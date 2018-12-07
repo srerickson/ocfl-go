@@ -1,0 +1,16 @@
+{
+  "head": "v2",
+  "id": "ark:/12345/bcd987",
+  "type": "Object",
+  "versions": {
+    "v2": {
+      "created": "2018-02-02T02:02:02Z",
+      "message": "Fix bar.xml, remove image.tiff, add empty2.txt",
+      "type": "Version",
+      "user": {
+        "address": "bob@example.com",
+        "name": "Bob"
+      }
+    }
+  }
+}

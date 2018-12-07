@@ -1,0 +1,16 @@
+{
+  "head": "v1",
+  "id": "ark:/12345/bcd987",
+  "type": "Object",
+  "versions": {
+    "v1": {
+      "created": "2018-01-01T01:01:01Z",
+      "message": "Initial import",
+      "type": "Version",
+      "user": {
+        "address": "alice@example.com",
+        "name": "Alice"
+      }
+    }
+  }
+}
