@@ -8,7 +8,8 @@ import (
 )
 
 // SearchTypePattern returns a slice of directories under root with a namaste
-// type matching pattern
+// type matching pattern. Subdirectories of matching directories are not
+// searched.
 // Example: results, err := SearchTypePattern(`objects`, `ocfl_object.*`)
 func SearchTypePattern(root string, pattern string) ([]string, error) {
 	var results []string
@@ -20,9 +21,13 @@ func SearchTypePattern(root string, pattern string) ([]string, error) {
 		if err != nil {
 			return err
 		}
+		if info.IsDir() {
+			fmt.Println(path)
+		}
 		if info.Mode().IsRegular() {
 			if len(namasteRe.FindStringSubmatch(info.Name())) > 0 {
 				results = append(results, filepath.Dir(path))
+				return filepath.SkipDir
 			}
 		}
 		return nil
