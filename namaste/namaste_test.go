@@ -34,5 +34,11 @@ func TestSetType(t *testing.T) {
 	if string(f) != fvalue {
 		t.Error(`SetType failed: fvalue read does not match fvalue set`)
 	}
+	if match, err := MatchTypePattern(tmp, tvalue); !match {
+		t.Error(err)
+	}
 
+	if match, _ := MatchTypePattern(tmp, `none`); match {
+		t.Error(`MatchTypePattern should not have matched`)
+	}
 }

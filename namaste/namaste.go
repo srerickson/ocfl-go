@@ -8,13 +8,17 @@ import (
 	"regexp"
 )
 
+const (
+	typePattern = `^0=%s$`
+)
+
 // SearchTypePattern returns a slice of directories under root with a namaste
 // type matching pattern. Subdirectories of matching directories are not
 // searched.
 // Example: results, err := SearchTypePattern(`objects`, `ocfl_object.*`)
 func SearchTypePattern(root string, pattern string) ([]string, error) {
 	var results []string
-	namasteRe, err := regexp.Compile(fmt.Sprintf(`^0=%s$`, pattern))
+	namasteRe, err := regexp.Compile(fmt.Sprintf(typePattern, pattern))
 	if err != nil {
 		return results, fmt.Errorf(`SearchTypePattern aborted: %s`, err)
 	}
@@ -34,6 +38,25 @@ func SearchTypePattern(root string, pattern string) ([]string, error) {
 		return results, fmt.Errorf(`SearchTypePattern aborted: %s`, err)
 	}
 	return results, nil
+}
+
+// MatchTypePattern returns true if path is a directory with a namaste type tag
+// matching pattern. An error is returned if path does not exist
+func MatchTypePattern(path string, pattern string) (bool, error) {
+	namasteRe, err := regexp.Compile(fmt.Sprintf(typePattern, pattern))
+	if err != nil {
+		return false, err
+	}
+	infos, err := ioutil.ReadDir(path)
+	if err != nil {
+		return false, err
+	}
+	for i := range infos {
+		if len(namasteRe.FindString(infos[i].Name())) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // SetType adds a namaste type tag to the directory at path. If path does not
