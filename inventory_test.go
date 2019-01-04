@@ -114,10 +114,10 @@ func TestInventoryValidate(t *testing.T) {
 	if err = json.Unmarshal(invJson, &inv); err != nil {
 		t.Error(err)
 	}
-	if err = inv.ValidateManifest(objectRoot); err != nil {
+	if err = inv.validateManifest(objectRoot); err != nil {
 		t.Error(err)
 	}
-	if err = inv.ValidateFixity(objectRoot); err != nil {
+	if err = inv.validateFixity(objectRoot); err != nil {
 		t.Error(err)
 	}
 

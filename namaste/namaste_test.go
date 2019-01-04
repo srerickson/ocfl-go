@@ -13,7 +13,7 @@ func TestSearch(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	if len(results) != 6 {
+	if len(results) != 7 {
 		t.Error(`expected 6 results from SearchTypePattern`)
 	}
 }

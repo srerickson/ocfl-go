@@ -59,9 +59,21 @@ func MatchTypePattern(path string, pattern string) (bool, error) {
 	return false, nil
 }
 
+// MatchTypePatternError returns an error if path does not match pattern
+func MatchTypePatternError(path string, pattern string) error {
+	match, err := MatchTypePattern(path, pattern)
+	if err != nil {
+		return err
+	}
+	if !match {
+		return fmt.Errorf(`%s does not match %s`, path, pattern)
+	}
+	return nil
+}
+
 // SetType adds a namaste type tag to the directory at path. If path does not
 // exist or is a directory, an error is returned.
-func SetType(path string, tvalue string, fvalue string) error {
-	fName := filepath.Join(path, fmt.Sprintf(`0=%s`, tvalue))
+func SetType(path string, dvalue string, fvalue string) error {
+	fName := filepath.Join(path, fmt.Sprintf(`0=%s`, dvalue))
 	return ioutil.WriteFile(fName, []byte(fvalue), 0644)
 }
