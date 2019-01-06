@@ -11,6 +11,7 @@ func TestNewObject(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
+	defer os.RemoveAll(objectRoot)
 	object, err := InitObject(objectRoot, `test-object`)
 	if err != nil {
 		t.Error(err)
@@ -28,14 +29,13 @@ func TestNewObject(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	if stage.State[`_`][0] != `test.txt` {
+	if stage.State[`-`][0] != `test.txt` {
 		t.Error(`Expected stage state to include test.txt`)
 	}
-	if err = object.CommitStage(); err != nil {
+	if err = stage.Commit(); err != nil {
 		t.Error(err)
 	}
 	if err = ValidateObject(objectRoot); err != nil {
 		t.Error(err)
 	}
-	os.RemoveAll(objectRoot)
 }

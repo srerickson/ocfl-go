@@ -39,7 +39,7 @@ type User struct {
 	Address string `json:"address"`
 }
 
-// State represents a Version's state element
+// State represents a Version's state element. State maps checksums to logical paths.
 type State map[string][]LPath
 
 // Fixity represents the Inventory's Fixity element
@@ -125,11 +125,7 @@ func ReadInventory(path string) (*Inventory, error) {
 	return &inv, nil
 }
 
-// func (i *Inventory) Write(root string) error {
-//
-// }
-
-// Sprint prints the inventory to writer as json
+// Fprint prints the inventory to writer as json
 func (i *Inventory) Fprint(writer io.Writer) error {
 	var j []byte
 	var err error
@@ -138,4 +134,56 @@ func (i *Inventory) Fprint(writer io.Writer) error {
 	}
 	_, err = writer.Write(j)
 	return err
+}
+
+// Find returns the digest and slice index used to reference lPath in the Version State.
+// Returns an error if lPath is not found
+func (version *Version) Find(lPath LPath) (string, int, error) {
+	for digest, files := range version.State {
+		for i := range files {
+			if lPath == files[i] {
+				return digest, i, nil
+			}
+		}
+	}
+	return ``, 0, fmt.Errorf(`file not in version: %s`, string(lPath))
+}
+
+// Add adds a digest->lPath map to Version State. Returns error if the lPath already exists.
+func (version *Version) Add(lPath LPath, digest string) (int, error) {
+	if version.State == nil {
+		version.State = State{}
+	}
+	if _, _, err := version.Find(lPath); err == nil {
+		return -1, fmt.Errorf(`file alread exists in version: %s`, lPath)
+	}
+	version.State[digest] = append(version.State[digest], lPath)
+	return len(version.State[digest]), nil
+}
+
+// Rename renames src to dst. Returns an error if dst already exists or src is not found
+func (version *Version) Rename(src LPath, dst LPath) error {
+	if _, _, err := version.Find(dst); err == nil {
+		return fmt.Errorf(`cannot rename file to existing filename: %s`, dst)
+	}
+	digest, i, err := version.Find(src)
+	if err != nil {
+		return err
+	}
+	version.State[digest][i] = dst
+	return nil
+}
+
+// Remove removes lPath from the Version State. Returns error if lPath is not found
+func (version *Version) Remove(lPath LPath) error {
+	digest, i, err := version.Find(lPath)
+	if err != nil {
+		return err
+	}
+	if len(version.State[digest]) == 1 && i == 0 {
+		delete(version.State, digest)
+	} else {
+		version.State[digest] = append(version.State[digest][:i], version.State[digest][:i+1]...)
+	}
+	return nil
 }

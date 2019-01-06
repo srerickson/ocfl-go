@@ -21,65 +21,73 @@ type Object struct {
 	stage     *Stage
 }
 
+// InitObject creates a new OCFL object at path with given ID.
 func InitObject(path string, id string) (Object, error) {
-	o := Object{Path: path}
+	var o Object
+	if absPath, err := filepath.Abs(path); err != nil {
+		return o, err
+	} else {
+		if err := os.MkdirAll(absPath, 0755); err != nil {
+			return o, err
+		}
+		o = Object{Path: absPath}
+	}
 	o.inventory = NewInventory(id)
-	err := namaste.SetType(o.Path, namasteObjectTValue, namasteObjectFValue)
-	if err != nil {
+	if err := namaste.SetType(o.Path, namasteObjectTValue, namasteObjectFValue); err != nil {
 		return o, err
 	}
-	return o, o.WriteInventory()
+	return o, o.writeInventory()
 }
 
-func (o *Object) WriteInventory() error {
-	file, err := os.OpenFile(filepath.Join(o.Path, `inventory.json`), os.O_CREATE|os.O_RDWR, 0644)
+func (o *Object) writeInventoryVersion(ver string) error {
+	invPath := filepath.Clean(filepath.Join(o.Path, ver, inventoryFileName))
+	file, err := os.OpenFile(invPath, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	o.inventory.Fprint(file)
-	return nil
+	if err := o.inventory.Fprint(file); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	digest, err := Checksum(`sha512`, invPath)
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(filepath.Join(invPath+`.sha512`), []byte(digest), 0644)
 }
 
+func (o *Object) writeInventory() error {
+	return o.writeInventoryVersion(``)
+}
+
+// NewStage returns a new Stage for creating new Object versions.
 func (o *Object) NewStage() (*Stage, error) {
 	if o.stage != nil {
-		os.RemoveAll(o.Path)
-	}
-	dir, err := ioutil.TempDir(o.Path, `stage`)
-	if err != nil {
-		return nil, err
-	}
-	inv, err := ReadInventory(filepath.Join(o.Path, `inventory.json`))
-	if err != nil {
-		return nil, err
-	}
-	head, ok := inv.Versions[inv.Head]
-	if !ok {
-		head = Version{
-			State: State{},
+		os.RemoveAll(o.stage.Path)
+	} else {
+		o.stage = &Stage{
+			object: o,
 		}
 	}
-	o.stage = &Stage{
-		Path:    dir,
-		Version: head,
-		object:  o,
+	if dir, err := ioutil.TempDir(o.Path, `stage`); err != nil {
+		return nil, err
+	} else {
+		o.stage.Path = dir
 	}
-	// read latest inventory
-	return o.stage, nil
-}
-
-//
-// func (o *Object) Open(logicalPath string, version string) (*os.File, error) {
-//
-// }
-//
-func (o *Object) CommitStage() error {
-	nextVersion, err := o.nextVersion()
+	inv, err := ReadInventory(filepath.Join(o.Path, inventoryFileName))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	o.inventory.Versions[nextVersion] = o.stage.Version
-	return o.WriteInventory()
+	if headVer, ok := inv.Versions[inv.Head]; !ok {
+		o.stage.Version = Version{
+			State: State{},
+		}
+	} else {
+		o.stage.Version = headVer
+	}
+	return o.stage, nil
 }
 
 func (o *Object) nextVersion() (string, error) {

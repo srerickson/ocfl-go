@@ -1,63 +1,64 @@
 package ocfl
 
 import (
+	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 )
 
-// Stage Represents is staging area for creating new Object Versions
+// Stage represents a staging area for creating new Object Versions
 type Stage struct {
 	Version
 	Path   string
 	object *Object
 }
 
-// OpenFile
+func (stage *Stage) Commit() error {
+	if stage.object == nil {
+		return errors.New(`stage has no parent object`)
+	}
+	nextVer, err := stage.object.nextVersion()
+	if err != nil {
+		return err
+	}
+	fmt.Println(`nextVersion: ` + nextVer)
+	// move tmpdir to version/contents
+	verDir := filepath.Join(stage.object.Path, nextVer)
+	if err := os.Mkdir(verDir, 0755); err != nil {
+		return err
+	}
+	// if stage has new content, move into version/content dir
+	if stage.Path != `` {
+		if newFiles, err := ioutil.ReadDir(stage.Path); err != nil {
+			return err
+		} else if len(newFiles) > 0 {
+			if err := os.Rename(stage.Path, filepath.Join(verDir, `content`)); err != nil {
+				return err
+			}
+		}
+	}
+
+	// update inventory
+	//
+	stage.object.inventory.Versions[nextVer] = stage.Version
+
+	// write inventory (twice)
+	if err := stage.object.writeInventoryVersion(nextVer); err != nil {
+		return err
+	}
+	return stage.object.writeInventory()
+}
+
+// OpenFile opens lPath in write-only mode, creating the file if necessary.
+// Because the digest is not yet known, it is added to the Version  State using a
+// temporary digest key.
 func (stage *Stage) OpenFile(lPath LPath) (*os.File, error) {
+	_ = stage.Remove(lPath)
+	if _, err := stage.Add(lPath, `-`); err != nil {
+		return nil, err
+	}
 	realPath := filepath.Join(stage.Path, lPath.RelPath())
-	stage.State[`_`] = append(stage.State[`_`], lPath)
 	return os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, 0644)
-}
-
-func (stage *Stage) Stat(lPath LPath) string {
-	for sum, files := range stage.State {
-		for i := range files {
-			if files[i] == lPath {
-				return sum
-			}
-		}
-	}
-	return ``
-}
-
-func (stage *Stage) Rename(src LPath, dst LPath) error {
-	// var err error
-	if dstSum := stage.Stat(dst); dstSum != `` {
-		return fmt.Errorf(`Already exists: %s`, dst)
-	}
-	if srcSum := stage.Stat(src); srcSum != `` {
-		for i, f := range stage.State[srcSum] {
-			if f == src {
-				stage.State[srcSum][i] = dst
-				return nil
-			}
-		}
-	}
-	return fmt.Errorf(`Not found: %s`, src)
-}
-
-func (stage *Stage) Remove(lPath LPath) error {
-	// var err error
-	if sum := stage.Stat(lPath); sum != `` {
-		var newFiles []LPath
-		for _, f := range stage.State[sum] {
-			if f != lPath {
-				newFiles = append(newFiles, f)
-			}
-		}
-		stage.State[sum] = newFiles
-		return nil
-	}
-	return fmt.Errorf(`Not found: %s`, lPath)
 }
