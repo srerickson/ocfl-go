@@ -20,18 +20,16 @@ func TestNewObject(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	file, err := stage.OpenFile(LPath(`test.txt`))
+	file, err := stage.OpenFile(`test.txt`, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		t.Error(err)
 	}
-	defer file.Close()
 	_, err = file.WriteString(`testing testing`)
 	if err != nil {
 		t.Error(err)
 	}
-	if stage.State[`-`][0] != `test.txt` {
-		t.Error(`Expected stage state to include test.txt`)
-	}
+	file.Close()
+	stage.Rename(`test.txt`, `test2.txt`)
 	if err = stage.Commit(); err != nil {
 		t.Error(err)
 	}

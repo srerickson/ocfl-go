@@ -2,7 +2,6 @@ package ocfl
 
 import (
 	"errors"
-	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -23,7 +22,6 @@ func (stage *Stage) Commit() error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(`nextVersion: ` + nextVer)
 	// move tmpdir to version/contents
 	verDir := filepath.Join(stage.object.Path, nextVer)
 	if err := os.Mkdir(verDir, 0755); err != nil {
@@ -51,14 +49,55 @@ func (stage *Stage) Commit() error {
 	return stage.object.writeInventory()
 }
 
-// OpenFile opens lPath in write-only mode, creating the file if necessary.
-// Because the digest is not yet known, it is added to the Version  State using a
-// temporary digest key.
-func (stage *Stage) OpenFile(lPath LPath) (*os.File, error) {
-	_ = stage.Remove(lPath)
-	if _, err := stage.Add(lPath, `-`); err != nil {
-		return nil, err
+// OpenFile provides a copy-on-write (COW) interface for the version's files.
+func (stage *Stage) OpenFile(lPath string, flag int, perm os.FileMode) (*os.File, error) {
+	return os.OpenFile(stage.existingPath(lPath), flag, perm)
+}
+
+// Rename renames files that are staged or exist in the verion
+func (stage *Stage) Rename(src string, dst string) error {
+	var renamedStaged bool
+	if stage.isStaged(src) {
+		err := os.Rename(stage.existingPath(src), stage.existingPath(dst));
+		if err != nil {
+			return err
+		}
+		renamedStaged = true
 	}
-	realPath := filepath.Join(stage.Path, lPath.RelPath())
-	return os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, 0644)
+	err := stage.Version.Rename(LPath(src), LPath(dst))
+	if err != nil && !renamedStaged {
+		return err
+	}
+	return nil
+}
+
+// Remove removes files that are staged or exist in the verion
+func (stage *Stage) Remove(lPath string) error {
+	var removedStaged bool
+	if stage.isStaged(lPath) {
+		err := os.Remove(stage.existingPath(lPath));
+		if err != nil {
+			return err
+		}
+		removedStaged = true
+	}
+	err := stage.Version.Remove(LPath(lPath))
+	if err != nil && !removedStaged {
+		return err
+	}
+	return nil
+}
+
+
+
+// existingPath gives return the real path from the logical path for a
+// staged file. The file does not necessarily exist
+func (stage *Stage) existingPath(lPath string) string {
+	return filepath.Join(stage.Path, filepath.FromSlash(lPath))
+}
+
+// isStaged returns whether the lPath exists as a new/modified file in the stage
+func (stage *Stage) isStaged(lPath string) bool {
+	_, err := os.Stat(stage.existingPath(lPath))
+	return !os.IsNotExist(err)
 }

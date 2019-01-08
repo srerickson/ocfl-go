@@ -1,6 +1,8 @@
 package ocfl
 
 import (
+	"errors"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -92,7 +94,18 @@ func (o *Object) NewStage() (*Stage, error) {
 
 func (o *Object) nextVersion() (string, error) {
 	if o.inventory.Head == `` {
-		return `1`, nil
+		return `v1`, nil
 	}
-	return `1`, nil
+	return `v1`, nil
+}
+
+func (o *Object) getExistingPath(digest string) (string, error) {
+	if o.inventory == nil {
+		return ``, errors.New(`object has no inventory`)
+	}
+	files, ok := o.inventory.Manifest[digest]
+	if !ok || len(files) == 0 {
+		return ``, fmt.Errorf(`not found: %s`, digest)
+	}
+	return string(files[0]), nil
 }
