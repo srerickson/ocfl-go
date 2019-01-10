@@ -6,7 +6,6 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -55,56 +54,56 @@ func NewInventory(id string) *Inventory {
 	}
 }
 
-func (i *Inventory) Validate(rootPath string) error {
-	if err := i.validateFixity(rootPath); err != nil {
-		return err
-	}
-	if i.ID == `` {
-		return fmt.Errorf(`Missing Inventory ID in %s`, rootPath)
-	}
-	return i.validateManifest(rootPath)
-}
+// func (i *Inventory) Validate(rootPath string) error {
+// 	if err := i.validateFixity(rootPath); err != nil {
+// 		return err
+// 	}
+// 	if i.ID == `` {
+// 		return fmt.Errorf(`Missing Inventory ID in %s`, rootPath)
+// 	}
+// 	return i.validateManifest(rootPath)
+// }
 
 // ValidateManifest returns errors manifest errors (or nil)
-func (i *Inventory) validateManifest(rootPath string) error {
-	if err := i.Manifest.validate(rootPath, i.DigestAlgorithm); err != nil {
-		return err
-	}
-	return nil
-}
+// func (i *Inventory) validateManifest(rootPath string) error {
+// 	if err := i.Manifest.validate(rootPath, i.DigestAlgorithm); err != nil {
+// 		return err
+// 	}
+// 	return nil
+// }
 
 // ValidateFixity returns fixity errors (or nil)
-func (i *Inventory) validateFixity(rootPath string) error {
-	for alg, manifest := range i.Fixity {
-		if err := manifest.validate(rootPath, alg); err != nil {
-			return err
-		}
-	}
-	return nil
-}
+// func (i *Inventory) validateFixity(rootPath string) error {
+// 	for alg, manifest := range i.Fixity {
+// 		if err := manifest.validate(rootPath, alg); err != nil {
+// 			return err
+// 		}
+// 	}
+// 	return nil
+// }
 
-func (m *Manifest) validate(rootPath string, alg string) error {
-	for expectedSum, paths := range *m {
-		for _, path := range paths {
-			fullPath := filepath.Join(rootPath, string(path))
-			info, err := os.Stat(fullPath)
-			if err != nil {
-				return err
-			}
-			if !info.Mode().IsRegular() {
-				return fmt.Errorf("Not a regular file: %s", path)
-			}
-			gotSum, err := Checksum(alg, fullPath)
-			if err != nil {
-				return err
-			}
-			if expectedSum != gotSum {
-				return fmt.Errorf("Checksum failed for %s", path)
-			}
-		}
-	}
-	return nil
-}
+// func (m *Manifest) validate(rootPath string, alg string) error {
+// 	for expectedSum, paths := range *m {
+// 		for _, path := range paths {
+// 			fullPath := filepath.Join(rootPath, string(path))
+// 			info, err := os.Stat(fullPath)
+// 			if err != nil {
+// 				return err
+// 			}
+// 			if !info.Mode().IsRegular() {
+// 				return fmt.Errorf("Not a regular file: %s", path)
+// 			}
+// 			gotSum, err := Checksum(alg, fullPath)
+// 			if err != nil {
+// 				return err
+// 			}
+// 			if expectedSum != gotSum {
+// 				return fmt.Errorf("Checksum failed for %s", path)
+// 			}
+// 		}
+// 	}
+// 	return nil
+// }
 
 // ReadInventory returns Inventory
 func ReadInventory(path string) (*Inventory, error) {

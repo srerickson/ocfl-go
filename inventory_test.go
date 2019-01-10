@@ -3,8 +3,6 @@ package ocfl
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -97,28 +95,4 @@ func TestInventoryMarshalling(t *testing.T) {
 	if _, err := gojsonschema.Validate(schemaLoader, documentLoader); err != nil {
 		t.Error(err)
 	}
-}
-
-func TestInventoryValidate(t *testing.T) {
-	var inv = Inventory{}
-	var invJson []byte
-	var err error
-	objectRoot := `test/fixtures/1.0/objects/spec-ex-full`
-	file, err := os.Open(objectRoot + `/inventory.json`)
-	if err != nil {
-		t.Error(err)
-	}
-	if invJson, err = ioutil.ReadAll(file); err != nil {
-		t.Error(err)
-	}
-	if err = json.Unmarshal(invJson, &inv); err != nil {
-		t.Error(err)
-	}
-	if err = inv.validateManifest(objectRoot); err != nil {
-		t.Error(err)
-	}
-	if err = inv.validateFixity(objectRoot); err != nil {
-		t.Error(err)
-	}
-
 }
