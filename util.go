@@ -8,12 +8,12 @@ import (
 	"strconv"
 )
 
+const version1 = `v1`
+
 var versionFormats = map[string]*regexp.Regexp{
 	`padded`:   regexp.MustCompile(`v0\d+`),
 	`unpadded`: regexp.MustCompile(`v[1-9]\d*`),
 }
-
-const version1 = `v1`
 
 // returns version format name (padded or unpadded)
 func versionFormat(name string) string {
@@ -42,9 +42,14 @@ func versionInt(name string) int {
 	return i
 }
 
-func versionGen(num int, padding int) string {
+// generates version with num and padding. return error if num is too big
+// for padding
+func versionGen(num int, padding int) (string, error) {
+	if padding > 0 && float64(num) >= math.Pow10(padding-1) {
+		return ``, errors.New(`version padding overflow`)
+	}
 	format := fmt.Sprintf("v%%0%dd", padding)
-	return fmt.Sprintf(format, num)
+	return fmt.Sprintf(format, num), nil
 }
 
 // returns next version name in the style of the given version name
@@ -54,8 +59,5 @@ func nextVersionLike(prev string) (string, error) {
 	if next == 1 {
 		return ``, errors.New(`invalid version format`)
 	}
-	if padding > 0 && float64(next) >= math.Pow10(padding-1) {
-		return ``, errors.New(`version format doesn't allow additional versions`)
-	}
-	return versionGen(next, padding), nil
+	return versionGen(next, padding)
 }
