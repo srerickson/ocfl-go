@@ -61,3 +61,12 @@ func nextVersionLike(prev string) (string, error) {
 	}
 	return versionGen(next, padding)
 }
+
+func stringIn(a string, list []string) bool {
+	for i := range list {
+		if a == list[i] {
+			return true
+		}
+	}
+	return false
+}

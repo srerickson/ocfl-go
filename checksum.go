@@ -14,12 +14,24 @@ import (
 
 // SHA512 = `sha512`
 const (
-	SHA512 = `sha512`
-	SHA256 = `sha256`
-	SHA224 = `sha224`
-	SHA1   = `sha1`
-	MD5    = `md5`
+	SHA512  = `sha512`
+	SHA256  = `sha256`
+	SHA224  = `sha224`
+	SHA1    = `sha1`
+	MD5     = `md5`
+	BLAKE2B = `blake2b`
 )
+
+var digestAlgorithms = [...]string{
+	SHA512,
+	SHA256,
+	SHA224,
+	SHA1,
+	MD5,
+	BLAKE2B,
+}
+
+var defaultAlgorithm = SHA512
 
 func Checksum(alg string, path string) (string, error) {
 	var h hash.Hash

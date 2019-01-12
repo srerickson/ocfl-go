@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+const (
+	inventoryType = `https://ocfl.io/1.0/spec/#inventory`
+)
+
 // Inventory represents contents of an OCFL Object's inventory.json file
 type Inventory struct {
 	ID              string             `json:"id"`
@@ -44,13 +48,15 @@ type State map[string][]LPath
 // Fixity represents the Inventory's Fixity element
 type Fixity map[string]Manifest
 
+// NewInventory returns a new, empty inventory with default values
 func NewInventory(id string) *Inventory {
 	return &Inventory{
-		ID:       id,
-		Type:     `Object`,
-		Versions: map[string]Version{},
-		Manifest: Manifest{},
-		Fixity:   Fixity{},
+		ID:              id,
+		Type:            inventoryType,
+		DigestAlgorithm: defaultAlgorithm,
+		Versions:        map[string]Version{},
+		Manifest:        Manifest{},
+		Fixity:          Fixity{},
 	}
 }
 
@@ -133,6 +139,15 @@ func (i *Inventory) Fprint(writer io.Writer) error {
 	}
 	_, err = writer.Write(j)
 	return err
+}
+
+// versionNames returns slice of version names
+func (i *Inventory) versionNames() []string {
+	var names []string
+	for k := range i.Versions {
+		names = append(names, k)
+	}
+	return names
 }
 
 // Find returns the digest and slice index used to reference lPath in the Version State.
