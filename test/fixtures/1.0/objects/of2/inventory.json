@@ -12,7 +12,7 @@
       "v3/a_file.txt"
     ]
   },
-  "type": "OCFLObject",
+  "type": "https://ocfl.io/1.0/spec/#inventory",
   "versions": {
     "v1": {
       "state": {

@@ -37,7 +37,7 @@
       "v1/content/image.tiff"
     ]
   },
-  "type": "Object",
+  "type": "https://ocfl.io/1.0/spec/#inventory",
   "versions": {
     "v1": {
       "created": "2018-01-01T01:01:01Z",
