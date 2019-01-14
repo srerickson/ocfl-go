@@ -31,10 +31,10 @@ func TestInventoryMarshalling(t *testing.T) {
     "head": "v3",
     "id": "ark:/12345/bcd987",
     "manifest": {
-      "4d27c8...b53": [ "v2/content/foo/bar.xml" ],
-      "7dcc35...c31": [ "v1/content/foo/bar.xml" ],
-      "cf83e1...a3e": [ "v1/content/empty.txt" ],
-      "ffccf6...62e": [ "v1/content/image.tiff" ]
+      "4d27c8b531": [ "v2/content/foo/bar.xml" ],
+      "7dcc35c311": [ "v1/content/foo/bar.xml" ],
+      "cf83e1a3e1": [ "v1/content/empty.txt" ],
+      "ffccf662e1": [ "v1/content/image.tiff" ]
     },
     "type": "https://ocfl.io/1.0/spec/#inventory",
     "versions": {
@@ -42,9 +42,9 @@ func TestInventoryMarshalling(t *testing.T) {
         "created": "2018-01-01T01:01:01Z",
         "message": "Initial import",
         "state": {
-          "7dcc35...c31": [ "foo/bar.xml" ],
-          "cf83e1...a3e": [ "empty.txt" ],
-          "ffccf6...62e": [ "image.tiff" ]
+          "17dcc35c31": [ "foo/bar.xml" ],
+          "1cf83e1a3e": [ "empty.txt" ],
+          "1ffccf662e": [ "image.tiff" ]
         },
         "user": {
           "address": "alice@example.com",
@@ -55,8 +55,8 @@ func TestInventoryMarshalling(t *testing.T) {
         "created": "2018-02-02T02:02:02Z",
         "message": "Fix bar.xml, remove image.tiff, add empty2.txt",
         "state": {
-          "4d27c8...b53": [ "foo/bar.xml" ],
-          "cf83e1...a3e": [ "empty.txt", "empty2.txt" ]
+          "4d27c8b531": [ "foo/bar.xml" ],
+          "cf83e1a3e1": [ "empty.txt", "empty2.txt" ]
         },
         "user": {
           "address": "bob@example.com",
@@ -67,9 +67,9 @@ func TestInventoryMarshalling(t *testing.T) {
         "created": "2018-03-03T03:03:03Z",
         "message": "Reinstate image.tiff, delete empty.txt",
         "state": {
-          "4d27c8...b53": [ "foo/bar.xml" ],
-          "cf83e1...a3e": [ "empty2.txt" ],
-          "ffccf6...62e": [ "image.tiff" ]
+          "4d27c8b53a": [ "foo/bar.xml" ],
+          "cf83e1a3ea": [ "empty2.txt" ],
+          "ffccf662ea": [ "image.tiff" ]
         },
         "user": {
           "address": "cecilia@example.com",
