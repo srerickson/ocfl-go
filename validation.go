@@ -44,19 +44,25 @@ func (v *Validator) init(root string) {
 	}
 }
 
-func (v *Validator) addCritical(err error) {
-	v.critical = append(v.critical, err)
+func (v *Validator) addCritical(err error) error {
+	if err != nil {
+		v.critical = append(v.critical, err)
+	}
+	return err
 }
 
-func (v *Validator) addWarning(err error) {
-	v.warning = append(v.warning, err)
+func (v *Validator) addWarning(err error) error {
+	if err != nil {
+		v.warning = append(v.warning, err)
+	}
+	return err
 }
 
 // ValidateObject validates OCFL object located at path
 func (v *Validator) ValidateObject(path string) error {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return err
+		return v.addCritical(err)
 	}
 	v.init(absPath)
 
@@ -64,14 +70,13 @@ func (v *Validator) ValidateObject(path string) error {
 	// TODO: Get Version Number to Compare to Inventory
 	err = namaste.MatchTypePatternError(path, namasteObjectTValue)
 	if err != nil {
-		v.addCritical(err)
-		return err
+		return v.addCritical(err)
 	}
 
 	// Validate Inventory
 	v.inventory, err = v.validateInventory(inventoryFileName)
 	if err != nil {
-		return err
+		return v.addCritical(err)
 	}
 
 	// Version Directories
@@ -97,8 +102,7 @@ func (v *Validator) ValidateObject(path string) error {
 func (v *Validator) validateInventory(name string) (*Inventory, error) {
 	inv, err := ReadInventory(filepath.Join(v.root, name))
 	if err != nil {
-		v.addCritical(err)
-		return nil, err
+		return nil, v.addCritical(err)
 	}
 
 	// Validate Inventory Structure:
@@ -140,7 +144,7 @@ func (v *Validator) validateInventory(name string) (*Inventory, error) {
 	// Fixity
 	for alg, manifest := range inv.Fixity {
 		if err := v.validateContentMap(manifest, alg); err != nil {
-			return nil, err
+			return nil, v.addCritical(err)
 		}
 	}
 	// Manifest
@@ -156,14 +160,14 @@ func (v *Validator) validateContentMap(cm ContentMap, alg string) error {
 				return err
 			}
 			if !info.Mode().IsRegular() {
-				return fmt.Errorf("not a regular file: %s", path)
+				return v.addCritical(fmt.Errorf("irregular file in manifest: %s", path))
 			}
 			gotSum, err := Checksum(alg, fullPath)
 			if err != nil {
-				return err
+				return v.addCritical(err)
 			}
 			if expectedSum != Digest(gotSum) {
-				return fmt.Errorf("checksum failed for %s", path)
+				return v.addCritical(fmt.Errorf("checksum failed for %s", path))
 			}
 		}
 	}
@@ -174,23 +178,25 @@ func (v *Validator) validateObjectVersionDir(version string) error {
 	inventoryPath := filepath.Join(version, inventoryFileName)
 	// FIXME: don't need to checksum same file multiple times.
 	if _, err := v.validateInventory(inventoryPath); err != nil {
-		return err
+		return v.addCritical(err)
 	}
+
 	contentPath := filepath.Join(v.root, version, `content`)
-	if i, err := os.Stat(contentPath); err == nil && i.IsDir() {
+	if i, statErr := os.Stat(contentPath); statErr == nil && i.IsDir() {
+		// Walk Version content, check all files present in manifest
 		walk := func(path string, info os.FileInfo, walkErr error) error {
 			if walkErr == nil && info.Mode().IsRegular() {
-				if ePath, err := filepath.Rel(v.root, path); err != nil {
-					return err
-				} else {
-					ePath = filepath.ToSlash(ePath)
-					// v.inventory.
+				ePath, pathErr := filepath.Rel(v.root, path)
+				if pathErr != nil {
+					return pathErr
 				}
-
+				if v.inventory.Manifest.GetDigest(Path(ePath)) == `` {
+					return fmt.Errorf(`not in manifest: %s`, ePath)
+				}
 			}
-			return err
+			return walkErr
 		}
-		return filepath.Walk(contentPath, walk)
+		return v.addCritical(filepath.Walk(contentPath, walk))
 	}
 	return nil
 }

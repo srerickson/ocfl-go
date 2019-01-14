@@ -11,7 +11,7 @@ func TestNewObject(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	defer os.RemoveAll(objectRoot)
+	//defer os.RemoveAll(objectRoot)
 	object, err := InitObject(objectRoot, `test-object`)
 	if err != nil {
 		t.Error(err)

@@ -49,9 +49,32 @@ func (stage *Stage) Commit() error {
 		if newFiles, err := ioutil.ReadDir(stage.Path); err != nil {
 			return err
 		} else if len(newFiles) > 0 {
-			if err := os.Rename(stage.Path, filepath.Join(verDir, `content`)); err != nil {
+			verContDir := filepath.Join(verDir, `content`)
+			if err := os.Rename(stage.Path, verContDir); err != nil {
 				return err
 			}
+			walk := func(path string, info os.FileInfo, walkErr error) error {
+				if walkErr == nil && info.Mode().IsRegular() {
+					alg := stage.object.inventory.DigestAlgorithm
+					digest, digestErr := Checksum(alg, path)
+					if digestErr != nil {
+						return digestErr
+					}
+					ePath, pathErr := filepath.Rel(stage.object.Path, path)
+					if pathErr != nil {
+						return pathErr
+					}
+					vPath, pathErr := filepath.Rel(verContDir, path)
+					if pathErr != nil {
+						return pathErr
+					}
+					stage.Version.State.Add(Digest(digest), Path(vPath))
+					stage.object.inventory.Manifest.Add(Digest(digest), Path(ePath))
+				}
+				return walkErr
+			}
+			filepath.Walk(verContDir, walk)
+
 		}
 	}
 
