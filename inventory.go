@@ -2,7 +2,6 @@ package ocfl
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -15,25 +14,25 @@ const (
 
 // Inventory represents contents of an OCFL Object's inventory.json file
 type Inventory struct {
-	ID              string             `json:"id"`
-	Type            string             `json:"type"`
-	DigestAlgorithm string             `json:"digestAlgorithm"`
-	Head            string             `json:"head"`
-	Manifest        Manifest           `json:"manifest"`
-	Versions        map[string]Version `json:"versions"`
-	Fixity          Fixity             `json:"fixity"`
+	ID              string                `json:"id"`
+	Type            string                `json:"type"`
+	DigestAlgorithm string                `json:"digestAlgorithm"`
+	Head            string                `json:"head"`
+	Manifest        ContentMap            `json:"manifest"`
+	Versions        map[string]Version    `json:"versions"`
+	Fixity          map[string]ContentMap `json:"fixity"`
 }
 
-// Manifest represents manifest elemenf of inventory.json. The manifest key
-// is a string representation of a checksum
-type Manifest map[string][]EPath
+// // Manifest represents manifest elemenf of inventory.json. The manifest key
+// // is a string representation of a checksum
+// type Manifest map[string][]EPath
 
 // Version represent a version entryin inventory.json
 type Version struct {
-	Created time.Time `json:"created"`
-	Message string    `json:"message"`
-	User    User      `json:"user"`
-	State   State     `json:"state"`
+	Created time.Time  `json:"created"`
+	Message string     `json:"message"`
+	User    User       `json:"user"`
+	State   ContentMap `json:"state"`
 }
 
 // User represent a Version's user entry
@@ -42,12 +41,6 @@ type User struct {
 	Address string `json:"address"`
 }
 
-// State represents a Version's state element. State maps checksums to logical paths.
-type State map[string][]LPath
-
-// Fixity represents the Inventory's Fixity element
-type Fixity map[string]Manifest
-
 // NewInventory returns a new, empty inventory with default values
 func NewInventory(id string) *Inventory {
 	return &Inventory{
@@ -55,63 +48,12 @@ func NewInventory(id string) *Inventory {
 		Type:            inventoryType,
 		DigestAlgorithm: defaultAlgorithm,
 		Versions:        map[string]Version{},
-		Manifest:        Manifest{},
-		Fixity:          Fixity{},
+		Manifest:        ContentMap{},
+		Fixity:          map[string]ContentMap{},
 	}
 }
 
-// func (i *Inventory) Validate(rootPath string) error {
-// 	if err := i.validateFixity(rootPath); err != nil {
-// 		return err
-// 	}
-// 	if i.ID == `` {
-// 		return fmt.Errorf(`Missing Inventory ID in %s`, rootPath)
-// 	}
-// 	return i.validateManifest(rootPath)
-// }
-
-// ValidateManifest returns errors manifest errors (or nil)
-// func (i *Inventory) validateManifest(rootPath string) error {
-// 	if err := i.Manifest.validate(rootPath, i.DigestAlgorithm); err != nil {
-// 		return err
-// 	}
-// 	return nil
-// }
-
-// ValidateFixity returns fixity errors (or nil)
-// func (i *Inventory) validateFixity(rootPath string) error {
-// 	for alg, manifest := range i.Fixity {
-// 		if err := manifest.validate(rootPath, alg); err != nil {
-// 			return err
-// 		}
-// 	}
-// 	return nil
-// }
-
-// func (m *Manifest) validate(rootPath string, alg string) error {
-// 	for expectedSum, paths := range *m {
-// 		for _, path := range paths {
-// 			fullPath := filepath.Join(rootPath, string(path))
-// 			info, err := os.Stat(fullPath)
-// 			if err != nil {
-// 				return err
-// 			}
-// 			if !info.Mode().IsRegular() {
-// 				return fmt.Errorf("Not a regular file: %s", path)
-// 			}
-// 			gotSum, err := Checksum(alg, fullPath)
-// 			if err != nil {
-// 				return err
-// 			}
-// 			if expectedSum != gotSum {
-// 				return fmt.Errorf("Checksum failed for %s", path)
-// 			}
-// 		}
-// 	}
-// 	return nil
-// }
-
-// ReadInventory returns Inventory
+// ReadInventory returns Inventory from json file at path
 func ReadInventory(path string) (*Inventory, error) {
 	var inv Inventory
 	var file *os.File
@@ -148,56 +90,4 @@ func (i *Inventory) versionNames() []string {
 		names = append(names, k)
 	}
 	return names
-}
-
-// Find returns the digest and slice index used to reference lPath in the Version State.
-// Returns an error if lPath is not found
-func (version *Version) Find(lPath LPath) (string, int, error) {
-	for digest, files := range version.State {
-		for i := range files {
-			if lPath == files[i] {
-				return digest, i, nil
-			}
-		}
-	}
-	return ``, 0, fmt.Errorf(`file not in version: %s`, string(lPath))
-}
-
-// Add adds a digest->lPath map to Version State. Returns error if the lPath already exists.
-func (version *Version) Add(lPath LPath, digest string) (int, error) {
-	if version.State == nil {
-		version.State = State{}
-	}
-	if _, _, err := version.Find(lPath); err == nil {
-		return -1, fmt.Errorf(`file alread exists in version: %s`, lPath)
-	}
-	version.State[digest] = append(version.State[digest], lPath)
-	return len(version.State[digest]), nil
-}
-
-// Rename renames src to dst. Returns an error if dst already exists or src is not found
-func (version *Version) Rename(src LPath, dst LPath) error {
-	if _, _, err := version.Find(dst); err == nil {
-		return fmt.Errorf(`cannot rename file to existing filename: %s`, dst)
-	}
-	digest, i, err := version.Find(src)
-	if err != nil {
-		return err
-	}
-	version.State[digest][i] = dst
-	return nil
-}
-
-// Remove removes lPath from the Version State. Returns error if lPath is not found
-func (version *Version) Remove(lPath LPath) error {
-	digest, i, err := version.Find(lPath)
-	if err != nil {
-		return err
-	}
-	if len(version.State[digest]) == 1 && i == 0 {
-		delete(version.State, digest)
-	} else {
-		version.State[digest] = append(version.State[digest][:i], version.State[digest][:i+1]...)
-	}
-	return nil
 }

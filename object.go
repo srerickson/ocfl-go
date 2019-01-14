@@ -84,7 +84,7 @@ func (o *Object) NewStage() (*Stage, error) {
 	}
 	if headVer, ok := inv.Versions[inv.Head]; !ok {
 		o.stage.Version = Version{
-			State: State{},
+			State: ContentMap{},
 		}
 	} else {
 		o.stage.Version = headVer
@@ -94,18 +94,18 @@ func (o *Object) NewStage() (*Stage, error) {
 
 func (o *Object) nextVersion() (string, error) {
 	if o.inventory.Head == `` {
-		return `v1`, nil
+		return version1, nil
 	}
-	return `v1`, nil
+	return nextVersionLike(o.inventory.Head)
 }
 
 func (o *Object) getExistingPath(digest string) (string, error) {
 	if o.inventory == nil {
 		return ``, errors.New(`object has no inventory`)
 	}
-	files, ok := o.inventory.Manifest[digest]
-	if !ok || len(files) == 0 {
+	paths := o.inventory.Manifest.DigestPaths(Digest(digest))
+	if len(paths) == 0 {
 		return ``, fmt.Errorf(`not found: %s`, digest)
 	}
-	return string(files[0]), nil
+	return string(paths[0]), nil
 }

@@ -1,7 +1,6 @@
 package ocfl
 
 import (
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -15,8 +14,8 @@ type Validator struct {
 	critical      []error
 	warning       []error
 	versionFormat string
-	// inventory *Inventory
-	checksums map[string]string // cache of file -> digest
+	inventory     *Inventory
+	checksums     map[string]string // cache of file -> digest
 }
 
 func ValidateObject(path string) error {
@@ -41,18 +40,22 @@ func (v *Validator) addWarning(err error) {
 
 // ValidateObject validates OCFL object located at path
 func (v *Validator) ValidateObject(path string) error {
-	v.init(path)
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	v.init(absPath)
 
 	// Object Conformance Declaration
 	// TODO: Get Version Number to Compare to Inventory
-	err := namaste.MatchTypePatternError(path, namasteObjectTValue)
+	err = namaste.MatchTypePatternError(path, namasteObjectTValue)
 	if err != nil {
 		v.addCritical(err)
 		return err
 	}
 
 	// Validate Inventory
-	_, err = v.validateInventory(inventoryFileName)
+	v.inventory, err = v.validateInventory(inventoryFileName)
 	if err != nil {
 		return err
 	}
@@ -85,7 +88,6 @@ func (v *Validator) validateInventory(name string) (*Inventory, error) {
 	}
 
 	// Validate Inventory Structure:
-	// Must have ID
 	if inv.ID == `` {
 		v.addCritical(fmt.Errorf(`missing inventory ID: %s`, name))
 	}
@@ -112,7 +114,7 @@ func (v *Validator) validateInventory(name string) (*Inventory, error) {
 		padding = versionPadding(versions[0])
 		for i := range versions {
 			n, _ := versionGen(i+1, padding)
-			if !stringIn(n, versions) {
+			if _, ok := inv.Versions[n]; !ok {
 				v.addCritical(fmt.Errorf(`inconsistent or missing version names: %s`, name))
 				break
 			}
@@ -123,17 +125,17 @@ func (v *Validator) validateInventory(name string) (*Inventory, error) {
 
 	// Fixity
 	for alg, manifest := range inv.Fixity {
-		if err := v.validateManifest(manifest, alg); err != nil {
+		if err := v.validateContentMap(manifest, alg); err != nil {
 			return nil, err
 		}
 	}
 	// Manifest
-	return inv, v.validateManifest(inv.Manifest, inv.DigestAlgorithm)
+	return inv, v.validateContentMap(inv.Manifest, inv.DigestAlgorithm)
 }
 
-func (v *Validator) validateManifest(m Manifest, alg string) error {
-	for expectedSum, paths := range m {
-		for _, path := range paths {
+func (v *Validator) validateContentMap(cm ContentMap, alg string) error {
+	for expectedSum := range cm {
+		for path := range cm[expectedSum] {
 			fullPath := filepath.Join(v.root, string(path))
 			info, err := os.Stat(fullPath)
 			if err != nil {
@@ -146,7 +148,7 @@ func (v *Validator) validateManifest(m Manifest, alg string) error {
 			if err != nil {
 				return err
 			}
-			if expectedSum != gotSum {
+			if expectedSum != Digest(gotSum) {
 				return fmt.Errorf("checksum failed for %s", path)
 			}
 		}
@@ -155,13 +157,26 @@ func (v *Validator) validateManifest(m Manifest, alg string) error {
 }
 
 func (v *Validator) validateObjectVersionDir(version string) error {
-	if v.root == `` {
-		return errors.New(`cannot validate object version: object path not set`)
-	}
 	inventoryPath := filepath.Join(version, inventoryFileName)
+	// FIXME: don't need to checksum same file multiple times.
 	if _, err := v.validateInventory(inventoryPath); err != nil {
 		return err
 	}
+	contentPath := filepath.Join(v.root, version, `content`)
+	if i, err := os.Stat(contentPath); err == nil && i.IsDir() {
+		walk := func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr == nil && info.Mode().IsRegular() {
+				if ePath, err := filepath.Rel(v.root, path); err != nil {
+					return err
+				} else {
+					ePath = filepath.ToSlash(ePath)
+					// v.inventory.
+				}
 
+			}
+			return err
+		}
+		return filepath.Walk(contentPath, walk)
+	}
 	return nil
 }

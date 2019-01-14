@@ -18,6 +18,9 @@ func (stage *Stage) Commit() error {
 	if stage.object == nil {
 		return errors.New(`stage has no parent object`)
 	}
+	if stage.object.inventory == nil {
+		return errors.New(`stage parent object has no inventory`)
+	}
 	nextVer, err := stage.object.nextVersion()
 	if err != nil {
 		return err
@@ -39,8 +42,8 @@ func (stage *Stage) Commit() error {
 	}
 
 	// update inventory
-	//
 	stage.object.inventory.Versions[nextVer] = stage.Version
+	stage.object.inventory.Head = nextVer
 
 	// write inventory (twice)
 	if err := stage.object.writeInventoryVersion(nextVer); err != nil {
@@ -58,13 +61,13 @@ func (stage *Stage) OpenFile(lPath string, flag int, perm os.FileMode) (*os.File
 func (stage *Stage) Rename(src string, dst string) error {
 	var renamedStaged bool
 	if stage.isStaged(src) {
-		err := os.Rename(stage.existingPath(src), stage.existingPath(dst));
+		err := os.Rename(stage.existingPath(src), stage.existingPath(dst))
 		if err != nil {
 			return err
 		}
 		renamedStaged = true
 	}
-	err := stage.Version.Rename(LPath(src), LPath(dst))
+	err := stage.Version.State.Rename(Path(src), Path(dst))
 	if err != nil && !renamedStaged {
 		return err
 	}
@@ -75,20 +78,18 @@ func (stage *Stage) Rename(src string, dst string) error {
 func (stage *Stage) Remove(lPath string) error {
 	var removedStaged bool
 	if stage.isStaged(lPath) {
-		err := os.Remove(stage.existingPath(lPath));
+		err := os.Remove(stage.existingPath(lPath))
 		if err != nil {
 			return err
 		}
 		removedStaged = true
 	}
-	err := stage.Version.Remove(LPath(lPath))
+	_, err := stage.Version.State.Remove(Path(lPath))
 	if err != nil && !removedStaged {
 		return err
 	}
 	return nil
 }
-
-
 
 // existingPath gives return the real path from the logical path for a
 // staged file. The file does not necessarily exist
