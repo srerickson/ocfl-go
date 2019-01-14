@@ -105,3 +105,18 @@ func (i *Inventory) versionNames() []string {
 	}
 	return names
 }
+
+// NewVersion returns a new, empty Version
+func NewVersion() Version {
+	return Version{
+		State: ContentMap{},
+	}
+}
+
+// NewUser returns a new User with given name and address
+func NewUser(name string, address string) User {
+	return User{
+		Name:    name,
+		Address: address,
+	}
+}

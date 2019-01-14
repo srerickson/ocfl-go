@@ -34,6 +34,12 @@ type Digest string
 // Path is a relative file path
 type Path string
 
+// DigestPath is a Digest/Path pair, used by Iterate()
+type DigestPath struct {
+	Digest Digest
+	Path   Path
+}
+
 //
 // ContentMap Functions
 //
@@ -87,24 +93,35 @@ func (cm ContentMap) Len() int {
 	return size
 }
 
-// Add adds a Digest->Path map to the ContentMap. Returns an error if path is already present.
-func (cm *ContentMap) Add(digest Digest, path Path) error {
+// insert inserts digest->path without checking for path duplication
+func (cm *ContentMap) insert(digest Digest, path Path) {
 	if *cm == nil {
 		*cm = ContentMap{}
-	}
-	if cm.GetDigest(path) != `` {
-		return fmt.Errorf(`already exists: %s`, path)
 	}
 	if _, ok := (*cm)[digest]; ok {
 		if _, ok := (*cm)[digest][path]; !ok {
 			(*cm)[digest][path] = true
-		} else {
-			panic(`ContentMap.GetDigest() is broken`)
 		}
 	} else {
 		(*cm)[digest] = map[Path]bool{path: true}
 	}
+}
+
+// Add adds a Digest->Path map to the ContentMap. Returns an error if path is already present.
+func (cm *ContentMap) Add(digest Digest, path Path) error {
+	if cm.GetDigest(path) != `` {
+		return fmt.Errorf(`already exists: %s`, path)
+	}
+	cm.insert(digest, path)
 	return nil
+}
+
+// AddReplace adds a Digest->Path map, removing previously existing path if necessary
+func (cm *ContentMap) AddReplace(digest Digest, path Path) {
+	if prev := cm.GetDigest(path); prev != `` {
+		cm.delete(prev, path)
+	}
+	cm.insert(digest, path)
 }
 
 // Rename renames src path to dst. Returns an error if dst already exists or src is not found
@@ -121,17 +138,45 @@ func (cm *ContentMap) Rename(src Path, dst Path) error {
 	return nil
 }
 
+// delete deletes digest->path pair without error check
+func (cm *ContentMap) delete(digest Digest, path Path) {
+	delete((*cm)[digest], path)
+	if len((*cm)[digest]) == 0 {
+		delete(*cm, digest)
+	}
+}
+
 // Remove removes path from the ContentMap and returns the digest. Returns error if path is not found
 func (cm *ContentMap) Remove(path Path) (Digest, error) {
 	digest := cm.GetDigest(path)
 	if digest == `` {
 		return ``, fmt.Errorf(`not found: %s`, path)
 	}
-	delete((*cm)[digest], path)
-	if len((*cm)[digest]) == 0 {
-		delete(*cm, digest)
-	}
+	cm.delete(digest, path)
 	return digest, nil
+}
+
+// Iterate returns a channel of DigestPaths in the ContentMap
+func (cm ContentMap) Iterate() chan DigestPath {
+	ret := make(chan DigestPath)
+	go func() {
+		for digest := range cm {
+			for path := range cm[digest] {
+				ret <- DigestPath{digest, path}
+			}
+		}
+		close(ret)
+	}()
+	return ret
+}
+
+// Copy returns a new ContentMap with same content/digest entries
+func (cm ContentMap) Copy() ContentMap {
+	var newCm ContentMap
+	for dp := range cm.Iterate() {
+		newCm.insert(dp.Digest, dp.Path)
+	}
+	return newCm
 }
 
 // UnmarshalJSON implements the Unmarshaler interface for ContentMap.

@@ -119,3 +119,14 @@ func TestPathJSON(t *testing.T) {
 		t.Errorf(`expected error, got: %s`, string(j))
 	}
 }
+
+func TestCopyContentMap(t *testing.T) {
+	a := ContentMap{}
+	a.Add(`ab`, `file.txt`)
+	b := a.Copy() // copy
+	a.Remove(`file.txt`)
+	if a.Len() == b.Len() {
+		t.Error(`expected different lengths`)
+	}
+
+}

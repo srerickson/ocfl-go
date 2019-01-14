@@ -40,14 +40,15 @@ type Object struct {
 // InitObject creates a new OCFL object at path with given ID.
 func InitObject(path string, id string) (Object, error) {
 	var o Object
-	if absPath, err := filepath.Abs(path); err != nil {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
 		return o, err
-	} else {
-		if err := os.MkdirAll(absPath, 0755); err != nil {
-			return o, err
-		}
-		o = Object{Path: absPath}
 	}
+	if err := os.MkdirAll(absPath, DIRMODE); err != nil {
+		return o, err
+	}
+	o = Object{Path: absPath}
+
 	o.inventory = NewInventory(id)
 	if err := namaste.SetType(o.Path, namasteObjectTValue, namasteObjectFValue); err != nil {
 		return o, err
@@ -81,27 +82,20 @@ func (o *Object) writeInventory() error {
 // NewStage returns a new Stage for creating new Object versions.
 func (o *Object) NewStage() (*Stage, error) {
 	if o.stage != nil {
-		os.RemoveAll(o.stage.Path)
+		o.stage.clear()
 	} else {
 		o.stage = &Stage{
 			object: o,
 		}
-	}
-	if dir, err := ioutil.TempDir(o.Path, `stage`); err != nil {
-		return nil, err
-	} else {
-		o.stage.Path = dir
 	}
 	inv, err := ReadInventory(filepath.Join(o.Path, inventoryFileName))
 	if err != nil {
 		return nil, err
 	}
 	if headVer, ok := inv.Versions[inv.Head]; !ok {
-		o.stage.Version = Version{
-			State: ContentMap{},
-		}
+		o.stage.State = ContentMap{}
 	} else {
-		o.stage.Version = headVer
+		o.stage.State = headVer.State.Copy()
 	}
 	return o.stage, nil
 }

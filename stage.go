@@ -19,21 +19,42 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"time"
+)
+
+var (
+	// FILEMODE is default FileMode for new files
+	FILEMODE os.FileMode = 0644
+	// DIRMODE is default FileMode for new directories
+	DIRMODE os.FileMode = 0755
 )
 
 // Stage represents a staging area for creating new Object Versions
 type Stage struct {
-	Version
-	Path   string
-	object *Object
+	State  ContentMap // next version state
+	Path   string     // tmp directory for staging new files
+	object *Object    // parent object
 }
 
-func (stage *Stage) Commit() error {
+func (stage *Stage) clear() {
+	if stage == nil {
+		return
+	}
+	if stage.Path != `` {
+		os.RemoveAll(stage.Path)
+		stage.Path = ``
+	}
+	stage.State = nil
+}
+
+// Commit creates a new Version in the Stage's parent Object reflecting
+// changes made through the Stage.
+func (stage *Stage) Commit(user User, message string) error {
 	if stage.object == nil {
 		return errors.New(`stage has no parent object`)
 	}
-	if stage.object.inventory == nil {
-		return errors.New(`stage parent object has no inventory`)
+	if stage.State == nil {
+		return errors.New(`stage has no state`)
 	}
 	nextVer, err := stage.object.nextVersion()
 	if err != nil {
@@ -45,6 +66,7 @@ func (stage *Stage) Commit() error {
 		return err
 	}
 	// if stage has new content, move into version/content dir
+	// TODO: if there any empty files in stage dir, delete them
 	if stage.Path != `` {
 		if newFiles, err := ioutil.ReadDir(stage.Path); err != nil {
 			return err
@@ -68,7 +90,7 @@ func (stage *Stage) Commit() error {
 					if pathErr != nil {
 						return pathErr
 					}
-					stage.Version.State.Add(Digest(digest), Path(vPath))
+					stage.State.AddReplace(Digest(digest), Path(vPath))
 					stage.object.inventory.Manifest.Add(Digest(digest), Path(ePath))
 				}
 				return walkErr
@@ -78,8 +100,14 @@ func (stage *Stage) Commit() error {
 		}
 	}
 
+	newVersion := NewVersion()
+	newVersion.State = stage.State.Copy()
+	newVersion.User = user
+	newVersion.Message = message
+	newVersion.Created = time.Now()
+
 	// update inventory
-	stage.object.inventory.Versions[nextVer] = stage.Version
+	stage.object.inventory.Versions[nextVer] = newVersion
 	stage.object.inventory.Head = nextVer
 
 	// write inventory (twice)
@@ -89,53 +117,71 @@ func (stage *Stage) Commit() error {
 	return stage.object.writeInventory()
 }
 
-// OpenFile provides a copy-on-write (COW) interface for the version's files.
-func (stage *Stage) OpenFile(lPath string, flag int, perm os.FileMode) (*os.File, error) {
-	return os.OpenFile(stage.existingPath(lPath), flag, perm)
+// OpenFile returns a readable and writable *os.File for the given Logical Path.
+// If the file has not already been staged (which is the case even if the file
+// exists in the current Version State), it is created, along with all parent
+// directories. It should not be used to read already committed files: use
+// Object.Open() instead.
+func (stage *Stage) OpenFile(lPath string) (*os.File, error) {
+	if stage.Path == `` {
+		dir, err := ioutil.TempDir(stage.object.Path, `stage`)
+		if err != nil {
+			return nil, err
+		}
+		stage.Path = dir
+	}
+	fullPath := stage.fullPath(lPath)
+	dir := filepath.Dir(fullPath)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		os.MkdirAll(dir, DIRMODE)
+	} else {
+		return nil, err
+	}
+	return os.OpenFile(fullPath, os.O_RDWR|os.O_CREATE, FILEMODE)
 }
 
-// Rename renames files that are staged or exist in the verion
+// Rename renames files that are staged or that exist in the staged version
 func (stage *Stage) Rename(src string, dst string) error {
 	var renamedStaged bool
 	if stage.isStaged(src) {
-		err := os.Rename(stage.existingPath(src), stage.existingPath(dst))
+		err := os.Rename(stage.fullPath(src), stage.fullPath(dst))
 		if err != nil {
 			return err
 		}
 		renamedStaged = true
 	}
-	err := stage.Version.State.Rename(Path(src), Path(dst))
+	err := stage.State.Rename(Path(src), Path(dst))
 	if err != nil && !renamedStaged {
 		return err
 	}
 	return nil
 }
 
-// Remove removes files that are staged or exist in the verion
+// Remove removes files that are staged or that exist in the staged version
 func (stage *Stage) Remove(lPath string) error {
 	var removedStaged bool
 	if stage.isStaged(lPath) {
-		err := os.Remove(stage.existingPath(lPath))
+		err := os.Remove(stage.fullPath(lPath))
 		if err != nil {
 			return err
 		}
 		removedStaged = true
 	}
-	_, err := stage.Version.State.Remove(Path(lPath))
+	_, err := stage.State.Remove(Path(lPath))
 	if err != nil && !removedStaged {
 		return err
 	}
 	return nil
 }
 
-// existingPath gives return the real path from the logical path for a
+// fullPath gives return the real path from the logical path for a
 // staged file. The file does not necessarily exist
-func (stage *Stage) existingPath(lPath string) string {
-	return filepath.Join(stage.Path, filepath.FromSlash(lPath))
+func (stage *Stage) fullPath(lPath string) string {
+	return filepath.Join(stage.Path, lPath)
 }
 
 // isStaged returns whether the lPath exists as a new/modified file in the stage
 func (stage *Stage) isStaged(lPath string) bool {
-	_, err := os.Stat(stage.existingPath(lPath))
+	_, err := os.Stat(stage.fullPath(lPath))
 	return !os.IsNotExist(err)
 }
