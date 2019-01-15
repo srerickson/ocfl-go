@@ -46,6 +46,9 @@ type DigestPath struct {
 
 // Exists returns true if digest/path pair exist in ContentMap
 func (cm ContentMap) Exists(digest Digest, path Path) bool {
+	if err := path.validate(); err != nil {
+		return false
+	}
 	if _, ok := cm[digest]; ok {
 		if _, ok := cm[digest][path]; ok {
 			return true
@@ -57,6 +60,9 @@ func (cm ContentMap) Exists(digest Digest, path Path) bool {
 // GetDigest returns the digest of path in the Content Map.
 // Returns an empty digest if not found
 func (cm ContentMap) GetDigest(path Path) Digest {
+	if err := path.validate(); err != nil {
+		return ``
+	}
 	for digest := range cm {
 		if _, ok := cm[digest][path]; ok {
 			return digest
@@ -93,7 +99,8 @@ func (cm ContentMap) Len() int {
 	return size
 }
 
-// insert inserts digest->path without checking for path duplication
+// insert inserts digest->path without checking for errors or
+// path duplication
 func (cm *ContentMap) insert(digest Digest, path Path) {
 	if *cm == nil {
 		*cm = ContentMap{}
@@ -107,8 +114,19 @@ func (cm *ContentMap) insert(digest Digest, path Path) {
 	}
 }
 
+// delete deletes digest->path pair without error check
+func (cm *ContentMap) delete(digest Digest, path Path) {
+	delete((*cm)[digest], path)
+	if len((*cm)[digest]) == 0 {
+		delete(*cm, digest)
+	}
+}
+
 // Add adds a Digest->Path map to the ContentMap. Returns an error if path is already present.
 func (cm *ContentMap) Add(digest Digest, path Path) error {
+	if err := path.validate(); err != nil {
+		return err
+	}
 	if cm.GetDigest(path) != `` {
 		return fmt.Errorf(`already exists: %s`, path)
 	}
@@ -117,15 +135,25 @@ func (cm *ContentMap) Add(digest Digest, path Path) error {
 }
 
 // AddReplace adds a Digest->Path map, removing previously existing path if necessary
-func (cm *ContentMap) AddReplace(digest Digest, path Path) {
+func (cm *ContentMap) AddReplace(digest Digest, path Path) error {
+	if err := path.validate(); err != nil {
+		return err
+	}
 	if prev := cm.GetDigest(path); prev != `` {
 		cm.delete(prev, path)
 	}
 	cm.insert(digest, path)
+	return nil
 }
 
 // Rename renames src path to dst. Returns an error if dst already exists or src is not found
 func (cm *ContentMap) Rename(src Path, dst Path) error {
+	if err := src.validate(); err != nil {
+		return err
+	}
+	if err := dst.validate(); err != nil {
+		return err
+	}
 	if cm.GetDigest(dst) != `` {
 		return fmt.Errorf(`already exists: %s`, dst)
 	}
@@ -138,16 +166,11 @@ func (cm *ContentMap) Rename(src Path, dst Path) error {
 	return nil
 }
 
-// delete deletes digest->path pair without error check
-func (cm *ContentMap) delete(digest Digest, path Path) {
-	delete((*cm)[digest], path)
-	if len((*cm)[digest]) == 0 {
-		delete(*cm, digest)
-	}
-}
-
 // Remove removes path from the ContentMap and returns the digest. Returns error if path is not found
 func (cm *ContentMap) Remove(path Path) (Digest, error) {
+	if err := path.validate(); err != nil {
+		return ``, err
+	}
 	digest := cm.GetDigest(path)
 	if digest == `` {
 		return ``, fmt.Errorf(`not found: %s`, path)
@@ -187,7 +210,7 @@ func (cm *ContentMap) UnmarshalJSON(jsonData []byte) error {
 	}
 	*cm = ContentMap{}
 	for digest, files := range tmpMap {
-		if err := digest.Validate(); err != nil {
+		if err := digest.validate(); err != nil {
 			return err
 		}
 		for i := range files {
@@ -201,8 +224,7 @@ func (cm *ContentMap) UnmarshalJSON(jsonData []byte) error {
 func (cm ContentMap) MarshalJSON() ([]byte, error) {
 	var tmpMap = map[Digest][]Path{}
 	for digest := range cm {
-		// TODO: why do I have to do this here?
-		if err := digest.Validate(); err != nil {
+		if err := digest.validate(); err != nil {
 			return nil, err
 		}
 		for path := range cm[digest] {
@@ -224,15 +246,16 @@ func (cm ContentMap) MarshalJSON() ([]byte, error) {
 // Path Functions
 //
 
-// Validate validates the Path value
-func (path Path) Validate() error {
-	cleanPath := filepath.Clean(string(path))
+// Validate validates the cleans the path
+func (path *Path) validate() error {
+	cleanPath := filepath.Clean(string(*path))
 	if filepath.IsAbs(cleanPath) {
-		return fmt.Errorf(`path must be relative: %s`, path)
+		return fmt.Errorf(`path must be relative: %s`, cleanPath)
 	}
 	if strings.HasPrefix(cleanPath, `..`) {
-		return fmt.Errorf(`path is out of scope: %s`, path)
+		return fmt.Errorf(`path is out of scope: %s`, cleanPath)
 	}
+	*path = Path(cleanPath)
 	return nil
 }
 
@@ -242,12 +265,12 @@ func (path *Path) UnmarshalJSON(jsonData []byte) error {
 	var tmpPath string
 	json.Unmarshal(jsonData, &tmpPath)
 	*path = Path(filepath.FromSlash(tmpPath))
-	return path.Validate()
+	return path.validate()
 }
 
 // MarshalJSON implements the Marshaler interface for Path
 func (path Path) MarshalJSON() ([]byte, error) {
-	if err := path.Validate(); err != nil {
+	if err := path.validate(); err != nil {
 		return nil, err
 	}
 	return json.Marshal(filepath.ToSlash(string(path)))
@@ -258,23 +281,9 @@ func (path Path) MarshalJSON() ([]byte, error) {
 //
 
 // Validate validates the Digest value
-func (digest Digest) Validate() error {
+func (digest Digest) validate() error {
 	if _, err := hex.DecodeString(string(digest)); err != nil {
 		return err
 	}
 	return nil
-}
-
-// UnmarshalJSON implements the Unmarshaler interface for Digest
-func (digest *Digest) UnmarshalJSON(jsonData []byte) error {
-	json.Unmarshal(jsonData, (*string)(digest))
-	return digest.Validate()
-}
-
-// MarshalJSON implements the Marshaler interface for Digest
-func (digest Digest) MarshalJSON() ([]byte, error) {
-	if err := digest.Validate(); err != nil {
-		return nil, err
-	}
-	return json.Marshal((string)(digest))
 }

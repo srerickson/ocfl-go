@@ -62,7 +62,7 @@ func (stage *Stage) Commit(user User, message string) error {
 	}
 	// move tmpdir to version/contents
 	verDir := filepath.Join(stage.object.Path, nextVer)
-	if err := os.Mkdir(verDir, 0755); err != nil {
+	if err := os.Mkdir(verDir, DIRMODE); err != nil {
 		return err
 	}
 	// if stage has new content, move into version/content dir
