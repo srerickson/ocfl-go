@@ -92,20 +92,6 @@ func TestContentMapJSON(t *testing.T) {
 
 }
 
-// func TestDigestJSON(t *testing.T) {
-// 	var d1 Digest
-// 	if err := json.Unmarshal([]byte(`"1234"`), &d1); err != nil {
-// 		t.Error(err)
-// 	}
-// 	if err := json.Unmarshal([]byte(`"x1234"`), &d1); err == nil {
-// 		t.Errorf(`expected error, got: %s`, d1)
-// 	}
-// 	var d2 Digest = `bad digest`
-// 	if j, err := json.Marshal(d2); err == nil {
-// 		t.Errorf(`expected error, got: %s`, string(j))
-// 	}
-// }
-
 func TestPathJSON(t *testing.T) {
 	var p1 Path
 	if err := json.Unmarshal([]byte(`"test/tmp.txt"`), &p1); err != nil {
@@ -128,8 +114,14 @@ func TestCleanPath(t *testing.T) {
 	if err := cm.Add(`AB`, Path(`../uglypath`)); err == nil {
 		t.Error(`expected an error`)
 	}
-	if err := cm.GetDigest(`uglypath`); err != `AA` {
+	if d := cm.GetDigest(`uglypath`); d != `AA` {
+		t.Errorf(`expected AA, got: %s`, d)
+	}
+	if err := cm.Rename(`./uglypath`, `.//another//ugly/path`); err != nil {
 		t.Error(err)
+	}
+	if d, _ := cm.Remove(`another/ugly/path`); d != `AA` {
+		t.Errorf(`expected AA, got: %s`, d)
 	}
 }
 
