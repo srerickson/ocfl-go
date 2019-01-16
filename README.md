@@ -16,12 +16,12 @@ object, _ := InitObject(`path/to/object-example-1`, `example-1-id`)
 // Staging area for building new versions
 stage, _ := object.NewStage()
 
-// Add a file to the stage as README.txt
+// Add a file to the stage as README.txt (OCFL logical path)
 stage.Add(`/path/to/file.txt`,`README.txt`)
-// Rename the file
-stage.Rename(`README.txt`,`README.md`)
+// Rename the file dir/README.md 
+stage.Rename(`README.txt`, filepath.Join(`dir`,`README.md`))
 // Remove the file
-stage.Remove(`README.txt`,`README.md`)
+stage.Remove(filepath.Join(`dir`,`README.md`))
 
 // Commit changes to the object, creating a new version
 stage.Commit(NewUser(`somebody`, `some@where`), `commit version 1`)
