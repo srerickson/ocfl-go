@@ -15,14 +15,15 @@ object, _ := InitObject(`path/to/object-example-1`, `example-1-id`)
 
 // Staging area for building new versions
 stage, _ := object.NewStage()
-file, _ := stage.OpenFile(filepath.Join(`dir`, `test-1.txt`))
-file.WriteString(`...`)
-file.Close()
 
-// Something like this for importing contents of a directory:
-stage, _ := object.NewStageDir(`path/to/data`)
+// Add a file to the stage as README.txt
+stage.Add(`/path/to/file.txt`,`README.txt`)
+// Rename the file
+stage.Rename(`README.txt`,`README.md`)
+// Remove the file
+stage.Remove(`README.txt`,`README.md`)
 
-// Create the new version
+// Commit changes to the object, creating a new version
 stage.Commit(NewUser(`somebody`, `some@where`), `commit version 1`)
 ```
 

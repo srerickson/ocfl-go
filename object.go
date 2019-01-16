@@ -93,9 +93,9 @@ func (o *Object) NewStage() (*Stage, error) {
 		return nil, err
 	}
 	if headVer, ok := inv.Versions[inv.Head]; !ok {
-		o.stage.State = ContentMap{}
+		o.stage.state = ContentMap{}
 	} else {
-		o.stage.State = headVer.State.Copy()
+		o.stage.state = headVer.State.Copy()
 	}
 	return o.stage, nil
 }
