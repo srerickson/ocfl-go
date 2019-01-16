@@ -2,12 +2,7 @@ package ocfl
 
 import (
 	"encoding/json"
-	"fmt"
-	"path/filepath"
-	"runtime"
 	"testing"
-
-	"github.com/xeipuuv/gojsonschema"
 )
 
 func TestInventoryMarshalling(t *testing.T) {
@@ -85,14 +80,4 @@ func TestInventoryMarshalling(t *testing.T) {
 		t.Error(`Problem Unmarshalling Versions Element`)
 	}
 
-	// Validate Marshalled JSON
-	_, schemaPath, _, _ := runtime.Caller(0)
-	schemaPath = filepath.Dir(schemaPath)
-	schemaPath = fmt.Sprintf("file://%s/inventory_schema.json", schemaPath)
-	newInv, _ := json.Marshal(inv)
-	schemaLoader := gojsonschema.NewReferenceLoader(schemaPath)
-	documentLoader := gojsonschema.NewBytesLoader(newInv)
-	if _, err := gojsonschema.Validate(schemaLoader, documentLoader); err != nil {
-		t.Error(err)
-	}
 }
