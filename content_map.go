@@ -146,6 +146,20 @@ func (cm *ContentMap) AddReplace(digest Digest, path Path) error {
 	return nil
 }
 
+// AddDeduplicate adds digest/path pair only if no other paths are associated
+// with the digest. It returns true if the path is added, false otherwise.
+// An error is returned only if path is invalid.
+func (cm *ContentMap) AddDeduplicate(digest Digest, path Path) (bool, error) {
+	if err := path.validate(); err != nil {
+		return false, err
+	}
+	if len((*cm)[digest]) > 0 {
+		return false, nil
+	}
+	cm.insert(digest, path)
+	return true, nil
+}
+
 // Rename renames src path to dst. Returns an error if dst already exists or src is not found
 func (cm *ContentMap) Rename(src Path, dst Path) error {
 	if err := src.validate(); err != nil {

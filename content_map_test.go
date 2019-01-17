@@ -62,6 +62,25 @@ func TestContentMap(t *testing.T) {
 	}
 }
 
+func TestContentMapAddDeduplicate(t *testing.T) {
+	var cm ContentMap
+	added, err := cm.AddDeduplicate(`aa`, `data.txt`)
+	if err != nil {
+		t.Error(err)
+	}
+	if added == false {
+		t.Error(`expected added to be true`)
+	}
+	added, _ = cm.AddDeduplicate(`aa`, `data2.txt`)
+	if added == true {
+		t.Error(`expected added to be false`)
+	}
+	_, err = cm.AddDeduplicate(`aa`, `../data2.txt`)
+	if err == nil {
+		t.Error(err)
+	}
+}
+
 func TestContentMapJSON(t *testing.T) {
 	var cm ContentMap
 	jsonData := `{"fd4305341e6939cae02eb767176427d9":["file.txt","test.txt"]}`

@@ -94,7 +94,7 @@ func (stage *Stage) Commit(user User, message string) error {
 						return pathErr
 					}
 					stage.state.AddReplace(Digest(digest), Path(vPath))
-					stage.object.inventory.Manifest.Add(Digest(digest), Path(ePath))
+					stage.object.inventory.Manifest.AddDeduplicate(Digest(digest), Path(ePath))
 				}
 				return walkErr
 			}
