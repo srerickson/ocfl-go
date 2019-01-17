@@ -56,6 +56,50 @@ func InitObject(path string, id string) (Object, error) {
 	return o, o.writeInventory()
 }
 
+// GetObject returns and *Object representing the OCFL object stored
+// at path
+func GetObject(path string) (*Object, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	err = namaste.MatchTypePatternError(absPath, namasteObjectTValue)
+	if err != nil {
+		return nil, err
+	}
+	inv, err := ReadInventory(filepath.Join(absPath, inventoryFileName))
+	if err != nil {
+		return nil, err
+	}
+	return &Object{
+		Path:      absPath,
+		inventory: inv,
+	}, nil
+}
+
+func (o *Object) Open(path string) (*os.File, error) {
+	if o.inventory == nil {
+		return nil, errors.New(`object has no inventory`)
+	}
+	vName := o.inventory.Head
+	if vName == `` {
+		return nil, errors.New(`object has no versions`)
+	}
+	version, ok := o.inventory.Versions[vName]
+	if !ok {
+		return nil, fmt.Errorf(`version not found: %s`, vName)
+	}
+	digest := version.State.GetDigest(Path(path))
+	if digest == `` {
+		return nil, fmt.Errorf(`file not found: %s`, path)
+	}
+	ePaths := o.inventory.Manifest.DigestPaths(digest)
+	if len(ePaths) > 0 {
+		return os.Open(filepath.Join(o.Path, string(ePaths[0])))
+	}
+	return nil, fmt.Errorf(`no path in manifest for digest: %s`, digest)
+}
+
 func (o *Object) writeInventoryVersion(ver string) error {
 	invPath := filepath.Clean(filepath.Join(o.Path, ver, inventoryFileName))
 	file, err := os.OpenFile(invPath, os.O_CREATE|os.O_WRONLY, 0644)
@@ -107,13 +151,13 @@ func (o *Object) nextVersion() (string, error) {
 	return nextVersionLike(o.inventory.Head)
 }
 
-func (o *Object) getExistingPath(digest string) (string, error) {
-	if o.inventory == nil {
-		return ``, errors.New(`object has no inventory`)
-	}
-	paths := o.inventory.Manifest.DigestPaths(Digest(digest))
-	if len(paths) == 0 {
-		return ``, fmt.Errorf(`not found: %s`, digest)
-	}
-	return string(paths[0]), nil
-}
+// func (o *Object) getExistingPath(digest string) (string, error) {
+// 	if o.inventory == nil {
+// 		return ``, errors.New(`object has no inventory`)
+// 	}
+// 	paths := o.inventory.Manifest.DigestPaths(Digest(digest))
+// 	if len(paths) == 0 {
+// 		return ``, fmt.Errorf(`not found: %s`, digest)
+// 	}
+// 	return string(paths[0]), nil
+// }

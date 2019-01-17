@@ -100,5 +100,29 @@ func TestNewObject(t *testing.T) {
 	if err = ValidateObject(objectRoot); err != nil {
 		t.Error(err)
 	}
+}
+
+func TestGetObject(t *testing.T) {
+
+	o, err := GetObject(`nothing`)
+	if err == nil {
+		t.Error(`expected an error`)
+	}
+
+	path := filepath.Join(`test`, `fixtures`, `1.0`, `bad-objects`, `bad03_no_inv`)
+	o, err = GetObject(path)
+	if err == nil {
+		t.Error(`expected an error`)
+	}
+
+	path = filepath.Join(`test`, `fixtures`, `1.0`, `objects`, `spec-ex-full`)
+	o, err = GetObject(path)
+	if err != nil {
+		t.Error(err)
+	}
+	_, err = o.Open(filepath.Join(`foo`, `bar.xml`))
+	if err != nil {
+		t.Error(err)
+	}
 
 }
