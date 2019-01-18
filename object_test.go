@@ -10,7 +10,7 @@ import (
 func TestNewObject(t *testing.T) {
 	// prepare test
 	user := NewUser(`tester`, `tester@nowhere`)
-	objectRoot, err := ioutil.TempDir(`./`, `test-object`)
+	objectRoot, err := ioutil.TempDir(`.`, `test-object`)
 	if err != nil {
 		t.Error(err)
 	}
@@ -103,18 +103,15 @@ func TestNewObject(t *testing.T) {
 }
 
 func TestGetObject(t *testing.T) {
-
 	o, err := GetObject(`nothing`)
 	if err == nil {
 		t.Error(`expected an error`)
 	}
-
 	path := filepath.Join(`test`, `fixtures`, `1.0`, `bad-objects`, `bad03_no_inv`)
 	o, err = GetObject(path)
 	if err == nil {
 		t.Error(`expected an error`)
 	}
-
 	path = filepath.Join(`test`, `fixtures`, `1.0`, `objects`, `spec-ex-full`)
 	o, err = GetObject(path)
 	if err != nil {
@@ -123,6 +120,21 @@ func TestGetObject(t *testing.T) {
 	_, err = o.Open(filepath.Join(`foo`, `bar.xml`))
 	if err != nil {
 		t.Error(err)
+	}
+}
+
+func TestObjectIterate(t *testing.T) {
+	path := filepath.Join(`test`, `fixtures`, `1.0`, `objects`, `spec-ex-full`)
+	o, err := GetObject(path)
+	if err != nil {
+		t.Error(err)
+	}
+	var gotFiles bool
+	for range o.Iterate() {
+		gotFiles = true
+	}
+	if !gotFiles {
+		t.Error(`expected to get files`)
 	}
 
 }

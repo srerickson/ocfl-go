@@ -48,7 +48,6 @@ func InitObject(path string, id string) (Object, error) {
 		return o, err
 	}
 	o = Object{Path: absPath}
-
 	o.inventory = NewInventory(id)
 	if err := namaste.SetType(o.Path, namasteObjectTValue, namasteObjectFValue); err != nil {
 		return o, err
@@ -77,6 +76,7 @@ func GetObject(path string) (*Object, error) {
 	}, nil
 }
 
+// Open opens a file in the most recent version using its logical path.
 func (o *Object) Open(path string) (*os.File, error) {
 	if o.inventory == nil {
 		return nil, errors.New(`object has no inventory`)
@@ -98,6 +98,22 @@ func (o *Object) Open(path string) (*os.File, error) {
 		return os.Open(filepath.Join(o.Path, string(ePaths[0])))
 	}
 	return nil, fmt.Errorf(`no path in manifest for digest: %s`, digest)
+}
+
+// Iterate returns channel of DigestPath in latest version
+func (o *Object) Iterate() chan DigestPath {
+	if o.inventory == nil {
+		return nil
+	}
+	vName := o.inventory.Head
+	if vName == `` {
+		return nil
+	}
+	version, ok := o.inventory.Versions[vName]
+	if !ok {
+		return nil
+	}
+	return version.State.Iterate()
 }
 
 func (o *Object) writeInventoryVersion(ver string) error {
@@ -150,14 +166,3 @@ func (o *Object) nextVersion() (string, error) {
 	}
 	return nextVersionLike(o.inventory.Head)
 }
-
-// func (o *Object) getExistingPath(digest string) (string, error) {
-// 	if o.inventory == nil {
-// 		return ``, errors.New(`object has no inventory`)
-// 	}
-// 	paths := o.inventory.Manifest.DigestPaths(Digest(digest))
-// 	if len(paths) == 0 {
-// 		return ``, fmt.Errorf(`not found: %s`, digest)
-// 	}
-// 	return string(paths[0]), nil
-// }
