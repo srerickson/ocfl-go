@@ -15,7 +15,6 @@
 package ocfl
 
 import (
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -33,7 +32,7 @@ const (
 // Object represents an OCFL Object
 type Object struct {
 	Path      string
-	inventory *Inventory
+	inventory Inventory
 	stage     *Stage
 }
 
@@ -78,16 +77,9 @@ func GetObject(path string) (*Object, error) {
 
 // Open opens a file in the most recent version using its logical path.
 func (o *Object) Open(path string) (*os.File, error) {
-	if o.inventory == nil {
-		return nil, errors.New(`object has no inventory`)
-	}
-	vName := o.inventory.Head
-	if vName == `` {
-		return nil, errors.New(`object has no versions`)
-	}
-	version, ok := o.inventory.Versions[vName]
-	if !ok {
-		return nil, fmt.Errorf(`version not found: %s`, vName)
+	version, err := o.inventory.lastVersion()
+	if err != nil {
+		return nil, err
 	}
 	digest := version.State.GetDigest(Path(path))
 	if digest == `` {
@@ -102,15 +94,8 @@ func (o *Object) Open(path string) (*os.File, error) {
 
 // Iterate returns channel of DigestPath in latest version
 func (o *Object) Iterate() chan DigestPath {
-	if o.inventory == nil {
-		return nil
-	}
-	vName := o.inventory.Head
-	if vName == `` {
-		return nil
-	}
-	version, ok := o.inventory.Versions[vName]
-	if !ok {
+	version, err := o.inventory.lastVersion()
+	if err != nil {
 		return nil
 	}
 	return version.State.Iterate()
@@ -122,10 +107,12 @@ func (o *Object) writeInventoryVersion(ver string) error {
 	if err != nil {
 		return err
 	}
-	if err := o.inventory.Fprint(file); err != nil {
+	err = o.inventory.Fprint(file)
+	if err != nil {
 		return err
 	}
-	if err := file.Close(); err != nil {
+	err = file.Close()
+	if err != nil {
 		return err
 	}
 	digest, err := Checksum(`sha512`, invPath)
@@ -134,7 +121,6 @@ func (o *Object) writeInventoryVersion(ver string) error {
 	}
 	return ioutil.WriteFile(filepath.Join(invPath+`.sha512`), []byte(digest), 0644)
 }
-
 func (o *Object) writeInventory() error {
 	return o.writeInventoryVersion(``)
 }

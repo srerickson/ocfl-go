@@ -16,6 +16,7 @@ package ocfl
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -56,8 +57,8 @@ type User struct {
 }
 
 // NewInventory returns a new, empty inventory with default values
-func NewInventory(id string) *Inventory {
-	return &Inventory{
+func NewInventory(id string) Inventory {
+	return Inventory{
 		ID:              id,
 		Type:            inventoryType,
 		DigestAlgorithm: defaultAlgorithm,
@@ -68,29 +69,30 @@ func NewInventory(id string) *Inventory {
 }
 
 // ReadInventory returns Inventory from json file at path
-func ReadInventory(path string) (*Inventory, error) {
+func ReadInventory(path string) (Inventory, error) {
 	var inv Inventory
 	var file *os.File
 	var invJSON []byte
 	var err error
 	if file, err = os.Open(path); err != nil {
-		return nil, err
+		return inv, err
 	}
 	defer file.Close()
 	if invJSON, err = ioutil.ReadAll(file); err != nil {
-		return nil, err
+		return inv, err
 	}
 	if err = json.Unmarshal(invJSON, &inv); err != nil {
-		return nil, err
+		return inv, err
 	}
-	return &inv, nil
+	return inv, nil
 }
 
 // Fprint prints the inventory to writer as json
 func (i *Inventory) Fprint(writer io.Writer) error {
 	var j []byte
 	var err error
-	if j, err = json.Marshal(i); err != nil {
+	j, err = json.MarshalIndent(i, ``, "\t")
+	if err != nil {
 		return err
 	}
 	_, err = writer.Write(j)
@@ -104,6 +106,19 @@ func (i *Inventory) versionNames() []string {
 		names = append(names, k)
 	}
 	return names
+}
+
+func (i *Inventory) lastVersion() (Version, error) {
+	var version Version
+	vName := i.Head
+	if vName == `` {
+		return version, fmt.Errorf(`inventory has no Head`)
+	}
+	version, ok := i.Versions[vName]
+	if !ok {
+		return version, fmt.Errorf(`version not found: %s`, vName)
+	}
+	return version, nil
 }
 
 // NewVersion returns a new, empty Version

@@ -148,7 +148,7 @@ func (v *Validator) validateInventory(name string) (*Inventory, error) {
 		}
 	}
 	// Manifest
-	return inv, v.validateContentMap(inv.Manifest, inv.DigestAlgorithm)
+	return &inv, v.validateContentMap(inv.Manifest, inv.DigestAlgorithm)
 }
 
 func (v *Validator) validateContentMap(cm ContentMap, alg string) error {

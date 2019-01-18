@@ -216,6 +216,24 @@ func (cm ContentMap) Copy() ContentMap {
 	return newCm
 }
 
+type ChangeSet struct {
+	Added    []Path
+	Renamed  []Path
+	Modified []Path
+	Removed  []Path
+}
+
+// Changes returns a ChangeSet decsribing
+// changes from cm to cm2.
+// added files are new digest/new path pairs in cm2
+// renamed files are same digest/new path pairs in cm2
+// modified files are new digest/same path in cm2
+// removed files are old digest/old path not in cm2
+func (cm ContentMap) Changes(cm2 ContentMap) ChangeSet {
+	changes := ChangeSet{}
+	return changes
+}
+
 // UnmarshalJSON implements the Unmarshaler interface for ContentMap.
 func (cm *ContentMap) UnmarshalJSON(jsonData []byte) error {
 	var tmpMap map[Digest][]Path

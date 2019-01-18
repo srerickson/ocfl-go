@@ -63,43 +63,51 @@ func (stage *Stage) Commit(user User, message string) error {
 	if err != nil {
 		return err
 	}
-	// move tmpdir to version/contents
+	// create version directory
 	verDir := filepath.Join(stage.object.Path, nextVer)
-	if err := os.Mkdir(verDir, DIRMODE); err != nil {
+	err = os.Mkdir(verDir, DIRMODE)
+	if err != nil {
 		return err
 	}
 	// if stage has new content, move into version/content dir
 	// TODO: if there any empty files in stage dir, delete them
 	if stage.path != `` {
-		if newFiles, err := ioutil.ReadDir(stage.path); err != nil {
-			return err
-		} else if len(newFiles) > 0 {
-			verContDir := filepath.Join(verDir, `content`)
-			if err := os.Rename(stage.path, verContDir); err != nil {
-				return err
-			}
-			walk := func(path string, info os.FileInfo, walkErr error) error {
-				if walkErr == nil && info.Mode().IsRegular() {
-					alg := stage.object.inventory.DigestAlgorithm
-					digest, digestErr := Checksum(alg, path)
-					if digestErr != nil {
-						return digestErr
-					}
-					ePath, pathErr := filepath.Rel(stage.object.Path, path)
-					if pathErr != nil {
-						return pathErr
-					}
-					vPath, pathErr := filepath.Rel(verContDir, path)
-					if pathErr != nil {
-						return pathErr
-					}
-					stage.state.AddReplace(Digest(digest), Path(vPath))
-					stage.object.inventory.Manifest.AddDeduplicate(Digest(digest), Path(ePath))
-				}
+		walk := func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil || !info.Mode().IsRegular() {
 				return walkErr
 			}
-			filepath.Walk(verContDir, walk)
-
+			manifest := stage.object.inventory.Manifest
+			// logical path
+			lPath, err := filepath.Rel(stage.path, path)
+			if err != nil {
+				return err
+			}
+			digest := stage.state.GetDigest(Path(lPath))
+			if digest == `` {
+				panic(fmt.Sprintf(`staged file missing from stage state: %s`, lPath))
+			}
+			// existing path to add to manifest
+			ePath := Path(filepath.Join(nextVer, `content`, lPath))
+			// try to add to manifest -- may not be necessary if digest exists
+			added, err := manifest.AddDeduplicate(digest, ePath)
+			if err != nil {
+				return err
+			}
+			if added {
+				newPath := filepath.Join(stage.object.Path, string(ePath))
+				err := os.MkdirAll(filepath.Dir(newPath), DIRMODE)
+				if err != nil {
+					return err
+				}
+				renameErr := os.Rename(path, newPath)
+				if renameErr != nil {
+					return renameErr
+				}
+			}
+			return walkErr
+		}
+		if err := filepath.Walk(stage.path, walk); err != nil {
+			return err
 		}
 	}
 	newVersion := NewVersion()
@@ -107,14 +115,21 @@ func (stage *Stage) Commit(user User, message string) error {
 	newVersion.User = user
 	newVersion.Message = message
 	newVersion.Created = time.Now()
-	// update inventory
+
+	// update parent object
 	stage.object.inventory.Versions[nextVer] = newVersion
 	stage.object.inventory.Head = nextVer
 	// write inventory (twice)
-	if err := stage.object.writeInventoryVersion(nextVer); err != nil {
+	err = stage.object.writeInventoryVersion(nextVer)
+	if err != nil {
 		return err
 	}
-	return stage.object.writeInventory()
+	err = stage.object.writeInventory()
+	if err != nil {
+		return err
+	}
+	stage.clear()
+	return nil
 }
 
 // Add adds the file at src to the stage as dst

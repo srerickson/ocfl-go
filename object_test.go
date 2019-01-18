@@ -14,20 +14,21 @@ func TestNewObject(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
+	defer os.RemoveAll(objectRoot)
 	tmpDir, err := ioutil.TempDir(``, `test-object`)
 	if err != nil {
 		t.Error(err)
 	}
+	defer os.RemoveAll(tmpDir)
 	testFile := filepath.Join(tmpDir, `test.txt`)
-	if err := ioutil.WriteFile(testFile, []byte(`lol`), FILEMODE); err != nil {
+	err = ioutil.WriteFile(testFile, []byte(`lol`), FILEMODE)
+	if err != nil {
 		t.Error(err)
 	}
 	testDigest, err := Checksum(SHA512, testFile)
 	if err != nil {
 		t.Error(err)
 	}
-	defer os.RemoveAll(objectRoot)
-	defer os.RemoveAll(tmpDir)
 
 	// create a new object
 	object, err := InitObject(objectRoot, `test-object-id`)
@@ -41,19 +42,24 @@ func TestNewObject(t *testing.T) {
 		t.Error(err)
 	}
 	dst := filepath.Join(`dir`, `test-1.txt`)
-	if err := stage.Add(testFile, dst); err != nil {
+	err = stage.Add(testFile, dst)
+	if err != nil {
 		t.Error(err)
 	}
-	if err := stage.Rename(dst, `test-2.txt`); err != nil {
+	err = stage.Rename(dst, `test-2.txt`)
+	if err != nil {
 		t.Error(err)
 	}
-	if err := stage.Add(testFile, `test-3.txt`); err != nil {
+	err = stage.Add(testFile, `test-3.txt`)
+	if err != nil {
 		t.Error(err)
 	}
-	if err := stage.Remove(`test-2.txt`); err != nil {
+	err = stage.Remove(`test-2.txt`)
+	if err != nil {
 		t.Error(err)
 	}
-	if err = stage.Commit(user, `commit version 1`); err != nil {
+	err = stage.Commit(user, `commit version 1`)
+	if err != nil {
 		t.Error(err)
 	}
 	ePath := filepath.Join(`v1`, `content`, `test-3.txt`)
@@ -69,13 +75,16 @@ func TestNewObject(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	if err := stage.Remove(`test-3.txt`); err != nil {
+	err = stage.Remove(`test-3.txt`)
+	if err != nil {
 		t.Error(err)
 	}
-	if err = stage.Commit(user, `commit version 2`); err != nil {
+	err = stage.Commit(user, `commit version 2`)
+	if err != nil {
 		t.Error(err)
 	}
-	if err = ValidateObject(objectRoot); err != nil {
+	err = ValidateObject(objectRoot)
+	if err != nil {
 		t.Error(err)
 	}
 
@@ -84,18 +93,21 @@ func TestNewObject(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	if err := stage.AddRename(testFile, `README.md`); err != nil {
+	err = stage.AddRename(testFile, `README.md`)
+	if err != nil {
 		t.Error(err)
 	}
-	if _, err := os.Stat(testFile); !os.IsNotExist(err) {
+	_, err = os.Stat(testFile)
+	if !os.IsNotExist(err) {
 		t.Errorf(`expected %s to no longer exist`, testFile)
 	}
-	if err = stage.Commit(user, `commit version 3`); err != nil {
+	err = stage.Commit(user, `commit version 3`)
+	if err != nil {
 		t.Error(err)
 	}
-	ePath = filepath.Join(`v3`, `content`, `README.md`)
-	if object.inventory.Manifest.GetDigest(Path(ePath)) == `` {
-		t.Errorf(`expected %s to exist in manifest`, ePath)
+	_, err = object.Open(`README.md`)
+	if err != nil {
+		t.Error(err)
 	}
 	if err = ValidateObject(objectRoot); err != nil {
 		t.Error(err)
