@@ -1,6 +1,7 @@
 {
   "digestAlgorithm": "sha512",
   "id": "ark:123/abc",
+  "Head": "v3",
   "manifest": {
     "10c4f059fc9235474c75c5e4b48837d1fcd93f6bca273c1153deb568096e1ec18fe5cd13467e550ca9dcfe8d4f81b2f71d5951a169cbfb321445a9a3211be708": [
       "v2/a_file.txt"

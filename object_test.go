@@ -15,7 +15,7 @@ func TestNewObject(t *testing.T) {
 		t.Error(err)
 	}
 	defer os.RemoveAll(objectRoot)
-	tmpDir, err := ioutil.TempDir(``, `test-object`)
+	tmpDir, err := ioutil.TempDir(`.`, `test-object`)
 	if err != nil {
 		t.Error(err)
 	}
@@ -142,7 +142,11 @@ func TestObjectIterate(t *testing.T) {
 		t.Error(err)
 	}
 	var gotFiles bool
-	for range o.Iterate() {
+	files, err := o.Iterate()
+	if err != nil {
+		t.Error(err)
+	}
+	for range files {
 		gotFiles = true
 	}
 	if !gotFiles {

@@ -93,12 +93,12 @@ func (o *Object) Open(path string) (*os.File, error) {
 }
 
 // Iterate returns channel of DigestPath in latest version
-func (o *Object) Iterate() chan DigestPath {
+func (o *Object) Iterate() (chan DigestPath, error) {
 	version, err := o.inventory.lastVersion()
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return version.State.Iterate()
+	return version.State.Iterate(), nil
 }
 
 func (o *Object) writeInventoryVersion(ver string) error {
