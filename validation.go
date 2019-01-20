@@ -15,13 +15,18 @@
 package ocfl
 
 import (
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/srerickson/ocfl/namaste"
 )
+
+var invSidecarRexp = regexp.MustCompile(`inventory\.json\.(\w+)`)
 
 // Validator handles state for OCFL Object validation
 type Validator struct {
@@ -113,11 +118,45 @@ func (v *Validator) ValidateObject(path string) error {
 }
 
 func (v *Validator) readInventory(name string) (*Inventory, error) {
-	inv, err := ReadInventory(filepath.Join(v.root, name))
+	path := filepath.Join(v.root, name)
+	inv, err := ReadInventory(path)
 	if err != nil {
 		return nil, err
 	}
-	return &inv, inv.Consistency()
+	// Check Inventory Consistency
+	err = inv.Consistency()
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate Inventory File Checksum
+	var sidecarPath string
+	var sidecarAlg string
+	fList, err := ioutil.ReadDir(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	for _, info := range fList {
+		matches := invSidecarRexp.FindStringSubmatch(info.Name())
+		if len(matches) > 1 {
+			sidecarAlg = matches[1]
+			sidecarPath = fmt.Sprint(path, `.`, sidecarAlg)
+			break
+		}
+	}
+	if sidecarPath == `` {
+		return nil, errors.New(`missing inventory checksum file`)
+	}
+	readBytes, err := ioutil.ReadFile(sidecarPath)
+	if err != nil {
+		return nil, err
+	}
+	expectedSum := strings.Trim(string(readBytes), "\n ")
+	sum, err := Checksum(sidecarAlg, path)
+	if err != nil || expectedSum != sum {
+		return nil, errors.New(`failed to validate inventory file checksum`)
+	}
+	return &inv, nil
 }
 
 func (v *Validator) validateContentMap(cm ContentMap, alg string) error {
