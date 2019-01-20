@@ -216,12 +216,12 @@ func (cm ContentMap) Copy() ContentMap {
 	return newCm
 }
 
-type ChangeSet struct {
-	Added    []Path
-	Renamed  []Path
-	Modified []Path
-	Removed  []Path
-}
+// type ChangeSet struct {
+// 	Added    []Path
+// 	Renamed  []Path
+// 	Modified []Path
+// 	Removed  []Path
+// }
 
 // Changes returns a ChangeSet decsribing
 // changes from cm to cm2.
@@ -229,10 +229,10 @@ type ChangeSet struct {
 // renamed files are same digest/new path pairs in cm2
 // modified files are new digest/same path in cm2
 // removed files are old digest/old path not in cm2
-func (cm ContentMap) Changes(cm2 ContentMap) ChangeSet {
-	changes := ChangeSet{}
-	return changes
-}
+// func (cm ContentMap) Changes(cm2 ContentMap) ChangeSet {
+// 	changes := ChangeSet{}
+// 	return changes
+// }
 
 // UnmarshalJSON implements the Unmarshaler interface for ContentMap.
 func (cm *ContentMap) UnmarshalJSON(jsonData []byte) error {
@@ -287,7 +287,9 @@ func (path *Path) validate() error {
 	if strings.HasPrefix(cleanPath, `..`) {
 		return fmt.Errorf(`path is out of scope: %s`, cleanPath)
 	}
-	*path = Path(cleanPath)
+	if *path != Path(cleanPath) {
+		*path = Path(cleanPath)
+	}
 	return nil
 }
 

@@ -23,15 +23,18 @@ import (
 	"github.com/srerickson/ocfl/namaste"
 )
 
+// Validator handles state for OCFL Object validation
 type Validator struct {
+	HandleErr     func(err error)
+	HandleWrn     func(err error)
 	root          string
-	critical      []error
-	warning       []error
+	lastErr       error
 	versionFormat string
 	inventory     *Inventory
 	checksums     map[string]string // cache of file -> digest
 }
 
+// ValidateObject validates the object at path
 func ValidateObject(path string) error {
 	var v Validator
 	return v.ValidateObject(path)
@@ -46,14 +49,19 @@ func (v *Validator) init(root string) {
 
 func (v *Validator) addCritical(err error) error {
 	if err != nil {
-		v.critical = append(v.critical, err)
+		v.lastErr = err
+		if v.HandleErr != nil {
+			v.HandleErr(err)
+		}
 	}
 	return err
 }
 
 func (v *Validator) addWarning(err error) error {
 	if err != nil {
-		v.warning = append(v.warning, err)
+		if v.HandleWrn != nil {
+			v.HandleWrn(err)
+		}
 	}
 	return err
 }
@@ -67,14 +75,13 @@ func (v *Validator) ValidateObject(path string) error {
 	v.init(absPath)
 
 	// Object Conformance Declaration
-	// TODO: Get Version Number to Compare to Inventory
 	err = namaste.MatchTypePatternError(path, namasteObjectTValue)
 	if err != nil {
 		return v.addCritical(err)
 	}
 
-	// Validate Inventory
-	v.inventory, err = v.validateInventory(inventoryFileName)
+	// Validate Inventory Structure (not checksum)
+	v.inventory, err = v.readInventory(inventoryFileName)
 	if err != nil {
 		return v.addCritical(err)
 	}
@@ -93,62 +100,24 @@ func (v *Validator) ValidateObject(path string) error {
 		}
 
 	}
-	if len(v.critical) > 0 {
-		return v.critical[0]
+
+	// Manifest Checksum
+	v.validateContentMap(v.inventory.Manifest, v.inventory.DigestAlgorithm)
+
+	// Fixity Checksum
+	for alg, manifest := range v.inventory.Fixity {
+		v.validateContentMap(manifest, alg)
 	}
-	return nil
+
+	return v.lastErr
 }
 
-func (v *Validator) validateInventory(name string) (*Inventory, error) {
+func (v *Validator) readInventory(name string) (*Inventory, error) {
 	inv, err := ReadInventory(filepath.Join(v.root, name))
 	if err != nil {
-		return nil, v.addCritical(err)
+		return nil, err
 	}
-
-	// Validate Inventory Structure:
-	if inv.ID == `` {
-		v.addCritical(fmt.Errorf(`missing inventory ID: %s`, name))
-	}
-	if inv.Type != inventoryType {
-		v.addCritical(fmt.Errorf(`bad type: %s`, inv.Type))
-	}
-	if inv.DigestAlgorithm == `` {
-		v.addCritical(fmt.Errorf(`missing digestAlgorithm: %s`, name))
-	}
-	if !stringIn(inv.DigestAlgorithm, digestAlgorithms[:]) {
-		v.addCritical(fmt.Errorf(`bad digestAlgorithm: %s`, inv.DigestAlgorithm))
-	}
-	if inv.Manifest == nil {
-		v.addCritical(fmt.Errorf(`missing manifest: %s`, name))
-	}
-	if inv.Versions == nil {
-		v.addCritical(fmt.Errorf(`missing version: %s`, name))
-	}
-
-	// Validate Version Names in Inventory
-	var versions = inv.versionNames()
-	var padding int
-	if len(versions) > 0 {
-		padding = versionPadding(versions[0])
-		for i := range versions {
-			n, _ := versionGen(i+1, padding)
-			if _, ok := inv.Versions[n]; !ok {
-				v.addCritical(fmt.Errorf(`inconsistent or missing version names: %s`, name))
-				break
-			}
-		}
-	} else {
-		v.addWarning(fmt.Errorf(`inventory has no versions: %s`, name))
-	}
-
-	// Fixity
-	for alg, manifest := range inv.Fixity {
-		if err := v.validateContentMap(manifest, alg); err != nil {
-			return nil, v.addCritical(err)
-		}
-	}
-	// Manifest
-	return &inv, v.validateContentMap(inv.Manifest, inv.DigestAlgorithm)
+	return &inv, inv.Consistency()
 }
 
 func (v *Validator) validateContentMap(cm ContentMap, alg string) error {
@@ -175,12 +144,10 @@ func (v *Validator) validateContentMap(cm ContentMap, alg string) error {
 }
 
 func (v *Validator) validateObjectVersionDir(version string) error {
-	inventoryPath := filepath.Join(version, inventoryFileName)
-	// FIXME: don't need to checksum same file multiple times.
-	if _, err := v.validateInventory(inventoryPath); err != nil {
-		return v.addCritical(err)
+	_, err := v.readInventory(filepath.Join(version, inventoryFileName))
+	if err != nil {
+		return v.addWarning(err)
 	}
-
 	contentPath := filepath.Join(v.root, version, `content`)
 	if i, statErr := os.Stat(contentPath); statErr == nil && i.IsDir() {
 		// Walk Version content, check all files present in manifest
@@ -191,7 +158,7 @@ func (v *Validator) validateObjectVersionDir(version string) error {
 					return pathErr
 				}
 				if v.inventory.Manifest.GetDigest(Path(ePath)) == `` {
-					return fmt.Errorf(`not in manifest: %s`, ePath)
+					v.addCritical(fmt.Errorf(`not in manifest: %s`, ePath))
 				}
 			}
 			return walkErr

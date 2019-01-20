@@ -47,6 +47,7 @@ var digestAlgorithms = [...]string{
 
 var defaultAlgorithm = SHA512
 
+// Checksum returns checksum of file at path using algorithm alg
 func Checksum(alg string, path string) (string, error) {
 	var h hash.Hash
 	var err error

@@ -16,6 +16,7 @@ package ocfl
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -88,10 +89,10 @@ func ReadInventory(path string) (Inventory, error) {
 }
 
 // Fprint prints the inventory to writer as json
-func (i *Inventory) Fprint(writer io.Writer) error {
+func (inv *Inventory) Fprint(writer io.Writer) error {
 	var j []byte
 	var err error
-	j, err = json.MarshalIndent(i, ``, "\t")
+	j, err = json.MarshalIndent(inv, ``, "\t")
 	if err != nil {
 		return err
 	}
@@ -99,22 +100,71 @@ func (i *Inventory) Fprint(writer io.Writer) error {
 	return err
 }
 
+// Consistency checks that the inventory values are present and
+// consistent. In the validation process, it does everything
+// except validate the checksums in the manifest/fixity.
+func (inv *Inventory) Consistency() error {
+
+	// Validate Inventory Structure:
+	if inv.ID == `` {
+		return errors.New(`missing inventory ID: %s`)
+	}
+	if inv.Type != inventoryType {
+		return fmt.Errorf(`invalid inventory type: %s`, inv.Type)
+	}
+	if inv.DigestAlgorithm == `` {
+		return errors.New(`missing digestAlgorithm`)
+	}
+	if !stringIn(inv.DigestAlgorithm, digestAlgorithms[:]) {
+		return fmt.Errorf(`invalid digestAlgorithm: %s`, inv.DigestAlgorithm)
+	}
+	if inv.Manifest == nil {
+		return errors.New(`missing manifest`)
+	}
+	if inv.Versions == nil {
+		return errors.New(`missing versions`)
+	}
+
+	// Validate Version Names in Inventory
+	var versions = inv.versionNames()
+	var padding int
+	if len(inv.Versions) > 0 {
+		padding = versionPadding(versions[0])
+		for i := range versions {
+			n, _ := versionGen(i+1, padding)
+			if _, ok := inv.Versions[n]; !ok {
+				return errors.New(`inconsistent or missing version names`)
+			}
+		}
+	}
+
+	// make sure every digest in version state is present in the manifest
+	for vname := range inv.Versions {
+		for digest := range inv.Versions[vname].State {
+			if len(inv.Manifest.DigestPaths(digest)) == 0 {
+				return fmt.Errorf(`digest missing from manifest: %s`, digest)
+			}
+		}
+	}
+	return nil
+}
+
 // versionNames returns slice of version names
-func (i *Inventory) versionNames() []string {
+func (inv *Inventory) versionNames() []string {
 	var names []string
-	for k := range i.Versions {
+	for k := range inv.Versions {
 		names = append(names, k)
 	}
 	return names
 }
 
-func (i *Inventory) lastVersion() (Version, error) {
+func (inv *Inventory) lastVersion() (Version, error) {
 	var version Version
-	vName := i.Head
+	vName := inv.Head
 	if vName == `` {
 		return version, fmt.Errorf(`inventory has no Head`)
 	}
-	version, ok := i.Versions[vName]
+	version, ok := inv.Versions[vName]
 	if !ok {
 		return version, fmt.Errorf(`version not found: %s`, vName)
 	}
