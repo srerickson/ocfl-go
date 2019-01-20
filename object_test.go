@@ -87,31 +87,6 @@ func TestNewObject(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-
-	// version 3
-	stage, err = object.NewStage()
-	if err != nil {
-		t.Error(err)
-	}
-	err = stage.AddRename(testFile, `README.md`)
-	if err != nil {
-		t.Error(err)
-	}
-	_, err = os.Stat(testFile)
-	if !os.IsNotExist(err) {
-		t.Errorf(`expected %s to no longer exist`, testFile)
-	}
-	err = stage.Commit(user, `commit version 3`)
-	if err != nil {
-		t.Error(err)
-	}
-	_, err = object.Open(`README.md`)
-	if err != nil {
-		t.Error(err)
-	}
-	if err = ValidateObject(objectRoot); err != nil {
-		t.Error(err)
-	}
 }
 
 func TestGetObject(t *testing.T) {
@@ -152,5 +127,17 @@ func TestObjectIterate(t *testing.T) {
 	if !gotFiles {
 		t.Error(`expected to get files`)
 	}
+}
 
+func TestChangelessCommit(t *testing.T) {
+	path := filepath.Join(`test`, `fixtures`, `1.0`, `objects`, `spec-ex-full`)
+	o, err := GetObject(path)
+	if err != nil {
+		t.Error(err)
+	}
+	stage, err := o.NewStage()
+	err = stage.Commit(NewUser(``, ``), `message`)
+	if err == nil {
+		t.Error(`expected an error`)
+	}
 }

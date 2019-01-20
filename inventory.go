@@ -162,7 +162,7 @@ func (inv *Inventory) lastVersion() (Version, error) {
 	var version Version
 	vName := inv.Head
 	if vName == `` {
-		return version, fmt.Errorf(`inventory has no Head`)
+		return version, nil
 	}
 	version, ok := inv.Versions[vName]
 	if !ok {

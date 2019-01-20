@@ -15,7 +15,6 @@
 package ocfl
 
 import (
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -59,6 +58,14 @@ func (stage *Stage) Commit(user User, message string) error {
 	if stage.state == nil {
 		return errors.New(`stage has no state`)
 	}
+	lastVersion, err := stage.object.inventory.lastVersion()
+	if err != nil {
+		return err
+	}
+	if stage.state.EqualTo(lastVersion.State) {
+		return errors.New(`no changes to commit`)
+	}
+
 	nextVer, err := stage.object.nextVersion()
 	if err != nil {
 		return err
@@ -70,7 +77,6 @@ func (stage *Stage) Commit(user User, message string) error {
 		return err
 	}
 	// if stage has new content, move into version/content dir
-	// TODO: if there any empty files in stage dir, delete them
 	if stage.path != `` {
 		walk := func(path string, info os.FileInfo, walkErr error) error {
 			if walkErr != nil || !info.Mode().IsRegular() {
@@ -133,50 +139,30 @@ func (stage *Stage) Commit(user User, message string) error {
 }
 
 // Add adds the file at src to the stage as dst
-// - src is copied into the stage's temporary directory
 // - src's digest is calculated using parent objects digestAlgorithm
+// - if digest is not new, src is copied into the stage's temporary directory
 // - An entry (digest->dst) is added to stage state. If dst alread
 //   exists, it is removed.
 func (stage *Stage) Add(src string, dst string) error {
-	return stage.add(src, dst, false)
-}
-
-// AddRename is same as Add, except that src is moved rather than
-// copied.
-func (stage *Stage) AddRename(src string, dst string) error {
-	return stage.add(src, dst, true)
-}
-
-// add is the business end of Add() and AddRename()
-// - src is copied/renamed into the stage's temporary directory
-// - src's digest is calculated using parent objects digestAlgorithm
-// - file is added to stage.state with AddReplace()
-func (stage *Stage) add(src string, dst string, doRename bool) error {
 	var dstPath = Path(dst)
-	var digest Digest
-	var alg = stage.object.inventory.DigestAlgorithm
-	if err := dstPath.validate(); err != nil {
+	var inv = stage.object.inventory
+	var alg = inv.DigestAlgorithm
+	err := dstPath.validate()
+	if err != nil {
 		return err
 	}
-	if err := stage.tempDir(); err != nil {
+	sum, err := Checksum(alg, src)
+	if err != nil {
 		return err
 	}
-	realDst := stage.stagedPath(string(dstPath))
-	// Should we remove readlDst if it exists?
-	if err := os.MkdirAll(filepath.Dir(realDst), DIRMODE); err != nil {
-		return err
-	}
-	if doRename {
-		err := os.Rename(src, realDst)
-		if err != nil {
+	if inv.Manifest.LenDigest(Digest(sum)) == 0 {
+		if err := stage.tempDir(); err != nil {
 			return err
 		}
-		sum, err := Checksum(alg, realDst)
-		if err != nil {
+		realDst := stage.stagedPath(dst)
+		if err := os.MkdirAll(filepath.Dir(realDst), DIRMODE); err != nil {
 			return err
 		}
-		digest = Digest(sum)
-	} else {
 		srcFile, err := os.Open(src)
 		if err != nil {
 			return err
@@ -187,18 +173,12 @@ func (stage *Stage) add(src string, dst string, doRename bool) error {
 			return err
 		}
 		defer dstFile.Close()
-		hash, err := newHash(alg)
+		_, err = io.Copy(dstFile, srcFile)
 		if err != nil {
 			return err
 		}
-		tReader := io.TeeReader(srcFile, hash)
-		_, err = io.Copy(dstFile, tReader)
-		if err != nil {
-			return err
-		}
-		digest = Digest(hex.EncodeToString(hash.Sum(nil)))
 	}
-	return stage.state.AddReplace(digest, dstPath)
+	return stage.state.AddReplace(Digest(sum), dstPath)
 }
 
 // OpenFile returns a readable and writable *os.File for the given Logical Path.

@@ -90,6 +90,11 @@ func (cm ContentMap) DigestPaths(digest Digest) []Path {
 	return paths
 }
 
+// LenDigest returns number of paths associated with digest
+func (cm ContentMap) LenDigest(digest Digest) int {
+	return len(cm[digest])
+}
+
 // Len returns total number of Paths in the ContentMap
 func (cm ContentMap) Len() int {
 	var size int
@@ -214,6 +219,21 @@ func (cm ContentMap) Copy() ContentMap {
 		newCm.insert(dp.Digest, dp.Path)
 	}
 	return newCm
+}
+
+// Subset return wheather cm2 is a subset of cm
+func (cm ContentMap) Subset(cm2 ContentMap) bool {
+	for dp := range cm2.Iterate() {
+		if !cm.Exists(dp.Digest, dp.Path) {
+			return false
+		}
+	}
+	return true
+}
+
+// EqualTo returns whether cm and cm2 are the same
+func (cm ContentMap) EqualTo(cm2 ContentMap) bool {
+	return cm.Subset(cm2) && cm2.Subset(cm)
 }
 
 // type ChangeSet struct {
