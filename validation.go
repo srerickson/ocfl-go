@@ -30,13 +30,11 @@ var invSidecarRexp = regexp.MustCompile(`inventory\.json\.(\w+)`)
 
 // Validator handles state for OCFL Object validation
 type Validator struct {
-	HandleErr     func(err error)
-	HandleWrn     func(err error)
-	root          string
-	lastErr       error
-	versionFormat string
-	inventory     *Inventory
-	checksums     map[string]string // cache of file -> digest
+	HandleErr func(err error)
+	HandleWrn func(err error)
+	root      string
+	lastErr   error
+	inventory *Inventory
 }
 
 // ValidateObject validates the object at path
@@ -48,7 +46,8 @@ func ValidateObject(path string) error {
 func (v *Validator) init(root string) {
 	*v = Validator{
 		root:      root,
-		checksums: map[string]string{},
+		HandleErr: v.HandleErr,
+		HandleWrn: v.HandleWrn,
 	}
 }
 

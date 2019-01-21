@@ -32,3 +32,15 @@ func TestValidateObject(t *testing.T) {
 
 	}
 }
+
+func TestErrHandle(t *testing.T) {
+	var v Validator
+	var test bool
+	v.HandleErr = func(err error) {
+		test = true
+	}
+	v.ValidateObject(`nothing`)
+	if !test {
+		t.Error(`expected HandleErr to be called`)
+	}
+}
