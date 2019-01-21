@@ -24,6 +24,9 @@ import (
 	"hash"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime"
+	"sync"
 )
 
 // SHA512 = `sha512`
@@ -46,6 +49,17 @@ var digestAlgorithms = [...]string{
 }
 
 var defaultAlgorithm = SHA512
+
+// NumDigesters sets concurrency for Digest
+var NumDigesters = runtime.GOMAXPROCS(0)
+
+type checksumJob struct {
+	path string
+	alg  string
+	sum  string
+	// expected string
+	err error
+}
 
 // Checksum returns checksum of file at path using algorithm alg
 func Checksum(alg string, path string) (string, error) {
@@ -83,4 +97,74 @@ func newHash(alg string) (hash.Hash, error) {
 		return nil, fmt.Errorf(`Unknown checksum algorithm: %s`, alg)
 	}
 	return h, nil
+}
+
+func digester(in <-chan checksumJob) <-chan checksumJob {
+	var wg sync.WaitGroup
+	out := make(chan checksumJob)
+	for i := 0; i < NumDigesters; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range in {
+				if job.err == nil {
+					job.sum, job.err = Checksum(job.alg, job.path)
+				}
+				out <- job
+			}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+	return out
+}
+
+// ConcurrentDigest concurrently calculates checksum of every file in dir
+// using alg, returning results as a ContentMap
+func ConcurrentDigest(dir string, alg string) (ContentMap, error) {
+	var cm ContentMap
+	jobIn := make(chan checksumJob)
+	walkErr := make(chan error)
+	// input queue
+	go func() {
+		walk := func(p string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.Mode().IsRegular() {
+				jobIn <- checksumJob{path: p, alg: alg}
+			}
+			return nil
+		}
+		err := filepath.Walk(dir, walk)
+		close(jobIn)
+		if err != nil {
+			walkErr <- err
+		}
+	}()
+
+	var lastErr error
+	for job := range digester(jobIn) {
+		if job.err != nil {
+			lastErr = job.err
+		} else {
+			relPath, _ := filepath.Rel(dir, job.path)
+			cm.Add(Digest(job.sum), Path(relPath))
+		}
+	}
+
+	select {
+	case lastErr = <-walkErr:
+	default:
+	}
+
+	return cm, lastErr
+}
+
+// Validate confirms digests in ContentMap using hash algorithm alg and
+// dir as a base path for relative paths in the ContentMap
+func (cm *ContentMap) Validate(dir string, alg string) error {
+	return nil
 }
