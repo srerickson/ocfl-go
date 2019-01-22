@@ -88,12 +88,12 @@ func (stage *Stage) Commit(user User, message string) error {
 			if err != nil {
 				return err
 			}
-			digest := stage.state.GetDigest(Path(lPath))
+			digest := stage.state.GetDigest(lPath)
 			if digest == `` {
 				panic(fmt.Sprintf(`staged file missing from stage state: %s`, lPath))
 			}
 			// existing path to add to manifest
-			ePath := Path(filepath.Join(nextVer, `content`, lPath))
+			ePath := filepath.Join(nextVer, `content`, lPath)
 			// try to add to manifest -- may not be necessary if digest exists
 			added, err := manifest.AddDeduplicate(digest, ePath)
 			if err != nil {
@@ -144,10 +144,9 @@ func (stage *Stage) Commit(user User, message string) error {
 // - An entry (digest->dst) is added to stage state. If dst alread
 //   exists, it is removed.
 func (stage *Stage) Add(src string, dst string) error {
-	var dstPath = Path(dst)
 	var inv = stage.object.inventory
 	var alg = inv.DigestAlgorithm
-	err := dstPath.validate()
+	err := validPath(&dst)
 	if err != nil {
 		return err
 	}
@@ -155,7 +154,7 @@ func (stage *Stage) Add(src string, dst string) error {
 	if err != nil {
 		return err
 	}
-	if inv.Manifest.LenDigest(Digest(sum)) == 0 {
+	if inv.Manifest.LenDigest(sum) == 0 {
 		if err := stage.tempDir(); err != nil {
 			return err
 		}
@@ -178,7 +177,7 @@ func (stage *Stage) Add(src string, dst string) error {
 			return err
 		}
 	}
-	return stage.state.AddReplace(Digest(sum), dstPath)
+	return stage.state.AddReplace(sum, dst)
 }
 
 // OpenFile returns a readable and writable *os.File for the given Logical Path.
@@ -208,7 +207,7 @@ func (stage *Stage) Rename(src string, dst string) error {
 		}
 		renamedStaged = true
 	}
-	err := stage.state.Rename(Path(src), Path(dst))
+	err := stage.state.Rename(src, dst)
 	if err != nil && !renamedStaged {
 		return err
 	}
@@ -225,7 +224,7 @@ func (stage *Stage) Remove(lPath string) error {
 		}
 		removedStaged = true
 	}
-	_, err := stage.state.Remove(Path(lPath))
+	_, err := stage.state.Remove(lPath)
 	if err != nil && !removedStaged {
 		return err
 	}

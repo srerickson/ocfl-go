@@ -63,7 +63,7 @@ func TestNewObject(t *testing.T) {
 		t.Error(err)
 	}
 	ePath := filepath.Join(`v1`, `content`, `test-3.txt`)
-	if object.inventory.Manifest.GetDigest(Path(ePath)) != Digest(testDigest) {
+	if object.inventory.Manifest.GetDigest(ePath) != testDigest {
 		t.Errorf(`expected %s to exist in manifest`, ePath)
 	}
 	if err = ValidateObject(objectRoot); err != nil {
@@ -135,7 +135,7 @@ func TestChangelessCommit(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	stage, err := o.NewStage()
+	stage, _ := o.NewStage()
 	err = stage.Commit(NewUser(``, ``), `message`)
 	if err == nil {
 		t.Error(`expected an error`)

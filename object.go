@@ -81,7 +81,7 @@ func (o *Object) Open(path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	digest := version.State.GetDigest(Path(path))
+	digest := version.State.GetDigest(path)
 	if digest == `` {
 		return nil, fmt.Errorf(`file not found: %s`, path)
 	}
@@ -93,7 +93,7 @@ func (o *Object) Open(path string) (*os.File, error) {
 }
 
 // Iterate returns channel of DigestPath in latest version
-func (o *Object) Iterate() (chan DigestPath, error) {
+func (o *Object) Iterate() (chan File, error) {
 	version, err := o.inventory.lastVersion()
 	if err != nil {
 		return nil, err

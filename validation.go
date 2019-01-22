@@ -176,7 +176,7 @@ func (v *Validator) validateObjectVersionDir(version string) error {
 				if pathErr != nil {
 					return pathErr
 				}
-				if v.inventory.Manifest.GetDigest(Path(ePath)) == `` {
+				if v.inventory.Manifest.GetDigest(ePath) == `` {
 					v.addCritical(fmt.Errorf(`not in manifest: %s`, ePath))
 				}
 			}

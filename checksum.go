@@ -151,7 +151,7 @@ func ConcurrentDigest(dir string, alg string) (ContentMap, error) {
 			lastErr = job.err
 		} else {
 			relPath, _ := filepath.Rel(dir, job.path)
-			cm.Add(Digest(job.sum), Path(relPath))
+			cm.Add(job.sum, relPath)
 		}
 	}
 
