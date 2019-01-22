@@ -75,10 +75,15 @@ func TestContentMapAddDeduplicate(t *testing.T) {
 	if added == true {
 		t.Error(`expected added to be false`)
 	}
+	_, err = cm.AddDeduplicate(`ab`, `data.txt`)
+	if err == nil {
+		t.Error(`expected an error`)
+	}
 	_, err = cm.AddDeduplicate(`aa`, `../data2.txt`)
 	if err == nil {
 		t.Error(err)
 	}
+
 }
 
 func TestContentMapJSON(t *testing.T) {

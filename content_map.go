@@ -61,6 +61,26 @@ func (cm ContentMap) lookup(path string) (string, int) {
 	return ``, -1
 }
 
+// insert adds digest->path without any checks
+func (cm *ContentMap) insert(digest string, path string) {
+	if *cm == nil {
+		*cm = ContentMap{}
+	}
+	if _, ok := (*cm)[digest]; ok {
+		(*cm)[digest] = append((*cm)[digest], path)
+	} else {
+		(*cm)[digest] = []string{path}
+	}
+}
+
+// delete deletes digest->path pair without any checks
+func (cm *ContentMap) delete(digest string, i int) {
+	(*cm)[digest] = append((*cm)[digest][:i], (*cm)[digest][i+1:]...)
+	if len((*cm)[digest]) == 0 {
+		delete(*cm, digest)
+	}
+}
+
 // Exists returns true if digest/path pair exist in ContentMap
 func (cm ContentMap) Exists(digest string, path string) bool {
 	validPath(&path)
@@ -104,25 +124,7 @@ func (cm ContentMap) Len() int {
 	return size
 }
 
-// insert inserts digest->path without checking for path
-// duplication or errors
-func (cm *ContentMap) insert(digest string, path string) {
-	if *cm == nil {
-		*cm = ContentMap{}
-	}
-	if _, ok := (*cm)[digest]; ok {
-		(*cm)[digest] = append((*cm)[digest], path)
-	} else {
-		(*cm)[digest] = []string{path}
-	}
-}
-
-// delete deletes digest->path pair without error check
-func (cm *ContentMap) delete(digest string, i int) {
-	(*cm)[digest] = append((*cm)[digest][:i], (*cm)[digest][i+1:]...)
-}
-
-// Add adds a Digest->Path map to the ContentMap. Returns an error if path is already present.
+// Add adds a digest->path map to the ContentMap. Returns an error if path is already present.
 func (cm *ContentMap) Add(digest string, path string) error {
 	if err := validPath(&path); err != nil {
 		return err
@@ -148,13 +150,15 @@ func (cm *ContentMap) AddReplace(digest string, path string) error {
 }
 
 // AddDeduplicate adds digest/path pair only if no other paths are associated
-// with the digest. It returns true if the path is added, false otherwise.
-// An error is returned only if path is invalid.
+// with the digest. It returns true if the path was added, false otherwise.
+// An error is returned if path is invalid or path is already associated with
+// a digest. AddDeduplicate is used to add digests/paths to manifests that
+// implement deduplication.
 func (cm *ContentMap) AddDeduplicate(digest string, path string) (bool, error) {
 	if err := validPath(&path); err != nil {
 		return false, err
 	}
-	if _, ok := cm.getIdx(digest, path); ok {
+	if cm.GetDigest(path) != `` {
 		return false, fmt.Errorf(`already exists: %s`, path)
 	}
 	if len((*cm)[digest]) > 0 {
@@ -236,24 +240,6 @@ func (cm ContentMap) Subset(cm2 ContentMap) bool {
 func (cm ContentMap) EqualTo(cm2 ContentMap) bool {
 	return cm.Subset(cm2) && cm2.Subset(cm)
 }
-
-// type ChangeSet struct {
-// 	Added    []Path
-// 	Renamed  []Path
-// 	Modified []Path
-// 	Removed  []Path
-// }
-
-// Changes returns a ChangeSet decsribing
-// changes from cm to cm2.
-// added files are new digest/new path pairs in cm2
-// renamed files are same digest/new path pairs in cm2
-// modified files are new digest/same path in cm2
-// removed files are old digest/old path not in cm2
-// func (cm ContentMap) Changes(cm2 ContentMap) ChangeSet {
-// 	changes := ChangeSet{}
-// 	return changes
-// }
 
 // UnmarshalJSON implements the Unmarshaler interface for ContentMap.
 func (cm *ContentMap) UnmarshalJSON(jsonData []byte) error {
