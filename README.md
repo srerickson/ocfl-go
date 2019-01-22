@@ -2,8 +2,9 @@
 
 [![](https://godoc.org/github.com/srerickson/ocfl?status.svg)](https://godoc.org/github.com/srerickson/ocfl)
 [![Go Report Card](https://goreportcard.com/badge/github.com/srerickson/ocfl)](https://goreportcard.com/report/github.com/srerickson/ocfl)
+[![Build Status](https://travis-ci.org/srerickson/ocfl.svg?branch=master)](https://travis-ci.org/srerickson/ocfl)
 
-This is an implementation of [OCFL](https://ocfl.io/) in Go. *It is work-in-progress and **should not** be used IRL*.
+This is an implementation of [OCFL](https://ocfl.io/) in Go. *This is work-in-progress and **should not** be used IRL*.
 
 # Usage
 
