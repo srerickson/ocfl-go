@@ -1,0 +1,7 @@
+os:
+  - windows
+  - linux
+  - osx
+language: go
+go:
+- "1.11"
