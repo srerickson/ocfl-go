@@ -54,11 +54,11 @@ var defaultAlgorithm = SHA512
 var NumDigesters = runtime.GOMAXPROCS(0)
 
 type checksumJob struct {
-	path string
-	alg  string
-	sum  string
-	// expected string
-	err error
+	path     string
+	alg      string
+	sum      string
+	expected string
+	err      error
 }
 
 // Checksum returns checksum of file at path using algorithm alg
@@ -122,7 +122,7 @@ func digester(in <-chan checksumJob) <-chan checksumJob {
 }
 
 // ConcurrentDigest concurrently calculates checksum of every file in dir
-// using alg, returning results as a ContentMap
+// using Hash algorithm alg, returning results as a ContentMap
 func ConcurrentDigest(dir string, alg string) (ContentMap, error) {
 	var cm ContentMap
 	jobIn := make(chan checksumJob)
@@ -163,8 +163,35 @@ func ConcurrentDigest(dir string, alg string) (ContentMap, error) {
 	return cm, lastErr
 }
 
-// Validate confirms digests in ContentMap using hash algorithm alg and
+// ValidateHandleErr confirms digests in ContentMap using hash algorithm alg and
 // dir as a base path for relative paths in the ContentMap
-func (cm *ContentMap) Validate(dir string, alg string) error {
-	return nil
+func (cm *ContentMap) ValidateHandleErr(dir string, alg string, handle func(error)) error {
+	in := make(chan checksumJob)
+	go func() {
+		for dp := range cm.Iterate() {
+			in <- checksumJob{
+				path:     filepath.Join(dir, string(dp.Path)),
+				alg:      alg,
+				expected: string(dp.Digest),
+			}
+		}
+		close(in)
+	}()
+	var lastErr error
+	for result := range digester(in) {
+		if result.err != nil {
+			lastErr = result.err
+			if handle != nil {
+				handle(lastErr)
+			}
+			continue
+		}
+		if result.sum != result.expected {
+			lastErr = fmt.Errorf(`checksum failed: %s`, result.path)
+			if handle != nil {
+				handle(lastErr)
+			}
+		}
+	}
+	return lastErr
 }

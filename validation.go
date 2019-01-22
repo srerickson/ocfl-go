@@ -106,11 +106,15 @@ func (v *Validator) ValidateObject(path string) error {
 	}
 
 	// Manifest Checksum
-	v.validateContentMap(v.inventory.Manifest, v.inventory.DigestAlgorithm)
+	v.inventory.Manifest.ValidateHandleErr(
+		v.root,
+		v.inventory.DigestAlgorithm,
+		func(error) { v.addCritical(err) })
 
 	// Fixity Checksum
 	for alg, manifest := range v.inventory.Fixity {
-		v.validateContentMap(manifest, alg)
+		manifest.ValidateHandleErr(v.root, alg,
+			func(error) { v.addCritical(err) })
 	}
 
 	return v.lastErr
@@ -156,29 +160,6 @@ func (v *Validator) readInventory(name string) (*Inventory, error) {
 		return nil, errors.New(`failed to validate inventory file checksum`)
 	}
 	return &inv, nil
-}
-
-func (v *Validator) validateContentMap(cm ContentMap, alg string) error {
-	for expectedSum := range cm {
-		for path := range cm[expectedSum] {
-			fullPath := filepath.Join(v.root, string(path))
-			info, err := os.Stat(fullPath)
-			if err != nil {
-				return err
-			}
-			if !info.Mode().IsRegular() {
-				return v.addCritical(fmt.Errorf("irregular file in manifest: %s", path))
-			}
-			gotSum, err := Checksum(alg, fullPath)
-			if err != nil {
-				return v.addCritical(err)
-			}
-			if expectedSum != Digest(gotSum) {
-				return v.addCritical(fmt.Errorf("checksum failed for %s", path))
-			}
-		}
-	}
-	return nil
 }
 
 func (v *Validator) validateObjectVersionDir(version string) error {
