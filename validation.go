@@ -154,7 +154,7 @@ func (v *Validator) readInventory(name string) (*Inventory, error) {
 	if err != nil {
 		return nil, err
 	}
-	expectedSum := strings.Trim(string(readBytes), "\n ")
+	expectedSum := strings.Trim(string(readBytes), "\r\n ")
 	sum, err := Checksum(sidecarAlg, path)
 	if err != nil || expectedSum != sum {
 		return nil, errors.New(`failed to validate inventory file checksum`)
