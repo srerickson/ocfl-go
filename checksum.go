@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -163,9 +164,9 @@ func ConcurrentDigest(dir string, alg string) (ContentMap, error) {
 	return cm, lastErr
 }
 
-// ValidateHandleErr confirms digests in ContentMap using hash algorithm alg and
+// Validate confirms digests in ContentMap using hash algorithm alg and
 // dir as a base path for relative paths in the ContentMap
-func (cm *ContentMap) ValidateHandleErr(dir string, alg string, handle func(error)) error {
+func (cm *ContentMap) Validate(dir string, alg string) error {
 	in := make(chan checksumJob)
 	go func() {
 		for dp := range cm.Iterate() {
@@ -181,16 +182,11 @@ func (cm *ContentMap) ValidateHandleErr(dir string, alg string, handle func(erro
 	for result := range digester(in) {
 		if result.err != nil {
 			lastErr = result.err
-			if handle != nil {
-				handle(lastErr)
-			}
 			continue
 		}
 		if result.sum != result.expected {
 			lastErr = fmt.Errorf(`checksum failed: %s`, result.path)
-			if handle != nil {
-				handle(lastErr)
-			}
+			log.Print(lastErr)
 		}
 	}
 	return lastErr

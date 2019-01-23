@@ -15,23 +15,18 @@
 package ocfl
 
 import (
-	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
-
-	"github.com/srerickson/ocfl/namaste"
 )
 
 var invSidecarRexp = regexp.MustCompile(`inventory\.json\.(\w+)`)
 
 // Validator handles state for OCFL Object validation
 type Validator struct {
-	HandleErr func(err error)
-	HandleWrn func(err error)
 	root      string
 	lastErr   error
 	inventory *Inventory
@@ -43,146 +38,67 @@ func ValidateObject(path string) error {
 	return v.ValidateObject(path)
 }
 
-func (v *Validator) init(root string) {
-	*v = Validator{
-		root:      root,
-		HandleErr: v.HandleErr,
-		HandleWrn: v.HandleWrn,
-	}
-}
-
-func (v *Validator) addCritical(err error) error {
-	if err != nil {
-		v.lastErr = err
-		if v.HandleErr != nil {
-			v.HandleErr(err)
-		}
-	}
-	return err
-}
-
-func (v *Validator) addWarning(err error) error {
-	if err != nil {
-		if v.HandleWrn != nil {
-			v.HandleWrn(err)
-		}
-	}
-	return err
-}
-
 // ValidateObject validates OCFL object located at path
 func (v *Validator) ValidateObject(path string) error {
-	absPath, err := filepath.Abs(path)
+	obj, err := GetObject(path)
 	if err != nil {
-		return v.addCritical(err)
+		log.Print(`error reading object: `, err)
+		return err
 	}
-	v.init(absPath)
+	v.root = obj.Path
+	v.inventory = &obj.inventory
 
-	// Object Conformance Declaration
-	err = namaste.MatchTypePatternError(path, namasteObjectTValue)
+	// Validate Each Version Directory
+	files, err := ioutil.ReadDir(path)
 	if err != nil {
-		return v.addCritical(err)
+		log.Print(`error reading object: `, err)
+		return err
 	}
-
-	// Validate Inventory Structure (not checksum)
-	v.inventory, err = v.readInventory(inventoryFileName)
-	if err != nil {
-		return v.addCritical(err)
-	}
-
-	// Version Directories
-	if files, err := ioutil.ReadDir(path); err != nil {
-		v.addCritical(err)
-	} else {
-		for _, f := range files {
-			if !f.IsDir() {
-				continue
-			}
-			if style := versionFormat(f.Name()); style != `` {
-				v.validateObjectVersionDir(f.Name())
-			}
+	for _, f := range files {
+		if !f.IsDir() {
+			continue
 		}
-
+		if style := versionFormat(f.Name()); style != `` {
+			v.validateVersionDir(f.Name())
+		}
 	}
-
 	// Manifest Checksum
-	v.inventory.Manifest.ValidateHandleErr(
-		v.root,
-		v.inventory.DigestAlgorithm,
-		func(error) { v.addCritical(err) })
-
+	v.inventory.Manifest.Validate(v.root, v.inventory.DigestAlgorithm)
 	// Fixity Checksum
 	for alg, manifest := range v.inventory.Fixity {
-		manifest.ValidateHandleErr(v.root, alg,
-			func(error) { v.addCritical(err) })
+		manifest.Validate(v.root, alg)
 	}
-
 	return v.lastErr
 }
 
-func (v *Validator) readInventory(name string) (*Inventory, error) {
-	path := filepath.Join(v.root, name)
-	inv, err := ReadInventory(path)
-	if err != nil {
-		return nil, err
+func (v *Validator) validateVersionDir(version string) error {
+	invPath := filepath.Join(v.root, version, inventoryFileName)
+	_, err := ReadValidateInventory(invPath)
+	if os.IsNotExist(err) {
+		log.Printf(`WARNING: Version %s has not inventory`, version)
+	} else if err != nil {
+		return err
 	}
-	// Check Inventory Consistency
-	err = inv.Consistency()
-	if err != nil {
-		return nil, err
-	}
-
-	// Validate Inventory File Checksum
-	var sidecarPath string
-	var sidecarAlg string
-	fList, err := ioutil.ReadDir(filepath.Dir(path))
-	if err != nil {
-		return nil, err
-	}
-	for _, info := range fList {
-		matches := invSidecarRexp.FindStringSubmatch(info.Name())
-		if len(matches) > 1 {
-			sidecarAlg = matches[1]
-			sidecarPath = fmt.Sprint(path, `.`, sidecarAlg)
-			break
+	// Check version content present in manifest
+	var returnErr error
+	contPath := filepath.Join(v.root, version, `content`)
+	walk := func(path string, info os.FileInfo, err error) error {
+		if err != nil || !info.Mode().IsRegular() {
+			return err
 		}
-	}
-	if sidecarPath == `` {
-		return nil, errors.New(`missing inventory checksum file`)
-	}
-	readBytes, err := ioutil.ReadFile(sidecarPath)
-	if err != nil {
-		return nil, err
-	}
-	expectedSum := strings.Trim(string(readBytes), "\r\n ")
-	sum, err := Checksum(sidecarAlg, path)
-	if err != nil || expectedSum != sum {
-		return nil, errors.New(`failed to validate inventory file checksum`)
-	}
-	return &inv, nil
-}
-
-func (v *Validator) validateObjectVersionDir(version string) error {
-	_, err := v.readInventory(filepath.Join(version, inventoryFileName))
-	if err != nil {
-		return v.addWarning(err)
-	}
-	contentPath := filepath.Join(v.root, version, `content`)
-	if i, statErr := os.Stat(contentPath); statErr == nil && i.IsDir() {
-		// Walk Version content, check all files present in manifest
-		walk := func(path string, info os.FileInfo, walkErr error) error {
-			if walkErr == nil && info.Mode().IsRegular() {
-				ePath, pathErr := filepath.Rel(v.root, path)
-				if pathErr != nil {
-					return pathErr
-				}
-				if v.inventory.Manifest.GetDigest(ePath) == `` {
-					v.addCritical(fmt.Errorf(`not in manifest: %s`, ePath))
-				}
-			}
-			return walkErr
+		ePath, pathErr := filepath.Rel(v.root, path)
+		if pathErr != nil {
+			return pathErr
 		}
-		return v.addCritical(filepath.Walk(contentPath, walk))
+		if v.inventory.Manifest.GetDigest(ePath) == `` {
+			returnErr = fmt.Errorf(`not in manifest: %s`, ePath)
+			log.Print(returnErr)
+		}
+		return nil
 	}
-	return nil
+	err = filepath.Walk(contPath, walk)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return returnErr
 }

@@ -65,7 +65,7 @@ func GetObject(path string) (*Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	inv, err := ReadInventory(filepath.Join(absPath, inventoryFileName))
+	inv, err := ReadValidateInventory(filepath.Join(absPath, inventoryFileName))
 	if err != nil {
 		return nil, err
 	}

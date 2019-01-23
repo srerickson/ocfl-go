@@ -18,15 +18,15 @@ func TestContentMapValidate(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	err = cm.ValidateHandleErr(`test`, SHA1, nil)
+	err = cm.Validate(`test`, SHA1)
 	if err != nil {
 		t.Error(err)
 	}
-	err = cm.ValidateHandleErr(`test2`, SHA1, nil)
+	err = cm.Validate(`test2`, SHA1)
 	if err == nil {
 		t.Error(`expected error`)
 	}
-	err = cm.ValidateHandleErr(`test`, MD5, nil)
+	err = cm.Validate(`test`, MD5)
 	if err == nil {
 		t.Error(`expected error`)
 	}

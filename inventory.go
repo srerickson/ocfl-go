@@ -20,7 +20,10 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -88,6 +91,97 @@ func ReadInventory(path string) (Inventory, error) {
 	return inv, nil
 }
 
+// ReadValidateInventory is same as ReadInventory with the addition
+// that it validates the inventory file's checksum against a sidecar file
+// (e.g. inventory.json.sha512), and it returns errors from
+// Inventory.Consistency(). Note, it *does not* validate the checksums
+// of the files listed in the manifest/fixity.
+func ReadValidateInventory(path string) (Inventory, error) {
+	inv, err := ReadInventory(path)
+	if err != nil {
+		return inv, err
+	}
+	// Validate Inventory File Checksum
+	var sidecarPath string
+	var sidecarAlg string
+	fList, err := ioutil.ReadDir(filepath.Dir(path))
+	if err != nil {
+		return inv, err
+	}
+	for _, info := range fList {
+		matches := invSidecarRexp.FindStringSubmatch(info.Name())
+		if len(matches) > 1 {
+			sidecarAlg = matches[1]
+			sidecarPath = fmt.Sprint(path, `.`, sidecarAlg)
+			break
+		}
+	}
+	if sidecarPath == `` {
+		return inv, errors.New(`missing inventory checksum file`)
+	}
+	readBytes, err := ioutil.ReadFile(sidecarPath)
+	if err != nil {
+		return inv, err
+	}
+	expectedSum := strings.Trim(string(readBytes), "\r\n ")
+	sum, err := Checksum(sidecarAlg, path)
+	if err != nil || expectedSum != sum {
+		return inv, errors.New(`failed to validate inventory file checksum`)
+	}
+	return inv, inv.Consistency()
+}
+
+// Consistency checks that the inventory values are present and
+// consistent. As part of the validation process, it does everything
+// except validate the checksums in the manifest/fixity.
+func (inv *Inventory) Consistency() error {
+	var lastErr error
+	setErrf := func(s string, v ...interface{}) {
+		err := fmt.Errorf(s, v...)
+		lastErr = err
+		log.Println(err)
+	}
+	// Validate Inventory Structure:
+	if inv.ID == `` {
+		setErrf(`missing inventory ID`)
+	}
+	if inv.Type != inventoryType {
+		setErrf(`invalid inventory type: %s`, inv.Type)
+	}
+	if inv.DigestAlgorithm == `` {
+		setErrf(`missing digestAlgorithm`)
+	} else if !stringIn(inv.DigestAlgorithm, digestAlgorithms[:]) {
+		setErrf(`invalid digestAlgorithm: %s`, inv.DigestAlgorithm)
+	}
+	if inv.Manifest == nil {
+		setErrf(`missing manifest`)
+	}
+	if inv.Versions == nil {
+		setErrf(`missing versions`)
+	}
+	// Validate Version Names in Inventory
+	var versions = inv.versionNames()
+	var padding int
+	if len(inv.Versions) > 0 {
+		padding = versionPadding(versions[0])
+		for i := range versions {
+			n, _ := versionGen(i+1, padding)
+			if _, ok := inv.Versions[n]; !ok {
+				setErrf(`inconsistent or missing version names`)
+			}
+		}
+	}
+	// make sure every digest in version state is present in the manifest
+	for vname := range inv.Versions {
+		for digest := range inv.Versions[vname].State {
+			if inv.Manifest.LenDigest(digest) == 0 {
+				setErrf(`digest missing from manifest: %s`, digest)
+			}
+		}
+	}
+	return lastErr
+}
+
 // Fprint prints the inventory to writer as json
 func (inv *Inventory) Fprint(writer io.Writer) error {
 	var j []byte
@@ -98,55 +192,6 @@ func (inv *Inventory) Fprint(writer io.Writer) error {
 	}
 	_, err = writer.Write(j)
 	return err
-}
-
-// Consistency checks that the inventory values are present and
-// consistent. In the validation process, it does everything
-// except validate the checksums in the manifest/fixity.
-func (inv *Inventory) Consistency() error {
-
-	// Validate Inventory Structure:
-	if inv.ID == `` {
-		return errors.New(`missing inventory ID: %s`)
-	}
-	if inv.Type != inventoryType {
-		return fmt.Errorf(`invalid inventory type: %s`, inv.Type)
-	}
-	if inv.DigestAlgorithm == `` {
-		return errors.New(`missing digestAlgorithm`)
-	}
-	if !stringIn(inv.DigestAlgorithm, digestAlgorithms[:]) {
-		return fmt.Errorf(`invalid digestAlgorithm: %s`, inv.DigestAlgorithm)
-	}
-	if inv.Manifest == nil {
-		return errors.New(`missing manifest`)
-	}
-	if inv.Versions == nil {
-		return errors.New(`missing versions`)
-	}
-
-	// Validate Version Names in Inventory
-	var versions = inv.versionNames()
-	var padding int
-	if len(inv.Versions) > 0 {
-		padding = versionPadding(versions[0])
-		for i := range versions {
-			n, _ := versionGen(i+1, padding)
-			if _, ok := inv.Versions[n]; !ok {
-				return errors.New(`inconsistent or missing version names`)
-			}
-		}
-	}
-
-	// make sure every digest in version state is present in the manifest
-	for vname := range inv.Versions {
-		for digest := range inv.Versions[vname].State {
-			if len(inv.Manifest.DigestPaths(digest)) == 0 {
-				return fmt.Errorf(`digest missing from manifest: %s`, digest)
-			}
-		}
-	}
-	return nil
 }
 
 // versionNames returns slice of version names
