@@ -21,16 +21,16 @@ import (
 
 func TestContentMap(t *testing.T) {
 	var cm ContentMap
-	if err := cm.Add(`fd4305341e6939cae02eb767176427d9`, `a-file`); err != nil {
+	if err := cm.Add(`fa`, `a-file`); err != nil {
 		t.Error(err)
 	}
 	if l := cm.Len(); l != 1 {
 		t.Errorf(`expected 1, got: %d`, l)
 	}
-	if err := cm.Add(`fd4305341e6939cae02eb767176427d9`, `another-file`); err != nil {
+	if err := cm.Add(`fa`, `another-file`); err != nil {
 		t.Error(err)
 	}
-	if l := cm.Len(); l != 2 {
+	if l := cm.LenDigest(`fa`); l != 2 {
 		t.Errorf(`expected 2, got: %d`, l)
 	}
 	if err := cm.Rename(`a-file`, `another-file`); err == nil {
@@ -39,10 +39,10 @@ func TestContentMap(t *testing.T) {
 	if err := cm.Rename(`a-file`, `b-file`); err != nil {
 		t.Error(err)
 	}
-	if err := cm.Add(`ed4305341e6939cae02eb767176427d2`, `b-file`); err == nil {
+	if err := cm.Add(`e2`, `b-file`); err == nil {
 		t.Error(`expected an error`)
 	}
-	if err := cm.Add(`ed4305341e6939cae02eb767176427d2`, `c-file`); err != nil {
+	if err := cm.Add(`e2`, `c-file`); err != nil {
 		t.Error(err)
 	}
 	if _, err := cm.Remove(`b-file`); err != nil {
@@ -57,7 +57,7 @@ func TestContentMap(t *testing.T) {
 	if _, err := cm.Remove(`no-file`); err == nil {
 		t.Error(`expected an error`)
 	}
-	if l := cm.Len(); l != 0 {
+	if l := cm.LenDigest(`fa`); l != 0 {
 		t.Errorf(`expected 0, got: %d`, l)
 	}
 }

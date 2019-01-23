@@ -128,7 +128,7 @@ func (o *Object) writeInventory() error {
 // NewStage returns a new Stage for creating new Object versions.
 func (o *Object) NewStage() (*Stage, error) {
 	if o.stage != nil {
-		o.stage.clear()
+		o.stage.RemoveAll()
 	} else {
 		o.stage = &Stage{
 			object: o,

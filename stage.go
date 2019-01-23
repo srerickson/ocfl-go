@@ -38,7 +38,8 @@ type Stage struct {
 	object *Object    // parent object
 }
 
-func (stage *Stage) clear() {
+// RemoveAll clears the stage of all files
+func (stage *Stage) RemoveAll() {
 	if stage == nil {
 		return
 	}
@@ -84,7 +85,8 @@ func (stage *Stage) Commit(user User, message string) error {
 			}
 			manifest := stage.object.inventory.Manifest
 			// logical path
-			lPath, err := filepath.Rel(stage.path, path)
+			var lPath string
+			lPath, err = filepath.Rel(stage.path, path)
 			if err != nil {
 				return err
 			}
@@ -134,32 +136,19 @@ func (stage *Stage) Commit(user User, message string) error {
 	if err != nil {
 		return err
 	}
-	stage.clear()
+	stage.RemoveAll()
 	return nil
 }
 
-// Add adds the file at src to the stage as dst
-// - src's digest is calculated using parent objects digestAlgorithm
-// - if digest is not new, src is copied into the stage's temporary directory
-// - An entry (digest->dst) is added to stage state. If dst alread
-//   exists, it is removed.
-func (stage *Stage) Add(src string, dst string) error {
-	var inv = stage.object.inventory
-	var alg = inv.DigestAlgorithm
-	err := validPath(&dst)
-	if err != nil {
-		return err
-	}
-	sum, err := Checksum(alg, src)
-	if err != nil {
-		return err
-	}
-	if inv.Manifest.LenDigest(sum) == 0 {
-		if err := stage.tempDir(); err != nil {
+func (stage *Stage) add(src string, dst string, sum string) error {
+	if stage.object.inventory.Manifest.LenDigest(sum) == 0 {
+		err := stage.tempDir()
+		if err != nil {
 			return err
 		}
 		realDst := stage.stagedPath(dst)
-		if err := os.MkdirAll(filepath.Dir(realDst), DIRMODE); err != nil {
+		err = os.MkdirAll(filepath.Dir(realDst), DIRMODE)
+		if err != nil {
 			return err
 		}
 		srcFile, err := os.Open(src)
@@ -178,6 +167,41 @@ func (stage *Stage) Add(src string, dst string) error {
 		}
 	}
 	return stage.state.AddReplace(sum, dst)
+}
+
+// Add adds the file at src to the stage as dst
+// - src's digest is calculated using parent objects digestAlgorithm
+// - if digest is not new, src is copied into the stage's temporary directory
+// - An entry (digest->dst) is added to stage state. If dst alread
+//   exists, it is removed.
+func (stage *Stage) Add(src string, dst string) error {
+	var inv = stage.object.inventory
+	var alg = inv.DigestAlgorithm
+	err := validPath(&dst)
+	if err != nil {
+		return err
+	}
+	sum, err := Checksum(alg, src)
+	if err != nil {
+		return err
+	}
+	return stage.add(src, dst, sum)
+}
+
+// AddDir adds all the files in dir to the stage
+func (stage *Stage) AddDir(dir string) error {
+	inv := stage.object.inventory
+	cm, err := ConcurrentDigest(dir, inv.DigestAlgorithm)
+	if err != nil {
+		return err
+	}
+	for f := range cm.Iterate() {
+		src := filepath.Join(dir, f.Path)
+		if err == nil {
+			err = stage.add(src, f.Path, f.Digest)
+		}
+	}
+	return err
 }
 
 // OpenFile returns a readable and writable *os.File for the given Logical Path.

@@ -141,3 +141,26 @@ func TestChangelessCommit(t *testing.T) {
 		t.Error(`expected an error`)
 	}
 }
+
+func TestAddDir(t *testing.T) {
+	user := NewUser(`tester`, `tester@nowhere`)
+	objectRoot, err := ioutil.TempDir(`.`, `test-object`)
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(objectRoot)
+	obj, err := InitObject(objectRoot, `test`)
+	if err != nil {
+		t.Error(err)
+	}
+	stage, _ := obj.NewStage()
+	err = stage.AddDir(`test`)
+	if err != nil {
+		t.Error(err)
+	}
+	stage.Commit(user, ``)
+	err = ValidateObject(objectRoot)
+	if err != nil {
+		t.Error(err)
+	}
+}
