@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -78,16 +77,44 @@ func ReadInventory(path string) (Inventory, error) {
 	var invJSON []byte
 	var err error
 	if file, err = os.Open(path); err != nil {
-		return inv, err
+		return inv, NewErr(ReadErr, err)
 	}
 	defer file.Close()
 	if invJSON, err = ioutil.ReadAll(file); err != nil {
-		return inv, err
+		return inv, NewErr(ReadErr, err)
 	}
 	if err = json.Unmarshal(invJSON, &inv); err != nil {
-		return inv, err
+		return inv, NewErr(InvJSONErr, err)
 	}
 	return inv, nil
+}
+
+// ReadInventorySidecar returns digest string in inventory.json
+// sidecar file, e.g. inventory.json.sha512
+func ReadInventorySidecar(path string) (string, string, error) {
+	var sidecarPath string
+	var sidecarAlg string
+	fList, err := ioutil.ReadDir(filepath.Dir(path))
+	if err != nil {
+		return "", ``, NewErr(ReadErr, err)
+	}
+	for _, info := range fList {
+		matches := invSidecarRexp.FindStringSubmatch(info.Name())
+		if len(matches) > 1 {
+			sidecarAlg = matches[1]
+			sidecarPath = fmt.Sprint(path, `.`, sidecarAlg)
+			break
+		}
+	}
+	if sidecarPath == `` {
+		err = errors.New(`missing inventory checksum file`)
+		return "", ``, NewErr(InvSidecarErr, err)
+	}
+	readBytes, err := ioutil.ReadFile(sidecarPath)
+	if err != nil {
+		return "", ``, NewErr(ReadErr, err)
+	}
+	return sidecarAlg, strings.Trim(string(readBytes), "\r\n "), nil
 }
 
 // ReadValidateInventory is same as ReadInventory with the addition
@@ -101,29 +128,11 @@ func ReadValidateInventory(path string) (Inventory, error) {
 		return inv, err
 	}
 	// Validate Inventory File Checksum
-	var sidecarPath string
-	var sidecarAlg string
-	fList, err := ioutil.ReadDir(filepath.Dir(path))
+	alg, expectedSum, err := ReadInventorySidecar(path)
 	if err != nil {
 		return inv, err
 	}
-	for _, info := range fList {
-		matches := invSidecarRexp.FindStringSubmatch(info.Name())
-		if len(matches) > 1 {
-			sidecarAlg = matches[1]
-			sidecarPath = fmt.Sprint(path, `.`, sidecarAlg)
-			break
-		}
-	}
-	if sidecarPath == `` {
-		return inv, errors.New(`missing inventory checksum file`)
-	}
-	readBytes, err := ioutil.ReadFile(sidecarPath)
-	if err != nil {
-		return inv, err
-	}
-	expectedSum := strings.Trim(string(readBytes), "\r\n ")
-	sum, err := Checksum(sidecarAlg, path)
+	sum, err := Checksum(alg, path)
 	if err != nil || expectedSum != sum {
 		return inv, errors.New(`failed to validate inventory file checksum`)
 	}
@@ -134,51 +143,7 @@ func ReadValidateInventory(path string) (Inventory, error) {
 // consistent. As part of the validation process, it does everything
 // except validate the checksums in the manifest/fixity.
 func (inv *Inventory) Consistency() error {
-	var lastErr error
-	setErrf := func(s string, v ...interface{}) {
-		err := fmt.Errorf(s, v...)
-		lastErr = err
-		log.Println(err)
-	}
-	// Validate Inventory Structure:
-	if inv.ID == `` {
-		setErrf(`missing inventory ID`)
-	}
-	if inv.Type != inventoryType {
-		setErrf(`invalid inventory type: %s`, inv.Type)
-	}
-	if inv.DigestAlgorithm == `` {
-		setErrf(`missing digestAlgorithm`)
-	} else if !stringIn(inv.DigestAlgorithm, digestAlgorithms[:]) {
-		setErrf(`invalid digestAlgorithm: %s`, inv.DigestAlgorithm)
-	}
-	if inv.Manifest == nil {
-		setErrf(`missing manifest`)
-	}
-	if inv.Versions == nil {
-		setErrf(`missing versions`)
-	}
-	// Validate Version Names in Inventory
-	var versions = inv.versionNames()
-	var padding int
-	if len(inv.Versions) > 0 {
-		padding = versionPadding(versions[0])
-		for i := range versions {
-			n, _ := versionGen(i+1, padding)
-			if _, ok := inv.Versions[n]; !ok {
-				setErrf(`inconsistent or missing version names`)
-			}
-		}
-	}
-	// make sure every digest in version state is present in the manifest
-	for vname := range inv.Versions {
-		for digest := range inv.Versions[vname].State {
-			if inv.Manifest.LenDigest(digest) == 0 {
-				setErrf(`digest missing from manifest: %s`, digest)
-			}
-		}
-	}
-	return lastErr
+	return nil
 }
 
 // Fprint prints the inventory to writer as json

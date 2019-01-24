@@ -59,11 +59,11 @@ func InitObject(path string, id string) (Object, error) {
 func GetObject(path string) (*Object, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return nil, err
+		return nil, NewErr(PathErr, err)
 	}
 	err = namaste.MatchTypePatternError(absPath, namasteObjectTValue)
 	if err != nil {
-		return nil, err
+		return nil, NewErr(NamasteErr, err)
 	}
 	inv, err := ReadValidateInventory(filepath.Join(absPath, inventoryFileName))
 	if err != nil {
