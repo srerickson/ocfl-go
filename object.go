@@ -115,11 +115,11 @@ func (o *Object) writeInventoryVersion(ver string) error {
 	if err != nil {
 		return err
 	}
-	digest, err := Checksum(`sha512`, invPath)
+	digest, err := Checksum(defaultAlgorithm, invPath)
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile(filepath.Join(invPath+`.sha512`), []byte(digest), 0644)
+	return ioutil.WriteFile((invPath + `.` + defaultAlgorithm), []byte(digest), 0644)
 }
 func (o *Object) writeInventory() error {
 	return o.writeInventoryVersion(``)

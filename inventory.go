@@ -23,6 +23,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -30,6 +31,8 @@ import (
 const (
 	inventoryType = `https://ocfl.io/1.0/spec/#inventory`
 )
+
+var invSidecarRexp = regexp.MustCompile(`inventory\.json\.(\w+)`)
 
 // Inventory represents contents of an OCFL Object's inventory.json file
 type Inventory struct {
@@ -41,10 +44,6 @@ type Inventory struct {
 	Versions        map[string]Version    `json:"versions"`
 	Fixity          map[string]ContentMap `json:"fixity"`
 }
-
-// // Manifest represents manifest elemenf of inventory.json. The manifest key
-// // is a string representation of a checksum
-// type Manifest map[string][]EPath
 
 // Version represent a version entryin inventory.json
 type Version struct {
@@ -93,9 +92,9 @@ func ReadInventory(path string) (Inventory, error) {
 
 // ReadValidateInventory is same as ReadInventory with the addition
 // that it validates the inventory file's checksum against a sidecar file
-// (e.g. inventory.json.sha512), and it returns errors from
+// (typically inventory.json.sha512), and it returns errors from
 // Inventory.Consistency(). Note, it *does not* validate the checksums
-// of the files listed in the manifest/fixity.
+// of the files listed in the manifest/fixity sections of the inventory.
 func ReadValidateInventory(path string) (Inventory, error) {
 	inv, err := ReadInventory(path)
 	if err != nil {

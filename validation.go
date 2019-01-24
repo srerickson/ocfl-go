@@ -20,15 +20,11 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"regexp"
 )
-
-var invSidecarRexp = regexp.MustCompile(`inventory\.json\.(\w+)`)
 
 // Validator handles state for OCFL Object validation
 type Validator struct {
 	root      string
-	lastErr   error
 	inventory *Inventory
 }
 
@@ -40,47 +36,54 @@ func ValidateObject(path string) error {
 
 // ValidateObject validates OCFL object located at path
 func (v *Validator) ValidateObject(path string) error {
-	obj, err := GetObject(path)
-	if err != nil {
-		log.Print(`error reading object: `, err)
-		return err
+	obj, retErr := GetObject(path)
+	if retErr != nil {
+		log.Print(`error reading object: `, retErr)
+		return retErr
 	}
 	v.root = obj.Path
 	v.inventory = &obj.inventory
+	alg := v.inventory.DigestAlgorithm
 
 	// Validate Each Version Directory
-	files, err := ioutil.ReadDir(path)
-	if err != nil {
-		log.Print(`error reading object: `, err)
-		return err
+	var files []os.FileInfo
+	files, retErr = ioutil.ReadDir(path)
+	if retErr != nil {
+		log.Print(`error reading object: `, retErr)
+		return retErr
 	}
 	for _, f := range files {
 		if !f.IsDir() {
 			continue
 		}
 		if style := versionFormat(f.Name()); style != `` {
-			v.validateVersionDir(f.Name())
+			if err := v.validateVersionDir(f.Name()); err != nil {
+				retErr = err
+			}
 		}
 	}
 	// Manifest Checksum
-	v.inventory.Manifest.Validate(v.root, v.inventory.DigestAlgorithm)
+	if err := v.inventory.Manifest.Validate(v.root, alg); err != nil {
+		retErr = err
+	}
 	// Fixity Checksum
 	for alg, manifest := range v.inventory.Fixity {
-		manifest.Validate(v.root, alg)
+		if err := manifest.Validate(v.root, alg); err != nil {
+			retErr = err
+		}
 	}
-	return v.lastErr
+	return retErr
 }
 
 func (v *Validator) validateVersionDir(version string) error {
 	invPath := filepath.Join(v.root, version, inventoryFileName)
-	_, err := ReadValidateInventory(invPath)
-	if os.IsNotExist(err) {
+	_, retErr := ReadValidateInventory(invPath)
+	if os.IsNotExist(retErr) {
 		log.Printf(`WARNING: Version %s has not inventory`, version)
-	} else if err != nil {
-		return err
+	} else if retErr != nil {
+		return retErr
 	}
 	// Check version content present in manifest
-	var returnErr error
 	contPath := filepath.Join(v.root, version, `content`)
 	walk := func(path string, info os.FileInfo, err error) error {
 		if err != nil || !info.Mode().IsRegular() {
@@ -91,14 +94,13 @@ func (v *Validator) validateVersionDir(version string) error {
 			return pathErr
 		}
 		if v.inventory.Manifest.GetDigest(ePath) == `` {
-			returnErr = fmt.Errorf(`not in manifest: %s`, ePath)
-			log.Print(returnErr)
+			retErr = fmt.Errorf(`not in manifest: %s`, ePath)
+			log.Print(retErr)
 		}
 		return nil
 	}
-	err = filepath.Walk(contPath, walk)
-	if err != nil && !os.IsNotExist(err) {
+	if err := filepath.Walk(contPath, walk); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return returnErr
+	return retErr
 }
