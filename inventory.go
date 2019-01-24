@@ -91,36 +91,35 @@ func ReadInventory(path string) (Inventory, error) {
 
 // ReadInventorySidecar returns digest string in inventory.json
 // sidecar file, e.g. inventory.json.sha512
-func ReadInventorySidecar(path string) (string, string, error) {
+func ReadInventorySidecar(path string) (alg string, sum string, err error) {
 	var sidecarPath string
-	var sidecarAlg string
 	fList, err := ioutil.ReadDir(filepath.Dir(path))
 	if err != nil {
-		return "", ``, NewErr(ReadErr, err)
+		return ``, ``, NewErr(ReadErr, err)
 	}
 	for _, info := range fList {
 		matches := invSidecarRexp.FindStringSubmatch(info.Name())
 		if len(matches) > 1 {
-			sidecarAlg = matches[1]
-			sidecarPath = fmt.Sprint(path, `.`, sidecarAlg)
+			alg = matches[1]
+			sidecarPath = fmt.Sprint(path, `.`, alg)
 			break
 		}
 	}
 	if sidecarPath == `` {
 		err = errors.New(`missing inventory checksum file`)
-		return "", ``, NewErr(InvSidecarErr, err)
+		return ``, ``, NewErr(InvSidecarErr, err)
 	}
 	readBytes, err := ioutil.ReadFile(sidecarPath)
 	if err != nil {
-		return "", ``, NewErr(ReadErr, err)
+		return ``, ``, NewErr(ReadErr, err)
 	}
-	return sidecarAlg, strings.Trim(string(readBytes), "\r\n "), nil
+	sum = strings.Trim(string(readBytes), "\r\n ")
+	return alg, sum, nil
 }
 
 // ReadValidateInventory is same as ReadInventory with the addition
 // that it validates the inventory file's checksum against a sidecar file
-// (typically inventory.json.sha512), and it returns errors from
-// Inventory.Consistency(). Note, it *does not* validate the checksums
+// (typically inventory.json.sha512). Note, it *does not* validate the checksums
 // of the files listed in the manifest/fixity sections of the inventory.
 func ReadValidateInventory(path string) (Inventory, error) {
 	inv, err := ReadInventory(path)
@@ -134,16 +133,9 @@ func ReadValidateInventory(path string) (Inventory, error) {
 	}
 	sum, err := Checksum(alg, path)
 	if err != nil || expectedSum != sum {
-		return inv, errors.New(`failed to validate inventory file checksum`)
+		return inv, NewErr(InvChecksumErr, nil)
 	}
-	return inv, inv.Consistency()
-}
-
-// Consistency checks that the inventory values are present and
-// consistent. As part of the validation process, it does everything
-// except validate the checksums in the manifest/fixity.
-func (inv *Inventory) Consistency() error {
-	return nil
+	return inv, nil
 }
 
 // Fprint prints the inventory to writer as json

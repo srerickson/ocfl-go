@@ -17,7 +17,6 @@ package ocfl
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -61,9 +60,10 @@ func done(ctx context.Context) bool {
 }
 
 // ValidateObject validates the object at path
-func ValidateObject(ctx context.Context, path string) Error {
+func ValidateObject(path string) Error {
 	var v = Validator{}
-	ctx, v.Cancel = context.WithCancel(ctx)
+	var ctx context.Context
+	ctx, v.Cancel = context.WithCancel(context.Background())
 	for vErr := range v.ValidateObject(ctx, path) {
 		// cancel remaining validation on first error
 		v.Cancel()
@@ -80,47 +80,49 @@ func (v *Validator) ValidateObject(ctx context.Context, path string) chan Error 
 
 		// Load Object
 		obj, err := GetObject(path)
-		if err != nil && v.handleErr(ctx, err) != nil {
+		if err != nil {
+			v.handleErr(ctx, err)
 			return
 		}
-		v.root = obj.Path
-		v.inventory = &obj.inventory
-		alg := v.inventory.DigestAlgorithm
+		v.validateInventory(ctx, &(obj.inventory))
 
-		// Validate Each Version Directory
-		files, ioErr := ioutil.ReadDir(path)
-		if ioErr != nil && v.handleErr(ctx, NewErr(ReadErr, ioErr)) != nil {
-			return
-		}
-		for _, f := range files {
-			// check if context is canceled
-			if done(ctx) {
-				break
-			}
-			if !f.IsDir() {
-				continue
-			}
-			if style := versionFormat(f.Name()); style != `` {
-				v.validateVersionDir(ctx, f.Name())
-			}
-		}
-		// Manifest Checksum
-		if v.inventory.Manifest.Validate(v.root, alg); err != nil {
-			retErr = err
-		}
-		// Fixity Checksum
-		for alg, manifest := range v.inventory.Fixity {
-			if err := manifest.Validate(v.root, alg); err != nil {
-				retErr = err
-			}
-		}
-		return retErr
+		// v.root = obj.Path
+		// v.inventory = &obj.inventory
+		// alg := v.inventory.DigestAlgorithm
+
+		// // Validate Each Version Directory
+		// files, ioErr := ioutil.ReadDir(path)
+		// if ioErr != nil && v.handleErr(ctx, NewErr(ReadErr, ioErr)) != nil {
+		// 	return
+		// }
+		// for _, f := range files {
+		// 	// check if context is canceled
+		// 	if done(ctx) {
+		// 		break
+		// 	}
+		// 	if !f.IsDir() {
+		// 		continue
+		// 	}
+		// 	if style := versionFormat(f.Name()); style != `` {
+		// 		v.validateVersionDir(ctx, f.Name())
+		// 	}
+		// }
+		// // Manifest Checksum
+		// if v.inventory.Manifest.Validate(v.root, alg); err != nil {
+		// 	retErr = err
+		// }
+		// // Fixity Checksum
+		// for alg, manifest := range v.inventory.Fixity {
+		// 	if err := manifest.Validate(v.root, alg); err != nil {
+		// 		retErr = err
+		// 	}
+		// }
 
 	}()
-	return vErrChan
+	return v.errChan
 }
 
-func (v *Validator) validateVersionDir(version string) error {
+func (v *Validator) validateVersionDir(ctx context.Context, version string) error {
 	invPath := filepath.Join(v.root, version, inventoryFileName)
 	_, retErr := ReadValidateInventory(invPath)
 	if os.IsNotExist(retErr) {

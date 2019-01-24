@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -186,7 +185,7 @@ func (cm *ContentMap) Validate(dir string, alg string) error {
 		}
 		if result.sum != result.expected {
 			lastErr = fmt.Errorf(`checksum failed: %s`, result.path)
-			log.Print(lastErr)
+			//log.Print(lastErr)
 		}
 	}
 	return lastErr
