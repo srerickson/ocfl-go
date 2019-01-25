@@ -16,7 +16,8 @@ package ocfl
 
 import (
 	"context"
-	"fmt"
+	"errors"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -26,9 +27,18 @@ import (
 type Validator struct {
 	root      string
 	inventory *Inventory
-	// ctx       context.Context
-	Cancel  context.CancelFunc
-	errChan chan Error
+	Cancel    context.CancelFunc
+	errChan   chan error
+}
+
+// NewValidator returns a new validator
+func NewValidator(ctx context.Context, dir string) (Validator, context.Context) {
+	v := Validator{
+		root:    dir,
+		errChan: make(chan error),
+	}
+	ctx, v.Cancel = context.WithCancel(ctx)
+	return v, ctx
 }
 
 // handleErr sends the error over the channel if the
@@ -41,11 +51,7 @@ func (v *Validator) handleErr(ctx context.Context, err error) error {
 	case <-ctx.Done():
 		return err
 	default:
-		oErr, ok := err.(ObjectError)
-		if !ok {
-			panic(`tried to send non-ObjectError to Validator`)
-		}
-		v.errChan <- oErr
+		v.errChan <- err
 	}
 	return nil
 }
@@ -60,10 +66,9 @@ func done(ctx context.Context) bool {
 }
 
 // ValidateObject validates the object at path
-func ValidateObject(path string) Error {
-	var v = Validator{}
-	var ctx context.Context
-	ctx, v.Cancel = context.WithCancel(context.Background())
+func ValidateObject(path string) error {
+	ctx := context.Background()
+	v, _ := NewValidator(ctx, path)
 	for vErr := range v.ValidateObject(ctx, path) {
 		// cancel remaining validation on first error
 		v.Cancel()
@@ -73,11 +78,9 @@ func ValidateObject(path string) Error {
 }
 
 // ValidateObject validates OCFL object located at path
-func (v *Validator) ValidateObject(ctx context.Context, path string) chan Error {
-	v.errChan = make(chan Error)
+func (v *Validator) ValidateObject(ctx context.Context, path string) chan error {
 	go func() {
 		defer close(v.errChan)
-
 		// Load Object
 		obj, err := GetObject(path)
 		if err != nil {
@@ -85,33 +88,31 @@ func (v *Validator) ValidateObject(ctx context.Context, path string) chan Error 
 			return
 		}
 		v.validateInventory(ctx, &(obj.inventory))
+		v.root = obj.Path
+		v.inventory = &obj.inventory
+		alg := v.inventory.DigestAlgorithm
+		// Validate Each Version Directory
+		files, ioErr := ioutil.ReadDir(path)
+		if ioErr != nil {
+			v.handleErr(ctx, NewErr(ReadErr, ioErr))
+			return
+		}
+		for _, f := range files {
+			// check if context is canceled
+			if done(ctx) {
+				break
+			}
+			if !f.IsDir() {
+				continue
+			}
+			if style := versionFormat(f.Name()); style != `` {
+				v.validateVersionDir(ctx, f.Name())
+			}
+		}
+		// Manifest Checksum
+		v.validateContentMap(ctx, v.inventory.Manifest, alg)
 
-		// v.root = obj.Path
-		// v.inventory = &obj.inventory
-		// alg := v.inventory.DigestAlgorithm
-
-		// // Validate Each Version Directory
-		// files, ioErr := ioutil.ReadDir(path)
-		// if ioErr != nil && v.handleErr(ctx, NewErr(ReadErr, ioErr)) != nil {
-		// 	return
-		// }
-		// for _, f := range files {
-		// 	// check if context is canceled
-		// 	if done(ctx) {
-		// 		break
-		// 	}
-		// 	if !f.IsDir() {
-		// 		continue
-		// 	}
-		// 	if style := versionFormat(f.Name()); style != `` {
-		// 		v.validateVersionDir(ctx, f.Name())
-		// 	}
-		// }
-		// // Manifest Checksum
-		// if v.inventory.Manifest.Validate(v.root, alg); err != nil {
-		// 	retErr = err
-		// }
-		// // Fixity Checksum
+		// Fixity Checksum
 		// for alg, manifest := range v.inventory.Fixity {
 		// 	if err := manifest.Validate(v.root, alg); err != nil {
 		// 		retErr = err
@@ -122,70 +123,106 @@ func (v *Validator) ValidateObject(ctx context.Context, path string) chan Error 
 	return v.errChan
 }
 
-func (v *Validator) validateVersionDir(ctx context.Context, version string) error {
+func (v *Validator) validateVersionDir(ctx context.Context, version string) {
 	invPath := filepath.Join(v.root, version, inventoryFileName)
-	_, retErr := ReadValidateInventory(invPath)
-	if os.IsNotExist(retErr) {
+	inv, err := ReadValidateInventory(invPath)
+	if os.IsNotExist(err) {
 		log.Printf(`WARNING: Version %s has not inventory`, version)
-	} else if retErr != nil {
-		return retErr
+	} else if err != nil {
+		v.handleErr(ctx, err)
+	} else {
+		v.validateInventory(ctx, &inv)
 	}
 	// Check version content present in manifest
 	contPath := filepath.Join(v.root, version, `content`)
 	walk := func(path string, info os.FileInfo, err error) error {
-		if err != nil || !info.Mode().IsRegular() {
+		if err != nil {
+
 			return err
+		}
+		if done(ctx) {
+			return errors.New(`stop walk`)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
 		}
 		ePath, pathErr := filepath.Rel(v.root, path)
 		if pathErr != nil {
 			return pathErr
 		}
 		if v.inventory.Manifest.GetDigest(ePath) == `` {
-			retErr = fmt.Errorf(`not in manifest: %s`, ePath)
-			log.Print(retErr)
+			v.handleErr(ctx, NewErrf(ManPathErr, `not in manifest: %s`, ePath))
 		}
 		return nil
 	}
-	if err := filepath.Walk(contPath, walk); err != nil && !os.IsNotExist(err) {
-		return err
+	filepath.Walk(contPath, walk)
+}
+
+// validateContentMap checks
+func (v *Validator) validateContentMap(ctx context.Context, cm ContentMap, alg string) int {
+	var checked int
+	in := make(chan checksumJob)
+	go func() {
+		for dp := range cm.Iterate() {
+			select {
+			case <-ctx.Done():
+				// drain cm Iterate
+			default:
+				in <- checksumJob{
+					path:     filepath.Join(v.root, dp.Path),
+					alg:      alg,
+					expected: string(dp.Digest),
+				}
+			}
+
+		}
+		close(in)
+	}()
+	for result := range digester(ctx, in) {
+		if result.err != nil {
+			v.handleErr(ctx, result.err)
+			continue
+		}
+		if result.sum != result.expected {
+			v.handleErr(ctx, NewErr(ContentChecksumErr, nil))
+		} else {
+			checked++
+		}
 	}
-	return retErr
+	return checked
 }
 
-func (v *Validator) validateContentMap(ctx context.Context, cm ContentMap) {
-
-}
-
-func (v *Validator) validateInventory(ctx context.Context, inv *Inventory) {
+// validateInventory really just checks consistency of the inventory
+func (v *Validator) validateInventory(ctx context.Context, inv *Inventory) bool {
 
 	// Validate Inventory Structure:
 	if inv.ID == `` {
 		if v.handleErr(ctx, NewErr(InvIDErr, nil)) != nil {
-			return
+			return false
 		}
 	}
 	if inv.Type != inventoryType {
 		if v.handleErr(ctx, NewErr(InvTypeErr, nil)) != nil {
-			return
+			return false
 		}
 	}
 	if inv.DigestAlgorithm == `` {
 		if v.handleErr(ctx, NewErr(InvDigestErr, nil)) != nil {
-			return
+			return false
 		}
 	} else if !stringIn(inv.DigestAlgorithm, digestAlgorithms[:]) {
 		if v.handleErr(ctx, NewErr(InvDigestErr, nil)) != nil {
-			return
+			return false
 		}
 	}
 	if inv.Manifest == nil {
 		if v.handleErr(ctx, NewErr(InvNoManErr, nil)) != nil {
-			return
+			return false
 		}
 	}
 	if inv.Versions == nil {
 		if v.handleErr(ctx, NewErr(InvNoVerErr, nil)) != nil {
-			return
+			return false
 		}
 	}
 	// Validate Version Names in Inventory
@@ -194,13 +231,10 @@ func (v *Validator) validateInventory(ctx context.Context, inv *Inventory) {
 	if len(inv.Versions) > 0 {
 		padding = versionPadding(versions[0])
 		for i := range versions {
-			// if done(ctx){
-			// 	return
-			// }
 			n, _ := versionGen(i+1, padding)
 			if _, ok := inv.Versions[n]; !ok {
 				if v.handleErr(ctx, NewErr(VerFormatErr, nil)) != nil {
-					return
+					return false
 				}
 			}
 		}
@@ -210,9 +244,10 @@ func (v *Validator) validateInventory(ctx context.Context, inv *Inventory) {
 		for digest := range inv.Versions[vname].State {
 			if inv.Manifest.LenDigest(digest) == 0 {
 				if v.handleErr(ctx, NewErr(ManDigestErr, nil)) != nil {
-					return
+					return false
 				}
 			}
 		}
 	}
+	return true
 }

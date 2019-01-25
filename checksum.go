@@ -15,6 +15,7 @@
 package ocfl
 
 import (
+	"context"
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -99,16 +100,25 @@ func newHash(alg string) (hash.Hash, error) {
 	return h, nil
 }
 
-func digester(in <-chan checksumJob) <-chan checksumJob {
+// digester processes checksum jobs concurrently
+func digester(ctx context.Context, in <-chan checksumJob) <-chan checksumJob {
 	var wg sync.WaitGroup
 	out := make(chan checksumJob)
+	if NumDigesters < 1 {
+		NumDigesters = 1
+	}
 	for i := 0; i < NumDigesters; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for job := range in {
-				if job.err == nil {
-					job.sum, job.err = Checksum(job.alg, job.path)
+				select {
+				case <-ctx.Done():
+					job.err = NewErr(CtxCanceledErr, nil)
+				default:
+					if job.err == nil {
+						job.sum, job.err = Checksum(job.alg, job.path)
+					}
 				}
 				out <- job
 			}
@@ -125,8 +135,9 @@ func digester(in <-chan checksumJob) <-chan checksumJob {
 // using Hash algorithm alg, returning results as a ContentMap
 func ConcurrentDigest(dir string, alg string) (ContentMap, error) {
 	var cm ContentMap
+	var ctx = context.Background()
 	jobIn := make(chan checksumJob)
-	walkErr := make(chan error)
+	walkErr := make(chan error, 1)
 	// input queue
 	go func() {
 		walk := func(p string, info os.FileInfo, err error) error {
@@ -138,15 +149,13 @@ func ConcurrentDigest(dir string, alg string) (ContentMap, error) {
 			}
 			return nil
 		}
-		err := filepath.Walk(dir, walk)
+		walkErr <- filepath.Walk(dir, walk)
 		close(jobIn)
-		if err != nil {
-			walkErr <- err
-		}
+		close(walkErr)
 	}()
 
 	var lastErr error
-	for job := range digester(jobIn) {
+	for job := range digester(ctx, jobIn) {
 		if job.err != nil {
 			lastErr = job.err
 		} else {
@@ -155,38 +164,8 @@ func ConcurrentDigest(dir string, alg string) (ContentMap, error) {
 		}
 	}
 
-	select {
-	case lastErr = <-walkErr:
-	default:
+	if err := <-walkErr; err != nil {
+		lastErr = err
 	}
-
 	return cm, lastErr
-}
-
-// Validate confirms digests in ContentMap using hash algorithm alg and
-// dir as a base path for relative paths in the ContentMap
-func (cm *ContentMap) Validate(dir string, alg string) error {
-	in := make(chan checksumJob)
-	go func() {
-		for dp := range cm.Iterate() {
-			in <- checksumJob{
-				path:     filepath.Join(dir, string(dp.Path)),
-				alg:      alg,
-				expected: string(dp.Digest),
-			}
-		}
-		close(in)
-	}()
-	var lastErr error
-	for result := range digester(in) {
-		if result.err != nil {
-			lastErr = result.err
-			continue
-		}
-		if result.sum != result.expected {
-			lastErr = fmt.Errorf(`checksum failed: %s`, result.path)
-			//log.Print(lastErr)
-		}
-	}
-	return lastErr
 }

@@ -4,39 +4,43 @@ import "fmt"
 
 // Error Codes
 const (
-	ReadErr        int8 = iota + 1 // File System Error
-	PathErr                        // could not determine absolute path to object or content
-	NamasteErr                     // missing/invalid Object declaration (namaste file)
-	ContentErr                     // file listed in manifest missing in content
-	VerFormatErr                   // inconsistent version name format
-	InvJSONErr                     // error unmarshalling inventory json
-	InvSidecarErr                  // missing inventory.json checksum sidecard
-	InvChecksumErr                 // invalid inventory.json checksum
-	InvIDErr                       // inventory has no id
-	InvTypeErr                     // inventory has invalid/missing type
-	InvDigestErr                   // inventory has invalid/missing digestAlgorthm
-	InvNoManErr                    // no manifest
-	InvNoVerErr                    // no versions
-	ManDigestErr                   // manifest does not include expected digest
-	PathFormatErr                  // invalid path format (not relative or out of scope)
+	ReadErr            int8 = iota + 1 // File System Error
+	PathErr                            // could not determine absolute path to object or content
+	NamasteErr                         // missing/invalid Object declaration (namaste file)
+	VerFormatErr                       // inconsistent version name format
+	InvJSONErr                         // error unmarshalling inventory json
+	InvSidecarErr                      // missing inventory.json checksum sidecard
+	InvChecksumErr                     // invalid inventory.json checksum
+	InvIDErr                           // inventory has no id
+	InvTypeErr                         // inventory has invalid/missing type
+	InvDigestErr                       // inventory has invalid/missing digestAlgorthm
+	InvNoManErr                        // no manifest
+	InvNoVerErr                        // no versions
+	ManDigestErr                       // manifest does not include expected digest
+	ManPathErr                         // manifest does not include expected path
+	ContentChecksumErr                 //content checksum does not match manifest`
+	PathFormatErr                      // invalid path format (not relative or out of scope)
+	CtxCanceledErr                     // context canceled
 )
 
 var errShortMessages = map[int8]string{
-	ReadErr:        `file system error`,
-	PathErr:        `could not determine absolute path to object or content`,
-	NamasteErr:     `missing/invalid Object declaration (namaste file)`,
-	ContentErr:     `file listed in manifest missing in content`,
-	VerFormatErr:   `inconsistent version name format`,
-	InvJSONErr:     `error unmarshalling inventory json`,
-	InvSidecarErr:  `missing inventory.json checksum sidecard`,
-	InvChecksumErr: `invalid inventory.json checksum`,
-	InvIDErr:       `inventory has no id`,
-	InvTypeErr:     `inventory has invalid/missing type`,
-	InvDigestErr:   `inventory has invalid/missing digestAlgorthm`,
-	InvNoManErr:    `inventory has no manifest`,
-	InvNoVerErr:    `inventory has no versions`,
-	ManDigestErr:   `manifest does not include expected digest`,
-	PathFormatErr:  `invalid path in inventory`,
+	ReadErr:            `file system error`,
+	PathErr:            `could not determine absolute path to object or content`,
+	NamasteErr:         `missing/invalid OCFL Object declaration`,
+	VerFormatErr:       `inconsistent version name format`,
+	InvJSONErr:         `error unmarshalling inventory json`,
+	InvSidecarErr:      `missing inventory.json checksum sidecar`,
+	InvChecksumErr:     `invalid inventory.json checksum`,
+	InvIDErr:           `inventory has no id`,
+	InvTypeErr:         `inventory has invalid/missing type`,
+	InvDigestErr:       `inventory has invalid/missing digestAlgorthm`,
+	InvNoManErr:        `inventory has no manifest`,
+	InvNoVerErr:        `inventory has no versions`,
+	ManDigestErr:       `manifest does not include expected digest`,
+	ManPathErr:         `manifest does not include expected path`,
+	ContentChecksumErr: `content checksum does not match manifest`,
+	PathFormatErr:      `invalid path in inventory`,
+	CtxCanceledErr:     `context was canceled`,
 }
 
 // Error is interface is interface for error with codes
@@ -63,7 +67,7 @@ func NewErrf(code int8, message string, v ...interface{}) Error {
 
 func (err ObjectError) Error() string {
 	if err.error != nil {
-		return err.Error()
+		return err.error.Error()
 	}
 	return errShortMessages[err.code]
 }
