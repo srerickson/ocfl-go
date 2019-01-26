@@ -16,147 +16,168 @@ package ocfl
 
 import (
 	"context"
-	"errors"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
 )
 
-// Validator handles state for OCFL Object validation
-type Validator struct {
-	root      string
-	inventory *Inventory
-	Cancel    context.CancelFunc
-	errChan   chan error
-}
-
-// NewValidator returns a new validator
-func NewValidator(ctx context.Context, dir string) (Validator, context.Context) {
-	v := Validator{
-		root:    dir,
-		errChan: make(chan error),
-	}
-	ctx, v.Cancel = context.WithCancel(ctx)
-	return v, ctx
-}
-
 // handleErr sends the error over the channel if the
 // context is still active, otherwise it returns the error
-func (v *Validator) handleErr(ctx context.Context, err error) error {
-	if err == nil {
-		return nil
-	}
+func sendErr(ctx context.Context, errs chan error, err error) bool {
 	select {
 	case <-ctx.Done():
-		return err
-	case v.errChan <- err:
+		return false
+	case errs <- err:
+		return true
 	}
-	return nil
 }
 
-func done(ctx context.Context) bool {
+func ctxDone(ctx context.Context) bool {
 	select {
 	case <-ctx.Done():
 		return true
 	default:
+		return false
 	}
-	return false
 }
 
-// ValidateObject validates the object at path
+// ValidateObject validates the object at path. It returns
+// only the first error encountered, canceling any
+// remaining validation tests
 func ValidateObject(path string) error {
-	ctx := context.Background()
-	v, _ := NewValidator(ctx, path)
-	for vErr := range v.ValidateObject(ctx, path) {
-		// cancel remaining validation on first error
-		v.Cancel()
-		return vErr
+	var returnErr error
+	obj, err := GetObject(path)
+	if err != nil {
+		return err
 	}
-	return nil
+	ctx, cancel := context.WithCancel(context.Background())
+	errs, complete := obj.Validate(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			// context was canceled
+			returnErr = NewErr(CtxCanceledErr, nil)
+			break
+		case <-complete():
+			// all tests completed
+			break
+		case err := <-errs:
+			returnErr = err
+			break
+		}
+		cancel()
+		return returnErr
+	}
 }
 
-// ValidateObject validates OCFL object located at path
-func (v *Validator) ValidateObject(ctx context.Context, path string) chan error {
+// Validate runs all validation tests on an object within
+// the given context. It returns a channel to receive
+// validation errors and a function that returns a closed
+// channel when all tests are completed. If the context
+// is canceled before all tests are complete, the complete
+// function remains open.
+func (obj *Object) Validate(ctx context.Context) (chan error, func() <-chan struct{}) {
+	errs := make(chan error)
+	complete := make(chan struct{})
+
+	// complete() function to signal that all tests complete
 	go func() {
-		defer close(v.errChan)
-		// Load Object
-		obj, err := GetObject(path)
-		if err != nil {
-			v.handleErr(ctx, err)
+		defer close(errs)
+
+		inv := &(obj.inventory)
+		alg := inv.DigestAlgorithm
+		man := inv.Manifest
+		path := obj.Path
+
+		// validate inventory structure
+		for err := range inv.validateStructure(ctx) {
+			if !sendErr(ctx, errs, err) {
+				return
+			}
+		}
+		if ctxDone(ctx) {
 			return
 		}
-		v.validateInventory(ctx, &(obj.inventory))
-		v.root = obj.Path
-		v.inventory = &obj.inventory
-		alg := v.inventory.DigestAlgorithm
-		// Validate Each Version Directory
-		files, ioErr := ioutil.ReadDir(path)
-		if ioErr != nil {
-			v.handleErr(ctx, NewErr(ReadErr, ioErr))
+
+		// validate version directories
+		files, err := ioutil.ReadDir(path)
+		if err != nil && !sendErr(ctx, errs, err) {
 			return
 		}
 		for _, f := range files {
-			// check if context is canceled
-			if done(ctx) {
-				break
-			}
 			if !f.IsDir() {
 				continue
 			}
+			if ctxDone(ctx) {
+				return
+			}
 			if style := versionFormat(f.Name()); style != `` {
-				v.validateVersionDir(ctx, f.Name())
+				for err := range obj.validateVerDir(ctx, f.Name()) {
+					if !sendErr(ctx, errs, err) {
+						return
+					}
+				}
 			}
 		}
-		// Manifest Checksum
-		for e := range v.inventory.Manifest.Validate(ctx, v.root, alg) {
-			v.errChan <- e
+		//Manifest Checksum
+		for err := range man.Validate(ctx, obj.Path, alg) {
+			if !sendErr(ctx, errs, err) {
+				return
+			}
 		}
 
-		// Fixity Checksum
-		// for alg, manifest := range v.inventory.Fixity {
-		// 	if err := manifest.Validate(v.root, alg); err != nil {
-		// 		retErr = err
-		// 	}
-		// }
-
+		//Fixity Checksum
+		for alg, manifest := range inv.Fixity {
+			for err := range manifest.Validate(ctx, path, alg) {
+				if !sendErr(ctx, errs, err) {
+					return
+				}
+			}
+		}
+		// signal that all tests complete
+		close(complete)
 	}()
-	return v.errChan
+	return errs, func() <-chan struct{} { return complete }
+
 }
 
-func (v *Validator) validateVersionDir(ctx context.Context, version string) {
-	invPath := filepath.Join(v.root, version, inventoryFileName)
-	inv, err := ReadValidateInventory(invPath)
-	if os.IsNotExist(err) {
-		log.Printf(`WARNING: Version %s has not inventory`, version)
-	} else if err != nil {
-		v.handleErr(ctx, err)
-	} else {
-		v.validateInventory(ctx, &inv)
-	}
-	// Check version content present in manifest
-	contPath := filepath.Join(v.root, version, `content`)
-	walk := func(path string, info os.FileInfo, err error) error {
-		if err != nil {
+func (obj *Object) validateVerDir(ctx context.Context, ver string) chan error {
+	errs := make(chan error)
 
-			return err
+	go func() {
+		defer close(errs)
+		path := obj.Path
+		invPath := filepath.Join(path, ver, inventoryFileName)
+		inv, err := ReadValidateInventory(invPath)
+		if os.IsNotExist(err) {
+			log.Printf(`WARNING: Version %s has not inventory`, ver)
+		} else if err != nil {
+			sendErr(ctx, errs, err)
+		} else {
+			inv.validateStructure(ctx)
 		}
-		if done(ctx) {
-			return errors.New(`stop walk`)
-		}
-		if !info.Mode().IsRegular() {
+		// Check version content present in manifest
+		contPath := filepath.Join(path, ver, `content`)
+		walk := func(fPath string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				return nil
+			}
+			ePath, pathErr := filepath.Rel(path, fPath)
+			if pathErr != nil {
+				return pathErr
+			}
+			if obj.inventory.Manifest.GetDigest(ePath) == `` {
+				sendErr(ctx, errs, NewErr(ManPathErr, nil))
+			}
 			return nil
 		}
-		ePath, pathErr := filepath.Rel(v.root, path)
-		if pathErr != nil {
-			return pathErr
-		}
-		if v.inventory.Manifest.GetDigest(ePath) == `` {
-			v.handleErr(ctx, NewErrf(ManPathErr, `not in manifest: %s`, ePath))
-		}
-		return nil
-	}
-	filepath.Walk(contPath, walk)
+		filepath.Walk(contPath, walk)
+	}()
+	return errs
 }
 
 // Validate returns a channel of checksum validation errors
@@ -193,66 +214,69 @@ func (cm ContentMap) Validate(ctx context.Context, dir string, alg string) chan 
 			}
 		}
 	}()
-
 	return errs
 }
 
 // validateInventory really just checks consistency of the inventory
-func (v *Validator) validateInventory(ctx context.Context, inv *Inventory) bool {
+func (inv *Inventory) validateStructure(ctx context.Context) chan error {
+	errs := make(chan error)
 
-	// Validate Inventory Structure:
-	if inv.ID == `` {
-		if v.handleErr(ctx, NewErr(InvIDErr, nil)) != nil {
-			return false
+	go func() {
+		defer close(errs)
+		// Validate Inventory Structure:
+		if inv.ID == `` {
+			if !sendErr(ctx, errs, NewErr(InvIDErr, nil)) {
+				return
+			}
 		}
-	}
-	if inv.Type != inventoryType {
-		if v.handleErr(ctx, NewErr(InvTypeErr, nil)) != nil {
-			return false
+		if inv.Type != inventoryType {
+			if !sendErr(ctx, errs, NewErr(InvTypeErr, nil)) {
+				return
+			}
 		}
-	}
-	if inv.DigestAlgorithm == `` {
-		if v.handleErr(ctx, NewErr(InvDigestErr, nil)) != nil {
-			return false
+		if inv.DigestAlgorithm == `` {
+			if !sendErr(ctx, errs, NewErr(InvDigestErr, nil)) {
+				return
+			}
+		} else if !stringIn(inv.DigestAlgorithm, digestAlgorithms[:]) {
+			if !sendErr(ctx, errs, NewErr(InvDigestErr, nil)) {
+				return
+			}
 		}
-	} else if !stringIn(inv.DigestAlgorithm, digestAlgorithms[:]) {
-		if v.handleErr(ctx, NewErr(InvDigestErr, nil)) != nil {
-			return false
+		if inv.Manifest == nil {
+			if !sendErr(ctx, errs, NewErr(InvNoManErr, nil)) {
+				return
+			}
 		}
-	}
-	if inv.Manifest == nil {
-		if v.handleErr(ctx, NewErr(InvNoManErr, nil)) != nil {
-			return false
+		if inv.Versions == nil {
+			if !sendErr(ctx, errs, NewErr(InvNoVerErr, nil)) {
+				return
+			}
 		}
-	}
-	if inv.Versions == nil {
-		if v.handleErr(ctx, NewErr(InvNoVerErr, nil)) != nil {
-			return false
-		}
-	}
-	// Validate Version Names in Inventory
-	var versions = inv.versionNames()
-	var padding int
-	if len(inv.Versions) > 0 {
-		padding = versionPadding(versions[0])
-		for i := range versions {
-			n, _ := versionGen(i+1, padding)
-			if _, ok := inv.Versions[n]; !ok {
-				if v.handleErr(ctx, NewErr(VerFormatErr, nil)) != nil {
-					return false
+		// Validate Version Names in Inventory
+		var versions = inv.versionNames()
+		var padding int
+		if len(inv.Versions) > 0 {
+			padding = versionPadding(versions[0])
+			for i := range versions {
+				n, _ := versionGen(i+1, padding)
+				if _, ok := inv.Versions[n]; !ok {
+					if !sendErr(ctx, errs, NewErr(VerFormatErr, nil)) {
+						return
+					}
 				}
 			}
 		}
-	}
-	// make sure every digest in version state is present in the manifest
-	for vname := range inv.Versions {
-		for digest := range inv.Versions[vname].State {
-			if inv.Manifest.LenDigest(digest) == 0 {
-				if v.handleErr(ctx, NewErr(ManDigestErr, nil)) != nil {
-					return false
+		// make sure every digest in version state is present in the manifest
+		for vname := range inv.Versions {
+			for digest := range inv.Versions[vname].State {
+				if inv.Manifest.LenDigest(digest) == 0 {
+					if !sendErr(ctx, errs, NewErr(ManDigestErr, nil)) {
+						return
+					}
 				}
 			}
 		}
-	}
-	return true
+	}()
+	return errs
 }
