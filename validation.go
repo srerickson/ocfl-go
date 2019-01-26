@@ -50,8 +50,7 @@ func (v *Validator) handleErr(ctx context.Context, err error) error {
 	select {
 	case <-ctx.Done():
 		return err
-	default:
-		v.errChan <- err
+	case v.errChan <- err:
 	}
 	return nil
 }
@@ -110,7 +109,9 @@ func (v *Validator) ValidateObject(ctx context.Context, path string) chan error 
 			}
 		}
 		// Manifest Checksum
-		v.validateContentMap(ctx, v.inventory.Manifest, alg)
+		for e := range v.inventory.Manifest.Validate(ctx, v.root, alg) {
+			v.errChan <- e
+		}
 
 		// Fixity Checksum
 		// for alg, manifest := range v.inventory.Fixity {
@@ -158,38 +159,42 @@ func (v *Validator) validateVersionDir(ctx context.Context, version string) {
 	filepath.Walk(contPath, walk)
 }
 
-// validateContentMap checks
-func (v *Validator) validateContentMap(ctx context.Context, cm ContentMap, alg string) int {
-	var checked int
+// Validate returns a channel of checksum validation errors
+func (cm ContentMap) Validate(ctx context.Context, dir string, alg string) chan error {
 	in := make(chan checksumJob)
+	errs := make(chan error)
 	go func() {
-		for dp := range cm.Iterate() {
+		defer close(in)
+		for file := range cm.Iterate() {
 			select {
 			case <-ctx.Done():
 				// drain cm Iterate
+			case in <- checksumJob{
+				path:     filepath.Join(dir, file.Path),
+				alg:      alg,
+				expected: file.Digest,
+			}:
+			}
+		}
+	}()
+	go func() {
+		defer close(errs)
+		for result := range digester(ctx, in) {
+			select {
+			case <-ctx.Done():
+				return
 			default:
-				in <- checksumJob{
-					path:     filepath.Join(v.root, dp.Path),
-					alg:      alg,
-					expected: string(dp.Digest),
+				if result.err != nil {
+					errs <- result.err
+				} else if result.sum != result.expected {
+					// FIXME: include path in error
+					errs <- NewErr(ContentChecksumErr, nil)
 				}
 			}
-
 		}
-		close(in)
 	}()
-	for result := range digester(ctx, in) {
-		if result.err != nil {
-			v.handleErr(ctx, result.err)
-			continue
-		}
-		if result.sum != result.expected {
-			v.handleErr(ctx, NewErr(ContentChecksumErr, nil))
-		} else {
-			checked++
-		}
-	}
-	return checked
+
+	return errs
 }
 
 // validateInventory really just checks consistency of the inventory

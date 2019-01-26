@@ -26,10 +26,13 @@ func TestCancelDigester(t *testing.T) {
 
 	// this job should not
 	jobs <- job
-	r = <-results
-	if r.sum != `` || r.err == nil {
-		t.Errorf(`expected no sum and an error, but got %s`, r.sum)
+	select {
+	case <-results:
+		t.Error(`don't expect a result`)
+	case <-ctx.Done():
+
 	}
+
 }
 
 func TestConcurrentDigest(t *testing.T) {
@@ -39,26 +42,12 @@ func TestConcurrentDigest(t *testing.T) {
 		t.Error(err)
 	}
 
-	// FIXME: clean this mess up
-	ctx := context.Background()
-	var v Validator
-	v.errChan = make(chan error)
-	v.root = `test`
-	var checked int
-	go func() {
-		checked = v.validateContentMap(ctx, cm, `sha1`)
-		close(v.errChan)
-	}()
-
-	for e := range v.errChan {
-		err = e
-	}
-	if err != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	for err = range cm.Validate(ctx, `test`, `sha1`) {
 		t.Error(err)
+		break
 	}
-	if cm.Len() != checked {
-		t.Errorf(`expected %d files to be checked`, checked)
-	}
+	cancel()
 
 	// should get error with invalid path
 	_, err = ConcurrentDigest(`none`, `sha1`)

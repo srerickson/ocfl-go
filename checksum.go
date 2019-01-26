@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -107,20 +108,21 @@ func digester(ctx context.Context, in <-chan checksumJob) <-chan checksumJob {
 	if NumDigesters < 1 {
 		NumDigesters = 1
 	}
+	wg.Add(NumDigesters)
 	for i := 0; i < NumDigesters; i++ {
-		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for job := range in {
 				select {
 				case <-ctx.Done():
-					job.err = NewErr(CtxCanceledErr, nil)
+					return
 				default:
 					if job.err == nil {
 						job.sum, job.err = Checksum(job.alg, job.path)
 					}
+					out <- job
 				}
-				out <- job
+
 			}
 		}()
 	}
@@ -135,37 +137,46 @@ func digester(ctx context.Context, in <-chan checksumJob) <-chan checksumJob {
 // using Hash algorithm alg, returning results as a ContentMap
 func ConcurrentDigest(dir string, alg string) (ContentMap, error) {
 	var cm ContentMap
-	var ctx = context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
 	jobIn := make(chan checksumJob)
 	walkErr := make(chan error, 1)
-	// input queue
+
+	// walk files in dir
 	go func() {
+		defer close(jobIn)
+		defer close(walkErr)
 		walk := func(p string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}
 			if info.Mode().IsRegular() {
-				jobIn <- checksumJob{path: p, alg: alg}
+				select {
+				case jobIn <- checksumJob{path: p, alg: alg}:
+				case <-ctx.Done(): // cancel() called
+					return errors.New(`walk canceled`)
+				}
+
 			}
 			return nil
 		}
 		walkErr <- filepath.Walk(dir, walk)
-		close(jobIn)
-		close(walkErr)
 	}()
 
-	var lastErr error
+	// stream results into ContentMap
 	for job := range digester(ctx, jobIn) {
 		if job.err != nil {
-			lastErr = job.err
-		} else {
-			relPath, _ := filepath.Rel(dir, job.path)
-			cm.Add(job.sum, relPath)
+			cancel() // cancel filepath.Walk
+			return cm, job.err
 		}
+		relPath, _ := filepath.Rel(dir, job.path)
+		cm.Add(job.sum, relPath)
 	}
 
+	// Handle filepath.Walk errs
 	if err := <-walkErr; err != nil {
-		lastErr = err
+		cancel()
+		return cm, err
 	}
-	return cm, lastErr
+	cancel()
+	return cm, nil
 }
