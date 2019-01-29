@@ -152,3 +152,22 @@ func (o *Object) nextVersion() (string, error) {
 	}
 	return nextVersionLike(o.inventory.Head)
 }
+
+// versionDirs returns a list of version directories
+// found in the Object path
+func (o *Object) versionDirs() ([]string, error) {
+	var dirs []string
+	ls, err := ioutil.ReadDir(o.Path)
+	if err != nil {
+		return dirs, err
+	}
+	for i := range ls {
+		if !ls[i].IsDir() {
+			continue
+		}
+		if versionFormat(ls[i].Name()) != `` {
+			dirs = append(dirs, ls[i].Name())
+		}
+	}
+	return dirs, nil
+}

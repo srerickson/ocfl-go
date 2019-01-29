@@ -16,14 +16,13 @@ package ocfl
 
 import (
 	"context"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
 )
 
-// handleErr sends the error over the channel if the
-// context is still active, otherwise it returns the error
+// sendErr sends the error over the channel if ctx is still active.
+// It returns true if the error was sent, false otherwise.
 func sendErr(ctx context.Context, errs chan error, err error) bool {
 	select {
 	case <-ctx.Done():
@@ -46,29 +45,21 @@ func ctxDone(ctx context.Context) bool {
 // only the first error encountered, canceling any
 // remaining validation tests
 func ValidateObject(path string) error {
-	var returnErr error
+	var err error
 	obj, err := GetObject(path)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	errs, complete := obj.Validate(ctx)
-	for {
-		select {
-		case <-ctx.Done():
-			// context was canceled
-			returnErr = NewErr(CtxCanceledErr, nil)
-			break
-		case <-complete():
-			// all tests completed
-			break
-		case err := <-errs:
-			returnErr = err
-			break
-		}
-		cancel()
-		return returnErr
+	for err = range obj.Validate(ctx) {
+		break
 	}
+	// good practice to check that context wasn't canceled
+	// if ctxErr := ctx.Err(); ctxErr != nil {
+	// 	err = ctxErr
+	// }
+	cancel()
+	return err
 }
 
 // Validate runs all validation tests on an object within
@@ -77,11 +68,9 @@ func ValidateObject(path string) error {
 // channel when all tests are completed. If the context
 // is canceled before all tests are complete, the complete
 // function remains open.
-func (obj *Object) Validate(ctx context.Context) (chan error, func() <-chan struct{}) {
+func (obj *Object) Validate(ctx context.Context) chan error {
 	errs := make(chan error)
-	complete := make(chan struct{})
 
-	// complete() function to signal that all tests complete
 	go func() {
 		defer close(errs)
 
@@ -91,34 +80,30 @@ func (obj *Object) Validate(ctx context.Context) (chan error, func() <-chan stru
 		path := obj.Path
 
 		// validate inventory structure
-		for err := range inv.validateStructure(ctx) {
-			if !sendErr(ctx, errs, err) {
+		var invErr error
+		for invErr = range inv.validateStructure(ctx) {
+			if !sendErr(ctx, errs, invErr) {
 				return
 			}
 		}
-		if ctxDone(ctx) {
+
+		// don't continue if inventory is broken
+		if invErr != nil {
 			return
 		}
 
 		// validate version directories
-		files, err := ioutil.ReadDir(path)
+		vDirs, err := obj.versionDirs()
 		if err != nil && !sendErr(ctx, errs, err) {
 			return
 		}
-		for _, f := range files {
-			if !f.IsDir() {
-				continue
-			}
-			if ctxDone(ctx) {
-				return
-			}
-			if style := versionFormat(f.Name()); style != `` {
-				for err := range obj.validateVerDir(ctx, f.Name()) {
-					if !sendErr(ctx, errs, err) {
-						return
-					}
+		for _, dir := range vDirs {
+			for err := range obj.validateVerDir(ctx, dir) {
+				if !sendErr(ctx, errs, err) {
+					return
 				}
 			}
+
 		}
 		//Manifest Checksum
 		for err := range man.Validate(ctx, obj.Path, alg) {
@@ -126,7 +111,6 @@ func (obj *Object) Validate(ctx context.Context) (chan error, func() <-chan stru
 				return
 			}
 		}
-
 		//Fixity Checksum
 		for alg, manifest := range inv.Fixity {
 			for err := range manifest.Validate(ctx, path, alg) {
@@ -135,11 +119,8 @@ func (obj *Object) Validate(ctx context.Context) (chan error, func() <-chan stru
 				}
 			}
 		}
-		// signal that all tests complete
-		close(complete)
 	}()
-	return errs, func() <-chan struct{} { return complete }
-
+	return errs
 }
 
 func (obj *Object) validateVerDir(ctx context.Context, ver string) chan error {
@@ -147,18 +128,24 @@ func (obj *Object) validateVerDir(ctx context.Context, ver string) chan error {
 
 	go func() {
 		defer close(errs)
-		path := obj.Path
-		invPath := filepath.Join(path, ver, inventoryFileName)
+
+		invPath := filepath.Join(obj.Path, ver, inventoryFileName)
 		inv, err := ReadValidateInventory(invPath)
+
 		if os.IsNotExist(err) {
 			log.Printf(`WARNING: Version %s has not inventory`, ver)
 		} else if err != nil {
 			sendErr(ctx, errs, err)
 		} else {
-			inv.validateStructure(ctx)
+			for err := range inv.validateStructure(ctx) {
+				if !sendErr(ctx, errs, err) {
+					return
+				}
+			}
 		}
+
 		// Check version content present in manifest
-		contPath := filepath.Join(path, ver, `content`)
+		contPath := filepath.Join(obj.Path, ver, `content`)
 		walk := func(fPath string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err
@@ -166,7 +153,7 @@ func (obj *Object) validateVerDir(ctx context.Context, ver string) chan error {
 			if !info.Mode().IsRegular() {
 				return nil
 			}
-			ePath, pathErr := filepath.Rel(path, fPath)
+			ePath, pathErr := filepath.Rel(obj.Path, fPath)
 			if pathErr != nil {
 				return pathErr
 			}
@@ -203,6 +190,7 @@ func (cm ContentMap) Validate(ctx context.Context, dir string, alg string) chan 
 		for result := range digester(ctx, in) {
 			select {
 			case <-ctx.Done():
+				errs <- NewErr(CtxCanceledErr, nil)
 				return
 			default:
 				if result.err != nil {
