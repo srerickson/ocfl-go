@@ -1,10 +1,10 @@
-# Floc
+# OCFL
 
 [![](https://godoc.org/github.com/srerickson/ocfl?status.svg)](https://godoc.org/github.com/srerickson/ocfl)
 [![Go Report Card](https://goreportcard.com/badge/github.com/srerickson/ocfl)](https://goreportcard.com/report/github.com/srerickson/ocfl)
 [![Build Status](https://travis-ci.org/srerickson/ocfl.svg?branch=master)](https://travis-ci.org/srerickson/ocfl)
 
-Floc is a library for workign with [OCFL](https://ocfl.io/) objects, written in Go. 
+This is a library for workign with [OCFL](https://ocfl.io/) objects, written in Go. 
 
 *It is work-in-progress and **should not** be used IRL*.
 
