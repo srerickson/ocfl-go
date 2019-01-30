@@ -1,14 +1,16 @@
-# OCFL in Go
+# Floc
 
 [![](https://godoc.org/github.com/srerickson/ocfl?status.svg)](https://godoc.org/github.com/srerickson/ocfl)
 [![Go Report Card](https://goreportcard.com/badge/github.com/srerickson/ocfl)](https://goreportcard.com/report/github.com/srerickson/ocfl)
 [![Build Status](https://travis-ci.org/srerickson/ocfl.svg?branch=master)](https://travis-ci.org/srerickson/ocfl)
 
-This is an implementation of [OCFL](https://ocfl.io/) in Go. *This is work-in-progress and **should not** be used IRL*.
+Floc is a library for workign with [OCFL](https://ocfl.io/) objects, written in Go. 
 
-# Usage
+*It is work-in-progress and **should not** be used IRL*.
 
-## Create/Update an OCFL Object
+## Usage
+
+### Create/Update an OCFL Object
 
 ```go
 // Create a new empty object
