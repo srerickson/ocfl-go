@@ -30,6 +30,7 @@ const (
 )
 
 // Object represents an OCFL Object
+// TODO: replace with ObjectReader / ObjectWriter
 type Object struct {
 	Path      string
 	inventory Inventory
