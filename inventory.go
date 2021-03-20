@@ -35,27 +35,28 @@ var invSidecarRexp = regexp.MustCompile(`inventory\.json\.(\w+)`)
 
 // Inventory represents contents of an OCFL Object's inventory.json file
 type Inventory struct {
-	ID              string                `json:"id"`
-	Type            string                `json:"type"`
-	DigestAlgorithm string                `json:"digestAlgorithm"`
-	Head            string                `json:"head"`
-	Manifest        ContentMap            `json:"manifest"`
-	Versions        map[string]Version    `json:"versions"`
-	Fixity          map[string]ContentMap `json:"fixity"`
+	ID               string                `json:"id"`
+	Type             string                `json:"type"`
+	DigestAlgorithm  string                `json:"digestAlgorithm"`
+	Head             string                `json:"head"`
+	ContentDirectory string                `json:"contentDirectory,omitempty"`
+	Manifest         ContentMap            `json:"manifest"`
+	Versions         map[string]Version    `json:"versions"`
+	Fixity           map[string]ContentMap `json:"fixity,omitempty"`
 }
 
 // Version represent a version entryin inventory.json
 type Version struct {
 	Created time.Time  `json:"created"`
-	Message string     `json:"message"`
-	User    User       `json:"user"`
 	State   ContentMap `json:"state"`
+	Message string     `json:"message,omitempty"`
+	User    User       `json:"user,omitempty"`
 }
 
 // User represent a Version's user entry
 type User struct {
 	Name    string `json:"name"`
-	Address string `json:"address"`
+	Address string `json:"address,omitempty"`
 }
 
 // NewInventory returns a new, empty inventory with default values
