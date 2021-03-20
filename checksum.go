@@ -96,7 +96,7 @@ func newHash(alg string) (hash.Hash, error) {
 	case MD5:
 		h = md5.New()
 	default:
-		return nil, fmt.Errorf(`Unknown checksum algorithm: %s`, alg)
+		return nil, fmt.Errorf(`unknown checksum algorithm: %s`, alg)
 	}
 	return h, nil
 }

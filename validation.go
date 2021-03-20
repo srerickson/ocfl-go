@@ -32,14 +32,14 @@ func sendErr(ctx context.Context, errs chan error, err error) bool {
 	}
 }
 
-func ctxDone(ctx context.Context) bool {
-	select {
-	case <-ctx.Done():
-		return true
-	default:
-		return false
-	}
-}
+// func ctxDone(ctx context.Context) bool {
+// 	select {
+// 	case <-ctx.Done():
+// 		return true
+// 	default:
+// 		return false
+// 	}
+// }
 
 // ValidateObject validates the object at path. It returns
 // only the first error encountered, canceling any

@@ -90,19 +90,19 @@ func TestNewObject(t *testing.T) {
 }
 
 func TestGetObject(t *testing.T) {
-	o, err := GetObject(`nothing`)
+	_, err := GetObject(`nothing`)
 	if err == nil {
 		t.Error(`expected an error`)
 	}
-	path := filepath.Join(`test`, `fixtures`, `1.0`, `bad-objects`, `bad03_no_inv`)
-	o, err = GetObject(path)
+	path := filepath.Join(`test`, `fixtures`, `1.0`, `bad-objects`, `E034_no_inv`)
+	_, err = GetObject(path)
 	if err == nil {
 		t.Error(`expected an error`)
 	}
-	path = filepath.Join(`test`, `fixtures`, `1.0`, `objects`, `spec-ex-full`)
-	o, err = GetObject(path)
+	path = filepath.Join(`test`, `fixtures`, `1.0`, `good-objects`, `spec-ex-full`)
+	o, err := GetObject(path)
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
 	_, err = o.Open(filepath.Join(`foo`, `bar.xml`))
 	if err != nil {
@@ -111,7 +111,7 @@ func TestGetObject(t *testing.T) {
 }
 
 func TestObjectIterate(t *testing.T) {
-	path := filepath.Join(`test`, `fixtures`, `1.0`, `objects`, `spec-ex-full`)
+	path := filepath.Join(`test`, `fixtures`, `1.0`, `good-objects`, `spec-ex-full`)
 	o, err := GetObject(path)
 	if err != nil {
 		t.Error(err)

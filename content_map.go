@@ -35,7 +35,7 @@ type File struct {
 }
 
 // used only for (un)marshalling
-type jsonPath string
+// type jsonPath string
 
 //
 // ContentMap Functions
@@ -66,11 +66,7 @@ func (cm *ContentMap) insert(digest string, path string) {
 	if *cm == nil {
 		*cm = ContentMap{}
 	}
-	if _, ok := (*cm)[digest]; ok {
-		(*cm)[digest] = append((*cm)[digest], path)
-	} else {
-		(*cm)[digest] = []string{path}
-	}
+	(*cm)[digest] = append((*cm)[digest], path)
 }
 
 // delete deletes digest->path pair without any checks
