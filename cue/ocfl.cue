@@ -1,24 +1,20 @@
 {
 	#Inventory
-
 	#Inventory: {
-		id:                string
+		id:                Id
 		type:              *"https://ocfl.io/1.0/spec/#inventory" | string
-		digestAlgorithm:   #Algs
-		head:              =~"v[0-9]+"
+		digestAlgorithm:   Algs
+		head:              Version
 		contentDirectory?: *"content" | string
-		manifest:          #Manifest
-		versions: [=~"v[0-9]+"]: #Version
-		fixity: [#Algs]: [string]: [...string]
+		manifest:          #ContentMap
+		versions: [Version]: #Version
+		versions: [head]: #Version
+		fixity: [Algs]: #ContentMap
 	}
 
-	#Manifest: [=~"[a-z0-9]+"]: [... string]
-	#Manifest: [string]: [... !~"^[.\/]"]
-	#Manifest: [string]: [... !~"/$"]
-
 	#Version: {
-		created: =~"^([0-9]{4})-([0-9]{2})-([0-9]{2})([Tt]([0-9]{2}):([0-9]{2}):([0-9]{2})(\\.[0-9]+)?)?(([Zz]|([+-])([0-9]{2}):([0-9]{2})))"
-		state: [string]: [string, ...]
+		created:  =~"^([0-9]{4})-([0-9]{2})-([0-9]{2})([Tt]([0-9]{2}):([0-9]{2}):([0-9]{2})(\\.[0-9]+)?)?(([Zz]|([+-])([0-9]{2}):([0-9]{2})))"
+		state:    #ContentMap
 		message?: string
 		user?: {
 			name:     string
@@ -26,9 +22,11 @@
 		}
 	}
 
-	#Version: state: [=~"[a-z0-9]+"]: [... string]
-	#Version: state: [string]: [... !~"^[.\/]"]
-	#Version: state: [string]: [... !~"/$"]
+	#ContentMap: [Digest]: [... Paths]
 
-	#Algs: "md5" | "sha256" | "sha512" | "sha1" | "blake2b-512"
+	let Algs = "md5" | "sha256" | "sha512" | "sha1" | "blake2b-512"
+	let Id = !=""
+	let Paths = !~"^[\/]" & !~"/$"
+	let Digest = =~"^[a-zA-Z0-9]+$"
+	let Version = =~"^v[0-9]+$"
 }
