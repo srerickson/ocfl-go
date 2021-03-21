@@ -34,31 +34,3 @@ func TestCancelDigester(t *testing.T) {
 	}
 
 }
-
-func TestConcurrentDigest(t *testing.T) {
-
-	cm, err := ConcurrentDigest(`test`, `sha1`)
-	if err != nil {
-		t.Error(err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	for err = range cm.Validate(ctx, `test`, `sha1`) {
-		t.Error(err)
-		break
-	}
-	cancel()
-
-	// should get error with invalid path
-	_, err = ConcurrentDigest(`none`, `sha1`)
-	if err == nil {
-		t.Error(`expected an error`)
-	}
-
-	// should get error with invalid algorithm
-	_, err = ConcurrentDigest(`test`, `sha`)
-	if err == nil {
-		t.Error(`expected an error`)
-	}
-
-}

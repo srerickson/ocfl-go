@@ -6,6 +6,12 @@ import (
 	"io/fs"
 )
 
+const (
+	namasteObjectTValue = `ocfl_object_1.0`
+	namasteObjectFValue = "ocfl_object_\n"
+	inventoryFileName   = `inventory.json`
+)
+
 // ObjectReader represents a readable OCFL Object
 type ObjectReader struct {
 	root      fs.FS // root fs
