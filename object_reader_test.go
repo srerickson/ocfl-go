@@ -15,7 +15,7 @@ func TestObjectReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = obj.CUEValudate()
+	err = obj.Validate()
 	if err != nil {
 		t.Fatal(err)
 	}

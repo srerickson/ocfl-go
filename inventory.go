@@ -15,6 +15,10 @@
 package ocfl
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"strings"
 	"time"
 )
 
@@ -32,7 +36,7 @@ type Inventory struct {
 	Head             string                `json:"head"`
 	ContentDirectory string                `json:"contentDirectory,omitempty"`
 	Manifest         ContentMap            `json:"manifest"`
-	Versions         map[string]Version    `json:"versions"`
+	Versions         map[string]*Version   `json:"versions"`
 	Fixity           map[string]ContentMap `json:"fixity,omitempty"`
 }
 
@@ -48,4 +52,58 @@ type Version struct {
 type User struct {
 	Name    string `json:"name"`
 	Address string `json:"address,omitempty"`
+}
+
+func ReadInventory(file io.Reader) (*Inventory, error) {
+	inv := &Inventory{}
+	decoder := json.NewDecoder(file)
+	decoder.DisallowUnknownFields()
+	err := decoder.Decode(inv)
+	if err != nil {
+		switch err.(type) {
+		case *time.ParseError:
+			return nil, fmt.Errorf(`date/time format error in inventory.json: %w`, &ErrE049)
+		case *json.UnmarshalTypeError:
+			if strings.Contains(err.Error(), `Inventory.head`) {
+				return nil, fmt.Errorf(`failed to parse head in inventory.json: %w`, &ErrE040)
+			}
+			// Todo other special cases?
+			return nil, fmt.Errorf("%s: %w", err.Error(), &ErrE034)
+		}
+		return nil, err
+	}
+	return inv, nil
+}
+
+func (inv *Inventory) Validate() error {
+
+	// one or more versions are present
+	if len(inv.Versions) == 0 {
+		return fmt.Errorf(`inventory missing 'versions' field: %w`, &ErrE008)
+	}
+	// id is present
+	if inv.ID == "" {
+		return fmt.Errorf(`inventory missing 'id' field: %w`, &ErrE036)
+	}
+	// type is present
+	if inv.ID == "" {
+		return fmt.Errorf(`inventory missing 'type' field: %w`, &ErrE036)
+	}
+	if inv.DigestAlgorithm == "" {
+		return fmt.Errorf(`inventory missing 'digestAlgorithm' field: %w`, &ErrE036)
+	}
+	// head is present
+	if inv.Head == "" {
+		return fmt.Errorf(`inventory missing 'head' field: %w`, &ErrE036)
+	}
+	// head is a version
+	if inv.Versions[inv.Head] == nil {
+		return fmt.Errorf(`inventory 'head' value does not correspond to a version: %w`, &ErrE040)
+	}
+	// manifest is present
+	if inv.Manifest == nil {
+		return fmt.Errorf(`inventory missing 'manifest' field: %w`, &ErrE041)
+	}
+
+	return nil
 }

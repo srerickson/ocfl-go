@@ -10,6 +10,6 @@ func init() {
 }
 
 //CUEVAlidate validates using cue
-func (i *Inventory) CUEValudate() error {
+func (i *Inventory) CUEValidate() error {
 	return cuego.Validate(i)
 }
