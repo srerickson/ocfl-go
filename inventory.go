@@ -15,15 +15,14 @@
 package ocfl
 
 import (
-	"regexp"
 	"time"
 )
 
 const (
-	inventoryType = `https://ocfl.io/1.0/spec/#inventory`
+//inventoryType = `https://ocfl.io/1.0/spec/#inventory`
 )
 
-var invSidecarRexp = regexp.MustCompile(`inventory\.json\.(\w+)`)
+//var invSidecarRexp = regexp.MustCompile(`inventory\.json\.(\w+)`)
 
 // Inventory represents contents of an OCFL Object's inventory.json file
 type Inventory struct {

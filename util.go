@@ -22,7 +22,7 @@ import (
 	"strconv"
 )
 
-const version1 = `v1`
+//const version1 = `v1`
 
 var versionFormats = map[string]*regexp.Regexp{
 	`padded`:   regexp.MustCompile(`v0\d+`),

@@ -50,17 +50,17 @@ var digestAlgorithms = [...]string{
 	BLAKE2B,
 }
 
-var defaultAlgorithm = SHA512
+//var defaultAlgorithm = SHA512
 
 // NumDigesters sets concurrency for Digest
 var NumDigesters = runtime.GOMAXPROCS(0)
 
 type checksumJob struct {
-	path     string
-	alg      string
-	sum      string
-	expected string
-	err      error
+	path string
+	alg  string
+	sum  string
+	//	expected string
+	err error
 }
 
 // Checksum returns checksum of file at path using algorithm alg
