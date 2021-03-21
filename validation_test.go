@@ -41,6 +41,20 @@ var badObjects = []objValidationTest{
 	{filepath.Join(badObjPath, "E064_different_root_and_latest_inventories"), []error{&ocfl.ErrE064}},
 	{filepath.Join(badObjPath, "E067_file_in_extensions_dir"), []error{&ocfl.ErrE067}},
 	{filepath.Join(badObjPath, "E095_conflicting_logical_paths"), []error{&ocfl.ErrE095}},
+
+	// https://github.com/zimeon/ocfl-py/tree/main/extra_fixtures/bad-objects
+	// Fixtures referenced below are copyright (c) 2018 Simeon Warner, MIT License
+	{filepath.Join(badObjPath, "E009_version_two_only"), []error{&ocfl.ErrE009}},
+	{filepath.Join(badObjPath, "E033_inventory_bad_json"), []error{&ocfl.ErrE033}},
+	{filepath.Join(badObjPath, "E042_bad_manifest_content_path"), []error{&ocfl.ErrE042}},
+	{filepath.Join(badObjPath, "E046_missing_version_dir"), []error{&ocfl.ErrE046}},
+	{filepath.Join(badObjPath, "E050_state_digest_different_case"), []error{&ocfl.ErrE050}},
+	{filepath.Join(badObjPath, "E050_state_repeated_digest"), []error{&ocfl.ErrE050}},
+	{filepath.Join(badObjPath, "E092_bad_manifest_digest"), []error{&ocfl.ErrE092}},
+	{filepath.Join(badObjPath, "E094_message_not_a_string"), []error{&ocfl.ErrE094}},
+	{filepath.Join(badObjPath, "E096_manifest_repeated_digest"), []error{&ocfl.ErrE096}},
+	{filepath.Join(badObjPath, "E097_fixity_repeated_digest"), []error{&ocfl.ErrE097}},
+	{filepath.Join(badObjPath, "E099_bad_content_path_elements"), []error{&ocfl.ErrE099}},
 }
 
 func TestValidation(t *testing.T) {
