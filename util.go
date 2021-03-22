@@ -17,6 +17,7 @@ package ocfl
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"regexp"
 	"strconv"
@@ -84,3 +85,17 @@ func nextVersionLike(prev string) (string, error) {
 // 	}
 // 	return false
 // }
+
+func deleteDirEntry(list []fs.DirEntry, name string, isDir bool) ([]fs.DirEntry, fs.DirEntry) {
+	cut := -1
+	for i, f := range list {
+		if f.IsDir() == isDir && f.Name() == name {
+			cut = i
+		}
+	}
+	if cut > -1 {
+		ret := list[cut]
+		return append(list[:cut], list[cut+1:]...), ret
+	}
+	return list, nil
+}

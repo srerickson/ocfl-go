@@ -16,10 +16,8 @@ package ocfl
 
 import (
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -79,7 +77,6 @@ func (cm *ContentMap) delete(digest string, i int) {
 
 // Exists returns true if digest/path pair exist in ContentMap
 func (cm ContentMap) Exists(digest string, path string) bool {
-	validPath(&path)
 	_, ok := cm.getIdx(digest, path)
 	return ok
 }
@@ -87,7 +84,6 @@ func (cm ContentMap) Exists(digest string, path string) bool {
 // GetDigest returns the digest of path in the Content Map.
 // Returns an empty digest if not found
 func (cm ContentMap) GetDigest(path string) string {
-	validPath(&path)
 	digest, _ := cm.lookup(path)
 	return digest
 }
@@ -122,7 +118,7 @@ func (cm ContentMap) Len() int {
 
 // Add adds a digest->path map to the ContentMap. Returns an error if path is already present.
 func (cm *ContentMap) Add(digest string, path string) error {
-	if err := validPath(&path); err != nil {
+	if err := validPath(path); err != nil {
 		return err
 	}
 	if cm.GetDigest(path) != `` {
@@ -134,7 +130,7 @@ func (cm *ContentMap) Add(digest string, path string) error {
 
 // AddReplace adds a Digest->Path map, removing previously existing path if necessary
 func (cm *ContentMap) AddReplace(digest string, path string) error {
-	if err := validPath(&path); err != nil {
+	if err := validPath(path); err != nil {
 		return err
 	}
 	prev, i := cm.lookup(path)
@@ -151,7 +147,7 @@ func (cm *ContentMap) AddReplace(digest string, path string) error {
 // a digest. AddDeduplicate is used to add digests/paths to manifests that
 // implement deduplication.
 func (cm *ContentMap) AddDeduplicate(digest string, path string) (bool, error) {
-	if err := validPath(&path); err != nil {
+	if err := validPath(path); err != nil {
 		return false, err
 	}
 	if cm.GetDigest(path) != `` {
@@ -166,10 +162,7 @@ func (cm *ContentMap) AddDeduplicate(digest string, path string) (bool, error) {
 
 // Rename renames src path to dst. Returns an error if dst already exists or src is not found
 func (cm *ContentMap) Rename(src string, dst string) error {
-	if err := validPath(&src); err != nil {
-		return err
-	}
-	if err := validPath(&dst); err != nil {
+	if err := validPath(dst); err != nil {
 		return err
 	}
 	if cm.GetDigest(dst) != `` {
@@ -185,7 +178,7 @@ func (cm *ContentMap) Rename(src string, dst string) error {
 
 // Remove removes path from the ContentMap and returns the digest. Returns error if path is not found
 func (cm *ContentMap) Remove(path string) (string, error) {
-	if err := validPath(&path); err != nil {
+	if err := validPath(path); err != nil {
 		return ``, err
 	}
 	digest, i := cm.lookup(path)
@@ -237,60 +230,14 @@ func (cm ContentMap) EqualTo(cm2 ContentMap) bool {
 	return cm.Subset(cm2) && cm2.Subset(cm)
 }
 
-// UnmarshalJSON implements the Unmarshaler interface for ContentMap.
-func (cm *ContentMap) UnmarshalJSON(jsonData []byte) error {
-	var tmpMap map[string][]string
-	if err := json.Unmarshal(jsonData, &tmpMap); err != nil {
-		return err
-	}
-	*cm = ContentMap(tmpMap)
-	for digest := range *cm {
-		if err := validDigest(digest); err != nil {
-			return err
-		}
-		for i := range (*cm)[digest] {
-			newPath := (*cm)[digest][i]
-			if err := validPath(&newPath); err != nil {
-				return err
-			}
-			(*cm)[digest][i] = filepath.FromSlash(newPath)
-		}
-	}
-	return nil
-}
-
-// MarshalJSON implements the Unmarshaler interface for ContentMap.
-func (cm ContentMap) MarshalJSON() ([]byte, error) {
-	tmp := map[string][]string{}
-	for digest := range cm {
-		if err := validDigest(digest); err != nil {
-			return nil, err
-		}
-		tmp[digest] = make([]string, len(cm[digest]))
-		sort.Strings(cm[digest])
-		for i := range cm[digest] {
-			newPath := cm[digest][i]
-			if err := validPath(&newPath); err != nil {
-				return nil, err
-			}
-			tmp[digest][i] = filepath.ToSlash(newPath)
-		}
-	}
-	return json.Marshal(&tmp)
-
-}
-
-// validPath cleans and validates path
-func validPath(path *string) error {
-	cleanPath := filepath.Clean(*path)
+// validPath returns
+func validPath(path string) error {
+	cleanPath := filepath.Clean(path)
 	if filepath.IsAbs(cleanPath) {
 		return fmt.Errorf(`path must be relative: %s`, cleanPath)
 	}
 	if strings.HasPrefix(cleanPath, `..`) {
 		return fmt.Errorf(`path is out of scope: %s`, cleanPath)
-	}
-	if *path != cleanPath {
-		*path = cleanPath
 	}
 	return nil
 }
