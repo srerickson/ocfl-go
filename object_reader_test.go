@@ -8,8 +8,6 @@ import (
 	"github.com/srerickson/ocfl"
 )
 
-//var warnObjPath = filepath.Join(fixturePath, `warn-objects`)
-
 func TestObjectReader(t *testing.T) {
 	obj, err := ocfl.NewObjectReader(os.DirFS(filepath.Join(goodObjPath, `spec-ex-full`)))
 	if err != nil {

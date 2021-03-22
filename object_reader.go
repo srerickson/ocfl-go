@@ -72,9 +72,9 @@ func (obj *ObjectReader) readInventory() error {
 	return nil
 }
 
-type versionOpenFunc func(name string) (fs.File, error)
+type fsOpenFunc func(name string) (fs.File, error)
 
-func (f versionOpenFunc) Open(name string) (fs.File, error) {
+func (f fsOpenFunc) Open(name string) (fs.File, error) {
 	return f(name)
 }
 
@@ -85,7 +85,7 @@ func (obj *ObjectReader) VersionFS(vname string) (fs.FS, error) {
 		return nil, fmt.Errorf(`Version not found: %s`, vname)
 	}
 
-	var open versionOpenFunc = func(logicalPath string) (fs.File, error) {
+	var open fsOpenFunc = func(logicalPath string) (fs.File, error) {
 		// TODO: This search should be a Version method
 		for digest, paths := range v.State {
 			for _, p := range paths {

@@ -57,7 +57,12 @@ type User struct {
 func ReadInventory(file io.Reader) (*Inventory, error) {
 	inv := &Inventory{}
 	decoder := json.NewDecoder(file)
-	decoder.DisallowUnknownFields()
+
+	// The OCFL spec (v1.0) allows uknown fields in some places (in
+	// Versions, for examples). Using DisallowUnknownFields() would
+	// invalidate some valid objects. Best to leave this disabled.
+	// decoder.DisallowUnknownFields()
+
 	err := decoder.Decode(inv)
 	if err != nil {
 		switch err.(type) {
@@ -67,10 +72,13 @@ func ReadInventory(file io.Reader) (*Inventory, error) {
 			if strings.Contains(err.Error(), `Inventory.head`) {
 				return nil, fmt.Errorf(`failed to parse head in inventory.json: %w`, &ErrE040)
 			}
+			if strings.Contains(err.Error(), `Version.versions.message`) {
+				return nil, fmt.Errorf(`failed to parese version message in inventory.json: %w`, &ErrE094)
+			}
 			// Todo other special cases?
-			return nil, fmt.Errorf("%s: %w", err.Error(), &ErrE034)
 		}
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", err.Error(), &ErrE033)
+
 	}
 	return inv, nil
 }
