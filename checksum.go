@@ -15,20 +15,17 @@
 package ocfl
 
 import (
-	"context"
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
-	"encoding/hex"
-	"errors"
 	"fmt"
 	"hash"
-	"io"
-	"os"
-	"path/filepath"
+	"io/fs"
 	"runtime"
-	"sync"
+
+	"github.com/srerickson/checksum"
+	"golang.org/x/crypto/blake2b"
 )
 
 // SHA512 = `sha512`
@@ -38,7 +35,7 @@ const (
 	SHA224  = `sha224`
 	SHA1    = `sha1`
 	MD5     = `md5`
-	BLAKE2B = `blake2b`
+	BLAKE2B = `blake2b-512`
 )
 
 var digestAlgorithms = [...]string{
@@ -52,131 +49,48 @@ var digestAlgorithms = [...]string{
 
 //var defaultAlgorithm = SHA512
 
+func newHash(alg string) (func() hash.Hash, error) {
+	switch alg {
+	case SHA512:
+		return sha512.New, nil
+	case SHA256:
+		return sha256.New, nil
+	case SHA1:
+		return sha1.New, nil
+	case MD5:
+		return md5.New, nil
+	case BLAKE2B:
+		h, err := blake2b.New512(nil)
+		if err != nil {
+			return nil, err
+		}
+		return func() hash.Hash {
+			return h
+		}, nil
+	}
+	return nil, fmt.Errorf(`unknown checksum algorithm: %s`, alg)
+}
+
 // NumDigesters sets concurrency for Digest
 var NumDigesters = runtime.GOMAXPROCS(0)
 
-type checksumJob struct {
-	path string
-	alg  string
-	sum  string
-	//	expected string
-	err error
-}
-
-// Checksum returns checksum of file at path using algorithm alg
-func Checksum(alg string, path string) (string, error) {
-	var h hash.Hash
-	var err error
-	var file io.ReadCloser
-	if h, err = newHash(alg); err != nil {
-		return ``, err
-	}
-	if file, err = os.Open(path); err != nil {
-		return ``, err
-	}
-	defer file.Close()
-	if _, err = io.Copy(h, file); err != nil {
-		return ``, err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-// NewHash returns Hash object for specified algorithm
-func newHash(alg string) (hash.Hash, error) {
-	var h hash.Hash
-	switch alg {
-	case SHA512:
-		h = sha512.New()
-	case SHA256:
-		h = sha256.New()
-	case SHA224:
-		h = sha256.New224()
-	case SHA1:
-		h = sha1.New()
-	case MD5:
-		h = md5.New()
-	default:
-		return nil, fmt.Errorf(`unknown checksum algorithm: %s`, alg)
-	}
-	return h, nil
-}
-
-// digester processes checksum jobs concurrently
-func digester(ctx context.Context, in <-chan checksumJob) <-chan checksumJob {
-	var wg sync.WaitGroup
-	out := make(chan checksumJob)
-	if NumDigesters < 1 {
-		NumDigesters = 1
-	}
-	wg.Add(NumDigesters)
-	for i := 0; i < NumDigesters; i++ {
-		go func() {
-			defer wg.Done()
-			for job := range in {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					if job.err == nil {
-						job.sum, job.err = Checksum(job.alg, job.path)
-					}
-					out <- job
-				}
-
-			}
-		}()
-	}
-	go func() {
-		wg.Wait()
-		close(out)
-	}()
-	return out
-}
-
-// ConcurrentDigest concurrently calculates checksum of every file in dir
+// NewContentMap concurrently calculates checksum of every file in dir
 // using Hash algorithm alg, returning results as a ContentMap
-func ConcurrentDigest(dir string, alg string) (ContentMap, error) {
+func NewContentMap(fsys fs.FS, root string, alg string) (ContentMap, error) {
 	var cm ContentMap
-	ctx, cancel := context.WithCancel(context.Background())
-	jobIn := make(chan checksumJob)
-	walkErr := make(chan error, 1)
-
-	// walk files in dir
-	go func() {
-		defer close(jobIn)
-		defer close(walkErr)
-		walk := func(p string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			if info.Mode().IsRegular() {
-				select {
-				case jobIn <- checksumJob{path: p, alg: alg}:
-				case <-ctx.Done(): // cancel() called
-					return errors.New(`walk canceled`)
-				}
-
-			}
-			return nil
-		}
-		walkErr <- filepath.Walk(dir, walk)
-	}()
-
-	// stream results into ContentMap
-	for job := range digester(ctx, jobIn) {
-		if job.err != nil {
-			cancel() // cancel filepath.Walk
-			return cm, job.err
-		}
-		relPath, _ := filepath.Rel(dir, job.path)
-		cm.Add(job.sum, relPath)
+	newH, err := newHash(alg)
+	if err != nil {
+		return nil, err
 	}
-
-	// Handle filepath.Walk errs
-	if err := <-walkErr; err != nil {
-		cancel()
-		return cm, err
+	each := func(j checksum.Job, err error) error {
+		if err != nil {
+			return err
+		}
+		return cm.Add(j.SumString(alg), j.Path())
 	}
-	cancel()
+	walkErr := checksum.Walk(fsys, root, each, checksum.WithAlg(alg, newH))
+	if walkErr != nil {
+		return nil, walkErr
+	}
 	return cm, nil
 }

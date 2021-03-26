@@ -1,36 +1,17 @@
 package ocfl
 
 import (
-	"context"
+	"log"
+	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestCancelDigester(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	jobs := make(chan checksumJob, 1)
-	results := digester(ctx, jobs)
-	job := checksumJob{
-		path: filepath.Join(`test`, `fixtures`, `README.md`),
-		alg:  SHA1,
+func TestNewContentMap(t *testing.T) {
+	dir := filepath.Join(`test`, `fixtures`, `1.0`, `good-objects`, `spec-ex-full`)
+	cm, err := NewContentMap(os.DirFS(dir), `.`, MD5)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// this job should work
-	jobs <- job
-	r := <-results
-	if r.sum == `` {
-		t.Errorf(`expected value, got %v`, r.err)
-	}
-
-	// cancel the context
-	cancel()
-
-	// this job should not
-	jobs <- job
-	select {
-	case <-results:
-		t.Error(`don't expect a result`)
-	case <-ctx.Done():
-
-	}
-
+	log.Println(cm)
 }
