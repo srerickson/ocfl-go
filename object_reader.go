@@ -112,46 +112,52 @@ func (obj *ObjectReader) validateFS() error {
 	if err != nil {
 		return err
 	}
-
-	var found fs.DirEntry
-	var check string
-
-	// check inventory
-	check = inventoryFile
-	existing, found = deleteDirEntry(existing, check, false)
-	if found == nil {
-		return &ErrE034
+	sidecarFile := inventoryFile + "." + obj.DigestAlgorithm
+	requiredFiles := []string{
+		inventoryFile,
+		sidecarFile,
+		objectDeclarationFile,
 	}
-
-	// check sidecar
-	check = inventoryFile + "." + obj.DigestAlgorithm
-	existing, found = deleteDirEntry(existing, check, false)
-	if found == nil {
-		return &ErrE058
-	}
-
-	// check namaste object decleration file
-	check = objectDeclarationFile
-	existing, found = deleteDirEntry(existing, check, false)
-	if found == nil {
-		return &ErrE003
-	}
-
-	// check require version directories
+	requiredDirs := make([]string, 0, len(obj.Inventory.Versions))
 	for v := range obj.Inventory.Versions {
-		existing, found = deleteDirEntry(existing, v, true)
-		if found == nil {
-			return &ErrE046
+		requiredDirs = append(requiredDirs, v)
+	}
+	var files []string // existing
+	var dirs []string  // existing
+	for _, d := range existing {
+		if d.Type().IsRegular() {
+			files = append(files, d.Name())
+		} else if d.Type().IsDir() {
+			dirs = append(dirs, d.Name())
+		} else {
+			return fmt.Errorf(`irregular file: %s`, d.Name())
 		}
 	}
-
-	// optional extensions director
-	existing, _ = deleteDirEntry(existing, `extensions`, true)
-
-	// remaining files are unexpected
-	if len(existing) > 0 {
+	// Files
+	missing := minusStrings(requiredFiles, files)
+	extra := minusStrings(files, requiredFiles)
+	for _, m := range missing {
+		switch m {
+		case inventoryFile:
+			return &ErrE034
+		case sidecarFile:
+			return &ErrE058
+		case objectDeclarationFile:
+			return &ErrE003
+		}
+	}
+	if len(extra) != 0 {
 		return &ErrE001
 	}
-
+	// directories
+	missing = minusStrings(requiredDirs, dirs)
+	extra = minusStrings(dirs, requiredDirs)
+	if len(missing) != 0 {
+		return &ErrE046
+	}
+	// optional directories
+	if len(extra) > 0 && extra[0] != "extensions" {
+		return &ErrE001
+	}
 	return nil
 }
