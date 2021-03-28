@@ -21,8 +21,6 @@ const (
 
 var ErrVersionInvalid = errors.New(`invalid version name format`)
 
-var v1DirRegexp = regexp.MustCompile(`^v0*1$`)
-
 var vFmtRegexps = map[versionFmt]*regexp.Regexp{
 	vPaddedFmt:   regexp.MustCompile(`^v0\d+$`),
 	vUnpaddedFmt: regexp.MustCompile(`^v[1-9]\d*$`),
@@ -134,7 +132,5 @@ func versionSeqValid(names []string) error {
 			return &ErrE010
 		}
 	}
-
 	return nil
-
 }
