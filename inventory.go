@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 )
@@ -114,4 +115,50 @@ func (inv *Inventory) Validate() error {
 	}
 
 	return nil
+}
+
+// returns list of version directories
+func (inv *Inventory) VersionDirs() []string {
+	dirs := make([]string, 0, len(inv.Versions))
+	for v := range inv.Versions {
+		dirs = append(dirs, v)
+	}
+	return dirs
+}
+
+// ParseVersion returns the last version number and padding level
+// for the inventory. If the inventory version names are inconsistent
+// or the version numbers are not 1..n, an error is returned.
+func (inv *Inventory) ParseVersions() (int, int, error) {
+	if len(inv.Versions) == 0 {
+		err := fmt.Errorf(`inventory missing 'versions' field: %w`, &ErrE008)
+		return 0, 0, err
+	}
+	padding := -1
+	versions := make([]int, 0, len(inv.Versions))
+	// check consistent padding
+	for d := range inv.Versions {
+		v, p, err := versionParse(d)
+		if err != nil {
+			return 0, 0, err
+		}
+		versions = append(versions, v)
+		if padding == -1 {
+			padding = p
+			continue
+		}
+		if p != padding {
+			err := fmt.Errorf(`inconsistent version format: %w`, &ErrE012)
+			return 0, 0, err
+		}
+	}
+	// check versions: v1...n
+	sort.Sort(sort.IntSlice(versions))
+	for i, v := range versions {
+		if i+1 != v {
+			err := fmt.Errorf(`non-sequential version %d: %w`, v, &ErrE009)
+			return 0, 0, err
+		}
+	}
+	return versions[0], padding, nil
 }

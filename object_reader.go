@@ -25,7 +25,7 @@ type ObjectReader struct {
 // An error is returned only if the inventory cannot be unmarshaled
 func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 	obj := &ObjectReader{root: root}
-	err := obj.readInventory()
+	err := obj.readInventory(`.`)
 	if err != nil {
 		return nil, err
 	}
@@ -36,16 +36,7 @@ func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 	return obj, nil
 }
 
-func (obj *ObjectReader) Validate() error {
-	if err := obj.Inventory.Validate(); err != nil {
-		return err
-	}
-	if err := obj.validateFS(); err != nil {
-		return err
-	}
-	return nil
-}
-
+// readDeclaration reads and validates the declaration file
 func (obj *ObjectReader) readDeclaration() error {
 	f, err := obj.root.Open(objectDeclarationFile)
 	if err != nil {
@@ -64,11 +55,12 @@ func (obj *ObjectReader) readDeclaration() error {
 	return nil
 }
 
-func (obj *ObjectReader) readInventory() error {
-	file, err := obj.root.Open(inventoryFile)
+func (obj *ObjectReader) readInventory(dir string) error {
+	path := filepath.Join(dir, inventoryFile)
+	file, err := obj.root.Open(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf(`inventory not found: %w`, &ErrE034)
+			return fmt.Errorf(`inventory not f: %w`, &ErrE034)
 		}
 		return err
 	}
@@ -103,61 +95,4 @@ func (obj *ObjectReader) VersionFS(vname string) (fs.FS, error) {
 		return obj.root.Open(filepath.FromSlash(realpaths[0]))
 	}
 	return open, nil
-}
-
-// validateFS validates the object's file structure. It checks
-// existence of required files and absece of illegal files.
-func (obj *ObjectReader) validateFS() error {
-	existing, err := fs.ReadDir(obj.root, `.`)
-	if err != nil {
-		return err
-	}
-	sidecarFile := inventoryFile + "." + obj.DigestAlgorithm
-	requiredFiles := []string{
-		inventoryFile,
-		sidecarFile,
-		objectDeclarationFile,
-	}
-	requiredDirs := make([]string, 0, len(obj.Inventory.Versions))
-	for v := range obj.Inventory.Versions {
-		requiredDirs = append(requiredDirs, v)
-	}
-	var files []string // existing
-	var dirs []string  // existing
-	for _, d := range existing {
-		if d.Type().IsRegular() {
-			files = append(files, d.Name())
-		} else if d.Type().IsDir() {
-			dirs = append(dirs, d.Name())
-		} else {
-			return fmt.Errorf(`irregular file: %s`, d.Name())
-		}
-	}
-	// Files
-	missing := minusStrings(requiredFiles, files)
-	extra := minusStrings(files, requiredFiles)
-	for _, m := range missing {
-		switch m {
-		case inventoryFile:
-			return &ErrE034
-		case sidecarFile:
-			return &ErrE058
-		case objectDeclarationFile:
-			return &ErrE003
-		}
-	}
-	if len(extra) != 0 {
-		return &ErrE001
-	}
-	// directories
-	missing = minusStrings(requiredDirs, dirs)
-	extra = minusStrings(dirs, requiredDirs)
-	if len(missing) != 0 {
-		return &ErrE046
-	}
-	// optional directories
-	if len(extra) > 0 && extra[0] != "extensions" {
-		return &ErrE001
-	}
-	return nil
 }

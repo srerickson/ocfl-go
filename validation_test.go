@@ -45,6 +45,7 @@ var badObjects = []objValidationTest{
 	// https://github.com/zimeon/ocfl-py/tree/main/extra_fixtures/bad-objects
 	// Fixtures referenced below are copyright (c) 2018 Simeon Warner, MIT License
 	{filepath.Join(badObjPath, "E009_version_two_only"), []error{&ocfl.ErrE009}},
+	{filepath.Join(badObjPath, "E012_inconsistent_version_format"), []error{&ocfl.ErrE012}},
 	{filepath.Join(badObjPath, "E033_inventory_bad_json"), []error{&ocfl.ErrE033}},
 	{filepath.Join(badObjPath, "E042_bad_manifest_content_path"), []error{&ocfl.ErrE042}},
 	{filepath.Join(badObjPath, "E046_missing_version_dir"), []error{&ocfl.ErrE046}},
