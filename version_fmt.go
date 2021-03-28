@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"sort"
 	"strconv"
 )
 
@@ -19,6 +20,8 @@ const (
 )
 
 var ErrVersionInvalid = errors.New(`invalid version name format`)
+
+var v1DirRegexp = regexp.MustCompile(`^v0*1$`)
 
 var vFmtRegexps = map[versionFmt]*regexp.Regexp{
 	vPaddedFmt:   regexp.MustCompile(`^v0\d+$`),
@@ -101,4 +104,37 @@ func nextVersionLike(prev string) (string, error) {
 	}
 	v++
 	return versionGen(v, padding)
+}
+
+// is the sequence of versions names ok?
+func versionSeqValid(names []string) error {
+	if len(names) == 0 {
+		return fmt.Errorf(`no versions: %w`, &ErrE008)
+	}
+	var padding int
+	var nums = make([]int, 0, len(names))
+	for i, name := range names {
+		v, p, err := versionParse(name)
+		if err != nil {
+			return err
+		}
+		if i == 0 {
+			padding = p
+		} else if padding != p {
+			return fmt.Errorf(`inconsistent version format: %w`, &ErrE012)
+		}
+		nums = append(nums, v)
+	}
+	sort.IntSlice(nums).Sort()
+	for i, v := range nums {
+		if v != i+1 {
+			if i == 0 {
+				return &ErrE009
+			}
+			return &ErrE010
+		}
+	}
+
+	return nil
+
 }

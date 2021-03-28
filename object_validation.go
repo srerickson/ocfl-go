@@ -18,36 +18,46 @@ func (obj *ObjectReader) Validate() error {
 // validateRoot validates the object's root file structure. It checks
 // existence of required files and absence of illegal files.
 func (obj *ObjectReader) validateRoot() error {
-	existing, err := fs.ReadDir(obj.root, `.`)
+	items, err := fs.ReadDir(obj.root, `.`)
 	if err != nil {
 		return err
 	}
-	sidecarFile := inventoryFile + "." + obj.DigestAlgorithm
+	if err := obj._validateRootFiles(items); err != nil {
+		return err
+	}
+	if err := obj._validateRootDirs(items); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (obj *ObjectReader) sidecarFile() string {
+	return inventoryFile + "." + obj.DigestAlgorithm
+}
+
+// helper for validateRoot
+func (obj *ObjectReader) _validateRootFiles(items []fs.DirEntry) error {
 	onlyFiles := []string{
 		inventoryFile,
-		sidecarFile,
+		obj.sidecarFile(),
 		objectDeclarationFile,
 	}
-	requiredDirs := obj.VersionDirs()
-	var files []string // existing
-	var dirs []string  // existing
-	for _, d := range existing {
-		if d.Type().IsRegular() {
-			files = append(files, d.Name())
-		} else if d.Type().IsDir() {
-			dirs = append(dirs, d.Name())
-		} else {
-			return fmt.Errorf(`irregular file: %s`, d.Name())
+	var files []string // existing files
+	for _, f := range items {
+		name := f.Name()
+		if f.Type().IsRegular() {
+			files = append(files, name)
+		} else if !f.Type().IsDir() {
+			return fmt.Errorf(`irregular file: %s`, name)
 		}
 	}
-	// Files
 	missing := minusStrings(onlyFiles, files)
 	extra := minusStrings(files, onlyFiles)
 	for _, m := range missing {
 		switch m {
 		case inventoryFile:
 			return &ErrE034
-		case sidecarFile:
+		case obj.sidecarFile():
 			return &ErrE058
 		case objectDeclarationFile:
 			return &ErrE003
@@ -56,19 +66,35 @@ func (obj *ObjectReader) validateRoot() error {
 	if len(extra) != 0 {
 		return &ErrE001
 	}
-	// Directories
-	missing = minusStrings(requiredDirs, dirs)
-	extra = minusStrings(dirs, requiredDirs)
+	return nil
+}
+
+// helper for validateRoot
+func (obj *ObjectReader) _validateRootDirs(items []fs.DirEntry) error {
+	var vDirs []string
+	for _, d := range items {
+		name := d.Name()
+		if !d.Type().IsDir() {
+			continue
+		}
+		if name == `extensions` {
+			continue
+		}
+		// everything else should be a version dir
+		vDirs = append(vDirs, name)
+	}
+	// version directories must match keys in inventory
+	requiredDirs := obj.Inventory.VersionDirs()
+	missing := minusStrings(requiredDirs, vDirs)
+	extra := minusStrings(vDirs, requiredDirs)
 	if len(missing) != 0 {
 		return &ErrE046
 	}
-	// optional directories
-	if len(extra) > 0 && extra[0] != "extensions" {
+	if len(extra) > 0 {
 		return &ErrE001
 	}
-	// validate version names: padding and v1...n
-	_, _, err = obj.Inventory.ParseVersions()
-	if err != nil {
+	// version sequence is OK
+	if err := versionSeqValid(vDirs); err != nil {
 		return err
 	}
 	return nil

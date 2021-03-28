@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 	"time"
 )
@@ -95,29 +94,28 @@ func (inv *Inventory) Validate() error {
 		return fmt.Errorf(`inventory missing 'id' field: %w`, &ErrE036)
 	}
 	// type is present
-	if inv.ID == "" {
+	if inv.Type == "" {
 		return fmt.Errorf(`inventory missing 'type' field: %w`, &ErrE036)
 	}
 	if inv.DigestAlgorithm == "" {
 		return fmt.Errorf(`inventory missing 'digestAlgorithm' field: %w`, &ErrE036)
 	}
-	// head is present
-	if inv.Head == "" {
-		return fmt.Errorf(`inventory missing 'head' field: %w`, &ErrE036)
+	// check verions sequence
+	if err := versionSeqValid(inv.VersionDirs()); err != nil {
+		return err
 	}
-	// head is a version
-	if inv.Versions[inv.Head] == nil {
-		return fmt.Errorf(`inventory 'head' value does not correspond to a version: %w`, &ErrE040)
+	// check Head
+	if err := inv.validateHead(); err != nil {
+		return err
 	}
-	// manifest is present
+	// manifest is present (can be empty)
 	if inv.Manifest == nil {
 		return fmt.Errorf(`inventory missing 'manifest' field: %w`, &ErrE041)
 	}
-
 	return nil
 }
 
-// returns list of version directories
+// returns list of version directories that should be present in the object root
 func (inv *Inventory) VersionDirs() []string {
 	dirs := make([]string, 0, len(inv.Versions))
 	for v := range inv.Versions {
@@ -126,39 +124,16 @@ func (inv *Inventory) VersionDirs() []string {
 	return dirs
 }
 
-// ParseVersion returns the last version number and padding level
-// for the inventory. If the inventory version names are inconsistent
-// or the version numbers are not 1..n, an error is returned.
-func (inv *Inventory) ParseVersions() (int, int, error) {
-	if len(inv.Versions) == 0 {
-		err := fmt.Errorf(`inventory missing 'versions' field: %w`, &ErrE008)
-		return 0, 0, err
+func (inv *Inventory) validateHead() error {
+	v, _, err := versionParse(inv.Head)
+	if err != nil {
+		return fmt.Errorf(`inventory 'head' not valid: %w`, &ErrE040)
 	}
-	padding := -1
-	versions := make([]int, 0, len(inv.Versions))
-	// check consistent padding
-	for d := range inv.Versions {
-		v, p, err := versionParse(d)
-		if err != nil {
-			return 0, 0, err
-		}
-		versions = append(versions, v)
-		if padding == -1 {
-			padding = p
-			continue
-		}
-		if p != padding {
-			err := fmt.Errorf(`inconsistent version format: %w`, &ErrE012)
-			return 0, 0, err
-		}
+	if _, ok := inv.Versions[inv.Head]; !ok {
+		return fmt.Errorf(`inventory 'head' value does not correspond to a version: %w`, &ErrE040)
 	}
-	// check versions: v1...n
-	sort.Sort(sort.IntSlice(versions))
-	for i, v := range versions {
-		if i+1 != v {
-			err := fmt.Errorf(`non-sequential version %d: %w`, v, &ErrE009)
-			return 0, 0, err
-		}
+	if v != len(inv.Versions) {
+		return fmt.Errorf(`inventory 'head' is not the last version: %w`, &ErrE040)
 	}
-	return versions[0], padding, nil
+	return nil
 }
