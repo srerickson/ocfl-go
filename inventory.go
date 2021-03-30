@@ -23,7 +23,9 @@ import (
 )
 
 const (
-//inventoryType = `https://ocfl.io/1.0/spec/#inventory`
+	inventoryType   = `https://ocfl.io/1.0/spec/#inventory`
+	contentDir      = `content`
+	digestAlgorithm = "sha512"
 )
 
 //var invSidecarRexp = regexp.MustCompile(`inventory\.json\.(\w+)`)
@@ -54,8 +56,14 @@ type User struct {
 	Address string `json:"address,omitempty"`
 }
 
+func inventoryDefaults() *Inventory {
+	return &Inventory{
+		ContentDirectory: contentDir,
+	}
+}
+
 func ReadInventory(file io.Reader) (*Inventory, error) {
-	inv := &Inventory{}
+	inv := inventoryDefaults()
 	decoder := json.NewDecoder(file)
 
 	// The OCFL spec (v1.0) allows uknown fields in some places (in

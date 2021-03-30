@@ -15,7 +15,6 @@
 package ocfl
 
 import (
-	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -26,7 +25,7 @@ import (
 // Fixity fields in the OCFL object Inventory
 type ContentMap map[string][]string
 
-// File is a Digest/Path pair, used by Iterate()
+// File is a Digest/Path
 type File struct {
 	Path   string
 	Digest string
@@ -190,39 +189,49 @@ func (cm *ContentMap) Remove(path string) (string, error) {
 }
 
 // Iterate returns a channel of DigestPaths in the ContentMap
-func (cm ContentMap) Iterate() chan File {
-	ret := make(chan File)
-	go func() {
-		for digest := range cm {
-			for i := range cm[digest] {
-				ret <- File{
-					Digest: digest,
-					Path:   cm[digest][i],
-				}
-			}
-		}
-		close(ret)
-	}()
-	return ret
-}
+// func (cm ContentMap) Iterate() chan File {
+// 	ret := make(chan File)
+// 	go func() {
+// 		for digest := range cm {
+// 			for i := range cm[digest] {
+// 				ret <- File{
+// 					Digest: digest,
+// 					Path:   cm[digest][i],
+// 				}
+// 			}
+// 		}
+// 		close(ret)
+// 	}()
+// 	return ret
+// }
 
 // Copy returns a new ContentMap with same content/digest entries
-func (cm ContentMap) Copy() ContentMap {
-	var newCm ContentMap
-	for dp := range cm.Iterate() {
-		newCm.insert(dp.Digest, dp.Path)
-	}
-	return newCm
-}
+// func (cm ContentMap) Copy() ContentMap {
+// 	var newCm ContentMap
+// 	for dp := range cm.Iterate() {
+// 		newCm.insert(dp.Digest, dp.Path)
+// 	}
+// 	return newCm
+// }
 
 // Subset return wheather cm2 is a subset of cm
 func (cm ContentMap) Subset(cm2 ContentMap) bool {
-	for dp := range cm2.Iterate() {
-		if !cm.Exists(dp.Digest, dp.Path) {
-			return false
+	diff := cm2.Sub(cm)
+	return len(diff) == 0
+}
+
+// Sub returns a content map of the digest->path
+// combinations in cm not in cm2
+func (cm ContentMap) Sub(cm2 ContentMap) ContentMap {
+	var diff ContentMap
+	for d := range cm {
+		for _, p := range cm[d] {
+			if !cm2.Exists(d, p) {
+				diff.Add(d, p)
+			}
 		}
 	}
-	return true
+	return diff
 }
 
 // EqualTo returns whether cm and cm2 are the same
@@ -243,9 +252,43 @@ func validPath(path string) error {
 }
 
 // Validate validates the Digest value
-func validDigest(digest string) error {
-	if _, err := hex.DecodeString(string(digest)); err != nil {
-		return err
+// func validDigest(digest string) error {
+// 	if _, err := hex.DecodeString(string(digest)); err != nil {
+// 		return err
+// 	}
+// 	return nil
+// }
+
+// ToUpper returns content map with upercase digists
+func (cm ContentMap) ToUpper() ContentMap {
+	var upper ContentMap
+	for d := range cm {
+		for _, p := range cm[d] {
+			upper.Add(strings.ToUpper(d), p)
+		}
 	}
-	return nil
+	return upper
+}
+
+func (cm ContentMap) ToLower() ContentMap {
+	var lower ContentMap
+	for d := range cm {
+		for _, p := range cm[d] {
+			lower.Add(strings.ToLower(d), p)
+		}
+	}
+	return lower
+}
+
+// Files returns a slice of File objects representing
+// everything in the content map.
+func (cm ContentMap) Files() []File {
+	files := make([]File, 0, cm.Len())
+	for d := range cm {
+		for _, p := range cm[d] {
+			f := File{Path: p, Digest: d}
+			files = append(files, f)
+		}
+	}
+	return files
 }

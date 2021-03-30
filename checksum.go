@@ -19,6 +19,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
+	"errors"
 	"fmt"
 	"hash"
 	"io/fs"
@@ -74,9 +75,9 @@ func newHash(alg string) (func() hash.Hash, error) {
 // NumDigesters sets concurrency for Digest
 var NumDigesters = runtime.GOMAXPROCS(0)
 
-// NewContentMap concurrently calculates checksum of every file in dir
+// FSContentMap concurrently calculates checksum of every file in dir
 // using Hash algorithm alg, returning results as a ContentMap
-func NewContentMap(fsys fs.FS, root string, alg string) (ContentMap, error) {
+func FSContentMap(fsys fs.FS, root string, alg string) (ContentMap, error) {
 	var cm ContentMap
 	newH, err := newHash(alg)
 	if err != nil {
@@ -86,11 +87,22 @@ func NewContentMap(fsys fs.FS, root string, alg string) (ContentMap, error) {
 		if err != nil {
 			return err
 		}
-		return cm.Add(j.SumString(alg), j.Path())
+		sum, err := j.SumString(alg)
+		// fmt.Println(j.Path())
+		if err != nil {
+			return err
+		}
+		return cm.Add(sum, j.Path())
 	}
-	walkErr := checksum.Walk(fsys, root, each, checksum.WithAlg(alg, newH))
-	if walkErr != nil {
-		return nil, walkErr
+	err = checksum.Walk(fsys, root, each, checksum.WithAlg(alg, newH))
+	if err != nil {
+		walkErr, _ := err.(*checksum.WalkErr)
+		// if the walk failed because the dir doesn't exists
+		// return that error
+		if errors.Is(walkErr.WalkDirErr, fs.ErrNotExist) {
+			return nil, walkErr.WalkDirErr
+		}
+		return nil, err
 	}
 	return cm, nil
 }

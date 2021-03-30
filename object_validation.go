@@ -12,6 +12,15 @@ func (obj *ObjectReader) Validate() error {
 	if err := obj.validateRoot(); err != nil {
 		return err
 	}
+	if err := obj.validateContent(); err != nil {
+		return err
+	}
+	// for v := range obj.Inventory.Versions {
+	// 	err := obj.validateVersion(v)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
 	return nil
 }
 
@@ -97,5 +106,55 @@ func (obj *ObjectReader) _validateRootDirs(items []fs.DirEntry) error {
 	if err := versionSeqValid(vDirs); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (obj *ObjectReader) validateContent() error {
+	content, err := obj.Content()
+	if err != nil {
+		return err
+	}
+	// file and digests in content but not in manifest?
+	manifest := obj.Manifest.ToLower()
+	notInManifest := content.Sub(manifest)
+	if len(notInManifest) != 0 {
+		for _, f := range notInManifest.Files() {
+			var missingPath, missingDigest bool
+			if manifest.GetDigest(f.Path) == "" {
+				missingPath = true // the path isn't in the manifest
+			}
+			if len(manifest.DigestPaths(f.Digest)) == 0 {
+				missingDigest = true // the digest isn't in the manifest
+			}
+			if missingPath && missingDigest {
+				// new path and content in content
+				return fmt.Errorf(`file %s not in manifest: %w`, f.Path, &ErrE023)
+			} else if missingPath && !missingDigest {
+				// file has different name
+				return fmt.Errorf(`file %s not in manifest: %w`, f.Path, &ErrE023)
+			} else if !missingPath && missingDigest {
+				// file incorrect digest
+				return fmt.Errorf(`digest for %s does not match manifest: %w`, f.Path, &ErrE092)
+			}
+		}
+	}
+	notInContent := manifest.Sub(content)
+	if len(notInContent) != 0 {
+		for range notInContent.Files() {
+			// files missing from content
+
+			// digest/path from manifest not in content
+			// if content.GetDigest(f.Path) == "" {
+			// 	return fmt.Errorf(`file %s not in manifest with sum %s: %w`, f.Path, f.Digest, &ErrE023)
+			// }
+			// if len(content.DigestPaths(f.Digest)) == 0 {
+			// 	return fmt.Errorf(`digest for %s does not match manifest: %w`, f.Path, &ErrE092)
+			// }
+			// if len(lcm.DigestPaths(f.Digest)) == 0 {
+			// 	return fmt.Errorf(`%s digest for %s does not match manifest: %w`, alg, f.Path, &ErrE092)
+			// }
+		}
+	}
+
 	return nil
 }

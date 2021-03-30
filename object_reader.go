@@ -6,6 +6,8 @@ import (
 	"io"
 	"io/fs"
 	"path/filepath"
+
+	"github.com/srerickson/checksum"
 )
 
 const (
@@ -25,14 +27,15 @@ type ObjectReader struct {
 // An error is returned only if the inventory cannot be unmarshaled
 func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 	obj := &ObjectReader{root: root}
-	err := obj.readInventory(`.`)
+	err := obj.readDeclaration()
 	if err != nil {
 		return nil, err
 	}
-	err = obj.readDeclaration()
+	obj.Inventory, err = obj.readInventory(`.`)
 	if err != nil {
 		return nil, err
 	}
+
 	return obj, nil
 }
 
@@ -55,20 +58,17 @@ func (obj *ObjectReader) readDeclaration() error {
 	return nil
 }
 
-func (obj *ObjectReader) readInventory(dir string) error {
+func (obj *ObjectReader) readInventory(dir string) (*Inventory, error) {
 	path := filepath.Join(dir, inventoryFile)
 	file, err := obj.root.Open(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf(`inventory not f: %w`, &ErrE034)
+			return nil, &ErrE034
 		}
-		return err
+		return nil, err
 	}
 	defer file.Close()
-	if obj.Inventory, err = ReadInventory(file); err != nil {
-		return err
-	}
-	return nil
+	return ReadInventory(file)
 }
 
 type fsOpenFunc func(name string) (fs.File, error)
@@ -95,4 +95,37 @@ func (obj *ObjectReader) VersionFS(vname string) (fs.FS, error) {
 		return obj.root.Open(filepath.FromSlash(realpaths[0]))
 	}
 	return open, nil
+}
+
+//
+func (obj *ObjectReader) Content() (ContentMap, error) {
+	var content ContentMap
+	alg := obj.DigestAlgorithm
+	newH, err := newHash(alg)
+	if err != nil {
+		return nil, err
+	}
+	each := func(j checksum.Job, err error) error {
+		if err != nil {
+			return err
+		}
+		sum, err := j.SumString(alg)
+		if err != nil {
+			return err
+		}
+		return content.Add(sum, j.Path())
+	}
+	for v := range obj.Inventory.Versions {
+		contentDir := filepath.Join(v, obj.ContentDirectory)
+		// contentDir may not exist - that's ok
+		err = checksum.Walk(obj.root, contentDir, each, checksum.WithAlg(alg, newH))
+		if err != nil {
+			walkErr, _ := err.(*checksum.WalkErr)
+			if errors.Is(walkErr.WalkDirErr, fs.ErrNotExist) {
+				continue
+			}
+			return nil, err
+		}
+	}
+	return content, nil
 }
