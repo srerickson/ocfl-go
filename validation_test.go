@@ -47,7 +47,6 @@ var badObjects = []objValidationTest{
 	{filepath.Join(badObjPath, "E009_version_two_only"), []error{&ocfl.ErrE009}},
 	{filepath.Join(badObjPath, "E012_inconsistent_version_format"), []error{&ocfl.ErrE012}},
 	{filepath.Join(badObjPath, "E033_inventory_bad_json"), []error{&ocfl.ErrE033}},
-	{filepath.Join(badObjPath, "E042_bad_manifest_content_path"), []error{&ocfl.ErrE042}},
 	{filepath.Join(badObjPath, "E046_missing_version_dir"), []error{&ocfl.ErrE046}},
 	{filepath.Join(badObjPath, "E050_state_digest_different_case"), []error{&ocfl.ErrE050}},
 	{filepath.Join(badObjPath, "E050_state_repeated_digest"), []error{&ocfl.ErrE050}},

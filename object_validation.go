@@ -3,6 +3,8 @@ package ocfl
 import (
 	"fmt"
 	"io/fs"
+
+	"github.com/srerickson/checksum/delta"
 )
 
 func (obj *ObjectReader) Validate() error {
@@ -114,47 +116,30 @@ func (obj *ObjectReader) validateContent() error {
 	if err != nil {
 		return err
 	}
+	// path -> digest
+	allFiles := content.Invert()
+
 	// file and digests in content but not in manifest?
-	manifest := obj.Manifest.ToLower()
-	notInManifest := content.Sub(manifest)
-	if len(notInManifest) != 0 {
-		for _, f := range notInManifest.Files() {
-			var missingPath, missingDigest bool
-			if manifest.GetDigest(f.Path) == "" {
-				missingPath = true // the path isn't in the manifest
-			}
-			if len(manifest.DigestPaths(f.Digest)) == 0 {
-				missingDigest = true // the digest isn't in the manifest
-			}
-			if missingPath && missingDigest {
-				// new path and content in content
-				return fmt.Errorf(`file %s not in manifest: %w`, f.Path, &ErrE023)
-			} else if missingPath && !missingDigest {
-				// file has different name
-				return fmt.Errorf(`file %s not in manifest: %w`, f.Path, &ErrE023)
-			} else if !missingPath && missingDigest {
-				// file incorrect digest
-				return fmt.Errorf(`digest for %s does not match manifest: %w`, f.Path, &ErrE092)
-			}
+	manifest := obj.Manifest.ToLower().Invert()
+	changes := delta.New(manifest, allFiles)
+
+	if len(changes.Same()) != len(allFiles) || len(changes.Same()) != len(manifest) {
+		mods := changes.Modified()
+		if len(mods) != 0 {
+			return &ErrE092
+		}
+		added := changes.Added()
+		if len(added) != 0 {
+			return &ErrE023
+		}
+		removed := changes.Removed()
+		if len(removed) != 0 {
+			return &ErrE023
+		}
+		old, _ := changes.Renamed()
+		if len(old) != 0 {
+			return &ErrE023
 		}
 	}
-	notInContent := manifest.Sub(content)
-	if len(notInContent) != 0 {
-		for range notInContent.Files() {
-			// files missing from content
-
-			// digest/path from manifest not in content
-			// if content.GetDigest(f.Path) == "" {
-			// 	return fmt.Errorf(`file %s not in manifest with sum %s: %w`, f.Path, f.Digest, &ErrE023)
-			// }
-			// if len(content.DigestPaths(f.Digest)) == 0 {
-			// 	return fmt.Errorf(`digest for %s does not match manifest: %w`, f.Path, &ErrE092)
-			// }
-			// if len(lcm.DigestPaths(f.Digest)) == 0 {
-			// 	return fmt.Errorf(`%s digest for %s does not match manifest: %w`, alg, f.Path, &ErrE092)
-			// }
-		}
-	}
-
 	return nil
 }
