@@ -116,9 +116,28 @@ func (inv *Inventory) Validate() error {
 	if err := inv.validateHead(); err != nil {
 		return err
 	}
+	// check contentDir
+	if err := validPath(inv.ContentDirectory); err != nil {
+		//return fmt.Errorf("%s: %w", err.Error(), &ErrE00)
+		return err
+	}
 	// manifest is present (can be empty)
 	if inv.Manifest == nil {
 		return fmt.Errorf(`inventory missing 'manifest' field: %w`, &ErrE041)
+	}
+	// check manifest path format
+	for path := range inv.Manifest.Invert() {
+		if err := validPath(path); err != nil {
+			return fmt.Errorf("%s: %w", err.Error(), &ErrE099)
+		}
+	}
+	// check version state path format
+	for _, v := range inv.Versions {
+		for path := range v.State.Invert() {
+			if err := validPath(path); err != nil {
+				return fmt.Errorf("%s: %w", err.Error(), &ErrE052)
+			}
+		}
 	}
 	return nil
 }

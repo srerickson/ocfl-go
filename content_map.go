@@ -189,21 +189,15 @@ func (cm *ContentMap) Remove(path string) (string, error) {
 }
 
 // Iterate returns a channel of DigestPaths in the ContentMap
-// func (cm ContentMap) Iterate() chan File {
-// 	ret := make(chan File)
-// 	go func() {
-// 		for digest := range cm {
-// 			for i := range cm[digest] {
-// 				ret <- File{
-// 					Digest: digest,
-// 					Path:   cm[digest][i],
-// 				}
-// 			}
-// 		}
-// 		close(ret)
-// 	}()
-// 	return ret
-// }
+func (cm ContentMap) Invert() map[string]string {
+	inv := make(map[string]string)
+	for d, paths := range cm {
+		for _, p := range paths {
+			inv[p] = d
+		}
+	}
+	return inv
+}
 
 // Copy returns a new ContentMap with same content/digest entries
 // func (cm ContentMap) Copy() ContentMap {
@@ -237,18 +231,6 @@ func (cm ContentMap) Sub(cm2 ContentMap) ContentMap {
 // EqualTo returns whether cm and cm2 are the same
 func (cm ContentMap) EqualTo(cm2 ContentMap) bool {
 	return cm.Subset(cm2) && cm2.Subset(cm)
-}
-
-// validPath returns
-func validPath(path string) error {
-	cleanPath := filepath.Clean(path)
-	if filepath.IsAbs(cleanPath) {
-		return fmt.Errorf(`path must be relative: %s`, cleanPath)
-	}
-	if strings.HasPrefix(cleanPath, `..`) {
-		return fmt.Errorf(`path is out of scope: %s`, cleanPath)
-	}
-	return nil
 }
 
 // Validate validates the Digest value
@@ -291,4 +273,19 @@ func (cm ContentMap) Files() []File {
 		}
 	}
 	return files
+}
+
+// validPath returns
+func validPath(path string) error {
+	cleanPath := filepath.Clean(path)
+	if path != cleanPath {
+		return fmt.Errorf(`path includes elements ('.','..','//'): %s`, path)
+	}
+	if filepath.IsAbs(cleanPath) {
+		return fmt.Errorf(`path must be relative: %s`, cleanPath)
+	}
+	if strings.HasPrefix(cleanPath, `..`) {
+		return fmt.Errorf(`path is out of scope: %s`, cleanPath)
+	}
+	return nil
 }
