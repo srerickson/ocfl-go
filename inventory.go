@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 	"time"
 )
@@ -126,17 +127,31 @@ func (inv *Inventory) Validate() error {
 		return fmt.Errorf(`inventory missing 'manifest' field: %w`, &ErrE041)
 	}
 	// check manifest path format
-	for path := range inv.Manifest.Invert() {
+	paths, err := inv.Manifest.Paths()
+	if err != nil {
+		return err
+	}
+	for path := range paths {
 		if err := validPath(path); err != nil {
 			return fmt.Errorf("%s: %w", err.Error(), &ErrE099)
 		}
 	}
 	// check version state path format
 	for _, v := range inv.Versions {
-		for path := range v.State.Invert() {
-			if err := validPath(path); err != nil {
+		paths, err := v.State.Paths()
+		if err != nil {
+			return fmt.Errorf("%s: %w", err.Error(), &ErrE095)
+		}
+		for p, _ := range paths {
+			if err := validPath(p); err != nil {
 				return fmt.Errorf("%s: %w", err.Error(), &ErrE052)
 			}
+			// check conflics like: "dir", "dir/file"
+			if _, present := paths[path.Dir(p)]; present {
+				return fmt.Errorf("conflict in %s between %s and %s: %w", v, p, path.Dir(p), &ErrE095)
+			}
+			// digest capitalization
+
 		}
 	}
 	return nil

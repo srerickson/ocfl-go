@@ -30,7 +30,7 @@ func TestContentMap(t *testing.T) {
 	if err := cm.Add(`fa`, `another-file`); err != nil {
 		t.Error(err)
 	}
-	if l := cm.LenDigest(`fa`); l != 2 {
+	if l := len(cm.DigestPaths(`fa`)); l != 2 {
 		t.Errorf(`expected 2, got: %d`, l)
 	}
 	if err := cm.Rename(`a-file`, `another-file`); err == nil {
@@ -57,7 +57,7 @@ func TestContentMap(t *testing.T) {
 	if _, err := cm.Remove(`no-file`); err == nil {
 		t.Error(`expected an error`)
 	}
-	if l := cm.LenDigest(`fa`); l != 0 {
+	if l := len(cm.DigestPaths(`fa`)); l != 0 {
 		t.Errorf(`expected 0, got: %d`, l)
 	}
 }

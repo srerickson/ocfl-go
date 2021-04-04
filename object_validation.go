@@ -117,10 +117,17 @@ func (obj *ObjectReader) validateContent() error {
 		return err
 	}
 	// path -> digest
-	allFiles := content.Invert()
+	allFiles, err := content.Paths()
+	if err != nil {
+		return err
+	}
 
 	// file and digests in content but not in manifest?
-	manifest := obj.Manifest.ToLower().Invert()
+	manifest, err := obj.Manifest.ToLower().Paths()
+	if err != nil {
+		// duplicate paths in manifest
+		return err
+	}
 	changes := delta.New(manifest, allFiles)
 
 	if len(changes.Same()) != len(allFiles) || len(changes.Same()) != len(manifest) {

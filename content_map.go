@@ -16,27 +16,21 @@ package ocfl
 
 import (
 	"fmt"
-	"path/filepath"
+	"path"
+	"regexp"
 	"strings"
+)
+
+var (
+	digestRegexp          = regexp.MustCompile("^[0-9a-fA-F]+$")
+	digestLowercaseRegexp = regexp.MustCompile("^[0-9a-f]+$")
+	digestUppercaseRegexp = regexp.MustCompile("^[0-9A-F]+$")
 )
 
 // ContentMap is a data structure for Content-Addressable-Storage.
 // It abstracs the functionality of the Manifest, Version State, and
 // Fixity fields in the OCFL object Inventory
 type ContentMap map[string][]string
-
-// File is a Digest/Path
-type File struct {
-	Path   string
-	Digest string
-}
-
-// used only for (un)marshalling
-// type jsonPath string
-
-//
-// ContentMap Functions
-//
 
 // gets the index of path in the []string at cm[digest]
 func (cm ContentMap) getIdx(digest string, path string) (int, bool) {
@@ -99,11 +93,6 @@ func (cm ContentMap) Digests() []string {
 // DigestPaths returns slice of Paths with the given digest
 func (cm ContentMap) DigestPaths(digest string) []string {
 	return cm[digest]
-}
-
-// LenDigest returns number of paths associated with digest
-func (cm ContentMap) LenDigest(digest string) int {
-	return len(cm[digest])
 }
 
 // Len returns total number of Paths in the ContentMap
@@ -188,15 +177,19 @@ func (cm *ContentMap) Remove(path string) (string, error) {
 	return digest, nil
 }
 
-// Iterate returns a channel of DigestPaths in the ContentMap
-func (cm ContentMap) Invert() map[string]string {
+// Paths returns a mapping between all files and their digests
+// it returns an error if two identical paths are encountered.
+func (cm ContentMap) Paths() (map[string]string, error) {
 	inv := make(map[string]string)
 	for d, paths := range cm {
 		for _, p := range paths {
+			if _, exists := inv[p]; exists {
+				return nil, fmt.Errorf(`duplicate path in content map: %s`, p)
+			}
 			inv[p] = d
 		}
 	}
-	return inv
+	return inv, nil
 }
 
 // Copy returns a new ContentMap with same content/digest entries
@@ -262,26 +255,13 @@ func (cm ContentMap) ToLower() ContentMap {
 	return lower
 }
 
-// Files returns a slice of File objects representing
-// everything in the content map.
-func (cm ContentMap) Files() []File {
-	files := make([]File, 0, cm.Len())
-	for d := range cm {
-		for _, p := range cm[d] {
-			f := File{Path: p, Digest: d}
-			files = append(files, f)
-		}
-	}
-	return files
-}
-
 // validPath returns
-func validPath(path string) error {
-	cleanPath := filepath.Clean(path)
-	if path != cleanPath {
-		return fmt.Errorf(`path includes elements ('.','..','//'): %s`, path)
+func validPath(p string) error {
+	cleanPath := path.Clean(p)
+	if p != cleanPath {
+		return fmt.Errorf(`path includes elements ('.','..','//'): %s`, p)
 	}
-	if filepath.IsAbs(cleanPath) {
+	if path.IsAbs(cleanPath) {
 		return fmt.Errorf(`path must be relative: %s`, cleanPath)
 	}
 	if strings.HasPrefix(cleanPath, `..`) {
