@@ -1,4 +1,4 @@
-package inventory
+package ocfl
 
 // Copyright 2019 Seth R. Erickson
 //
@@ -32,6 +32,36 @@ var (
 // It abstracs the functionality of the Manifest, Version State, and
 // Fixity fields in the OCFL object Inventory
 type DigestMap map[string][]string
+
+// Add adds a digest->path map to the ContentMap. Returns an error if path is already present.
+func (dm *DigestMap) Add(digest string, path string) error {
+	if err := validPath(path); err != nil {
+		return err
+	}
+	if dm.GetDigest(path) != `` {
+		return fmt.Errorf(`already exists: %s`, path)
+	}
+	if *dm == nil {
+		*dm = DigestMap{}
+	}
+	if _, ok := (*dm)[digest]; ok {
+		(*dm)[digest] = append((*dm)[digest], path)
+	} else {
+		(*dm)[digest] = []string{path}
+	}
+	return nil
+}
+
+func (dm DigestMap) GetDigest(p string) string {
+	for d, paths := range dm {
+		for _, path := range paths {
+			if p == path {
+				return d
+			}
+		}
+	}
+	return ""
+}
 
 // Paths returns a mapping between all files and their digests
 // it returns an error if two identical paths are encountered.

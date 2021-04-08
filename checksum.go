@@ -77,8 +77,8 @@ var NumDigesters = runtime.GOMAXPROCS(0)
 
 // FSContentMap concurrently calculates checksum of every file in dir
 // using Hash algorithm alg, returning results as a ContentMap
-func FSContentMap(fsys fs.FS, root string, alg string) (ContentMap, error) {
-	var cm ContentMap
+func FSContentMap(fsys fs.FS, root string, alg string) (DigestMap, error) {
+	var cm DigestMap
 	newH, err := newHash(alg)
 	if err != nil {
 		return nil, err

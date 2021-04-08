@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"path"
 	"strings"
 	"time"
 )
@@ -33,22 +32,22 @@ const (
 
 // Inventory represents contents of an OCFL Object's inventory.json file
 type Inventory struct {
-	ID               string                `json:"id"`
-	Type             string                `json:"type"`
-	DigestAlgorithm  string                `json:"digestAlgorithm"`
-	Head             string                `json:"head"`
-	ContentDirectory string                `json:"contentDirectory,omitempty"`
-	Manifest         ContentMap            `json:"manifest"`
-	Versions         map[string]*Version   `json:"versions"`
-	Fixity           map[string]ContentMap `json:"fixity,omitempty"`
+	ID               string               `json:"id"`
+	Type             string               `json:"type"`
+	DigestAlgorithm  string               `json:"digestAlgorithm"`
+	Head             string               `json:"head"`
+	ContentDirectory string               `json:"contentDirectory,omitempty"`
+	Manifest         DigestMap            `json:"manifest"`
+	Versions         map[string]*Version  `json:"versions"`
+	Fixity           map[string]DigestMap `json:"fixity,omitempty"`
 }
 
 // Version represent a version entryin inventory.json
 type Version struct {
-	Created time.Time  `json:"created"`
-	State   ContentMap `json:"state"`
-	Message string     `json:"message,omitempty"`
-	User    User       `json:"user,omitempty"`
+	Created time.Time `json:"created"`
+	State   DigestMap `json:"state"`
+	Message string    `json:"message,omitempty"`
+	User    User      `json:"user,omitempty"`
 }
 
 // User represent a Version's user entry
@@ -127,31 +126,15 @@ func (inv *Inventory) Validate() error {
 		return fmt.Errorf(`inventory missing 'manifest' field: %w`, &ErrE041)
 	}
 	// check manifest path format
-	paths, err := inv.Manifest.Paths()
+	err := inv.Manifest.Valid()
 	if err != nil {
 		return err
 	}
-	for path := range paths {
-		if err := validPath(path); err != nil {
-			return fmt.Errorf("%s: %w", err.Error(), &ErrE099)
-		}
-	}
 	// check version state path format
 	for _, v := range inv.Versions {
-		paths, err := v.State.Paths()
+		err := v.State.Valid()
 		if err != nil {
-			return fmt.Errorf("%s: %w", err.Error(), &ErrE095)
-		}
-		for p, _ := range paths {
-			if err := validPath(p); err != nil {
-				return fmt.Errorf("%s: %w", err.Error(), &ErrE052)
-			}
-			// check conflics like: "dir", "dir/file"
-			if _, present := paths[path.Dir(p)]; present {
-				return fmt.Errorf("conflict in %s between %s and %s: %w", v, p, path.Dir(p), &ErrE095)
-			}
-			// digest capitalization
-
+			return err
 		}
 	}
 	return nil

@@ -98,8 +98,8 @@ func (obj *ObjectReader) VersionFS(vname string) (fs.FS, error) {
 }
 
 //
-func (obj *ObjectReader) Content() (ContentMap, error) {
-	var content ContentMap
+func (obj *ObjectReader) Content() (DigestMap, error) {
+	var content DigestMap
 	alg := obj.DigestAlgorithm
 	newH, err := newHash(alg)
 	if err != nil {
