@@ -9,7 +9,7 @@ import (
 	"strconv"
 )
 
-const version1 = `v1`
+//const version1 = `v1`
 
 type versionFmt int
 

@@ -3,6 +3,7 @@ package ocfl
 import (
 	"fmt"
 	"io/fs"
+	"strings"
 
 	"github.com/srerickson/checksum/delta"
 )
@@ -14,15 +15,15 @@ func (obj *ObjectReader) Validate() error {
 	if err := obj.validateRoot(); err != nil {
 		return err
 	}
+	for v := range obj.Inventory.Versions {
+		err := obj.validateVersionDir(v)
+		if err != nil {
+			return err
+		}
+	}
 	if err := obj.validateContent(); err != nil {
 		return err
 	}
-	// for v := range obj.Inventory.Versions {
-	// 	err := obj.validateVersion(v)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// }
 	return nil
 }
 
@@ -108,6 +109,33 @@ func (obj *ObjectReader) _validateRootDirs(items []fs.DirEntry) error {
 	if err := versionSeqValid(vDirs); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (obj *ObjectReader) validateVersionDir(v string) error {
+	items, err := fs.ReadDir(obj.root, v)
+	if err != nil {
+		return err
+	}
+	var files []string
+	for _, i := range items {
+		if i.Type().IsRegular() {
+			files = append(files, i.Name())
+		}
+	}
+	onlyFiles := []string{
+		inventoryFile,
+		obj.sidecarFile(),
+	}
+	missing := minusStrings(onlyFiles, files)
+	extra := minusStrings(files, onlyFiles)
+	if len(missing) != 0 {
+		return fmt.Errorf(`missing files in version %s: %s`, v, strings.Join(missing, ", "))
+	}
+	if len(extra) != 0 {
+		return fmt.Errorf(`extra files in version %s: %s: %w`, v, strings.Join(extra, ", "), &ErrE015)
+	}
+
 	return nil
 }
 

@@ -14,6 +14,13 @@
 
 package ocfl
 
+import (
+	"fmt"
+	"io/fs"
+	"regexp"
+	"strings"
+)
+
 // func stringIn(a string, list []string) bool {
 // 	for i := range list {
 // 		if a == list[i] {
@@ -33,9 +40,67 @@ func minusStrings(a []string, b []string) []string {
 				found = true
 			}
 		}
-		if found == false {
+		if !found {
 			minus = append(minus, a[i])
 		}
 	}
 	return minus
+}
+
+type dirEntry []fs.DirEntry
+
+type dirMatch struct {
+	ReqFiles   []string
+	OptFiles   []string
+	ReqDirs    []string
+	OptDirs    []string
+	FileRegexp *regexp.Regexp
+	DirRegesp  *regexp.Regexp
+}
+
+func (match dirMatch) Match(items []fs.DirEntry) error {
+	var dirs []string
+	var files []string
+	for _, d := range items {
+		name := d.Name()
+		if d.Type().IsDir() {
+			dirs = append(dirs, name)
+		}
+		if d.Type().IsRegular() {
+			files = append(files, name)
+		}
+	}
+	// directories
+	missing := minusStrings(match.ReqDirs, dirs)
+	if len(missing) != 0 {
+		return fmt.Errorf("missing required directories: %s", strings.Join(missing, ", "))
+	}
+	extra := minusStrings(dirs, match.ReqDirs)
+	extra = minusStrings(extra, match.OptDirs)
+	if match.DirRegesp != nil {
+		for _, e := range extra {
+			if !match.DirRegesp.MatchString(e) {
+				return fmt.Errorf("invalid directory: %s", e)
+			}
+		}
+	} else if len(extra) > 0 {
+		return fmt.Errorf("invalid directories: %s", strings.Join(missing, ", "))
+	}
+	// files
+	missing = minusStrings(match.ReqFiles, files)
+	if len(missing) != 0 {
+		return fmt.Errorf("missing required files: %s", strings.Join(missing, ", "))
+	}
+	extra = minusStrings(files, match.ReqFiles)
+	extra = minusStrings(extra, match.OptFiles)
+	if match.FileRegexp != nil {
+		for _, e := range extra {
+			if !match.FileRegexp.MatchString(e) {
+				return fmt.Errorf("invalid file: %s", e)
+			}
+		}
+	} else if len(extra) > 0 {
+		return fmt.Errorf("invalid files: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }

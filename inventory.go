@@ -40,6 +40,7 @@ type Inventory struct {
 	Manifest         DigestMap            `json:"manifest"`
 	Versions         map[string]*Version  `json:"versions"`
 	Fixity           map[string]DigestMap `json:"fixity,omitempty"`
+	//checksum         []byte               // inventory file checksum
 }
 
 // Version represent a version entryin inventory.json

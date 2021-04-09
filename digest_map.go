@@ -23,9 +23,9 @@ import (
 )
 
 var (
-	digestRegexp          = regexp.MustCompile("^[0-9a-fA-F]+$")
-	digestLowercaseRegexp = regexp.MustCompile("^[0-9a-f]+$")
-	digestUppercaseRegexp = regexp.MustCompile("^[0-9A-F]+$")
+	digestRegexp = regexp.MustCompile("^[0-9a-fA-F]+$")
+	//digestLowercaseRegexp = regexp.MustCompile("^[0-9a-f]+$")
+	//digestUppercaseRegexp = regexp.MustCompile("^[0-9A-F]+$")
 )
 
 // DigestMap is a data structure for Content-Addressable-Storage.
@@ -44,11 +44,7 @@ func (dm *DigestMap) Add(digest string, path string) error {
 	if *dm == nil {
 		*dm = DigestMap{}
 	}
-	if _, ok := (*dm)[digest]; ok {
-		(*dm)[digest] = append((*dm)[digest], path)
-	} else {
-		(*dm)[digest] = []string{path}
-	}
+	(*dm)[digest] = append((*dm)[digest], path)
 	return nil
 }
 

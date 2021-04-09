@@ -48,6 +48,7 @@ func (obj *ObjectReader) readDeclaration() error {
 		}
 		return err
 	}
+	defer f.Close()
 	decl, err := io.ReadAll(f)
 	if err != nil {
 		return err
@@ -97,7 +98,7 @@ func (obj *ObjectReader) VersionFS(vname string) (fs.FS, error) {
 	return open, nil
 }
 
-//
+// Content returns DigestMap of all version contents
 func (obj *ObjectReader) Content() (DigestMap, error) {
 	var content DigestMap
 	alg := obj.DigestAlgorithm
