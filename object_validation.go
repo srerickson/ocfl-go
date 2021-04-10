@@ -13,7 +13,7 @@ import (
 )
 
 func (obj *ObjectReader) Validate() error {
-	if obj.inventory != nil {
+	if obj.inventory == nil {
 		return fmt.Errorf("object not itialized")
 	}
 	if err := obj.inventory.Validate(); err != nil {
