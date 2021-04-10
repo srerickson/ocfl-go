@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"regexp"
 	"strings"
@@ -12,24 +13,23 @@ import (
 )
 
 func (obj *ObjectReader) Validate() error {
-	if err := obj.Inventory.Validate(); err != nil {
+	if obj.inventory != nil {
+		return fmt.Errorf("object not itialized")
+	}
+	if err := obj.inventory.Validate(); err != nil {
+		return err
+	}
+	if err := obj.validateRoot(); err != nil {
 		return err
 	}
 	sidecar, err := obj.readInventorySidecar(".")
 	if err != nil {
 		return err
 	}
-	check, err := obj.inventoryChecksum(".", obj.Inventory.DigestAlgorithm)
-	if err != nil {
+	if hex.EncodeToString(obj.inventory.checksum) != sidecar {
 		return &ErrE058
 	}
-	if hex.EncodeToString(check) != sidecar {
-		return &ErrE058
-	}
-	if err := obj.validateRoot(); err != nil {
-		return err
-	}
-	for v := range obj.Inventory.Versions {
+	for v := range obj.inventory.Versions {
 		err := obj.validateVersionDir(v)
 		if err != nil {
 			return err
@@ -54,7 +54,7 @@ func (obj *ObjectReader) validateRoot() error {
 			obj.sidecarFile(),
 			objectDeclarationFile,
 		},
-		ReqDirs: obj.Inventory.VersionDirs(),
+		ReqDirs: obj.inventory.VersionDirs(),
 		OptDirs: []string{"extensions"},
 	}
 	err = match.Match(items)
@@ -81,7 +81,7 @@ func (obj *ObjectReader) validateRoot() error {
 		}
 		return err
 	}
-	err = versionSeqValid(obj.Inventory.VersionDirs())
+	err = versionSeqValid(obj.inventory.VersionDirs())
 	if err != nil {
 		return err
 	}
@@ -123,9 +123,9 @@ func (obj *ObjectReader) validateVersionDir(v string) error {
 	if err != nil {
 		return err
 	}
-	if obj.Inventory.Head == v {
+	if obj.inventory.Head == v {
 		// if this is the HEAD version, root inventory should match this inventory
-		if !bytes.Equal(obj.Inventory.checksum, inv.checksum) {
+		if !bytes.Equal(obj.inventory.checksum, inv.checksum) {
 			return &ErrE064
 		}
 	}
@@ -151,7 +151,7 @@ func (obj *ObjectReader) validateContent() error {
 	}
 
 	// file and digests in content but not in manifest?
-	manifest, err := obj.Manifest.Normalize()
+	manifest, err := obj.inventory.Manifest.Normalize()
 	if err != nil {
 		return err
 	}
