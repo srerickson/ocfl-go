@@ -26,6 +26,10 @@ var (
 	digestRegexp = regexp.MustCompile("^[0-9a-fA-F]+$")
 	//digestLowercaseRegexp = regexp.MustCompile("^[0-9a-f]+$")
 	//digestUppercaseRegexp = regexp.MustCompile("^[0-9A-F]+$")
+	errDuplicateDigest = errors.New("duplicate digest")
+	errInvalidDigest   = errors.New("invalid digest")
+	errPathConflict    = errors.New("path conflict")
+	errPathFormat      = errors.New("invalid path format")
 )
 
 // DigestMap is a data structure for Content-Addressable-Storage.
@@ -39,7 +43,7 @@ func (dm *DigestMap) Add(digest string, path string) error {
 		return err
 	}
 	if dm.GetDigest(path) != `` {
-		return fmt.Errorf(`already exists: %s`, path)
+		return fmt.Errorf(`%w: %s`, errPathConflict, path)
 	}
 	if *dm == nil {
 		*dm = DigestMap{}
@@ -66,7 +70,7 @@ func (dm DigestMap) Paths() (map[string]string, error) {
 	for d, paths := range dm {
 		for _, p := range paths {
 			if _, exists := inv[p]; exists {
-				return nil, fmt.Errorf(`duplicate path in content map: %s`, p)
+				return nil, fmt.Errorf(`%w: %s`, errPathConflict, p)
 			}
 			inv[p] = d
 		}
@@ -90,16 +94,16 @@ func (dm DigestMap) Normalize() (DigestMap, error) {
 	allDirs := make(map[string]bool)
 	for d, paths := range dm {
 		if !digestRegexp.MatchString(d) {
-			return nil, fmt.Errorf(`invalid digests: %s`, d)
+			return nil, fmt.Errorf(`%w: %s`, errInvalidDigest, d)
 		}
 		lowerD := strings.ToLower(d)
 		if _, exists := newDM[lowerD]; exists {
-			return nil, fmt.Errorf(`duplicate digests: %s and %s`, d, lowerD)
+			return nil, fmt.Errorf(`%w: %s`, errDuplicateDigest, d)
 		}
 		newDM[lowerD] = make([]string, len(paths))
 		for i, p := range paths {
 			if err := validPath(p); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("%w: %s", errPathFormat, p)
 			}
 			newDM[lowerD][i] = p
 			for _, dir := range parentDirs(p) {
@@ -111,7 +115,7 @@ func (dm DigestMap) Normalize() (DigestMap, error) {
 	for _, paths := range newDM {
 		for _, p := range paths {
 			if _, exists := allDirs[p]; exists {
-				return nil, fmt.Errorf("path %s also used as a directory", p)
+				return nil, fmt.Errorf("%w: %s", errPathConflict, p)
 			}
 		}
 	}

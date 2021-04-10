@@ -1,8 +1,9 @@
 package ocfl
 
 import (
-	"fmt"
+	"errors"
 	"io/fs"
+	"regexp"
 	"strings"
 
 	"github.com/srerickson/checksum/delta"
@@ -34,79 +35,41 @@ func (obj *ObjectReader) validateRoot() error {
 	if err != nil {
 		return err
 	}
-	if err := obj._validateRootFiles(items); err != nil {
+	match := dirMatch{
+		ReqFiles: []string{
+			inventoryFile,
+			obj.sidecarFile(),
+			objectDeclarationFile,
+		},
+		ReqDirs: obj.Inventory.VersionDirs(),
+		OptDirs: []string{"extensions"},
+	}
+	err = match.Match(items)
+	if err != nil {
+		if errors.Is(err, errDirMatchMissingFile) {
+			if strings.Contains(err.Error(), objectDeclarationFile) {
+				return &ErrE003
+			}
+			if strings.Contains(err.Error(), obj.sidecarFile()) {
+				return &ErrE058
+			}
+			if strings.Contains(err.Error(), inventoryFile) {
+				return &ErrE034
+			}
+		}
+		if errors.Is(err, errDirMatchInvalidFile) {
+			return &ErrE001
+		}
+		if errors.Is(err, errDirMatchMissingDir) {
+			return &ErrE046
+		}
+		if errors.Is(err, errDirMatchInvalidDir) {
+			return &ErrE001
+		}
 		return err
 	}
-	if err := obj._validateRootDirs(items); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (obj *ObjectReader) sidecarFile() string {
-	return inventoryFile + "." + obj.DigestAlgorithm
-}
-
-// helper for validateRoot
-func (obj *ObjectReader) _validateRootFiles(items []fs.DirEntry) error {
-	onlyFiles := []string{
-		inventoryFile,
-		obj.sidecarFile(),
-		objectDeclarationFile,
-	}
-	var files []string // existing files
-	for _, f := range items {
-		name := f.Name()
-		if f.Type().IsRegular() {
-			files = append(files, name)
-		} else if !f.Type().IsDir() {
-			return fmt.Errorf(`irregular file: %s`, name)
-		}
-	}
-	missing := minusStrings(onlyFiles, files)
-	extra := minusStrings(files, onlyFiles)
-	for _, m := range missing {
-		switch m {
-		case inventoryFile:
-			return &ErrE034
-		case obj.sidecarFile():
-			return &ErrE058
-		case objectDeclarationFile:
-			return &ErrE003
-		}
-	}
-	if len(extra) != 0 {
-		return &ErrE001
-	}
-	return nil
-}
-
-// helper for validateRoot
-func (obj *ObjectReader) _validateRootDirs(items []fs.DirEntry) error {
-	var vDirs []string
-	for _, d := range items {
-		name := d.Name()
-		if !d.Type().IsDir() {
-			continue
-		}
-		if name == `extensions` {
-			continue
-		}
-		// everything else should be a version dir
-		vDirs = append(vDirs, name)
-	}
-	// version directories must match keys in inventory
-	requiredDirs := obj.Inventory.VersionDirs()
-	missing := minusStrings(requiredDirs, vDirs)
-	extra := minusStrings(vDirs, requiredDirs)
-	if len(missing) != 0 {
-		return &ErrE046
-	}
-	if len(extra) > 0 {
-		return &ErrE001
-	}
-	// version sequence is OK
-	if err := versionSeqValid(vDirs); err != nil {
+	err = versionSeqValid(obj.Inventory.VersionDirs())
+	if err != nil {
 		return err
 	}
 	return nil
@@ -117,25 +80,28 @@ func (obj *ObjectReader) validateVersionDir(v string) error {
 	if err != nil {
 		return err
 	}
-	var files []string
-	for _, i := range items {
-		if i.Type().IsRegular() {
-			files = append(files, i.Name())
+	match := dirMatch{
+		ReqFiles: []string{
+			inventoryFile,
+			obj.sidecarFile(),
+		},
+		DirRegexp: regexp.MustCompile("^.*$"),
+	}
+	err = match.Match(items)
+	if err != nil {
+		if errors.Is(err, errDirMatchMissingFile) {
+			if strings.Contains(err.Error(), obj.sidecarFile()) {
+				return &ErrE058
+			}
+			if strings.Contains(err.Error(), inventoryFile) {
+				return &ErrE034
+			}
 		}
+		if errors.Is(err, errDirMatchInvalidFile) {
+			return &ErrE015
+		}
+		return err
 	}
-	onlyFiles := []string{
-		inventoryFile,
-		obj.sidecarFile(),
-	}
-	missing := minusStrings(onlyFiles, files)
-	extra := minusStrings(files, onlyFiles)
-	if len(missing) != 0 {
-		return fmt.Errorf(`missing files in version %s: %s`, v, strings.Join(missing, ", "))
-	}
-	if len(extra) != 0 {
-		return fmt.Errorf(`extra files in version %s: %s: %w`, v, strings.Join(extra, ", "), &ErrE015)
-	}
-
 	return nil
 }
 

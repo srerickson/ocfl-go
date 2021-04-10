@@ -16,6 +16,7 @@ package ocfl
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -93,7 +94,6 @@ func ReadInventory(file io.Reader) (*Inventory, error) {
 }
 
 func (inv *Inventory) Validate() error {
-
 	// one or more versions are present
 	if len(inv.Versions) == 0 {
 		return fmt.Errorf(`inventory missing 'versions' field: %w`, &ErrE008)
@@ -129,12 +129,62 @@ func (inv *Inventory) Validate() error {
 	// check manifest path format
 	err := inv.Manifest.Valid()
 	if err != nil {
+		if errors.Is(err, errDuplicateDigest) {
+			return &ErrE096
+		}
+		if errors.Is(err, errPathConflict) {
+			return &ErrE095
+		}
+		if errors.Is(err, errPathFormat) {
+			return &ErrE099
+		}
 		return err
 	}
 	// check version state path format
 	for _, v := range inv.Versions {
 		err := v.State.Valid()
 		if err != nil {
+			if errors.Is(err, errDuplicateDigest) {
+				return &ErrE050
+			}
+			if errors.Is(err, errPathConflict) {
+				return &ErrE095
+			}
+			if errors.Is(err, errPathFormat) {
+				return &ErrE099
+			}
+			return err
+		}
+	}
+	// check that each manifest entry is used in at least one state
+	for digest := range inv.Manifest {
+		var found bool
+		for _, version := range inv.Versions {
+			for d := range version.State {
+				if digest == d {
+					found = true
+				}
+			}
+		}
+		if !found {
+			// This error code is used in the fixture
+			// but doesn't makesense
+			return fmt.Errorf("digest not used in state: %s, %w", digest, &ErrE050)
+		}
+	}
+	// check version state path format
+	for _, fixity := range inv.Fixity {
+		err := fixity.Valid()
+		if err != nil {
+			if errors.Is(err, errDuplicateDigest) {
+				return &ErrE097
+			}
+			if errors.Is(err, errPathConflict) {
+				return &ErrE095
+			}
+			if errors.Is(err, errPathFormat) {
+				return &ErrE099
+			}
 			return err
 		}
 	}

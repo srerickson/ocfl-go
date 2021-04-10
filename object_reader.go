@@ -39,6 +39,10 @@ func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 	return obj, nil
 }
 
+func (obj *ObjectReader) sidecarFile() string {
+	return inventoryFile + "." + obj.DigestAlgorithm
+}
+
 // readDeclaration reads and validates the declaration file
 func (obj *ObjectReader) readDeclaration() error {
 	f, err := obj.root.Open(objectDeclarationFile)

@@ -15,10 +15,10 @@
 package ocfl
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"regexp"
-	"strings"
 )
 
 // func stringIn(a string, list []string) bool {
@@ -55,8 +55,15 @@ type dirMatch struct {
 	ReqDirs    []string
 	OptDirs    []string
 	FileRegexp *regexp.Regexp
-	DirRegesp  *regexp.Regexp
+	DirRegexp  *regexp.Regexp
 }
+
+var (
+	errDirMatchMissingFile = errors.New("file is missing")
+	errDirMatchInvalidFile = errors.New("file in invalid")
+	errDirMatchMissingDir  = errors.New("directory is missing")
+	errDirMatchInvalidDir  = errors.New("directory is invalid")
+)
 
 func (match dirMatch) Match(items []fs.DirEntry) error {
 	var dirs []string
@@ -72,35 +79,35 @@ func (match dirMatch) Match(items []fs.DirEntry) error {
 	}
 	// directories
 	missing := minusStrings(match.ReqDirs, dirs)
-	if len(missing) != 0 {
-		return fmt.Errorf("missing required directories: %s", strings.Join(missing, ", "))
+	if len(missing) > 0 {
+		return fmt.Errorf("%w: %s", errDirMatchMissingDir, missing[0])
 	}
 	extra := minusStrings(dirs, match.ReqDirs)
 	extra = minusStrings(extra, match.OptDirs)
-	if match.DirRegesp != nil {
+	if match.DirRegexp != nil {
 		for _, e := range extra {
-			if !match.DirRegesp.MatchString(e) {
-				return fmt.Errorf("invalid directory: %s", e)
+			if !match.DirRegexp.MatchString(e) {
+				return fmt.Errorf("%w: %s", errDirMatchInvalidDir, e)
 			}
 		}
 	} else if len(extra) > 0 {
-		return fmt.Errorf("invalid directories: %s", strings.Join(missing, ", "))
+		return fmt.Errorf("%w: %s", errDirMatchInvalidDir, extra[0])
 	}
 	// files
 	missing = minusStrings(match.ReqFiles, files)
-	if len(missing) != 0 {
-		return fmt.Errorf("missing required files: %s", strings.Join(missing, ", "))
+	if len(missing) > 0 {
+		return fmt.Errorf("%w: %s", errDirMatchMissingFile, missing[0])
 	}
 	extra = minusStrings(files, match.ReqFiles)
 	extra = minusStrings(extra, match.OptFiles)
 	if match.FileRegexp != nil {
 		for _, e := range extra {
 			if !match.FileRegexp.MatchString(e) {
-				return fmt.Errorf("invalid file: %s", e)
+				return fmt.Errorf("%w: %s", errDirMatchInvalidFile, e)
 			}
 		}
 	} else if len(extra) > 0 {
-		return fmt.Errorf("invalid files: %s", strings.Join(missing, ", "))
+		return fmt.Errorf("%w: %s", errDirMatchInvalidFile, extra[0])
 	}
 	return nil
 }
