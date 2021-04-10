@@ -14,7 +14,7 @@ import (
 
 func (obj *ObjectReader) Validate() error {
 	if obj.inventory == nil {
-		return fmt.Errorf("object not itialized")
+		return fmt.Errorf("object not initialized")
 	}
 	if err := obj.inventory.Validate(); err != nil {
 		return err
