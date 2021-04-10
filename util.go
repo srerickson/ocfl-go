@@ -47,8 +47,6 @@ func minusStrings(a []string, b []string) []string {
 	return minus
 }
 
-type dirEntry []fs.DirEntry
-
 type dirMatch struct {
 	ReqFiles   []string
 	OptFiles   []string

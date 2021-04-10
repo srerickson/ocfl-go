@@ -1,13 +1,13 @@
 package ocfl
 
 import (
-	"encoding/json"
+	"encoding/hex"
+	"strings"
 	"testing"
 )
 
-func TestInventoryMarshalling(t *testing.T) {
-	inv := &Inventory{}
-	test := `{
+func TestReadInventoryChecksum(t *testing.T) {
+	invJson := `{
     "digestAlgorithm": "sha512",
     "fixity": {
       "md5": {
@@ -73,11 +73,15 @@ func TestInventoryMarshalling(t *testing.T) {
       }
     }
   }`
-	if err := json.Unmarshal([]byte(test), inv); err != nil {
+	reader := strings.NewReader(invJson)
+	inv, err := ReadInventoryChecksum(reader, "sha512")
+	if err != nil {
 		t.Error(err)
 	}
-	if inv.Versions[`v1`].User.Address != `alice@example.com` {
-		t.Error(`Problem Unmarshalling Versions Element`)
+	checksum := hex.EncodeToString(inv.checksum)
+	expected := "1ed7565d18e90176912a811744f2508c81187016071f5dbffa4f421eec2e4d0b10787db1cc356aadd4b6a5c9fec0b17826840c5bc52ad7b2776f5a79ed1d4a93"
+	if checksum != expected {
+		t.Errorf("expected %s, got %s", expected, checksum)
 	}
 
 }

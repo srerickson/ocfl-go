@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"path/filepath"
+	"strings"
 
 	"github.com/srerickson/checksum"
 )
@@ -64,6 +65,7 @@ func (obj *ObjectReader) readDeclaration() error {
 }
 
 func (obj *ObjectReader) readInventory(dir string) (*Inventory, error) {
+
 	path := filepath.Join(dir, inventoryFile)
 	file, err := obj.root.Open(path)
 	if err != nil {
@@ -73,7 +75,61 @@ func (obj *ObjectReader) readInventory(dir string) (*Inventory, error) {
 		return nil, err
 	}
 	defer file.Close()
-	return ReadInventory(file)
+	if obj.Inventory != nil {
+		return ReadInventoryChecksum(file, obj.Inventory.DigestAlgorithm)
+	}
+	// we don't know the digest algorithm, so we read inventory
+	// and get checksum in two reads.
+	inv, err := ReadInventory(file)
+	if err != nil {
+		return nil, err
+	}
+	inv.checksum, err = obj.inventoryChecksum("", inv.DigestAlgorithm)
+	if err != nil {
+		return nil, err
+	}
+	return inv, nil
+}
+
+func (obj *ObjectReader) inventoryChecksum(dir string, alg string) ([]byte, error) {
+	newH, err := newHash(alg)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, inventoryFile)
+	file, err := obj.root.Open(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, &ErrE034
+		}
+		return nil, err
+	}
+	defer file.Close()
+	checksum := newH()
+	io.Copy(checksum, file)
+	return checksum.Sum(nil), nil
+}
+
+func (obj *ObjectReader) readInventorySidecar(dir string) (string, error) {
+	path := filepath.Join(dir, obj.sidecarFile())
+	file, err := obj.root.Open(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", &ErrE058
+		}
+		return "", err
+	}
+	defer file.Close()
+	cont, err := io.ReadAll(file)
+	if err != nil {
+		return "", err
+	}
+	sidecar := string(cont)
+	offset := strings.Index(string(sidecar), " ")
+	if offset < 0 || !digestRegexp.MatchString(sidecar[:offset]) {
+		return "", fmt.Errorf("invalid sidecar contents: %s: %w", sidecar, &ErrE061)
+	}
+	return sidecar[:offset], nil
 }
 
 type fsOpenFunc func(name string) (fs.File, error)

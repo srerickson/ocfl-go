@@ -1,6 +1,8 @@
 package ocfl
 
 import (
+	"bytes"
+	"encoding/hex"
 	"errors"
 	"io/fs"
 	"regexp"
@@ -12,6 +14,17 @@ import (
 func (obj *ObjectReader) Validate() error {
 	if err := obj.Inventory.Validate(); err != nil {
 		return err
+	}
+	sidecar, err := obj.readInventorySidecar(".")
+	if err != nil {
+		return err
+	}
+	check, err := obj.inventoryChecksum(".", obj.Inventory.DigestAlgorithm)
+	if err != nil {
+		return &ErrE058
+	}
+	if hex.EncodeToString(check) != sidecar {
+		return &ErrE058
 	}
 	if err := obj.validateRoot(); err != nil {
 		return err
@@ -72,6 +85,10 @@ func (obj *ObjectReader) validateRoot() error {
 	if err != nil {
 		return err
 	}
+	err = obj.validateExtensionsDir()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -101,6 +118,23 @@ func (obj *ObjectReader) validateVersionDir(v string) error {
 			return &ErrE015
 		}
 		return err
+	}
+	inv, err := obj.readInventory(v)
+	if err != nil {
+		return err
+	}
+	if obj.Inventory.Head == v {
+		// if this is the HEAD version, root inventory should match this inventory
+		if !bytes.Equal(obj.Inventory.checksum, inv.checksum) {
+			return &ErrE064
+		}
+	}
+	sidecar, err := obj.readInventorySidecar(v)
+	if err != nil {
+		return err
+	}
+	if hex.EncodeToString(inv.checksum) != sidecar {
+		return &ErrE058
 	}
 	return nil
 }
@@ -144,6 +178,25 @@ func (obj *ObjectReader) validateContent() error {
 		if len(old) != 0 {
 			return &ErrE023
 		}
+	}
+	return nil
+}
+
+func (obj *ObjectReader) validateExtensionsDir() error {
+	items, err := fs.ReadDir(obj.root, "extensions")
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	match := dirMatch{
+		// only contain directories
+		DirRegexp: regexp.MustCompile("^.*$"),
+	}
+	err = match.Match(items)
+	if err != nil {
+		return &ErrE067
 	}
 	return nil
 }
