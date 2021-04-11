@@ -1,6 +1,7 @@
 package ocfl
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -38,4 +39,17 @@ func (verr *ValidationErr) Error() string {
 
 func (verr *ValidationErr) Code() *OCFLCodeErr {
 	return verr.code
+}
+
+// checks if the err is a *ValidationErr. If it isn't
+// it creates one using err and code.
+func asValidationErr(err error, code *OCFLCodeErr) *ValidationErr {
+	var vErr *ValidationErr
+	if errors.As(err, &vErr) {
+		return vErr
+	}
+	return &ValidationErr{
+		err:  err,
+		code: code,
+	}
 }

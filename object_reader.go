@@ -25,7 +25,9 @@ type ObjectReader struct {
 }
 
 // NewObjectReader returns a new ObjectReader with loaded inventory.
-// An error is returned only if the inventory cannot be unmarshaled
+// An error is returned only if:
+// 	- OCFL object declaration is missing or invalid.
+//  - The inventory is not be present or there was an error loading it
 func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 	obj := &ObjectReader{root: root}
 	err := obj.readDeclaration()
@@ -34,20 +36,9 @@ func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 	}
 	obj.inventory, err = obj.readInventory(`.`)
 	if err != nil {
-		if _, ok := err.(*ValidationErr); !ok {
-			return nil, &ValidationErr{
-				err:  err,
-				code: &ErrE034,
-			}
-		}
-		return nil, err
-
+		return nil, asValidationErr(err, &ErrE034)
 	}
 	return obj, nil
-}
-
-func (obj *ObjectReader) sidecarFile() string {
-	return inventoryFile + "." + obj.inventory.DigestAlgorithm
 }
 
 // readDeclaration reads and validates the declaration file.
@@ -77,9 +68,8 @@ func (obj *ObjectReader) readDeclaration() error {
 	return nil
 }
 
-// reads inventory and calculates checksum for inventory.json
-// in dir. It' not necessarily a validation error if an inventory
-// doesn't exist
+// reads and parses the inventory.json file in dir. If an error is returned
+// it may be a ValidationErr if an error occured durind unmarshalling
 func (obj *ObjectReader) readInventory(dir string) (*Inventory, error) {
 	path := filepath.Join(dir, inventoryFile)
 	file, err := obj.root.Open(path)
@@ -87,17 +77,7 @@ func (obj *ObjectReader) readInventory(dir string) (*Inventory, error) {
 		return nil, err
 	}
 	defer file.Close()
-	// we don't know the digest algorithm, so we read inventory
-	// and get checksum in two reads.
-	inv, err := ReadInventory(file)
-	if err != nil {
-		return nil, err
-	}
-	inv.checksum, err = obj.inventoryChecksum(dir, inv.DigestAlgorithm)
-	if err != nil {
-		return nil, err
-	}
-	return inv, nil
+	return ReadInventory(file)
 }
 
 func (obj *ObjectReader) inventoryChecksum(dir string, alg string) ([]byte, error) {
@@ -117,8 +97,8 @@ func (obj *ObjectReader) inventoryChecksum(dir string, alg string) ([]byte, erro
 }
 
 // reads and validates sidecar. Always returns ValidationErr
-func (obj *ObjectReader) readInventorySidecar(dir string) (string, error) {
-	path := filepath.Join(dir, obj.sidecarFile())
+func (obj *ObjectReader) readInventorySidecar(dir string, alg string) (string, error) {
+	path := filepath.Join(dir, inventoryFile+"."+alg)
 	file, err := obj.root.Open(path)
 	if err != nil {
 		return "", &ValidationErr{

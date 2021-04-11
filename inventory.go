@@ -39,7 +39,7 @@ type Inventory struct {
 	Manifest         DigestMap            `json:"manifest"`
 	Versions         map[string]*Version  `json:"versions"`
 	Fixity           map[string]DigestMap `json:"fixity,omitempty"`
-	checksum         []byte               // inventory file checksum
+	digest           []byte               // digest of inventory file
 }
 
 // Version represent a version entryin inventory.json
@@ -112,4 +112,8 @@ func (inv *Inventory) VersionDirs() []string {
 		dirs = append(dirs, v)
 	}
 	return dirs
+}
+
+func (inv *Inventory) SidecarFile() string {
+	return inventoryFile + "." + inv.DigestAlgorithm
 }

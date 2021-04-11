@@ -12,29 +12,14 @@ import (
 	"github.com/srerickson/checksum/delta"
 )
 
-// func wrapValidationErr(err error) error {
-// 	if _, ok := err.(*ValidationErr); ok {
-// 		return err
-// 	}
-
-// }
-
 func (obj *ObjectReader) Validate() error {
-	if obj.inventory == nil {
-		return fmt.Errorf("object not initialized")
-	}
-	if err := obj.inventory.Validate(); err != nil {
-		return err
+	var err error
+	obj.inventory, err = obj.readInventoryValidate(".")
+	if err != nil {
+		return asValidationErr(err, &ErrE034)
 	}
 	if err := obj.validateRoot(); err != nil {
 		return err
-	}
-	sidecar, err := obj.readInventorySidecar(".")
-	if err != nil {
-		return err
-	}
-	if hex.EncodeToString(obj.inventory.checksum) != sidecar {
-		return &ErrE058
 	}
 	for v := range obj.inventory.Versions {
 		err := obj.validateVersionDir(v)
@@ -48,6 +33,31 @@ func (obj *ObjectReader) Validate() error {
 	return nil
 }
 
+func (obj *ObjectReader) readInventoryValidate(dir string) (*Inventory, error) {
+	inv, err := obj.readInventory(dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := inv.Validate(); err != nil {
+		return nil, err
+	}
+	inv.digest, err = obj.inventoryChecksum(dir, inv.DigestAlgorithm)
+	if err != nil {
+		return nil, err
+	}
+	sidecar, err := obj.readInventorySidecar(dir, inv.DigestAlgorithm)
+	if err != nil {
+		return nil, err
+	}
+	if hex.EncodeToString(inv.digest) != sidecar {
+		return nil, &ValidationErr{
+			err:  fmt.Errorf(`inventory checksum validation failed for version %s`, dir),
+			code: &ErrE034,
+		}
+	}
+	return inv, nil
+}
+
 // validateRoot validates the object's root file structure. It checks
 // existence of required files and absence of illegal files.
 func (obj *ObjectReader) validateRoot() error {
@@ -58,7 +68,7 @@ func (obj *ObjectReader) validateRoot() error {
 	match := dirMatch{
 		ReqFiles: []string{
 			inventoryFile,
-			obj.sidecarFile(),
+			obj.inventory.SidecarFile(),
 			objectDeclarationFile,
 		},
 		ReqDirs: obj.inventory.VersionDirs(),
@@ -70,7 +80,7 @@ func (obj *ObjectReader) validateRoot() error {
 			if strings.Contains(err.Error(), objectDeclarationFile) {
 				return &ValidationErr{&ErrE003, err}
 			}
-			if strings.Contains(err.Error(), obj.sidecarFile()) {
+			if strings.Contains(err.Error(), obj.inventory.SidecarFile()) {
 				return &ValidationErr{&ErrE058, err}
 			}
 			if strings.Contains(err.Error(), inventoryFile) {
@@ -119,23 +129,13 @@ func (obj *ObjectReader) validateVersionDir(v string) error {
 		}
 	}
 	if hasInventory {
-		inv, err := obj.readInventory(v)
-		if err != nil {
-			return &ValidationErr{code: &ErrE034, err: err}
-		}
-		sidecar, err := obj.readInventorySidecar(v)
+		inv, err := obj.readInventoryValidate(v)
 		if err != nil {
 			return err
 		}
-		if hex.EncodeToString(inv.checksum) != sidecar {
-			return &ValidationErr{
-				err:  fmt.Errorf(`inventory checksum validation failed for version %s`, v),
-				code: &ErrE034,
-			}
-		}
 		if obj.inventory.Head == v {
 			// if this is the HEAD version, root inventory should match this inventory
-			if !bytes.Equal(obj.inventory.checksum, inv.checksum) {
+			if !bytes.Equal(obj.inventory.digest, inv.digest) {
 				return &ValidationErr{
 					err:  fmt.Errorf(`root inventory doesn't match inventory for %s`, v),
 					code: &ErrE064,
