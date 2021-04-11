@@ -16,7 +16,6 @@ package ocfl
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -76,36 +75,35 @@ func ReadInventory(file io.Reader) (*Inventory, error) {
 	if err != nil {
 		switch err.(type) {
 		case *time.ParseError:
-			return nil, fmt.Errorf(`date/time format error in inventory.json: %w`, &ErrE049)
+			return nil, &ValidationErr{err: err, code: &ErrE049}
 		case *json.UnmarshalTypeError:
 			if strings.Contains(err.Error(), `Inventory.head`) {
-				return nil, fmt.Errorf(`failed to parse head in inventory.json: %w`, &ErrE040)
+				return nil, &ValidationErr{err: err, code: &ErrE040}
 			}
 			if strings.Contains(err.Error(), `Version.versions.message`) {
-				return nil, fmt.Errorf(`failed to parese version message in inventory.json: %w`, &ErrE094)
+				return nil, &ValidationErr{err: err, code: &ErrE094}
 			}
 			// Todo other special cases?
 		}
-		return nil, fmt.Errorf("%s: %w", err.Error(), &ErrE033)
-
+		return nil, &ValidationErr{err: err, code: &ErrE033}
 	}
 	return inv, nil
 }
 
-func ReadInventoryChecksum(file io.Reader, alg string) (*Inventory, error) {
-	newH, err := newHash(alg)
-	if err != nil {
-		return nil, err
-	}
-	checksum := newH()
-	reader := io.TeeReader(file, checksum)
-	inv, err := ReadInventory(reader)
-	if err != nil {
-		return nil, err
-	}
-	inv.checksum = checksum.Sum(nil)
-	return inv, nil
-}
+// func ReadInventoryChecksum(file io.Reader, alg string) (*Inventory, error) {
+// 	newH, err := newHash(alg)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	checksum := newH()
+// 	reader := io.TeeReader(file, checksum)
+// 	inv, err := ReadInventory(reader)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	inv.checksum = checksum.Sum(nil)
+// 	return inv, nil
+// }
 
 // returns list of version directories that should be present in the object root
 func (inv *Inventory) VersionDirs() []string {

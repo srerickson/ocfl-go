@@ -34,7 +34,14 @@ func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 	}
 	obj.inventory, err = obj.readInventory(`.`)
 	if err != nil {
+		if _, ok := err.(*ValidationErr); !ok {
+			return nil, &ValidationErr{
+				err:  err,
+				code: &ErrE034,
+			}
+		}
 		return nil, err
+
 	}
 	return obj, nil
 }
@@ -43,14 +50,18 @@ func (obj *ObjectReader) sidecarFile() string {
 	return inventoryFile + "." + obj.inventory.DigestAlgorithm
 }
 
-// readDeclaration reads and validates the declaration file
+// readDeclaration reads and validates the declaration file.
+// If an error is returned, it is a ValidationErr
 func (obj *ObjectReader) readDeclaration() error {
 	f, err := obj.root.Open(objectDeclarationFile)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			err = fmt.Errorf(`version declaration not found: %w`, &ErrE003)
+			return &ValidationErr{
+				err:  fmt.Errorf(`OCFL version declaration not found: %s`, objectDeclarationFile),
+				code: &ErrE003,
+			}
 		}
-		return err
+		return &ValidationErr{err: err, code: &ErrE003}
 	}
 	defer f.Close()
 	decl, err := io.ReadAll(f)
@@ -58,33 +69,31 @@ func (obj *ObjectReader) readDeclaration() error {
 		return err
 	}
 	if string(decl) != objectDeclaration+"\n" {
-		return fmt.Errorf(`version declaration invalid: %w`, &ErrE007)
+		return &ValidationErr{
+			err:  errors.New(`OCFL version declaration has invalid text contents`),
+			code: &ErrE007,
+		}
 	}
 	return nil
 }
 
-// reads inventory and calculates checksum
+// reads inventory and calculates checksum for inventory.json
+// in dir. It' not necessarily a validation error if an inventory
+// doesn't exist
 func (obj *ObjectReader) readInventory(dir string) (*Inventory, error) {
-
 	path := filepath.Join(dir, inventoryFile)
 	file, err := obj.root.Open(path)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, &ErrE034
-		}
 		return nil, err
 	}
 	defer file.Close()
-	if obj.inventory != nil {
-		return ReadInventoryChecksum(file, obj.inventory.DigestAlgorithm)
-	}
 	// we don't know the digest algorithm, so we read inventory
 	// and get checksum in two reads.
 	inv, err := ReadInventory(file)
 	if err != nil {
 		return nil, err
 	}
-	inv.checksum, err = obj.inventoryChecksum("", inv.DigestAlgorithm)
+	inv.checksum, err = obj.inventoryChecksum(dir, inv.DigestAlgorithm)
 	if err != nil {
 		return nil, err
 	}
@@ -99,9 +108,6 @@ func (obj *ObjectReader) inventoryChecksum(dir string, alg string) ([]byte, erro
 	path := filepath.Join(dir, inventoryFile)
 	file, err := obj.root.Open(path)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, &ErrE034
-		}
 		return nil, err
 	}
 	defer file.Close()
@@ -110,24 +116,31 @@ func (obj *ObjectReader) inventoryChecksum(dir string, alg string) ([]byte, erro
 	return checksum.Sum(nil), nil
 }
 
+// reads and validates sidecar. Always returns ValidationErr
 func (obj *ObjectReader) readInventorySidecar(dir string) (string, error) {
 	path := filepath.Join(dir, obj.sidecarFile())
 	file, err := obj.root.Open(path)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return "", &ErrE058
+		return "", &ValidationErr{
+			err:  err,
+			code: &ErrE058,
 		}
-		return "", err
 	}
 	defer file.Close()
 	cont, err := io.ReadAll(file)
 	if err != nil {
-		return "", err
+		return "", &ValidationErr{
+			err:  err,
+			code: &ErrE058,
+		}
 	}
 	sidecar := string(cont)
 	offset := strings.Index(string(sidecar), " ")
 	if offset < 0 || !digestRegexp.MatchString(sidecar[:offset]) {
-		return "", fmt.Errorf("invalid sidecar contents: %s: %w", sidecar, &ErrE061)
+		return "", &ValidationErr{
+			err:  fmt.Errorf("invalid sidecar contents: %s", sidecar),
+			code: &ErrE061,
+		}
 	}
 	return sidecar[:offset], nil
 }

@@ -119,17 +119,27 @@ func versionSeqValid(names []string) error {
 		if i == 0 {
 			padding = p
 		} else if padding != p {
-			return fmt.Errorf(`inconsistent version format: %w`, &ErrE012)
+			return &ValidationErr{
+				err:  fmt.Errorf(`inconsistent version padding: %s`, name),
+				code: &ErrE012,
+			}
 		}
 		nums = append(nums, v)
 	}
 	sort.IntSlice(nums).Sort()
 	for i, v := range nums {
-		if v != i+1 {
+		expectedV := i + 1
+		if v != expectedV {
 			if i == 0 {
-				return &ErrE009
+				return &ValidationErr{
+					err:  fmt.Errorf(`missing version 1`),
+					code: &ErrE009,
+				}
 			}
-			return &ErrE010
+			return &ValidationErr{
+				err:  fmt.Errorf(`missing version %d`, expectedV),
+				code: &ErrE010,
+			}
 		}
 	}
 	return nil

@@ -12,6 +12,13 @@ import (
 	"github.com/srerickson/checksum/delta"
 )
 
+// func wrapValidationErr(err error) error {
+// 	if _, ok := err.(*ValidationErr); ok {
+// 		return err
+// 	}
+
+// }
+
 func (obj *ObjectReader) Validate() error {
 	if obj.inventory == nil {
 		return fmt.Errorf("object not initialized")
@@ -61,25 +68,23 @@ func (obj *ObjectReader) validateRoot() error {
 	if err != nil {
 		if errors.Is(err, errDirMatchMissingFile) {
 			if strings.Contains(err.Error(), objectDeclarationFile) {
-				//return &ErrE003
 				return &ValidationErr{&ErrE003, err}
 			}
 			if strings.Contains(err.Error(), obj.sidecarFile()) {
-				//return &ErrE058
 				return &ValidationErr{&ErrE058, err}
 			}
 			if strings.Contains(err.Error(), inventoryFile) {
-				return &ErrE034
+				return &ValidationErr{&ErrE034, err}
 			}
 		}
 		if errors.Is(err, errDirMatchInvalidFile) {
-			return &ErrE001
+			return &ValidationErr{&ErrE001, err}
 		}
 		if errors.Is(err, errDirMatchMissingDir) {
-			return &ErrE046
+			return &ValidationErr{&ErrE046, err}
 		}
 		if errors.Is(err, errDirMatchInvalidDir) {
-			return &ErrE001
+			return &ValidationErr{&ErrE001, err}
 		}
 		return err
 	}
@@ -100,44 +105,46 @@ func (obj *ObjectReader) validateVersionDir(v string) error {
 		return err
 	}
 	match := dirMatch{
-		ReqFiles: []string{
-			inventoryFile,
-			obj.sidecarFile(),
-		},
-		DirRegexp: regexp.MustCompile("^.*$"),
+		FileRegexp: regexp.MustCompile(`^inventory\.json(\.[a-z0-9]+)?$`),
+		DirRegexp:  regexp.MustCompile(`^.*$`),
 	}
 	err = match.Match(items)
 	if err != nil {
-		if errors.Is(err, errDirMatchMissingFile) {
-			if strings.Contains(err.Error(), obj.sidecarFile()) {
-				return &ErrE058
+		return &ValidationErr{code: &ErrE015, err: err}
+	}
+	var hasInventory bool
+	for _, i := range items {
+		if i.Type().IsRegular() && i.Name() == inventoryFile {
+			hasInventory = true
+		}
+	}
+	if hasInventory {
+		inv, err := obj.readInventory(v)
+		if err != nil {
+			return &ValidationErr{code: &ErrE034, err: err}
+		}
+		sidecar, err := obj.readInventorySidecar(v)
+		if err != nil {
+			return err
+		}
+		if hex.EncodeToString(inv.checksum) != sidecar {
+			return &ValidationErr{
+				err:  fmt.Errorf(`inventory checksum validation failed for version %s`, v),
+				code: &ErrE034,
 			}
-			if strings.Contains(err.Error(), inventoryFile) {
-				return &ErrE034
+		}
+		if obj.inventory.Head == v {
+			// if this is the HEAD version, root inventory should match this inventory
+			if !bytes.Equal(obj.inventory.checksum, inv.checksum) {
+				return &ValidationErr{
+					err:  fmt.Errorf(`root inventory doesn't match inventory for %s`, v),
+					code: &ErrE064,
+				}
 			}
 		}
-		if errors.Is(err, errDirMatchInvalidFile) {
-			return &ErrE015
-		}
-		return err
+		return nil
 	}
-	inv, err := obj.readInventory(v)
-	if err != nil {
-		return err
-	}
-	if obj.inventory.Head == v {
-		// if this is the HEAD version, root inventory should match this inventory
-		if !bytes.Equal(obj.inventory.checksum, inv.checksum) {
-			return &ErrE064
-		}
-	}
-	sidecar, err := obj.readInventorySidecar(v)
-	if err != nil {
-		return err
-	}
-	if hex.EncodeToString(inv.checksum) != sidecar {
-		return &ErrE058
-	}
+	// WARN no inventory
 	return nil
 }
 
@@ -166,19 +173,31 @@ func (obj *ObjectReader) validateContent() error {
 	if len(changes.Same()) != len(allFiles) || len(changes.Same()) != len(manifest) {
 		mods := changes.Modified()
 		if len(mods) != 0 {
-			return &ErrE092
+			return &ValidationErr{
+				err:  fmt.Errorf("digests in manifest don't match digests of files in content"),
+				code: &ErrE092,
+			}
 		}
 		added := changes.Added()
 		if len(added) != 0 {
-			return &ErrE023
+			return &ValidationErr{
+				err:  fmt.Errorf("content includes files not in manifest"),
+				code: &ErrE023,
+			}
 		}
 		removed := changes.Removed()
 		if len(removed) != 0 {
-			return &ErrE023
+			return &ValidationErr{
+				err:  fmt.Errorf("manifest includes files not in content"),
+				code: &ErrE023,
+			}
 		}
 		old, _ := changes.Renamed()
 		if len(old) != 0 {
-			return &ErrE023
+			return &ValidationErr{
+				err:  fmt.Errorf("files in content renamed from manifest"),
+				code: &ErrE023,
+			}
 		}
 	}
 	return nil
@@ -198,7 +217,7 @@ func (obj *ObjectReader) validateExtensionsDir() error {
 	}
 	err = match.Match(items)
 	if err != nil {
-		return &ErrE067
+		return &ValidationErr{err: err, code: &ErrE067}
 	}
 	return nil
 }
