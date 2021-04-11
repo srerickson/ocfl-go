@@ -1,5 +1,10 @@
 package main
 
+// This program generates error objects based on ocfl spec.
+//
+// from this directory:
+// go run gen.go > ../errors_gen.go
+
 import (
 	"encoding/csv"
 	"log"
@@ -7,8 +12,6 @@ import (
 	"strings"
 	"text/template"
 )
-
-// generates error objects based on ocfl spec
 
 func main() {
 	tpl := template.Must(template.ParseFiles(`errors_gen.go.tpl`))

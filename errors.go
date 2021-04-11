@@ -1,32 +1,41 @@
 package ocfl
 
 import (
-	"errors"
 	"fmt"
 )
 
-// ErrInvalidObj is a generic OCFL validation error and
-// parent of all ObjectValidationErr instances
-var ErrInvalidObj error = errors.New(`invalid OCFL`)
-
-// ObjectValidationErr represents an OCFL Object Validation Error:
+// OCFLCodeErr represents an OCFL Validation Codes:
 // see https://ocfl.io/validation/validation-codes.html
-type ObjectValidationErr struct {
-	Name        string // short name (not from spec)
+type OCFLCodeErr struct {
 	Description string // description from spec
 	Code        string // code from spec
 	URI         string // reference URI from spec
 }
 
 // Error implements the Error interface for ObjectValidationErr
-func (err *ObjectValidationErr) Error() string {
-	if err.Name == "" {
-		return fmt.Sprintf(`%s [%s]`, err.Description, err.Code)
-	}
-	return fmt.Sprintf(`%s [%s]`, err.Description, err.Code)
+func (err *OCFLCodeErr) Error() string {
+	return fmt.Sprintf(`[%s] %s`, err.Code, err.Description)
 }
 
-// Unwrap implements the Unwrap interface for ObjectValidationErr
-func (err *ObjectValidationErr) Unwrap() error {
-	return ErrInvalidObj
+// ValidationErr is an error returned from validation check
+type ValidationErr struct {
+	code *OCFLCodeErr // code from spec
+	err  error        // internal error
+}
+
+func (verr *ValidationErr) Unwrap() error {
+	return verr.err
+}
+
+func (verr *ValidationErr) Error() string {
+	code := "??"
+	const format = "[%s] %s"
+	if verr.code != nil {
+		code = verr.code.Code
+	}
+	return fmt.Sprintf(format, code, verr.err.Error())
+}
+
+func (verr *ValidationErr) Code() *OCFLCodeErr {
+	return verr.code
 }

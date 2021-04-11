@@ -61,10 +61,12 @@ func (obj *ObjectReader) validateRoot() error {
 	if err != nil {
 		if errors.Is(err, errDirMatchMissingFile) {
 			if strings.Contains(err.Error(), objectDeclarationFile) {
-				return &ErrE003
+				//return &ErrE003
+				return &ValidationErr{&ErrE003, err}
 			}
 			if strings.Contains(err.Error(), obj.sidecarFile()) {
-				return &ErrE058
+				//return &ErrE058
+				return &ValidationErr{&ErrE058, err}
 			}
 			if strings.Contains(err.Error(), inventoryFile) {
 				return &ErrE034

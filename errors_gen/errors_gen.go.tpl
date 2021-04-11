@@ -4,7 +4,7 @@ package ocfl
 
 {{range .}}
 //Err{{index . 0}}: {{index . 1}}
-var Err{{index . 0}} = ObjectValidationErr{
+var Err{{index . 0}} = OCFLCodeErr{
 	Description: "{{index . 1}}",
 	Code: "{{index . 0}}",
 	URI: "{{index . 2}}",

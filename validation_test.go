@@ -1,7 +1,6 @@
 package ocfl_test
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,46 +14,46 @@ var badObjPath = filepath.Join(fixturePath, `bad-objects`)
 
 type objValidationTest struct {
 	Path     string
-	Expected []error
+	Expected []*ocfl.OCFLCodeErr
 }
 
 var badObjects = []objValidationTest{
-	{filepath.Join(badObjPath, "E001_extra_dir_in_root"), []error{&ocfl.ErrE001}},
-	{filepath.Join(badObjPath, "E001_extra_file_in_root"), []error{&ocfl.ErrE001}},
-	{filepath.Join(badObjPath, "E003_E034_empty"), []error{&ocfl.ErrE003, &ocfl.ErrE034}},
-	{filepath.Join(badObjPath, "E003_no_decl"), []error{&ocfl.ErrE003}},
-	{filepath.Join(badObjPath, "E007_bad_declaration_contents"), []error{&ocfl.ErrE007}},
-	{filepath.Join(badObjPath, "E008_E036_no_versions_no_head"), []error{&ocfl.ErrE008, &ocfl.ErrE036}},
-	{filepath.Join(badObjPath, "E015_content_not_in_content_dir"), []error{&ocfl.ErrE015}},
-	{filepath.Join(badObjPath, "E023_extra_file"), []error{&ocfl.ErrE023}},
-	{filepath.Join(badObjPath, "E023_missing_file"), []error{&ocfl.ErrE023}},
-	{filepath.Join(badObjPath, "E034_no_inv"), []error{&ocfl.ErrE034}},
-	{filepath.Join(badObjPath, "E036_no_id"), []error{&ocfl.ErrE036}},
-	{filepath.Join(badObjPath, "E040_wrong_head_doesnt_exist"), []error{&ocfl.ErrE040}},
-	{filepath.Join(badObjPath, "E040_wrong_head_format"), []error{&ocfl.ErrE040}},
-	{filepath.Join(badObjPath, "E041_no_manifest"), []error{&ocfl.ErrE041}},
-	{filepath.Join(badObjPath, "E049_created_no_timezone"), []error{&ocfl.ErrE049}},
-	{filepath.Join(badObjPath, "E049_created_not_to_seconds"), []error{&ocfl.ErrE049}},
-	{filepath.Join(badObjPath, "E049_E050_E054_bad_version_block_values"), []error{&ocfl.ErrE049, &ocfl.ErrE050, &ocfl.ErrE054}},
-	{filepath.Join(badObjPath, "E050_file_in_manifest_not_used"), []error{&ocfl.ErrE050}},
-	{filepath.Join(badObjPath, "E058_no_sidecar"), []error{&ocfl.ErrE058}},
-	{filepath.Join(badObjPath, "E064_different_root_and_latest_inventories"), []error{&ocfl.ErrE064}},
-	{filepath.Join(badObjPath, "E067_file_in_extensions_dir"), []error{&ocfl.ErrE067}},
-	{filepath.Join(badObjPath, "E095_conflicting_logical_paths"), []error{&ocfl.ErrE095}},
+	{filepath.Join(badObjPath, "E001_extra_dir_in_root"), []*ocfl.OCFLCodeErr{&ocfl.ErrE001}},
+	{filepath.Join(badObjPath, "E001_extra_file_in_root"), []*ocfl.OCFLCodeErr{&ocfl.ErrE001}},
+	{filepath.Join(badObjPath, "E003_E034_empty"), []*ocfl.OCFLCodeErr{&ocfl.ErrE003, &ocfl.ErrE034}},
+	{filepath.Join(badObjPath, "E003_no_decl"), []*ocfl.OCFLCodeErr{&ocfl.ErrE003}},
+	{filepath.Join(badObjPath, "E007_bad_declaration_contents"), []*ocfl.OCFLCodeErr{&ocfl.ErrE007}},
+	{filepath.Join(badObjPath, "E008_E036_no_versions_no_head"), []*ocfl.OCFLCodeErr{&ocfl.ErrE008, &ocfl.ErrE036}},
+	{filepath.Join(badObjPath, "E015_content_not_in_content_dir"), []*ocfl.OCFLCodeErr{&ocfl.ErrE015}},
+	{filepath.Join(badObjPath, "E023_extra_file"), []*ocfl.OCFLCodeErr{&ocfl.ErrE023}},
+	{filepath.Join(badObjPath, "E023_missing_file"), []*ocfl.OCFLCodeErr{&ocfl.ErrE023}},
+	{filepath.Join(badObjPath, "E034_no_inv"), []*ocfl.OCFLCodeErr{&ocfl.ErrE034}},
+	{filepath.Join(badObjPath, "E036_no_id"), []*ocfl.OCFLCodeErr{&ocfl.ErrE036}},
+	{filepath.Join(badObjPath, "E040_wrong_head_doesnt_exist"), []*ocfl.OCFLCodeErr{&ocfl.ErrE040}},
+	{filepath.Join(badObjPath, "E040_wrong_head_format"), []*ocfl.OCFLCodeErr{&ocfl.ErrE040}},
+	{filepath.Join(badObjPath, "E041_no_manifest"), []*ocfl.OCFLCodeErr{&ocfl.ErrE041}},
+	{filepath.Join(badObjPath, "E049_created_no_timezone"), []*ocfl.OCFLCodeErr{&ocfl.ErrE049}},
+	{filepath.Join(badObjPath, "E049_created_not_to_seconds"), []*ocfl.OCFLCodeErr{&ocfl.ErrE049}},
+	{filepath.Join(badObjPath, "E049_E050_E054_bad_version_block_values"), []*ocfl.OCFLCodeErr{&ocfl.ErrE049, &ocfl.ErrE050, &ocfl.ErrE054}},
+	{filepath.Join(badObjPath, "E050_file_in_manifest_not_used"), []*ocfl.OCFLCodeErr{&ocfl.ErrE050}},
+	{filepath.Join(badObjPath, "E058_no_sidecar"), []*ocfl.OCFLCodeErr{&ocfl.ErrE058}},
+	{filepath.Join(badObjPath, "E064_different_root_and_latest_inventories"), []*ocfl.OCFLCodeErr{&ocfl.ErrE064}},
+	{filepath.Join(badObjPath, "E067_file_in_extensions_dir"), []*ocfl.OCFLCodeErr{&ocfl.ErrE067}},
+	{filepath.Join(badObjPath, "E095_conflicting_logical_paths"), []*ocfl.OCFLCodeErr{&ocfl.ErrE095}},
 
 	// https://github.com/zimeon/ocfl-py/tree/main/extra_fixtures/bad-objects
 	// Fixtures referenced below are copyright (c) 2018 Simeon Warner, MIT License
-	{filepath.Join(badObjPath, "E009_version_two_only"), []error{&ocfl.ErrE009}},
-	{filepath.Join(badObjPath, "E012_inconsistent_version_format"), []error{&ocfl.ErrE012}},
-	{filepath.Join(badObjPath, "E033_inventory_bad_json"), []error{&ocfl.ErrE033}},
-	{filepath.Join(badObjPath, "E046_missing_version_dir"), []error{&ocfl.ErrE046}},
-	{filepath.Join(badObjPath, "E050_state_digest_different_case"), []error{&ocfl.ErrE050}},
-	{filepath.Join(badObjPath, "E050_state_repeated_digest"), []error{&ocfl.ErrE050}},
-	{filepath.Join(badObjPath, "E092_bad_manifest_digest"), []error{&ocfl.ErrE092}},
-	{filepath.Join(badObjPath, "E094_message_not_a_string"), []error{&ocfl.ErrE094}},
-	{filepath.Join(badObjPath, "E096_manifest_repeated_digest"), []error{&ocfl.ErrE096}},
-	{filepath.Join(badObjPath, "E097_fixity_repeated_digest"), []error{&ocfl.ErrE097}},
-	{filepath.Join(badObjPath, "E099_bad_content_path_elements"), []error{&ocfl.ErrE099}},
+	{filepath.Join(badObjPath, "E009_version_two_only"), []*ocfl.OCFLCodeErr{&ocfl.ErrE009}},
+	{filepath.Join(badObjPath, "E012_inconsistent_version_format"), []*ocfl.OCFLCodeErr{&ocfl.ErrE012}},
+	{filepath.Join(badObjPath, "E033_inventory_bad_json"), []*ocfl.OCFLCodeErr{&ocfl.ErrE033}},
+	{filepath.Join(badObjPath, "E046_missing_version_dir"), []*ocfl.OCFLCodeErr{&ocfl.ErrE046}},
+	{filepath.Join(badObjPath, "E050_state_digest_different_case"), []*ocfl.OCFLCodeErr{&ocfl.ErrE050}},
+	{filepath.Join(badObjPath, "E050_state_repeated_digest"), []*ocfl.OCFLCodeErr{&ocfl.ErrE050}},
+	{filepath.Join(badObjPath, "E092_bad_manifest_digest"), []*ocfl.OCFLCodeErr{&ocfl.ErrE092}},
+	{filepath.Join(badObjPath, "E094_message_not_a_string"), []*ocfl.OCFLCodeErr{&ocfl.ErrE094}},
+	{filepath.Join(badObjPath, "E096_manifest_repeated_digest"), []*ocfl.OCFLCodeErr{&ocfl.ErrE096}},
+	{filepath.Join(badObjPath, "E097_fixity_repeated_digest"), []*ocfl.OCFLCodeErr{&ocfl.ErrE097}},
+	{filepath.Join(badObjPath, "E099_bad_content_path_elements"), []*ocfl.OCFLCodeErr{&ocfl.ErrE099}},
 }
 
 func TestValidation(t *testing.T) {
@@ -78,17 +77,21 @@ func TestValidation(t *testing.T) {
 			t.Errorf(`fixture %s: validated but shouldn't`, name)
 			continue
 		}
+		verr, ok := err.(*ocfl.ValidationErr)
+		if !ok {
+			t.Errorf("fixture %s: expected ocfl.ValidationErr, got: %v", name, err)
+			continue
+		}
+		code := verr.Code()
 		var gotExpected bool
 		for _, e := range bad.Expected {
-			if errors.Is(err, e) {
+			if code == e {
 				gotExpected = true
 				break
 			}
 		}
 		if !gotExpected {
-			t.Errorf(`fixture %s: invalid for the wrong reason: %v`, name, err)
+			t.Errorf(`fixture %s: invalid for the wrong reason. Got %s`, name, code.Code)
 		}
-
 	}
-
 }
