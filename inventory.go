@@ -115,17 +115,3 @@ func (inv *Inventory) VersionDirs() []string {
 	}
 	return dirs
 }
-
-func (inv *Inventory) validateHead() error {
-	v, _, err := versionParse(inv.Head)
-	if err != nil {
-		return fmt.Errorf(`inventory 'head' not valid: %w`, &ErrE040)
-	}
-	if _, ok := inv.Versions[inv.Head]; !ok {
-		return fmt.Errorf(`inventory 'head' value does not correspond to a version: %w`, &ErrE040)
-	}
-	if v != len(inv.Versions) {
-		return fmt.Errorf(`inventory 'head' is not the last version: %w`, &ErrE040)
-	}
-	return nil
-}

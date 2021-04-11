@@ -81,10 +81,10 @@ func (obj *ObjectReader) validateRoot() error {
 		}
 		return err
 	}
-	err = versionSeqValid(obj.inventory.VersionDirs())
-	if err != nil {
-		return err
-	}
+	// err = versionSeqValid(obj.inventory.VersionDirs())
+	// if err != nil {
+	// 	return err
+	// }
 	err = obj.validateExtensionsDir()
 	if err != nil {
 		return err

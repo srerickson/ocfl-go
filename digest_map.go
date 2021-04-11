@@ -17,6 +17,7 @@ package ocfl
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"path"
 	"regexp"
 	"strings"
@@ -39,8 +40,8 @@ type DigestMap map[string][]string
 
 // Add adds a digest->path map to the ContentMap. Returns an error if path is already present.
 func (dm *DigestMap) Add(digest string, path string) error {
-	if err := validPath(path); err != nil {
-		return err
+	if !validPath(path) {
+		return fmt.Errorf("%w: %s", errPathFormat, path)
 	}
 	if dm.GetDigest(path) != `` {
 		return fmt.Errorf(`%w: %s`, errPathConflict, path)
@@ -102,7 +103,7 @@ func (dm DigestMap) Normalize() (DigestMap, error) {
 		}
 		newDM[lowerD] = make([]string, len(paths))
 		for i, p := range paths {
-			if err := validPath(p); err != nil {
+			if !validPath(p) {
 				return nil, fmt.Errorf("%w: %s", errPathFormat, p)
 			}
 			newDM[lowerD][i] = p
@@ -123,15 +124,12 @@ func (dm DigestMap) Normalize() (DigestMap, error) {
 }
 
 // validPath returns
-func validPath(p string) error {
-	cleanPath := path.Clean(p)
-	if p != cleanPath || strings.HasPrefix(p, `.`) {
-		return fmt.Errorf(`path includes elements ('.','..','//'): %s`, p)
+func validPath(p string) bool {
+	// fs.ValidPath is nearly perfect for OCFL
+	if p == "." {
+		return false
 	}
-	if path.IsAbs(cleanPath) {
-		return fmt.Errorf(`path must be relative: %s`, cleanPath)
-	}
-	return nil
+	return fs.ValidPath(p)
 }
 
 // parentDirs returns a slice of paths for each parent of p.

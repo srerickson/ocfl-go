@@ -29,11 +29,7 @@ func (inv *Inventory) Validate() error {
 	if err := inv.validateHead(); err != nil {
 		return err
 	}
-	// check contentDir
-	if err := validPath(inv.ContentDirectory); err != nil {
-		//return fmt.Errorf("%s: %w", err.Error(), &ErrE00)
-		return err
-	}
+	// TODO check contentDir
 	// manifest is present (can be empty)
 	if inv.Manifest == nil {
 		return fmt.Errorf(`inventory missing 'manifest' field: %w`, &ErrE041)
@@ -99,6 +95,20 @@ func (inv *Inventory) Validate() error {
 			}
 			return err
 		}
+	}
+	return nil
+}
+
+func (inv *Inventory) validateHead() error {
+	v, _, err := versionParse(inv.Head)
+	if err != nil {
+		return fmt.Errorf(`inventory 'head' not valid: %w`, &ErrE040)
+	}
+	if _, ok := inv.Versions[inv.Head]; !ok {
+		return fmt.Errorf(`inventory 'head' value does not correspond to a version: %w`, &ErrE040)
+	}
+	if v != len(inv.Versions) {
+		return fmt.Errorf(`inventory 'head' is not the last version: %w`, &ErrE040)
 	}
 	return nil
 }

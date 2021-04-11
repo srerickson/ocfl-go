@@ -51,8 +51,8 @@ func TestValidPath(t *testing.T) {
 		{"/a/b/c.txt", false},
 	}
 	for _, row := range table {
-		err := validPath(row.path)
-		if (err == nil) != row.valid {
+		v := validPath(row.path)
+		if v != row.valid {
 			if row.valid {
 				t.Errorf("expected validPath(\"%s\") to return no error", row.path)
 			} else {
