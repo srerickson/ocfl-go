@@ -22,24 +22,24 @@ func (r *DirEntries) add(fname string, digest string) error {
 	}
 	offset := strings.Index(fname, "/")
 	if offset == -1 {
-		if r.Files == nil {
-			r.Files = make(map[string]string)
-		}
 		if _, exists := r.Files[fname]; exists {
 			return fmt.Errorf("exists: %s", fname)
 		}
 		if _, exists := r.Dirs[fname]; exists {
 			return fmt.Errorf("exists as dir: %s", fname)
 		}
+		if r.Files == nil {
+			r.Files = make(map[string]string)
+		}
 		r.Files[fname] = digest
 		return nil
 	}
 	dir := fname[:offset]
-	if r.Dirs == nil {
-		r.Dirs = make(map[string]*DirEntries)
-	}
 	if _, exists := r.Files[dir]; exists {
 		return fmt.Errorf("exists as file: %s", dir)
+	}
+	if r.Dirs == nil {
+		r.Dirs = make(map[string]*DirEntries)
 	}
 	if _, exists := r.Dirs[dir]; !exists {
 		r.Dirs[dir] = &DirEntries{}
