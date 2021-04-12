@@ -87,8 +87,8 @@ func (inv *Inventory) Validate() error {
 		err := v.State.Valid()
 		if err != nil {
 			if errors.Is(err, errDuplicateDigest) {
-				// FIXME - this E050 is wrong (fixture is broken)
-				return &ValidationErr{err: err, code: &ErrE051}
+				// FIXME - E050 seems wrong
+				return &ValidationErr{err: err, code: &ErrE050}
 			}
 			if errors.Is(err, errPathConflict) {
 				return &ValidationErr{err: err, code: &ErrE095}
@@ -97,6 +97,15 @@ func (inv *Inventory) Validate() error {
 				return &ValidationErr{err: err, code: &ErrE099}
 			}
 			return err
+		}
+		// check that each state digest appears in manifest
+		for digest := range v.State {
+			if _, exists := inv.Manifest[digest]; !exists {
+				return &ValidationErr{
+					err:  fmt.Errorf("digest in % state not in manifest: %s", v, digest),
+					code: &ErrE050,
+				}
+			}
 		}
 	}
 	// check that each manifest entry is used in at least one state
