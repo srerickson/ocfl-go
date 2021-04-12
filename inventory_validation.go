@@ -67,13 +67,16 @@ func (inv *Inventory) Validate() error {
 	// check manifest path format
 	err := inv.Manifest.Valid()
 	if err != nil {
-		if errors.Is(err, errDuplicateDigest) {
+		var dcErr *DigestConflictErr
+		if errors.As(err, &dcErr) {
 			return &ValidationErr{err: err, code: &ErrE096}
 		}
-		if errors.Is(err, errPathConflict) {
+		var pcErr *PathConflictErr
+		if errors.As(err, &pcErr) {
 			return &ValidationErr{err: err, code: &ErrE095}
 		}
-		if errors.Is(err, errPathFormat) {
+		var piErr *PathInvalidErr
+		if errors.As(err, &piErr) {
 			return &ValidationErr{err: err, code: &ErrE099}
 		}
 		return err
@@ -86,14 +89,17 @@ func (inv *Inventory) Validate() error {
 	for _, v := range inv.Versions {
 		err := v.State.Valid()
 		if err != nil {
-			if errors.Is(err, errDuplicateDigest) {
+			var dcErr *DigestConflictErr
+			if errors.As(err, &dcErr) {
 				// FIXME - E050 seems wrong
 				return &ValidationErr{err: err, code: &ErrE050}
 			}
-			if errors.Is(err, errPathConflict) {
+			var pcErr *PathConflictErr
+			if errors.As(err, &pcErr) {
 				return &ValidationErr{err: err, code: &ErrE095}
 			}
-			if errors.Is(err, errPathFormat) {
+			var piErr *PathInvalidErr
+			if errors.As(err, &piErr) {
 				return &ValidationErr{err: err, code: &ErrE099}
 			}
 			return err
@@ -131,13 +137,16 @@ func (inv *Inventory) Validate() error {
 	for _, fixity := range inv.Fixity {
 		err := fixity.Valid()
 		if err != nil {
-			if errors.Is(err, errDuplicateDigest) {
+			var dcErr *DigestConflictErr
+			if errors.As(err, &dcErr) {
 				return &ValidationErr{err: err, code: &ErrE097}
 			}
-			if errors.Is(err, errPathConflict) {
+			var pcErr *PathConflictErr
+			if errors.As(err, &pcErr) {
 				return &ValidationErr{err: err, code: &ErrE095}
 			}
-			if errors.Is(err, errPathFormat) {
+			var piErr *PathInvalidErr
+			if errors.As(err, &piErr) {
 				return &ValidationErr{err: err, code: &ErrE099}
 			}
 			return err

@@ -12,6 +12,20 @@ import (
 	"github.com/srerickson/checksum/delta"
 )
 
+// ContentDiffErr represents an error due to
+// unexpected content changes
+type ContentDiffErr struct {
+	Added       []string
+	Removed     []string
+	Modified    []string
+	RenamedFrom []string
+	RenamedTo   []string
+}
+
+func (e *ContentDiffErr) Error() string {
+	return "unexpected files changes"
+}
+
 func (obj *ObjectReader) Validate() error {
 	var err error
 	obj.inventory, err = obj.readInventoryValidate(".")
@@ -171,33 +185,18 @@ func (obj *ObjectReader) validateContent() error {
 	changes := delta.New(paths, allFiles)
 
 	if len(changes.Same()) != len(allFiles) || len(changes.Same()) != len(manifest) {
-		mods := changes.Modified()
-		if len(mods) != 0 {
-			return &ValidationErr{
-				err:  fmt.Errorf("digests in manifest don't match digests of files in content"),
-				code: &ErrE092,
-			}
+		err := &ContentDiffErr{
+			Added:    changes.Added(),
+			Removed:  changes.Removed(),
+			Modified: changes.Modified(),
 		}
-		added := changes.Added()
-		if len(added) != 0 {
-			return &ValidationErr{
-				err:  fmt.Errorf("content includes files not in manifest"),
-				code: &ErrE023,
-			}
+		err.RenamedFrom, err.RenamedTo = changes.Renamed()
+		if len(err.Modified) != 0 {
+			return &ValidationErr{err: err, code: &ErrE092}
 		}
-		removed := changes.Removed()
-		if len(removed) != 0 {
-			return &ValidationErr{
-				err:  fmt.Errorf("manifest includes files not in content"),
-				code: &ErrE023,
-			}
-		}
-		old, _ := changes.Renamed()
-		if len(old) != 0 {
-			return &ValidationErr{
-				err:  fmt.Errorf("files in content renamed from manifest"),
-				code: &ErrE023,
-			}
+		return &ValidationErr{
+			err:  fmt.Errorf("content includes files not in manifest"),
+			code: &ErrE023,
 		}
 	}
 	// TODO E024 - empty directories

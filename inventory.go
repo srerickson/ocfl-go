@@ -17,7 +17,6 @@ package ocfl
 import (
 	"encoding/json"
 	"io"
-	"strings"
 	"time"
 )
 
@@ -73,14 +72,14 @@ func ReadInventory(file io.Reader) (*Inventory, error) {
 
 	err := decoder.Decode(inv)
 	if err != nil {
-		switch err.(type) {
+		switch err := err.(type) {
 		case *time.ParseError:
 			return nil, &ValidationErr{err: err, code: &ErrE049}
 		case *json.UnmarshalTypeError:
-			if strings.Contains(err.Error(), `Inventory.head`) {
+			if err.Field == "head" {
 				return nil, &ValidationErr{err: err, code: &ErrE040}
 			}
-			if strings.Contains(err.Error(), `Version.versions.message`) {
+			if err.Field == `versions.message` {
 				return nil, &ValidationErr{err: err, code: &ErrE094}
 			}
 			// Todo other special cases?

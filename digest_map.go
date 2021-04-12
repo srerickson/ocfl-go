@@ -16,22 +16,52 @@ package ocfl
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"path"
 	"regexp"
 	"strings"
 )
 
-var (
-	digestRegexp = regexp.MustCompile("^[0-9a-fA-F]+$")
-	//digestLowercaseRegexp = regexp.MustCompile("^[0-9a-f]+$")
-	//digestUppercaseRegexp = regexp.MustCompile("^[0-9A-F]+$")
-	errDuplicateDigest = errors.New("duplicate digest")
-	errInvalidDigest   = errors.New("invalid digest")
-	errPathConflict    = errors.New("path conflict")
-	errPathFormat      = errors.New("invalid path format")
-)
+// digests may be hex encoded, lowercase or uppercase
+var digestRegexp = regexp.MustCompile("^[0-9a-fA-F]+$")
+
+// DigestConflictErr indicates digest conflict in
+// the DigestMap
+type DigestConflictErr struct {
+	Digest string
+}
+
+func (d *DigestConflictErr) Error() string {
+	return "duplicate digest: " + string(d.Digest)
+}
+
+// DigestInvalidErr indicates the string is not a valid
+// representation of a digest
+type DigestInvalidErr struct {
+	Digest string
+}
+
+func (d *DigestInvalidErr) Error() string {
+	return "invalid digest: " + string(d.Digest)
+}
+
+// PathConflictErr a path conflic in the DigestMap
+type PathConflictErr struct {
+	Path string
+}
+
+func (p *PathConflictErr) Error() string {
+	return "duplicate Path: " + string(p.Path)
+}
+
+// PathInvalidErr indicates an invalid path
+type PathInvalidErr struct {
+	Path string
+}
+
+func (p *PathInvalidErr) Error() string {
+	return "invalid Path: " + string(p.Path)
+}
 
 // DigestMap is a data structure for Content-Addressable-Storage.
 // It abstracs the functionality of the Manifest, Version State, and
@@ -41,10 +71,10 @@ type DigestMap map[string][]string
 // Add adds a digest->path map to the ContentMap. Returns an error if path is already present.
 func (dm *DigestMap) Add(digest string, path string) error {
 	if !validPath(path) {
-		return fmt.Errorf("%w: %s", errPathFormat, path)
+		return &PathInvalidErr{path}
 	}
 	if dm.GetDigest(path) != `` {
-		return fmt.Errorf(`%w: %s`, errPathConflict, path)
+		return &PathConflictErr{path}
 	}
 	if *dm == nil {
 		*dm = DigestMap{}
@@ -71,7 +101,7 @@ func (dm DigestMap) Paths() (map[string]string, error) {
 	for d, paths := range dm {
 		for _, p := range paths {
 			if _, exists := inv[p]; exists {
-				return nil, fmt.Errorf(`%w: %s`, errPathConflict, p)
+				return nil, &PathConflictErr{p}
 			}
 			inv[p] = d
 		}
@@ -95,16 +125,16 @@ func (dm DigestMap) Normalize() (DigestMap, error) {
 	allDirs := make(map[string]bool)
 	for d, paths := range dm {
 		if !digestRegexp.MatchString(d) {
-			return nil, fmt.Errorf(`%w: %s`, errInvalidDigest, d)
+			return nil, &DigestInvalidErr{d}
 		}
 		lowerD := strings.ToLower(d)
 		if _, exists := newDM[lowerD]; exists {
-			return nil, fmt.Errorf(`%w: %s`, errDuplicateDigest, d)
+			return nil, &DigestConflictErr{d}
 		}
 		newDM[lowerD] = make([]string, len(paths))
 		for i, p := range paths {
 			if !validPath(p) {
-				return nil, fmt.Errorf("%w: %s", errPathFormat, p)
+				return nil, &PathInvalidErr{p}
 			}
 			newDM[lowerD][i] = p
 			for _, dir := range parentDirs(p) {
@@ -116,7 +146,7 @@ func (dm DigestMap) Normalize() (DigestMap, error) {
 	for _, paths := range newDM {
 		for _, p := range paths {
 			if _, exists := allDirs[p]; exists {
-				return nil, fmt.Errorf("%w: %s", errPathConflict, p)
+				return nil, &PathConflictErr{p}
 			}
 		}
 	}
