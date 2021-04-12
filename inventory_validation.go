@@ -13,36 +13,51 @@ func (inv *Inventory) Validate() error {
 			code: &ErrE008,
 		}
 	}
-	// id is present
+	// ID
+	// E037 - '[id] must be unique in the local context, and should be a URI [RFC3986].'
+	// W005 - 'The OCFL Object Inventory id SHOULD be a URI.'
 	if inv.ID == "" {
 		return &ValidationErr{
 			err:  fmt.Errorf(`inventory missing 'id' field`),
 			code: &ErrE036,
 		}
 	}
-	// type is present
+	// Type
+	// E038 - must be the URI of the inventory section of the specification version matching the object conformance declaration.
 	if inv.Type == "" {
 		return &ValidationErr{
 			err:  fmt.Errorf(`inventory missing 'type' field`),
 			code: &ErrE036,
 		}
 	}
+	// Digest Algorithm
+	// E025 - OCFL Objects must use either sha512 or sha256, and should use sha512
 	if inv.DigestAlgorithm == "" {
 		return &ValidationErr{
 			err:  fmt.Errorf(`inventory missing 'digestAlgorithm' field`),
 			code: &ErrE036,
 		}
 	}
-	// check verions sequence
+	// Versions
+	// E043 - 'An OCFL Object Inventory must include a block for storing versions.'
+	// E046 - 'The keys of [the versions object] must correspond to the names of the version directories used.'
 	if err := versionSeqValid(inv.VersionDirs()); err != nil {
 		return err
 	}
-	// check Head
+	// Head
+	// E040 - [head] must be the version directory name with the highest version number.'
 	if err := inv.validateHead(); err != nil {
 		return err
 	}
-	// TODO check contentDir
-	// manifest is present (can be empty)
+	// ContentDir
+	// E017/18 - 'The contentDirectory value MUST NOT contain the forward slash (/) path
+	// 	separator and must not be either one or two periods (. or ..).'
+	// E019/20 - 'If the key contentDirectory is set, it MUST be set in the first version of the object
+	//	and must not change between versions of the same object.'
+	// E021 - 'If the key contentDirectory is not present in the inventory file then
+	//  the name of the designated content sub-directory must be content.'
+	// Manifest
+
 	if inv.Manifest == nil {
 		return &ValidationErr{
 			err:  fmt.Errorf(`inventory missing 'manifest' field`),
@@ -63,12 +78,17 @@ func (inv *Inventory) Validate() error {
 		}
 		return err
 	}
-	// check version state path format
+	// Version State
+	// E050 - 'The keys of [the "state" JSON object] are digest values, each of which must
+	//	correspond to an entry in the manifest of the inventory.'
+	// E095 - 'Within a version, logical paths must be unique and non-conflicting, so the
+	//	logical path for a file cannot appear as the initial part of another logical path.'
 	for _, v := range inv.Versions {
 		err := v.State.Valid()
 		if err != nil {
 			if errors.Is(err, errDuplicateDigest) {
-				return &ValidationErr{err: err, code: &ErrE050}
+				// FIXME - this E050 is wrong (fixture is broken)
+				return &ValidationErr{err: err, code: &ErrE051}
 			}
 			if errors.Is(err, errPathConflict) {
 				return &ValidationErr{err: err, code: &ErrE095}

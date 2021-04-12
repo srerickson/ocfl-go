@@ -200,6 +200,7 @@ func (obj *ObjectReader) validateContent() error {
 			}
 		}
 	}
+	// TODO E024 - empty directories
 	return nil
 }
 
