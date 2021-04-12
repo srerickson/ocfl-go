@@ -810,3 +810,115 @@ var ErrE102 = OCFLCodeErr{
 	URI: "https://ocfl.io/1.0/spec/#E102",
 }
 
+
+//ErrW001: Implementations SHOULD use version directory names constructed without zero-padding the version number, ie. v1, v2, v3, etc.
+var ErrW001 = OCFLCodeErr{
+	Description: "Implementations SHOULD use version directory names constructed without zero-padding the version number, ie. v1, v2, v3, etc.",
+	Code: "W001",
+	URI: "https://ocfl.io/1.0/spec/#W001",
+}
+
+
+//ErrW002: The version directory SHOULD NOT contain any directories other than the designated content sub-directory. Once created, the contents of a version directory are expected to be immutable.
+var ErrW002 = OCFLCodeErr{
+	Description: "The version directory SHOULD NOT contain any directories other than the designated content sub-directory. Once created, the contents of a version directory are expected to be immutable.",
+	Code: "W002",
+	URI: "https://ocfl.io/1.0/spec/#W002",
+}
+
+
+//ErrW003: Version directories must contain a designated content sub-directory if the version contains files to be preserved, and SHOULD NOT contain this sub-directory otherwise.
+var ErrW003 = OCFLCodeErr{
+	Description: "Version directories must contain a designated content sub-directory if the version contains files to be preserved, and SHOULD NOT contain this sub-directory otherwise.",
+	Code: "W003",
+	URI: "https://ocfl.io/1.0/spec/#W003",
+}
+
+
+//ErrW004: For content-addressing, OCFL Objects SHOULD use sha512.
+var ErrW004 = OCFLCodeErr{
+	Description: "For content-addressing, OCFL Objects SHOULD use sha512.",
+	Code: "W004",
+	URI: "https://ocfl.io/1.0/spec/#W004",
+}
+
+
+//ErrW005: The OCFL Object Inventory id SHOULD be a URI.
+var ErrW005 = OCFLCodeErr{
+	Description: "The OCFL Object Inventory id SHOULD be a URI.",
+	Code: "W005",
+	URI: "https://ocfl.io/1.0/spec/#W005",
+}
+
+
+//ErrW007: In the OCFL Object Inventory, the JSON object describing an OCFL Version, SHOULD include the message and user keys.
+var ErrW007 = OCFLCodeErr{
+	Description: "In the OCFL Object Inventory, the JSON object describing an OCFL Version, SHOULD include the message and user keys.",
+	Code: "W007",
+	URI: "https://ocfl.io/1.0/spec/#W007",
+}
+
+
+//ErrW008: In the OCFL Object Inventory, in the version block, the value of the user key SHOULD contain an address key, address.
+var ErrW008 = OCFLCodeErr{
+	Description: "In the OCFL Object Inventory, in the version block, the value of the user key SHOULD contain an address key, address.",
+	Code: "W008",
+	URI: "https://ocfl.io/1.0/spec/#W008",
+}
+
+
+//ErrW009: In the OCFL Object Inventory, in the version block, the address value SHOULD be a URI: either a mailto URI [RFC6068] with the e-mail address of the user or a URL to a personal identifier, e.g., an ORCID iD.
+var ErrW009 = OCFLCodeErr{
+	Description: "In the OCFL Object Inventory, in the version block, the address value SHOULD be a URI: either a mailto URI [RFC6068] with the e-mail address of the user or a URL to a personal identifier, e.g., an ORCID iD.",
+	Code: "W009",
+	URI: "https://ocfl.io/1.0/spec/#W009",
+}
+
+
+//ErrW010: In addition to the inventory in the OCFL Object Root, every version directory SHOULD include an inventory file that is an Inventory of all content for versions up to and including that particular version.
+var ErrW010 = OCFLCodeErr{
+	Description: "In addition to the inventory in the OCFL Object Root, every version directory SHOULD include an inventory file that is an Inventory of all content for versions up to and including that particular version.",
+	Code: "W010",
+	URI: "https://ocfl.io/1.0/spec/#W010",
+}
+
+
+//ErrW011: In the case that prior version directories include an inventory file, the values of the created, message and user keys in each version block in each prior inventory file SHOULD have the same values as the corresponding keys in the corresponding version block in the current inventory file.
+var ErrW011 = OCFLCodeErr{
+	Description: "In the case that prior version directories include an inventory file, the values of the created, message and user keys in each version block in each prior inventory file SHOULD have the same values as the corresponding keys in the corresponding version block in the current inventory file.",
+	Code: "W011",
+	URI: "https://ocfl.io/1.0/spec/#W011",
+}
+
+
+//ErrW012: Implementers SHOULD use the logs directory, if present, for storing files that contain a record of actions taken on the object.
+var ErrW012 = OCFLCodeErr{
+	Description: "Implementers SHOULD use the logs directory, if present, for storing files that contain a record of actions taken on the object.",
+	Code: "W012",
+	URI: "https://ocfl.io/1.0/spec/#W012",
+}
+
+
+//ErrW013: In an OCFL Object, extension sub-directories SHOULD be named according to a registered extension name.
+var ErrW013 = OCFLCodeErr{
+	Description: "In an OCFL Object, extension sub-directories SHOULD be named according to a registered extension name.",
+	Code: "W013",
+	URI: "https://ocfl.io/1.0/spec/#W013",
+}
+
+
+//ErrW014: Storage hierarchies within the same OCFL Storage Root SHOULD use just one layout pattern.
+var ErrW014 = OCFLCodeErr{
+	Description: "Storage hierarchies within the same OCFL Storage Root SHOULD use just one layout pattern.",
+	Code: "W014",
+	URI: "https://ocfl.io/1.0/spec/#W014",
+}
+
+
+//ErrW015: Storage hierarchies within the same OCFL Storage Root SHOULD consistently use either a directory hierarchy of OCFL Objects or top-level OCFL Objects.
+var ErrW015 = OCFLCodeErr{
+	Description: "Storage hierarchies within the same OCFL Storage Root SHOULD consistently use either a directory hierarchy of OCFL Objects or top-level OCFL Objects.",
+	Code: "W015",
+	URI: "https://ocfl.io/1.0/spec/#W015",
+}
+
