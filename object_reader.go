@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"path/filepath"
+	"path"
 	"strings"
 
 	"github.com/srerickson/checksum"
@@ -71,7 +71,7 @@ func (obj *ObjectReader) readDeclaration() error {
 // reads and parses the inventory.json file in dir. If an error is returned
 // it may be a ValidationErr if an error occured durind unmarshalling
 func (obj *ObjectReader) readInventory(dir string) (*Inventory, error) {
-	path := filepath.Join(dir, inventoryFile)
+	path := path.Join(dir, inventoryFile)
 	file, err := obj.root.Open(path)
 	if err != nil {
 		return nil, err
@@ -85,7 +85,7 @@ func (obj *ObjectReader) inventoryChecksum(dir string, alg string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, inventoryFile)
+	path := path.Join(dir, inventoryFile)
 	file, err := obj.root.Open(path)
 	if err != nil {
 		return nil, err
@@ -98,7 +98,7 @@ func (obj *ObjectReader) inventoryChecksum(dir string, alg string) ([]byte, erro
 
 // reads and validates sidecar. Always returns ValidationErr
 func (obj *ObjectReader) readInventorySidecar(dir string, alg string) (string, error) {
-	path := filepath.Join(dir, inventoryFile+"."+alg)
+	path := path.Join(dir, inventoryFile+"."+alg)
 	file, err := obj.root.Open(path)
 	if err != nil {
 		return "", &ValidationErr{
@@ -146,7 +146,7 @@ func (obj *ObjectReader) VersionFS(vname string) (fs.FS, error) {
 		if len(realpaths) == 0 {
 			return nil, fmt.Errorf(`no manifest entries files associated with the digest: %s`, digest)
 		}
-		return obj.root.Open(filepath.FromSlash(realpaths[0]))
+		return obj.root.Open(realpaths[0])
 	}
 	return open, nil
 }
@@ -170,7 +170,7 @@ func (obj *ObjectReader) Content() (DigestMap, error) {
 		return content.Add(sum, j.Path())
 	}
 	for v := range obj.inventory.Versions {
-		contentDir := filepath.Join(v, obj.inventory.ContentDirectory)
+		contentDir := path.Join(v, obj.inventory.ContentDirectory)
 		// contentDir may not exist - that's ok
 		err = checksum.Walk(obj.root, contentDir, each, checksum.WithAlg(alg, newH))
 		if err != nil {
