@@ -13,7 +13,7 @@ import (
 // regular file open for reading
 type objFile struct {
 	path string
-	info *objFileInfo
+	info fs.FileInfo
 	file fs.File // actual file open for reading
 }
 
@@ -25,13 +25,7 @@ func (f *objFile) Stat() (fs.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	f.info = &objFileInfo{
-		name:    path.Base(f.path),
-		size:    realInfo.Size(),
-		mode:    realInfo.Mode(),
-		modTime: realInfo.ModTime(),
-		sys:     nil,
-	}
+	f.info = renameFileInfo(realInfo, path.Base(f.path))
 	return f.info, nil
 }
 func (f *objFile) Read(b []byte) (int, error) { return f.file.Read(b) }
@@ -60,30 +54,15 @@ type objDir struct {
 	offset int
 }
 
-type objDirEntry struct {
-	name     string
-	isDir    bool
-	modeType fs.FileMode
-	info     func() (fs.FileInfo, error)
-}
-
-func (e *objDirEntry) Name() string               { return e.name }
-func (e *objDirEntry) IsDir() bool                { return e.isDir }
-func (e *objDirEntry) Type() fs.FileMode          { return e.modeType }
-func (e *objDirEntry) Info() (fs.FileInfo, error) { return e.info() }
-
 func (dir *objDir) Read([]byte) (int, error) {
 	return 0, &fs.PathError{Op: "read", Path: dir.path, Err: fs.ErrInvalid}
 }
+
 func (dir *objDir) Close() error { return nil }
 func (dir *objDir) Stat() (fs.FileInfo, error) {
-	return &objFileInfo{
-		name: path.Base(dir.path),
-		size: 0,
-		mode: fs.ModeDir,
-		sys:  nil,
-	}, nil
+	return &objFileInfo{name: path.Base(dir.path), mode: fs.ModeDir}, nil
 }
+
 func (dir *objDir) ReadDir(count int) ([]fs.DirEntry, error) {
 	n := len(dir.entry) - dir.offset
 	if count > 0 && n > count {
@@ -99,6 +78,18 @@ func (dir *objDir) ReadDir(count int) ([]fs.DirEntry, error) {
 	dir.offset += n
 	return list, nil
 }
+
+type objDirEntry struct {
+	name     string
+	isDir    bool
+	modeType fs.FileMode
+	info     func() (fs.FileInfo, error)
+}
+
+func (e *objDirEntry) Name() string               { return e.name }
+func (e *objDirEntry) IsDir() bool                { return e.isDir }
+func (e *objDirEntry) Type() fs.FileMode          { return e.modeType }
+func (e *objDirEntry) Info() (fs.FileInfo, error) { return e.info() }
 
 // Open implements io/fs.FS for ObjectReader
 func (obj *ObjectReader) Open(name string) (fs.File, error) {
@@ -152,7 +143,7 @@ func (obj *ObjectReader) openFile(digest string) (fs.File, error) {
 // returns a function that returns fileinfo for the path
 func (obj *ObjectReader) statFunc(name string, node interface{}) func() (fs.FileInfo, error) {
 	return func() (fs.FileInfo, error) {
-		var info *objFileInfo
+		var info fs.FileInfo
 		switch val := node.(type) {
 		case string:
 			realF, err := obj.openFile(val)
@@ -164,13 +155,7 @@ func (obj *ObjectReader) statFunc(name string, node interface{}) func() (fs.File
 			if err != nil {
 				return nil, err
 			}
-			info = &objFileInfo{
-				name:    name,
-				size:    realInfo.Size(),
-				mode:    realInfo.Mode(),
-				modTime: realInfo.ModTime(),
-				sys:     nil,
-			}
+			info = renameFileInfo(realInfo, name)
 		case *internal.PathTree:
 			info = &objFileInfo{
 				name: name,
@@ -180,5 +165,15 @@ func (obj *ObjectReader) statFunc(name string, node interface{}) func() (fs.File
 			}
 		}
 		return info, nil
+	}
+}
+
+func renameFileInfo(in fs.FileInfo, newname string) fs.FileInfo {
+	return &objFileInfo{
+		name:    newname,
+		size:    in.Size(),
+		mode:    in.Mode(),
+		modTime: in.ModTime(),
+		sys:     nil,
 	}
 }
