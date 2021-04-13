@@ -1,7 +1,7 @@
 package internal
 
 import (
-	"fmt"
+	"errors"
 	"io/fs"
 	"strings"
 )
@@ -17,21 +17,29 @@ type PathTree struct {
 	Dirs  map[string]*PathTree
 }
 
+var ErrPathNotFound = errors.New("path not found")
+var ErrPathConflict = errors.New("duplicate path")
+var ErrPathInvalid = errors.New("invalid path")
+
+func NewPathStore() PathStore {
+	return &PathTree{}
+}
+
 // Add implements PathStore for PathTree
 func (r *PathTree) Add(fname string, val interface{}) error {
 	if !fs.ValidPath(fname) {
-		return fmt.Errorf("invalid path: %s", fname)
+		return ErrPathInvalid
 	}
 	if fname == "." {
-		return fmt.Errorf("not a file: %s", fname)
+		return ErrPathInvalid
 	}
 	offset := strings.Index(fname, "/")
 	if offset == -1 {
 		if _, exists := r.Files[fname]; exists {
-			return fmt.Errorf("exists: %s", fname)
+			return ErrPathConflict
 		}
 		if _, exists := r.Dirs[fname]; exists {
-			return fmt.Errorf("exists as dir: %s", fname)
+			return ErrPathConflict
 		}
 		if r.Files == nil {
 			r.Files = make(map[string]interface{})
@@ -42,7 +50,7 @@ func (r *PathTree) Add(fname string, val interface{}) error {
 	dir := fname[:offset]
 	if r.Files != nil {
 		if _, exists := r.Files[dir]; exists {
-			return fmt.Errorf("exists as file: %s", dir)
+			return ErrPathConflict
 		}
 	}
 	if r.Dirs == nil {
@@ -57,7 +65,7 @@ func (r *PathTree) Add(fname string, val interface{}) error {
 // Get implements PathStore for PathTree
 func (r *PathTree) Get(fname string) (interface{}, error) {
 	if !fs.ValidPath(fname) {
-		return "", fmt.Errorf("invalid path: %s", fname)
+		return "", ErrPathInvalid
 	}
 	if fname == "." {
 		return r, nil
@@ -76,7 +84,7 @@ func (r *PathTree) Get(fname string) (interface{}, error) {
 				return val, nil
 			}
 		}
-		return "", fmt.Errorf(`not found`)
+		return "", ErrPathNotFound
 	}
 	dir := fname[:offset]
 	if r.Dirs == nil {
@@ -84,7 +92,7 @@ func (r *PathTree) Get(fname string) (interface{}, error) {
 	}
 	val, exists := r.Dirs[dir]
 	if !exists {
-		return "", fmt.Errorf(`not found`)
+		return "", ErrPathNotFound
 	}
 	return val.Get(fname[offset+1:])
 }

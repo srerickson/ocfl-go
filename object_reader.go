@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/srerickson/checksum"
+	"github.com/srerickson/ocfl/internal"
 )
 
 const (
@@ -22,6 +23,7 @@ const (
 type ObjectReader struct {
 	root      fs.FS      // root fs
 	inventory *Inventory // inventory.json
+	index     internal.PathStore
 }
 
 // NewObjectReader returns a new ObjectReader with loaded inventory.
@@ -38,6 +40,24 @@ func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 	if err != nil {
 		return nil, asValidationErr(err, &ErrE034)
 	}
+	obj.index = internal.NewPathStore()
+
+	// add every path from every version to obj.index
+	for name, version := range obj.inventory.Versions {
+		for digest, paths := range version.State {
+			for _, p := range paths {
+				path := name + "/" + p
+				err := obj.index.Add(path, digest)
+				if err != nil {
+					if errors.Is(err, internal.ErrPathInvalid) {
+						return nil, asValidationErr(err, &ErrE099)
+					}
+					return nil, asValidationErr(err, &ErrE095)
+				}
+			}
+		}
+	}
+
 	return obj, nil
 }
 
@@ -123,32 +143,6 @@ func (obj *ObjectReader) readInventorySidecar(dir string, alg string) (string, e
 		}
 	}
 	return sidecar[:offset], nil
-}
-
-type fsOpenFunc func(name string) (fs.File, error)
-
-func (f fsOpenFunc) Open(name string) (fs.File, error) {
-	return f(name)
-}
-
-// VersionFS returns an fs.FS representing the logical state of the version
-func (obj *ObjectReader) VersionFS(vname string) (fs.FS, error) {
-	v, ok := obj.inventory.Versions[vname]
-	if !ok {
-		return nil, fmt.Errorf(`Version not found: %s`, vname)
-	}
-	var open fsOpenFunc = func(logicalPath string) (fs.File, error) {
-		digest := v.State.GetDigest(logicalPath)
-		if digest == "" {
-			return nil, fmt.Errorf(`%s: %w`, logicalPath, fs.ErrNotExist)
-		}
-		realpaths := obj.inventory.Manifest[digest]
-		if len(realpaths) == 0 {
-			return nil, fmt.Errorf(`no manifest entries files associated with the digest: %s`, digest)
-		}
-		return obj.root.Open(realpaths[0])
-	}
-	return open, nil
 }
 
 // Content returns DigestMap of all version contents
