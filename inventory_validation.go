@@ -1,9 +1,35 @@
 package ocfl
 
 import (
+	"context"
+	_ "embed"
 	"errors"
 	"fmt"
+
+	"github.com/qri-io/jsonschema"
+	"github.com/srerickson/ocfl/schema"
 )
+
+func init() {
+	// required for the schema to work
+
+}
+
+func jsonSchemaValidation(inv []byte) ([]error, error) {
+	var invJsonSchema = jsonschema.Must(string(schema.InventorySchema))
+
+	jsonschema.RegisterKeyword("definitions", jsonschema.NewDefs)
+	jsonschema.LoadDraft2019_09()
+	errs, err := invJsonSchema.ValidateBytes(context.Background(), inv)
+	if err != nil {
+		return nil, err
+	}
+	verrs := make([]error, len(errs))
+	for i, e := range errs {
+		verrs[i] = asValidationErr(e, &ErrE034)
+	}
+	return verrs, nil
+}
 
 func (inv *Inventory) Validate() error {
 	// one or more versions are present

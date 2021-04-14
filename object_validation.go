@@ -12,25 +12,15 @@ import (
 	"github.com/srerickson/checksum/delta"
 )
 
-// ContentDiffErr represents an error due to
-// unexpected content changes
-type ContentDiffErr struct {
-	Added       []string
-	Removed     []string
-	Modified    []string
-	RenamedFrom []string
-	RenamedTo   []string
-}
-
-func (e *ContentDiffErr) Error() string {
-	return "unexpected files changes"
-}
-
 func (obj *ObjectReader) Validate() error {
 	var err error
 	obj.inventory, err = obj.readInventoryValidate(".")
 	if err != nil {
 		return asValidationErr(err, &ErrE034)
+	}
+	e := obj.validateInventorySchema(".")
+	if e != nil {
+		return e
 	}
 	if err := obj.validateRoot(); err != nil {
 		return err
@@ -48,11 +38,12 @@ func (obj *ObjectReader) Validate() error {
 }
 
 func (obj *ObjectReader) readInventoryValidate(dir string) (*Inventory, error) {
-	inv, err := obj.readInventory(dir)
+	err := obj.validateInventorySchema(dir)
 	if err != nil {
 		return nil, err
 	}
-	if err := inv.Validate(); err != nil {
+	inv, err := obj.readInventory(dir)
+	if err != nil {
 		return nil, err
 	}
 	inv.digest, err = obj.inventoryChecksum(dir, inv.DigestAlgorithm)

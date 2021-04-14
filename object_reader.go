@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"io/ioutil"
 	"path"
 	"strings"
 
@@ -143,6 +144,24 @@ func (obj *ObjectReader) readInventorySidecar(dir string, alg string) (string, e
 		}
 	}
 	return sidecar[:offset], nil
+}
+
+func (obj *ObjectReader) validateInventorySchema(dir string) error {
+	path := path.Join(dir, inventoryFile)
+	file, err := obj.root.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	b, _ := ioutil.ReadAll(file)
+	verrs, err := jsonSchemaValidation(b)
+	if err != nil {
+		return err
+	}
+	if len(verrs) > 0 {
+		return verrs[0]
+	}
+	return nil
 }
 
 // Content returns DigestMap of all version contents

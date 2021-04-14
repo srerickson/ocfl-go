@@ -5,6 +5,20 @@ import (
 	"fmt"
 )
 
+// ContentDiffErr represents an error due to
+// unexpected content changes
+type ContentDiffErr struct {
+	Added       []string
+	Removed     []string
+	Modified    []string
+	RenamedFrom []string
+	RenamedTo   []string
+}
+
+func (e *ContentDiffErr) Error() string {
+	return "unexpected files changes"
+}
+
 // OCFLCodeErr represents an OCFL Validation Codes:
 // see https://ocfl.io/validation/validation-codes.html
 type OCFLCodeErr struct {
