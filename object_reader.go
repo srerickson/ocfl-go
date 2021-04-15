@@ -1,6 +1,7 @@
 package ocfl
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -39,7 +40,8 @@ func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 	}
 	obj.inventory, err = obj.readInventory(`.`)
 	if err != nil {
-		return nil, asValidationErr(err, &ErrE034)
+		//return nil, asValidationErr(err, &ErrE034)
+		return nil, err
 	}
 	obj.index = internal.NewPathStore()
 
@@ -97,24 +99,34 @@ func (obj *ObjectReader) readInventory(dir string) (*Inventory, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-	return ReadInventory(file)
-}
-
-func (obj *ObjectReader) inventoryChecksum(dir string, alg string) ([]byte, error) {
-	newH, err := newHash(alg)
+	invBytes, err := ioutil.ReadAll(file)
 	if err != nil {
 		return nil, err
 	}
-	path := path.Join(dir, inventoryFile)
-	file, err := obj.root.Open(path)
+	file.Close()
+	// json schema validation
+	err = validateInventoryBytes(invBytes)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	inv, err := ReadInventory(bytes.NewReader(invBytes))
+	if err != nil {
+		return nil, err
+	}
+	// additional validation
+	err = inv.Validate()
+	if err != nil {
+		return nil, err
+	}
+	// digest the inventory
+	newH, err := newHash(inv.DigestAlgorithm)
+	if err != nil {
+		return nil, err
+	}
 	checksum := newH()
-	io.Copy(checksum, file)
-	return checksum.Sum(nil), nil
+	io.Copy(checksum, bytes.NewReader(invBytes))
+	inv.digest = checksum.Sum(nil)
+	return inv, nil
 }
 
 // reads and validates sidecar. Always returns ValidationErr
@@ -144,24 +156,6 @@ func (obj *ObjectReader) readInventorySidecar(dir string, alg string) (string, e
 		}
 	}
 	return sidecar[:offset], nil
-}
-
-func (obj *ObjectReader) validateInventorySchema(dir string) error {
-	path := path.Join(dir, inventoryFile)
-	file, err := obj.root.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	b, _ := ioutil.ReadAll(file)
-	verrs, err := jsonSchemaValidation(b)
-	if err != nil {
-		return err
-	}
-	if len(verrs) > 0 {
-		return verrs[0]
-	}
-	return nil
 }
 
 // Content returns DigestMap of all version contents

@@ -32,6 +32,16 @@ func (err *OCFLCodeErr) Error() string {
 	return fmt.Sprintf(`[%s] %s`, err.Code, err.Description)
 }
 
+// ValidationErrSet is an error returned from validation check
+type ValidationErrSet struct {
+	Fatal    []error
+	Warnings []error
+}
+
+func (errs *ValidationErrSet) Error() string {
+	return fmt.Sprintf("encountered %d fatal errors and %d warnings", len(errs.Fatal), len(errs.Warnings))
+}
+
 // ValidationErr is an error returned from validation check
 type ValidationErr struct {
 	code *OCFLCodeErr // code from spec

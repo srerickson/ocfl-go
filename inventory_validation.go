@@ -10,25 +10,30 @@ import (
 	"github.com/srerickson/ocfl/schema"
 )
 
+var invJsonSchema *jsonschema.Schema
+
 func init() {
 	// required for the schema to work
-
-}
-
-func jsonSchemaValidation(inv []byte) ([]error, error) {
-	var invJsonSchema = jsonschema.Must(string(schema.InventorySchema))
-
 	jsonschema.RegisterKeyword("definitions", jsonschema.NewDefs)
 	jsonschema.LoadDraft2019_09()
+	invJsonSchema = jsonschema.Must(string(schema.InventorySchema))
+}
+
+func validateInventoryBytes(inv []byte) error {
 	errs, err := invJsonSchema.ValidateBytes(context.Background(), inv)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	verrs := make([]error, len(errs))
+	if len(errs) == 0 {
+		return nil
+	}
+	errSet := &ValidationErrSet{
+		Fatal: make([]error, len(errs)),
+	}
 	for i, e := range errs {
-		verrs[i] = asValidationErr(e, &ErrE034)
+		errSet.Fatal[i] = asValidationErr(e, &ErrE035)
 	}
-	return verrs, nil
+	return errSet
 }
 
 func (inv *Inventory) Validate() error {

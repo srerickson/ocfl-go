@@ -16,11 +16,8 @@ func (obj *ObjectReader) Validate() error {
 	var err error
 	obj.inventory, err = obj.readInventoryValidate(".")
 	if err != nil {
-		return asValidationErr(err, &ErrE034)
-	}
-	e := obj.validateInventorySchema(".")
-	if e != nil {
-		return e
+		return err
+		//return asValidationErr(err, &ErrE034)
 	}
 	if err := obj.validateRoot(); err != nil {
 		return err
@@ -38,15 +35,7 @@ func (obj *ObjectReader) Validate() error {
 }
 
 func (obj *ObjectReader) readInventoryValidate(dir string) (*Inventory, error) {
-	err := obj.validateInventorySchema(dir)
-	if err != nil {
-		return nil, err
-	}
 	inv, err := obj.readInventory(dir)
-	if err != nil {
-		return nil, err
-	}
-	inv.digest, err = obj.inventoryChecksum(dir, inv.DigestAlgorithm)
 	if err != nil {
 		return nil, err
 	}
