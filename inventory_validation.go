@@ -27,11 +27,12 @@ func validateInventoryBytes(inv []byte) error {
 	if len(errs) == 0 {
 		return nil
 	}
-	errSet := &ValidationErrSet{
-		Fatal: make([]error, len(errs)),
+	errSet := &ValidationResult{
+		Fatal: make([]*ValidationErr, len(errs)),
 	}
 	for i, e := range errs {
-		errSet.Fatal[i] = asValidationErr(e, &ErrE035)
+		// TODO : set error codes based on json schema
+		errSet.Fatal[i] = asValidationErr(e, nil)
 	}
 	return errSet
 }

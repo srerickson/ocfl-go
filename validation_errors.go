@@ -5,20 +5,6 @@ import (
 	"fmt"
 )
 
-// ContentDiffErr represents an error due to
-// unexpected content changes
-type ContentDiffErr struct {
-	Added       []string
-	Removed     []string
-	Modified    []string
-	RenamedFrom []string
-	RenamedTo   []string
-}
-
-func (e *ContentDiffErr) Error() string {
-	return "unexpected files changes"
-}
-
 // OCFLCodeErr represents an OCFL Validation Codes:
 // see https://ocfl.io/validation/validation-codes.html
 type OCFLCodeErr struct {
@@ -30,16 +16,6 @@ type OCFLCodeErr struct {
 // Error implements the Error interface for ObjectValidationErr
 func (err *OCFLCodeErr) Error() string {
 	return fmt.Sprintf(`[%s] %s`, err.Code, err.Description)
-}
-
-// ValidationErrSet is an error returned from validation check
-type ValidationErrSet struct {
-	Fatal    []error
-	Warnings []error
-}
-
-func (errs *ValidationErrSet) Error() string {
-	return fmt.Sprintf("encountered %d fatal errors and %d warnings", len(errs.Fatal), len(errs.Warnings))
 }
 
 // ValidationErr is an error returned from validation check
@@ -76,4 +52,18 @@ func asValidationErr(err error, code *OCFLCodeErr) *ValidationErr {
 		err:  err,
 		code: code,
 	}
+}
+
+// ContentDiffErr represents an error due to
+// unexpected content changes
+type ContentDiffErr struct {
+	Added       []string
+	Removed     []string
+	Modified    []string
+	RenamedFrom []string
+	RenamedTo   []string
+}
+
+func (e *ContentDiffErr) Error() string {
+	return "unexpected files changes"
 }

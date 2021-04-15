@@ -20,12 +20,6 @@ import (
 	"time"
 )
 
-const (
-	inventoryType   = `https://ocfl.io/1.0/spec/#inventory`
-	contentDir      = `content`
-	digestAlgorithm = "sha512"
-)
-
 //var invSidecarRexp = regexp.MustCompile(`inventory\.json\.(\w+)`)
 
 // Inventory represents contents of an OCFL Object's inventory.json file
@@ -72,19 +66,20 @@ func ReadInventory(file io.Reader) (*Inventory, error) {
 
 	err := decoder.Decode(inv)
 	if err != nil {
-		switch err := err.(type) {
-		case *time.ParseError:
-			return nil, &ValidationErr{err: err, code: &ErrE049}
-		case *json.UnmarshalTypeError:
-			if err.Field == "head" {
-				return nil, &ValidationErr{err: err, code: &ErrE040}
-			}
-			if err.Field == `versions.message` {
-				return nil, &ValidationErr{err: err, code: &ErrE094}
-			}
-			// Todo other special cases?
-		}
-		return nil, &ValidationErr{err: err, code: &ErrE033}
+		// switch err := err.(type) {
+		// case *time.ParseError:
+		// 	return nil, &ValidationErr{err: err, code: &ErrE049}
+		// case *json.UnmarshalTypeError:
+		// 	if err.Field == "head" {
+		// 		return nil, &ValidationErr{err: err, code: &ErrE040}
+		// 	}
+		// 	if err.Field == `versions.message` {
+		// 		return nil, &ValidationErr{err: err, code: &ErrE094}
+		// 	}
+		// 	// Todo other special cases?
+		// }
+		// return nil, &ValidationErr{err: err, code: &ErrE033}
+		return nil, err
 	}
 	return inv, nil
 }

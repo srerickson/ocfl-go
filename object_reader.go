@@ -1,29 +1,17 @@
 package ocfl
 
 import (
-	"bytes"
 	"errors"
-	"fmt"
-	"io"
 	"io/fs"
-	"io/ioutil"
 	"path"
-	"strings"
 
 	"github.com/srerickson/checksum"
 	"github.com/srerickson/ocfl/internal"
 )
 
-const (
-	ocflVersion           = "1.0"
-	objectDeclaration     = `ocfl_object_` + ocflVersion
-	objectDeclarationFile = `0=ocfl_object_` + ocflVersion
-	inventoryFile         = `inventory.json`
-)
-
 // ObjectReader represents a readable OCFL Object
 type ObjectReader struct {
-	root      fs.FS      // root fs
+	root      objectRoot // root fs
 	inventory *Inventory // inventory.json
 	index     internal.PathStore
 }
@@ -33,14 +21,14 @@ type ObjectReader struct {
 // 	- OCFL object declaration is missing or invalid.
 //  - The inventory is not be present or there was an error loading it
 func NewObjectReader(root fs.FS) (*ObjectReader, error) {
-	obj := &ObjectReader{root: root}
-	err := obj.readDeclaration()
+	obj := &ObjectReader{root: objectRoot{root}}
+	err := obj.root.readDeclaration()
 	if err != nil {
 		return nil, err
 	}
-	obj.inventory, err = obj.readInventory(`.`)
+	// don't validate inventory by default
+	obj.inventory, err = obj.root.readInventory(`.`, false)
 	if err != nil {
-		//return nil, asValidationErr(err, &ErrE034)
 		return nil, err
 	}
 	obj.index = internal.NewPathStore()
@@ -62,100 +50,6 @@ func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 	}
 
 	return obj, nil
-}
-
-// readDeclaration reads and validates the declaration file.
-// If an error is returned, it is a ValidationErr
-func (obj *ObjectReader) readDeclaration() error {
-	f, err := obj.root.Open(objectDeclarationFile)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return &ValidationErr{
-				err:  fmt.Errorf(`OCFL version declaration not found: %s`, objectDeclarationFile),
-				code: &ErrE003,
-			}
-		}
-		return &ValidationErr{err: err, code: &ErrE003}
-	}
-	defer f.Close()
-	decl, err := io.ReadAll(f)
-	if err != nil {
-		return err
-	}
-	if string(decl) != objectDeclaration+"\n" {
-		return &ValidationErr{
-			err:  errors.New(`OCFL version declaration has invalid text contents`),
-			code: &ErrE007,
-		}
-	}
-	return nil
-}
-
-// reads and parses the inventory.json file in dir. If an error is returned
-// it may be a ValidationErr if an error occured durind unmarshalling
-func (obj *ObjectReader) readInventory(dir string) (*Inventory, error) {
-	path := path.Join(dir, inventoryFile)
-	file, err := obj.root.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	invBytes, err := ioutil.ReadAll(file)
-	if err != nil {
-		return nil, err
-	}
-	file.Close()
-	// json schema validation
-	err = validateInventoryBytes(invBytes)
-	if err != nil {
-		return nil, err
-	}
-	inv, err := ReadInventory(bytes.NewReader(invBytes))
-	if err != nil {
-		return nil, err
-	}
-	// additional validation
-	err = inv.Validate()
-	if err != nil {
-		return nil, err
-	}
-	// digest the inventory
-	newH, err := newHash(inv.DigestAlgorithm)
-	if err != nil {
-		return nil, err
-	}
-	checksum := newH()
-	io.Copy(checksum, bytes.NewReader(invBytes))
-	inv.digest = checksum.Sum(nil)
-	return inv, nil
-}
-
-// reads and validates sidecar. Always returns ValidationErr
-func (obj *ObjectReader) readInventorySidecar(dir string, alg string) (string, error) {
-	path := path.Join(dir, inventoryFile+"."+alg)
-	file, err := obj.root.Open(path)
-	if err != nil {
-		return "", &ValidationErr{
-			err:  err,
-			code: &ErrE058,
-		}
-	}
-	defer file.Close()
-	cont, err := io.ReadAll(file)
-	if err != nil {
-		return "", &ValidationErr{
-			err:  err,
-			code: &ErrE058,
-		}
-	}
-	sidecar := string(cont)
-	offset := strings.Index(string(sidecar), " ")
-	if offset < 0 || !digestRegexp.MatchString(sidecar[:offset]) {
-		return "", &ValidationErr{
-			err:  fmt.Errorf("invalid sidecar contents: %s", sidecar),
-			code: &ErrE061,
-		}
-	}
-	return sidecar[:offset], nil
 }
 
 // Content returns DigestMap of all version contents

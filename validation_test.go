@@ -1,6 +1,7 @@
 package ocfl_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -77,26 +78,27 @@ func TestValidation(t *testing.T) {
 	for _, bad := range badObjects {
 		name := filepath.Base(bad.Path)
 		fsys := os.DirFS(filepath.Join(badObjPath, bad.Path))
-		err := ocfl.ValidateObject(fsys)
-		if err == nil {
+		result := ocfl.ValidateObject(fsys)
+		if result == nil {
 			t.Errorf(`fixture %s: validated but shouldn't`, name)
 			continue
 		}
-		verr, ok := err.(*ocfl.ValidationErr)
-		if !ok {
-			t.Errorf("fixture %s: expected ocfl.ValidationErr, got: %v", name, err)
-			continue
-		}
-		code := verr.Code()
-		var gotExpected bool
-		for _, e := range bad.Expected {
-			if code == e {
-				gotExpected = true
-				break
+		for _, err := range result.Fatal {
+			var verr *ocfl.ValidationErr
+			if !errors.As(err, &verr) {
+				t.Errorf("fixture %s: expected ocfl.ValidationErr, got: %v", name, err)
+				continue
 			}
-		}
-		if !gotExpected {
-			t.Errorf(`fixture %s: invalid for the wrong reason. Got %s`, name, code.Code)
+			var gotExpected bool
+			for _, e := range bad.Expected {
+				if verr.Code() == e {
+					gotExpected = true
+					break
+				}
+			}
+			if !gotExpected {
+				t.Errorf(`fixture %s: invalid for the wrong reason. Got %s`, name, err.Error())
+			}
 		}
 	}
 

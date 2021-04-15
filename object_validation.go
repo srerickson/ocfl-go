@@ -2,7 +2,6 @@ package ocfl
 
 import (
 	"bytes"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -12,44 +11,26 @@ import (
 	"github.com/srerickson/checksum/delta"
 )
 
-func (obj *ObjectReader) Validate() error {
+func (obj *ObjectReader) Validate() *ValidationResult {
+	result := &ValidationResult{}
 	var err error
-	obj.inventory, err = obj.readInventoryValidate(".")
+	obj.inventory, err = obj.root.readInventory(`.`, true)
 	if err != nil {
-		return err
-		//return asValidationErr(err, &ErrE034)
+		return result.AddFatal(err, nil)
 	}
 	if err := obj.validateRoot(); err != nil {
-		return err
+		return result.AddFatal(err, nil)
 	}
 	for v := range obj.inventory.Versions {
 		err := obj.validateVersionDir(v)
 		if err != nil {
-			return err
+			return result.AddFatal(err, nil)
 		}
 	}
 	if err := obj.validateContent(); err != nil {
-		return err
+		return result.AddFatal(err, nil)
 	}
 	return nil
-}
-
-func (obj *ObjectReader) readInventoryValidate(dir string) (*Inventory, error) {
-	inv, err := obj.readInventory(dir)
-	if err != nil {
-		return nil, err
-	}
-	sidecar, err := obj.readInventorySidecar(dir, inv.DigestAlgorithm)
-	if err != nil {
-		return nil, err
-	}
-	if hex.EncodeToString(inv.digest) != sidecar {
-		return nil, &ValidationErr{
-			err:  fmt.Errorf(`inventory checksum validation failed for version %s`, dir),
-			code: &ErrE034,
-		}
-	}
-	return inv, nil
 }
 
 // validateRoot validates the object's root file structure. It checks
@@ -123,7 +104,7 @@ func (obj *ObjectReader) validateVersionDir(v string) error {
 		}
 	}
 	if hasInventory {
-		inv, err := obj.readInventoryValidate(v)
+		inv, err := obj.root.readInventory(v, true)
 		if err != nil {
 			return err
 		}
@@ -152,7 +133,6 @@ func (obj *ObjectReader) validateContent() error {
 	if err != nil {
 		return err
 	}
-
 	// file and digests in content but not in manifest?
 	manifest, err := obj.inventory.Manifest.Normalize()
 	if err != nil {
