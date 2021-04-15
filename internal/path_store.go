@@ -6,11 +6,6 @@ import (
 	"strings"
 )
 
-type PathStore interface {
-	Add(string, interface{}) error
-	Get(string) (interface{}, error)
-}
-
 // PathTree
 type PathTree struct {
 	Files map[string]interface{}
@@ -20,10 +15,6 @@ type PathTree struct {
 var ErrPathNotFound = errors.New("path not found")
 var ErrPathConflict = errors.New("duplicate path")
 var ErrPathInvalid = errors.New("invalid path")
-
-func NewPathStore() PathStore {
-	return &PathTree{}
-}
 
 // Add implements PathStore for PathTree
 func (r *PathTree) Add(fname string, val interface{}) error {

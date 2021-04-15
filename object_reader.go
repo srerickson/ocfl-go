@@ -2,6 +2,7 @@ package ocfl
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"path"
 
@@ -13,7 +14,7 @@ import (
 type ObjectReader struct {
 	root      objectRoot // root fs
 	inventory *Inventory // inventory.json
-	index     internal.PathStore
+	logical   *internal.AliasFS
 }
 
 // NewObjectReader returns a new ObjectReader with loaded inventory.
@@ -31,25 +32,36 @@ func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 	if err != nil {
 		return nil, err
 	}
-	obj.index = internal.NewPathStore()
+	// obj.index = internal.NewPathStore()
 
+	files := make(map[string]string)
 	// add every path from every version to obj.index
-	for name, version := range obj.inventory.Versions {
-		for digest, paths := range version.State {
-			for _, p := range paths {
-				path := name + "/" + p
-				err := obj.index.Add(path, digest)
-				if err != nil {
-					if errors.Is(err, internal.ErrPathInvalid) {
-						return nil, asValidationErr(err, &ErrE099)
-					}
-					return nil, asValidationErr(err, &ErrE095)
-				}
+	for vname, version := range obj.inventory.Versions {
+		paths, err := version.State.Paths()
+		if err != nil {
+			return nil, asValidationErr(err, &ErrE095)
+		}
+		for p, digest := range paths {
+			targets := obj.inventory.Manifest[digest]
+			if len(targets) == 0 {
+				return nil, fmt.Errorf("empty path list for digest: %s", digest)
 			}
+			files[vname+"/"+p] = targets[0]
 		}
 	}
-
+	obj.logical, err = internal.NewAliasFS(obj.root, files)
+	if err != nil {
+		if errors.Is(err, internal.ErrPathInvalid) {
+			return nil, asValidationErr(err, &ErrE099)
+		}
+		return nil, asValidationErr(err, &ErrE095)
+	}
 	return obj, nil
+}
+
+// Open implements io/fs.FS for ObjectReader
+func (obj *ObjectReader) Open(name string) (fs.File, error) {
+	return obj.logical.Open(name)
 }
 
 // Content returns DigestMap of all version contents

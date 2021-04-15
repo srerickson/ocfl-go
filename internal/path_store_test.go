@@ -7,7 +7,7 @@ import (
 )
 
 func TestPathTree(t *testing.T) {
-	ps := internal.PathStore(new(internal.PathTree))
+	ps := internal.PathTree{}
 	err := ps.Add("a/b/c/d/e.txt", "123")
 	if err != nil {
 		t.Error(err)
