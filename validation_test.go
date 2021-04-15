@@ -19,16 +19,17 @@ type objValidationTest struct {
 }
 
 var badObjects = []objValidationTest{
+
 	{"E001_extra_dir_in_root", []*ocfl.OCFLCodeErr{&ocfl.ErrE001}},
 	{"E001_extra_file_in_root", []*ocfl.OCFLCodeErr{&ocfl.ErrE001}},
-	{"E003_E034_empty", []*ocfl.OCFLCodeErr{&ocfl.ErrE003, &ocfl.ErrE034}},
+	{"E001_v2_file_in_root", []*ocfl.OCFLCodeErr{&ocfl.ErrE001}},
+	{"E003_E063_empty", []*ocfl.OCFLCodeErr{&ocfl.ErrE003, &ocfl.ErrE063}},
 	{"E003_no_decl", []*ocfl.OCFLCodeErr{&ocfl.ErrE003}},
 	{"E007_bad_declaration_contents", []*ocfl.OCFLCodeErr{&ocfl.ErrE007}},
 	{"E008_E036_no_versions_no_head", []*ocfl.OCFLCodeErr{&ocfl.ErrE008, &ocfl.ErrE036}},
 	{"E015_content_not_in_content_dir", []*ocfl.OCFLCodeErr{&ocfl.ErrE015}},
 	{"E023_extra_file", []*ocfl.OCFLCodeErr{&ocfl.ErrE023}},
 	{"E023_missing_file", []*ocfl.OCFLCodeErr{&ocfl.ErrE023}},
-	{"E034_no_inv", []*ocfl.OCFLCodeErr{&ocfl.ErrE034}},
 	{"E036_no_id", []*ocfl.OCFLCodeErr{&ocfl.ErrE036}},
 	{"E040_wrong_head_doesnt_exist", []*ocfl.OCFLCodeErr{&ocfl.ErrE040}},
 	{"E040_wrong_head_format", []*ocfl.OCFLCodeErr{&ocfl.ErrE040}},
@@ -38,9 +39,12 @@ var badObjects = []objValidationTest{
 	{"E049_E050_E054_bad_version_block_values", []*ocfl.OCFLCodeErr{&ocfl.ErrE049, &ocfl.ErrE050, &ocfl.ErrE054}},
 	{"E050_file_in_manifest_not_used", []*ocfl.OCFLCodeErr{&ocfl.ErrE050}},
 	{"E058_no_sidecar", []*ocfl.OCFLCodeErr{&ocfl.ErrE058}},
+	{"E063_no_inv", []*ocfl.OCFLCodeErr{&ocfl.ErrE063}},
 	{"E064_different_root_and_latest_inventories", []*ocfl.OCFLCodeErr{&ocfl.ErrE064}},
 	{"E067_file_in_extensions_dir", []*ocfl.OCFLCodeErr{&ocfl.ErrE067}},
 	{"E095_conflicting_logical_paths", []*ocfl.OCFLCodeErr{&ocfl.ErrE095}},
+	{"E100_E099_fixity_invalid_content_paths", []*ocfl.OCFLCodeErr{&ocfl.ErrE100, &ocfl.ErrE099}},
+	{"E100_E099_manifest_invalid_content_paths", []*ocfl.OCFLCodeErr{&ocfl.ErrE100, &ocfl.ErrE099}},
 
 	// https://github.com/zimeon/ocfl-py/tree/main/extra_fixtures/bad-objects
 	// Fixtures referenced below are copyright (c) 2018 Simeon Warner, MIT License
