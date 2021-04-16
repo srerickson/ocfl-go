@@ -27,12 +27,12 @@ func validateInventoryBytes(inv []byte) error {
 	if len(errs) == 0 {
 		return nil
 	}
-	errSet := &ValidationResult{
-		Fatal: make([]*ValidationErr, len(errs)),
+	errSet := &validationResult{
+		fatal: make([]ValidationErr, len(errs)),
 	}
 	for i, e := range errs {
 		// TODO : set error codes based on json schema
-		errSet.Fatal[i] = asValidationErr(e, nil)
+		errSet.fatal[i] = asValidationErr(e, nil)
 	}
 	return errSet
 }
@@ -40,7 +40,7 @@ func validateInventoryBytes(inv []byte) error {
 func (inv *Inventory) Validate() error {
 	// one or more versions are present
 	if len(inv.Versions) == 0 {
-		return &ValidationErr{
+		return &validationErr{
 			err:  fmt.Errorf(`inventory has no versions`),
 			code: &ErrE008,
 		}
@@ -49,7 +49,7 @@ func (inv *Inventory) Validate() error {
 	// E037 - '[id] must be unique in the local context, and should be a URI [RFC3986].'
 	// W005 - 'The OCFL Object Inventory id SHOULD be a URI.'
 	if inv.ID == "" {
-		return &ValidationErr{
+		return &validationErr{
 			err:  fmt.Errorf(`inventory missing 'id' field`),
 			code: &ErrE036,
 		}
@@ -57,7 +57,7 @@ func (inv *Inventory) Validate() error {
 	// Type
 	// E038 - must be the URI of the inventory section of the specification version matching the object conformance declaration.
 	if inv.Type == "" {
-		return &ValidationErr{
+		return &validationErr{
 			err:  fmt.Errorf(`inventory missing 'type' field`),
 			code: &ErrE036,
 		}
@@ -65,7 +65,7 @@ func (inv *Inventory) Validate() error {
 	// Digest Algorithm
 	// E025 - OCFL Objects must use either sha512 or sha256, and should use sha512
 	if inv.DigestAlgorithm == "" {
-		return &ValidationErr{
+		return &validationErr{
 			err:  fmt.Errorf(`inventory missing 'digestAlgorithm' field`),
 			code: &ErrE036,
 		}
@@ -91,7 +91,7 @@ func (inv *Inventory) Validate() error {
 	// Manifest
 
 	if inv.Manifest == nil {
-		return &ValidationErr{
+		return &validationErr{
 			err:  fmt.Errorf(`inventory missing 'manifest' field`),
 			code: &ErrE041,
 		}
@@ -101,15 +101,15 @@ func (inv *Inventory) Validate() error {
 	if err != nil {
 		var dcErr *DigestConflictErr
 		if errors.As(err, &dcErr) {
-			return &ValidationErr{err: err, code: &ErrE096}
+			return &validationErr{err: err, code: &ErrE096}
 		}
 		var pcErr *PathConflictErr
 		if errors.As(err, &pcErr) {
-			return &ValidationErr{err: err, code: &ErrE095}
+			return &validationErr{err: err, code: &ErrE095}
 		}
 		var piErr *PathInvalidErr
 		if errors.As(err, &piErr) {
-			return &ValidationErr{err: err, code: &ErrE099}
+			return &validationErr{err: err, code: &ErrE099}
 		}
 		return err
 	}
@@ -124,22 +124,22 @@ func (inv *Inventory) Validate() error {
 			var dcErr *DigestConflictErr
 			if errors.As(err, &dcErr) {
 				// FIXME - E050 seems wrong
-				return &ValidationErr{err: err, code: &ErrE050}
+				return &validationErr{err: err, code: &ErrE050}
 			}
 			var pcErr *PathConflictErr
 			if errors.As(err, &pcErr) {
-				return &ValidationErr{err: err, code: &ErrE095}
+				return &validationErr{err: err, code: &ErrE095}
 			}
 			var piErr *PathInvalidErr
 			if errors.As(err, &piErr) {
-				return &ValidationErr{err: err, code: &ErrE099}
+				return &validationErr{err: err, code: &ErrE099}
 			}
 			return err
 		}
 		// check that each state digest appears in manifest
 		for digest := range v.State {
 			if _, exists := inv.Manifest[digest]; !exists {
-				return &ValidationErr{
+				return &validationErr{
 					err:  fmt.Errorf("digest in % state not in manifest: %s", v, digest),
 					code: &ErrE050,
 				}
@@ -159,7 +159,7 @@ func (inv *Inventory) Validate() error {
 		if !found {
 			// This error code is used in the fixture
 			// but doesn't makesense
-			return &ValidationErr{
+			return &validationErr{
 				err:  fmt.Errorf("digest not used in state: %s", digest),
 				code: &ErrE050,
 			}
@@ -171,15 +171,15 @@ func (inv *Inventory) Validate() error {
 		if err != nil {
 			var dcErr *DigestConflictErr
 			if errors.As(err, &dcErr) {
-				return &ValidationErr{err: err, code: &ErrE097}
+				return &validationErr{err: err, code: &ErrE097}
 			}
 			var pcErr *PathConflictErr
 			if errors.As(err, &pcErr) {
-				return &ValidationErr{err: err, code: &ErrE095}
+				return &validationErr{err: err, code: &ErrE095}
 			}
 			var piErr *PathInvalidErr
 			if errors.As(err, &piErr) {
-				return &ValidationErr{err: err, code: &ErrE099}
+				return &validationErr{err: err, code: &ErrE099}
 			}
 			return err
 		}
@@ -190,19 +190,19 @@ func (inv *Inventory) Validate() error {
 func (inv *Inventory) validateHead() error {
 	v, _, err := versionParse(inv.Head)
 	if err != nil {
-		return &ValidationErr{
+		return &validationErr{
 			err:  fmt.Errorf(`inventory 'head' not valid: %s`, inv.Head),
 			code: &ErrE040,
 		}
 	}
 	if _, ok := inv.Versions[inv.Head]; !ok {
-		return &ValidationErr{
+		return &validationErr{
 			err:  fmt.Errorf(`inventory 'head' value does not correspond to a version: %s`, inv.Head),
 			code: &ErrE040,
 		}
 	}
 	if v != len(inv.Versions) {
-		return &ValidationErr{
+		return &validationErr{
 			err:  fmt.Errorf(`inventory 'head' is not the last version %s`, inv.Head),
 			code: &ErrE040,
 		}

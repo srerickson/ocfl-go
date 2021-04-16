@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/srerickson/ocfl"
 )
@@ -15,10 +16,13 @@ var goodObjPath = filepath.Join(fixturePath, `good-objects`)
 var badObjPath = filepath.Join(fixturePath, `bad-objects`)
 var warnObjPath = filepath.Join(fixturePath, `warn-objects`)
 
-func TestNewObjectOpen(t *testing.T) {
+func TestNewObjectFS(t *testing.T) {
 	root := os.DirFS(filepath.Join(goodObjPath, `spec-ex-full`))
 	obj, err := ocfl.NewObjectReader(root)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fstest.TestFS(obj, `v1/foo/bar.xml`); err != nil {
 		t.Fatal(err)
 	}
 	file, err := obj.Open(`v1/foo/bar.xml`)
@@ -31,7 +35,7 @@ func TestNewObjectOpen(t *testing.T) {
 	}
 	expected := "Me, Myself, I"
 	if !strings.Contains(string(data), expected) {
-		t.Errorf("expected file to contain %s", expected)
+		t.Fatalf("expected file to contain %s", expected)
 	}
 }
 

@@ -11,8 +11,8 @@ import (
 	"github.com/srerickson/checksum/delta"
 )
 
-func (obj *ObjectReader) Validate() *ValidationResult {
-	result := &ValidationResult{}
+func (obj *ObjectReader) Validate() ValidationResult {
+	result := &validationResult{}
 	var err error
 	obj.inventory, err = obj.root.readInventory(`.`, true)
 	if err != nil {
@@ -53,23 +53,23 @@ func (obj *ObjectReader) validateRoot() error {
 	if err != nil {
 		if errors.Is(err, errDirMatchMissingFile) {
 			if strings.Contains(err.Error(), objectDeclarationFile) {
-				return &ValidationErr{&ErrE003, err}
+				return asValidationErr(err, &ErrE003)
 			}
 			if strings.Contains(err.Error(), obj.inventory.SidecarFile()) {
-				return &ValidationErr{&ErrE058, err}
+				return asValidationErr(err, &ErrE058)
 			}
 			if strings.Contains(err.Error(), inventoryFile) {
-				return &ValidationErr{&ErrE034, err}
+				return asValidationErr(err, &ErrE034)
 			}
 		}
 		if errors.Is(err, errDirMatchInvalidFile) {
-			return &ValidationErr{&ErrE001, err}
+			return asValidationErr(err, &ErrE001)
 		}
 		if errors.Is(err, errDirMatchMissingDir) {
-			return &ValidationErr{&ErrE046, err}
+			return asValidationErr(err, &ErrE046)
 		}
 		if errors.Is(err, errDirMatchInvalidDir) {
-			return &ValidationErr{&ErrE001, err}
+			return asValidationErr(err, &ErrE001)
 		}
 		return err
 	}
@@ -95,7 +95,7 @@ func (obj *ObjectReader) validateVersionDir(v string) error {
 	}
 	err = match.Match(items)
 	if err != nil {
-		return &ValidationErr{code: &ErrE015, err: err}
+		return asValidationErr(err, &ErrE015)
 	}
 	var hasInventory bool
 	for _, i := range items {
@@ -111,10 +111,8 @@ func (obj *ObjectReader) validateVersionDir(v string) error {
 		if obj.inventory.Head == v {
 			// if this is the HEAD version, root inventory should match this inventory
 			if !bytes.Equal(obj.inventory.digest, inv.digest) {
-				return &ValidationErr{
-					err:  fmt.Errorf(`root inventory doesn't match inventory for %s`, v),
-					code: &ErrE064,
-				}
+				err := fmt.Errorf(`root inventory doesn't match inventory for %s`, v)
+				return asValidationErr(err, &ErrE064)
 			}
 		}
 		return nil
@@ -152,12 +150,9 @@ func (obj *ObjectReader) validateContent() error {
 		}
 		err.RenamedFrom, err.RenamedTo = changes.Renamed()
 		if len(err.Modified) != 0 {
-			return &ValidationErr{err: err, code: &ErrE092}
+			return asValidationErr(err, &ErrE092)
 		}
-		return &ValidationErr{
-			err:  fmt.Errorf("content includes files not in manifest"),
-			code: &ErrE023,
-		}
+		return asValidationErr(fmt.Errorf("content includes files not in manifest"), &ErrE023)
 	}
 	// TODO E024 - empty directories
 	return nil
@@ -177,7 +172,7 @@ func (obj *ObjectReader) validateExtensionsDir() error {
 	}
 	err = match.Match(items)
 	if err != nil {
-		return &ValidationErr{err: err, code: &ErrE067}
+		return asValidationErr(err, &ErrE067)
 	}
 	return nil
 }

@@ -20,12 +20,12 @@ func (root *objectRoot) readDeclaration() error {
 	f, err := root.Open(objectDeclarationFile)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return &ValidationErr{
+			return &validationErr{
 				err:  fmt.Errorf(`OCFL object declaration not found`),
 				code: &ErrE003,
 			}
 		}
-		return &ValidationErr{err: err, code: &ErrE003}
+		return &validationErr{err: err, code: &ErrE003}
 	}
 	defer f.Close()
 	decl, err := io.ReadAll(f)
@@ -33,7 +33,7 @@ func (root *objectRoot) readDeclaration() error {
 		return err
 	}
 	if string(decl) != objectDeclaration+"\n" {
-		return &ValidationErr{
+		return &validationErr{
 			err:  errors.New(`OCFL object declaration has invalid text contents`),
 			code: &ErrE007,
 		}
@@ -86,7 +86,7 @@ func (root *objectRoot) readInventory(dir string, validate bool) (*Inventory, er
 		return nil, err
 	}
 	if hex.EncodeToString(inv.digest) != sidecar {
-		return nil, &ValidationErr{
+		return nil, &validationErr{
 			err:  fmt.Errorf(`inventory checksum validation failed for version %s`, dir),
 			code: &ErrE034,
 		}
@@ -99,7 +99,7 @@ func (root *objectRoot) readInventorySidecar(dir string, alg string) (string, er
 	path := path.Join(dir, inventoryFile+"."+alg)
 	file, err := root.Open(path)
 	if err != nil {
-		return "", &ValidationErr{
+		return "", &validationErr{
 			err:  err,
 			code: &ErrE058,
 		}
@@ -107,7 +107,7 @@ func (root *objectRoot) readInventorySidecar(dir string, alg string) (string, er
 	defer file.Close()
 	cont, err := io.ReadAll(file)
 	if err != nil {
-		return "", &ValidationErr{
+		return "", &validationErr{
 			err:  err,
 			code: &ErrE058,
 		}
@@ -115,7 +115,7 @@ func (root *objectRoot) readInventorySidecar(dir string, alg string) (string, er
 	sidecar := string(cont)
 	offset := strings.Index(string(sidecar), " ")
 	if offset < 0 || !digestRegexp.MatchString(sidecar[:offset]) {
-		return "", &ValidationErr{
+		return "", &validationErr{
 			err:  fmt.Errorf("invalid sidecar contents: %s", sidecar),
 			code: &ErrE061,
 		}

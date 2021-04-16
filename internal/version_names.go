@@ -119,7 +119,7 @@ func versionSeqValid(names []string) error {
 		if i == 0 {
 			padding = p
 		} else if padding != p {
-			return &ValidationErr{
+			return &validationErr{
 				err:  fmt.Errorf(`inconsistent version padding: %s`, name),
 				code: &ErrE012,
 			}
@@ -131,12 +131,12 @@ func versionSeqValid(names []string) error {
 		expectedV := i + 1
 		if v != expectedV {
 			if i == 0 {
-				return &ValidationErr{
+				return &validationErr{
 					err:  fmt.Errorf(`missing version 1`),
 					code: &ErrE009,
 				}
 			}
-			return &ValidationErr{
+			return &validationErr{
 				err:  fmt.Errorf(`missing version %d`, expectedV),
 				code: &ErrE010,
 			}
