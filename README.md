@@ -6,9 +6,10 @@
 
 This is a Go module for working with [OCFL](https://ocfl.io/) objects. Some notable features:
 
-- File system access is abstracted using the `fs.FS` interface (Go v1.16+). This way, OCFL objects can be *read* from any backend supporting the `fs.FS` interface.
-- Similarly, the logical content of OCFL an object is presented as an `fs.FS`. OCFL objects can be treated an a storage backed in code that uses the `fs.FS` interface.
-
+- File system is access abstracted using the `io/fs.FS` interface (Go v1.16+). OCFL objects can be read from any backend supporting the `fs.FS` interface.
+- Similarly, the logical content of an OCFL object is presented as an `fs.FS` (see example below).
+- Object validation (*forthcoming*)
+- Object creation & Object commits (*forthcoming*)
 
 # Example Usage
 
@@ -18,6 +19,7 @@ This is a Go module for working with [OCFL](https://ocfl.io/) objects. Some nota
 	if err != nil {
 		log.Fatal(err)
 	}
+	// obj is an fs.FS
 	file, err := obj.Open(`v1/foo/bar.xml`)
 	if err != nil {
 		log.Fatal(err)
