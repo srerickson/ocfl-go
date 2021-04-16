@@ -6,7 +6,7 @@
 
 This is a Go module for working with [OCFL](https://ocfl.io/) objects. Some notable features:
 
-- File system is access abstracted using the `io/fs.FS` interface (Go v1.16+). OCFL objects can be read from any backend supporting the `fs.FS` interface.
+- File system access is abstracted using the `io/fs.FS` interface (Go v1.16+). OCFL objects can be read from any backend supporting the `fs.FS` interface.
 - Similarly, the logical content of an OCFL object is presented as an `fs.FS` (see example below).
 - Object validation (*forthcoming*)
 - Object creation & Object commits (*forthcoming*)
