@@ -10,7 +10,6 @@ const Version = "0.0.0"
 
 type ObjectReader internal.ObjectReader
 type ValidationResult internal.ValidationResult
-type ValidationErr internal.ValidationResult
 
 func (obj *ObjectReader) Open(name string) (fs.File, error) {
 	return (*internal.ObjectReader)(obj).Open(name)

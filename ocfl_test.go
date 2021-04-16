@@ -42,11 +42,16 @@ func TestNewObjectFS(t *testing.T) {
 func TestValidateObject(t *testing.T) {
 	goodObj := filepath.Join(goodObjPath, `spec-ex-full`)
 	badObj := filepath.Join(badObjPath, `E003_no_decl`)
-	if !ocfl.ValidateObject(os.DirFS(goodObj)).Valid() {
+	result := ocfl.ValidateObject(os.DirFS(goodObj))
+	if !result.Valid() {
 		t.Errorf("expected %s to be valid", goodObj)
+		for _, err := range result.Fatal() {
+			t.Errorf(`--> %s`, err.Error())
+		}
 	}
-	if ocfl.ValidateObject(os.DirFS(badObj)).Valid() {
+	if !ocfl.ValidateObject(os.DirFS(badObj)).Valid() {
 		t.Errorf("expected %s to be invalid", badObj)
+
 	}
 	if ocfl.ValidateObject(nil).Valid() {
 		t.Errorf("expected %s to be invalid", badObj)
