@@ -1,4 +1,4 @@
-package ocfl
+package internal
 
 // Copyright 2019 Seth R. Erickson
 //

@@ -1,4 +1,4 @@
-package ocfl
+package internal
 
 import (
 	"os"

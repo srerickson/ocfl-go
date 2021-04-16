@@ -1,4 +1,4 @@
-package ocfl
+package internal
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/qri-io/jsonschema"
-	"github.com/srerickson/ocfl/schema"
+	"github.com/srerickson/ocfl/internal/schema"
 )
 
 var invJsonSchema *jsonschema.Schema

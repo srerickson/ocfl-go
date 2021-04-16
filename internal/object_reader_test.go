@@ -1,4 +1,4 @@
-package ocfl_test
+package internal_test
 
 import (
 	"os"
@@ -6,11 +6,11 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl/internal"
 )
 
 func TestObjectReader(t *testing.T) {
-	obj, err := ocfl.NewObjectReader(os.DirFS(filepath.Join(goodObjPath, `spec-ex-full`)))
+	obj, err := internal.NewObjectReader(os.DirFS(filepath.Join(goodObjPath, `spec-ex-full`)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -18,7 +18,7 @@ func TestObjectReader(t *testing.T) {
 		t.Error(err)
 	}
 
-	obj, err = ocfl.NewObjectReader(os.DirFS(filepath.Join(goodObjPath, `updates_three_versions_one_file`)))
+	obj, err = internal.NewObjectReader(os.DirFS(filepath.Join(goodObjPath, `updates_three_versions_one_file`)))
 	if err != nil {
 		t.Fatal(err)
 	}

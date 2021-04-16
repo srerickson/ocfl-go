@@ -1,13 +1,19 @@
 package ocfl
 
-const (
-	ocflVersion           = "1.0"
-	objectDeclaration     = `ocfl_object_` + ocflVersion
-	objectDeclarationFile = `0=ocfl_object_` + ocflVersion
-	inventoryFile         = `inventory.json`
+import (
+	"io/fs"
 
-	// defaults
-	inventoryType   = `https://ocfl.io/1.0/spec/#inventory`
-	contentDir      = `content`
-	digestAlgorithm = "sha512"
+	"github.com/srerickson/ocfl/internal"
 )
+
+const version = "0.0.0"
+
+// NewObjectReader returns an ObjectReader with root at fsys.
+func NewObjectReader(fsys fs.FS) (*internal.ObjectReader, error) {
+	return internal.NewObjectReader(fsys)
+}
+
+// ValidateObject returns ValidationResults for object at fsys.
+func ValidateObject(fsys fs.FS) *internal.ValidationResult {
+	return internal.ValidateObject(fsys)
+}

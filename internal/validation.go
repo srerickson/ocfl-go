@@ -1,4 +1,4 @@
-package ocfl
+package internal
 
 import (
 	"errors"
@@ -17,8 +17,12 @@ func (r *ValidationResult) Error() string {
 }
 
 func (r *ValidationResult) Merge(err error) bool {
+	// TODO - How to handle nil r, err?
 	var r2 *ValidationResult
 	if errors.As(err, &r2) {
+		if r2 == nil {
+			return false
+		}
 		r.Fatal = append(r.Fatal, r2.Fatal...)
 		r.Warnings = append(r.Warnings, r2.Warnings...)
 		return true
@@ -52,5 +56,6 @@ func ValidateObject(root fs.FS) *ValidationResult {
 	if err != nil {
 		return vr.AddFatal(err, nil)
 	}
-	return obj.Validate()
+	vr.Merge(obj.Validate())
+	return vr
 }

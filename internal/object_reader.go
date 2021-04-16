@@ -1,4 +1,4 @@
-package ocfl
+package internal
 
 import (
 	"errors"
@@ -7,14 +7,13 @@ import (
 	"path"
 
 	"github.com/srerickson/checksum"
-	"github.com/srerickson/ocfl/internal"
 )
 
 // ObjectReader represents a readable OCFL Object
 type ObjectReader struct {
 	root      objectRoot // root fs
 	inventory *Inventory // inventory.json
-	logical   *internal.AliasFS
+	logical   fs.FS
 }
 
 // NewObjectReader returns a new ObjectReader with loaded inventory.
@@ -22,6 +21,9 @@ type ObjectReader struct {
 // 	- OCFL object declaration is missing or invalid.
 //  - The inventory is not be present or there was an error loading it
 func NewObjectReader(root fs.FS) (*ObjectReader, error) {
+	if root == nil {
+		return nil, errors.New("cannot read nil FS")
+	}
 	obj := &ObjectReader{root: objectRoot{root}}
 	err := obj.root.readDeclaration()
 	if err != nil {
@@ -49,9 +51,9 @@ func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 			files[vname+"/"+p] = targets[0]
 		}
 	}
-	obj.logical, err = internal.NewAliasFS(obj.root, files)
+	obj.logical, err = NewAliasFS(obj.root, files)
 	if err != nil {
-		if errors.Is(err, internal.ErrPathInvalid) {
+		if errors.Is(err, ErrPathInvalid) {
 			return nil, asValidationErr(err, &ErrE099)
 		}
 		return nil, asValidationErr(err, &ErrE095)
