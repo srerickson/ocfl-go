@@ -49,11 +49,11 @@ func TestValidateObject(t *testing.T) {
 			t.Errorf(`--> %s`, err.Error())
 		}
 	}
-	if !ocfl.ValidateObject(os.DirFS(badObj)).Valid() {
+	if ocfl.ValidateObject(os.DirFS(badObj)).Valid() {
 		t.Errorf("expected %s to be invalid", badObj)
 
 	}
 	if ocfl.ValidateObject(nil).Valid() {
-		t.Errorf("expected %s to be invalid", badObj)
+		t.Errorf("expected nil object to be invalid")
 	}
 }
