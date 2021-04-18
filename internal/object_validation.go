@@ -2,12 +2,14 @@ package internal
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"regexp"
 	"strings"
 
+	"github.com/srerickson/checksum"
 	"github.com/srerickson/checksum/delta"
 )
 
@@ -28,6 +30,9 @@ func (obj *ObjectReader) Validate() ValidationResult {
 		}
 	}
 	if err := obj.validateContent(); err != nil {
+		return result.AddFatal(err, nil)
+	}
+	if err := obj.validateFixity(); err != nil {
 		return result.AddFatal(err, nil)
 	}
 	return nil
@@ -173,6 +178,62 @@ func (obj *ObjectReader) validateExtensionsDir() error {
 	err = match.Match(items)
 	if err != nil {
 		return asValidationErr(err, &ErrE067)
+	}
+	return nil
+}
+
+func (obj *ObjectReader) validateFixity() error {
+	if obj.inventory == nil {
+		return nil
+	}
+	if obj.inventory.Fixity == nil {
+		return nil
+	}
+	for alg, digestMap := range obj.inventory.Fixity {
+		digestMap, err := digestMap.Normalize()
+		if err != nil {
+			return asValidationErr(err, nil)
+		}
+		hash, err := newHash(alg)
+		if err != nil {
+			return asValidationErr(err, nil)
+		}
+		paths, err := digestMap.Paths()
+		if err != nil {
+			return asValidationErr(err, nil)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		pipe, err := checksum.NewPipe(obj.root,
+			checksum.WithAlg(alg, hash),
+			checksum.WithCtx(ctx),
+		)
+		if err != nil {
+			cancel()
+			return asValidationErr(err, nil)
+		}
+		go func() {
+			defer pipe.Close()
+			for path := range paths {
+				pipe.Add(path)
+			}
+		}()
+		for job := range pipe.Out() {
+			if err := job.Err(); err != nil {
+				cancel()
+				return asValidationErr(err, nil)
+			}
+			sum, err := job.SumString(alg)
+			if err != nil {
+				cancel()
+				return asValidationErr(err, nil)
+			}
+			if sum != paths[job.Path()] {
+				cancel()
+				err := fmt.Errorf("fixity check failed (%s): %s", alg, job.Path())
+				return asValidationErr(err, &ErrE093)
+			}
+		}
+		cancel()
 	}
 	return nil
 }
