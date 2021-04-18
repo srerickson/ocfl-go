@@ -19,8 +19,12 @@ This is a Go module for working with [OCFL](https://ocfl.io/) objects. Some nota
 	if err != nil {
 		log.Fatal(err)
 	}
-	// obj is an fs.FS
-	file, err := obj.Open(`v1/foo/bar.xml`)
+	// logical is an fs.FS
+	logical, err := obj.LogicalFS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := logical.Open(`v1/foo/bar.xml`)
 	if err != nil {
 		log.Fatal(err)
 	}
