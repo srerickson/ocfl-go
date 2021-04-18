@@ -28,7 +28,7 @@ func validateInventoryBytes(inv []byte) validationResult {
 		return result
 	}
 	for _, e := range errs {
-		// TODO : set error codes based on json schema
+		// FIXME this string matching business is crude
 		if strings.Contains(e.Message, `"id"`) {
 			result.AddFatal(e, &ErrE036)
 		} else if strings.Contains(e.Message, `"head"`) {
@@ -41,8 +41,10 @@ func validateInventoryBytes(inv []byte) validationResult {
 			result.AddFatal(e, &ErrE041)
 		} else if strings.Contains(e.Message, `"manifest"`) {
 			result.AddFatal(e, &ErrE041)
+		} else if strings.Contains(e.Message, `array items must be unique`) {
+			result.AddFatal(e, &ErrE095)
 		} else {
-			result.AddFatal(e, &ErrE033)
+			result.AddFatal(e, &ErrE032)
 		}
 	}
 	return result
