@@ -107,7 +107,10 @@ func nextVersionLike(prev string) (string, error) {
 // is the sequence of versions names ok?
 func versionSeqValid(names []string) error {
 	if len(names) == 0 {
-		return fmt.Errorf(`no versions: %w`, &ErrE008)
+		return &validationErr{
+			err:  errors.New(`no versions present`),
+			code: &ErrE008,
+		}
 	}
 	var padding int
 	var nums = make([]int, 0, len(names))

@@ -66,20 +66,19 @@ func ReadInventory(file io.Reader) (*Inventory, error) {
 
 	err := decoder.Decode(inv)
 	if err != nil {
-		// switch err := err.(type) {
-		// case *time.ParseError:
-		// 	return nil, &ValidationErr{err: err, code: &ErrE049}
-		// case *json.UnmarshalTypeError:
-		// 	if err.Field == "head" {
-		// 		return nil, &ValidationErr{err: err, code: &ErrE040}
-		// 	}
-		// 	if err.Field == `versions.message` {
-		// 		return nil, &ValidationErr{err: err, code: &ErrE094}
-		// 	}
-		// 	// Todo other special cases?
-		// }
-		// return nil, &ValidationErr{err: err, code: &ErrE033}
-		return nil, err
+		switch err := err.(type) {
+		case *time.ParseError:
+			return nil, asValidationErr(err, &ErrE049)
+		case *json.UnmarshalTypeError:
+			if err.Field == "head" {
+				return nil, asValidationErr(err, &ErrE040)
+			}
+			if err.Field == `versions.message` {
+				return nil, asValidationErr(err, &ErrE094)
+			}
+			// Todo other special cases?
+		}
+		return nil, asValidationErr(err, &ErrE033)
 	}
 	return inv, nil
 }

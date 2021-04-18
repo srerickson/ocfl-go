@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/qri-io/jsonschema"
 	"github.com/srerickson/ocfl/internal/schema"
@@ -19,57 +20,67 @@ func init() {
 	invJsonSchema = jsonschema.Must(string(schema.InventorySchema))
 }
 
-func validateInventoryBytes(inv []byte) error {
+func validateInventoryBytes(inv []byte) validationResult {
+	result := validationResult{}
 	errs, err := invJsonSchema.ValidateBytes(context.Background(), inv)
 	if err != nil {
-		return err
+		result.AddFatal(err, nil)
+		return result
 	}
-	if len(errs) == 0 {
-		return nil
-	}
-	errSet := &validationResult{
-		fatal: make([]ValidationErr, len(errs)),
-	}
-	for i, e := range errs {
+	for _, e := range errs {
 		// TODO : set error codes based on json schema
-		errSet.fatal[i] = asValidationErr(e, nil)
+		if strings.Contains(e.Message, `"id"`) {
+			result.AddFatal(e, &ErrE036)
+		} else if strings.Contains(e.Message, `"head"`) {
+			result.AddFatal(e, &ErrE036)
+		} else if strings.Contains(e.Message, `"type"`) {
+			result.AddFatal(e, &ErrE036)
+		} else if strings.Contains(e.Message, `"digestAlgorithm"`) {
+			result.AddFatal(e, &ErrE036)
+		} else if strings.Contains(e.Message, `"versions"`) {
+			result.AddFatal(e, &ErrE041)
+		} else if strings.Contains(e.Message, `"manifest"`) {
+			result.AddFatal(e, &ErrE041)
+		} else {
+			result.AddFatal(e, &ErrE033)
+		}
 	}
-	return errSet
+	return result
 }
 
 func (inv *Inventory) Validate() error {
 	// one or more versions are present
-	if len(inv.Versions) == 0 {
-		return &validationErr{
-			err:  fmt.Errorf(`inventory has no versions`),
-			code: &ErrE008,
-		}
-	}
+	// if len(inv.Versions) == 0 {
+	// 	return &validationErr{
+	// 		err:  fmt.Errorf(`inventory has no versions`),
+	// 		code: &ErrE008,
+	// 	}
+	// }
 	// ID
 	// E037 - '[id] must be unique in the local context, and should be a URI [RFC3986].'
 	// W005 - 'The OCFL Object Inventory id SHOULD be a URI.'
-	if inv.ID == "" {
-		return &validationErr{
-			err:  fmt.Errorf(`inventory missing 'id' field`),
-			code: &ErrE036,
-		}
-	}
+	// if inv.ID == "" {
+	// 	return &validationErr{
+	// 		err:  fmt.Errorf(`inventory missing 'id' field`),
+	// 		code: &ErrE036,
+	// 	}
+	// }
 	// Type
 	// E038 - must be the URI of the inventory section of the specification version matching the object conformance declaration.
-	if inv.Type == "" {
-		return &validationErr{
-			err:  fmt.Errorf(`inventory missing 'type' field`),
-			code: &ErrE036,
-		}
-	}
+	// if inv.Type == "" {
+	// 	return &validationErr{
+	// 		err:  fmt.Errorf(`inventory missing 'type' field`),
+	// 		code: &ErrE036,
+	// 	}
+	// }
 	// Digest Algorithm
 	// E025 - OCFL Objects must use either sha512 or sha256, and should use sha512
-	if inv.DigestAlgorithm == "" {
-		return &validationErr{
-			err:  fmt.Errorf(`inventory missing 'digestAlgorithm' field`),
-			code: &ErrE036,
-		}
-	}
+	// if inv.DigestAlgorithm == "" {
+	// 	return &validationErr{
+	// 		err:  fmt.Errorf(`inventory missing 'digestAlgorithm' field`),
+	// 		code: &ErrE036,
+	// 	}
+	// }
 	// Versions
 	// E043 - 'An OCFL Object Inventory must include a block for storing versions.'
 	// E046 - 'The keys of [the versions object] must correspond to the names of the version directories used.'

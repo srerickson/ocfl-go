@@ -15,7 +15,7 @@ type ValidationErr interface {
 	URI() string
 }
 
-// ValidationErr is an error returned from validation check
+// validationErr is an error returned from validation check
 type validationErr struct {
 	code *OCFLCodeErr // code from spec
 	err  error        // internal error
@@ -30,9 +30,9 @@ type OCFLCodeErr struct {
 }
 
 // Error implements the Error interface for ObjectValidationErr
-func (err *OCFLCodeErr) Error() string {
-	return fmt.Sprintf(`[%s] %s`, err.Code, err.Description)
-}
+// func (err *OCFLCodeErr) Error() string {
+// 	return fmt.Sprintf(`[%s] %s`, err.Code, err.Description)
+// }
 
 func (verr *validationErr) Unwrap() error {
 	return verr.err

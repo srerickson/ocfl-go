@@ -41,8 +41,7 @@ func (root *objectRoot) readDeclaration() error {
 	return nil
 }
 
-// reads and parses the inventory.json file in dir. If validation is performed
-// it may be a validation set
+// reads and parses the inventory.json file in dir.
 func (root *objectRoot) readInventory(dir string, validate bool) (*Inventory, error) {
 	path := path.Join(dir, inventoryFile)
 	file, err := root.Open(path)
@@ -60,9 +59,9 @@ func (root *objectRoot) readInventory(dir string, validate bool) (*Inventory, er
 		return nil, err
 	}
 	// json schema validation
-	err = validateInventoryBytes(invBytes)
-	if err != nil {
-		return nil, err
+	result := validateInventoryBytes(invBytes)
+	if !result.Valid() {
+		return nil, &result
 	}
 	inv, err := ReadInventory(bytes.NewReader(invBytes))
 	if err != nil {

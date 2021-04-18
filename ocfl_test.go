@@ -22,10 +22,14 @@ func TestNewObjectFS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fstest.TestFS(obj, `v1/foo/bar.xml`); err != nil {
+	logical, err := obj.LogicalFS()
+	if err != nil {
 		t.Fatal(err)
 	}
-	file, err := obj.Open(`v1/foo/bar.xml`)
+	if err := fstest.TestFS(logical, `v1/foo/bar.xml`); err != nil {
+		t.Fatal(err)
+	}
+	file, err := logical.Open(`v1/foo/bar.xml`)
 	if err != nil {
 		t.Fatal(err)
 	}

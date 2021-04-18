@@ -11,8 +11,8 @@ const Version = "0.0.0"
 type ObjectReader internal.ObjectReader
 type ValidationResult internal.ValidationResult
 
-func (obj *ObjectReader) Open(name string) (fs.File, error) {
-	return (*internal.ObjectReader)(obj).Open(name)
+func (obj *ObjectReader) LogicalFS() (fs.FS, error) {
+	return (*internal.ObjectReader)(obj).LogicalFS()
 }
 
 // NewObjectReader returns an ObjectReader with root at fsys.

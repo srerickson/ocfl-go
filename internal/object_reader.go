@@ -32,10 +32,15 @@ func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 	// don't validate inventory by default
 	obj.inventory, err = obj.root.readInventory(`.`, false)
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, asValidationErr(err, &ErrE063)
+		}
 		return nil, err
 	}
-	// obj.index = internal.NewPathStore()
+	return obj, nil
+}
 
+func (obj *ObjectReader) LogicalFS() (fs.FS, error) {
 	files := make(map[string]string)
 	// add every path from every version to obj.index
 	for vname, version := range obj.inventory.Versions {
@@ -51,19 +56,14 @@ func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 			files[vname+"/"+p] = targets[0]
 		}
 	}
-	obj.logical, err = NewAliasFS(obj.root, files)
+	logical, err := NewAliasFS(obj.root, files)
 	if err != nil {
 		if errors.Is(err, ErrPathInvalid) {
 			return nil, asValidationErr(err, &ErrE099)
 		}
 		return nil, asValidationErr(err, &ErrE095)
 	}
-	return obj, nil
-}
-
-// Open implements io/fs.FS for ObjectReader
-func (obj *ObjectReader) Open(name string) (fs.File, error) {
-	return obj.logical.Open(name)
+	return logical, nil
 }
 
 // Content returns DigestMap of all version contents
