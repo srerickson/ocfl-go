@@ -1,6 +1,6 @@
 package internal
-
 // This is generated code. Do not modify. See errors_gen folder.
+
 
 //ErrE001: The OCFL Object Root must not contain files or directories other than those specified in the following sections.
 var ErrE001 = OCFLCodeErr{
@@ -331,30 +331,30 @@ var ErrE047 = OCFLCodeErr{
 	URI:         "https://ocfl.io/1.0/spec/#E047",
 }
 
-//ErrE048: A JSON object to describe one OCFL Version, which must include the following keys: [created, state, message, user]
+//ErrE048: A JSON object to describe one OCFL Version, which must include the following keys: [created, state]
 var ErrE048 = OCFLCodeErr{
-	Description: "A JSON object to describe one OCFL Version, which must include the following keys: [created, state, message, user]",
+	Description: "A JSON object to describe one OCFL Version, which must include the following keys: [created, state]",
 	Code:        "E048",
 	URI:         "https://ocfl.io/1.0/spec/#E048",
 }
 
-//ErrE049: [the value of the “created” key] must be expressed in the Internet Date/Time Format defined by [RFC3339].
+//ErrE049: [the value of the \"created\" key] must be expressed in the Internet Date/Time Format defined by [RFC3339].
 var ErrE049 = OCFLCodeErr{
-	Description: "[the value of the “created” key] must be expressed in the Internet Date/Time Format defined by [RFC3339].",
+	Description: "[the value of the \"created\" key] must be expressed in the Internet Date/Time Format defined by [RFC3339].",
 	Code:        "E049",
 	URI:         "https://ocfl.io/1.0/spec/#E049",
 }
 
-//ErrE050: The keys of [the “state” JSON object] are digest values, each of which must correspond to an entry in the manifest of the inventory.
+//ErrE050: The keys of [the \"state\" JSON object] are digest values, each of which must correspond to an entry in the manifest of the inventory.
 var ErrE050 = OCFLCodeErr{
-	Description: "The keys of [the “state” JSON object] are digest values, each of which must correspond to an entry in the manifest of the inventory.",
+	Description: "The keys of [the \"state\" JSON object] are digest values, each of which must correspond to an entry in the manifest of the inventory.",
 	Code:        "E050",
 	URI:         "https://ocfl.io/1.0/spec/#E050",
 }
 
-//ErrE051: The logical path [value of a “state” digest key] must be interpreted as a set of one or more path elements joined by a / path separator.
+//ErrE051: The logical path [value of a \"state\" digest key] must be interpreted as a set of one or more path elements joined by a / path separator.
 var ErrE051 = OCFLCodeErr{
-	Description: "The logical path [value of a “state” digest key] must be interpreted as a set of one or more path elements joined by a / path separator.",
+	Description: "The logical path [value of a \"state\" digest key] must be interpreted as a set of one or more path elements joined by a / path separator.",
 	Code:        "E051",
 	URI:         "https://ocfl.io/1.0/spec/#E051",
 }
@@ -373,9 +373,9 @@ var ErrE053 = OCFLCodeErr{
 	URI:         "https://ocfl.io/1.0/spec/#E053",
 }
 
-//ErrE054: The value of the user key must contain a user name key, “name” and should contain an address key, “address”.
+//ErrE054: The value of the user key must contain a user name key, \"name\" and should contain an address key, \"address\".
 var ErrE054 = OCFLCodeErr{
-	Description: "The value of the user key must contain a user name key, “name” and should contain an address key, “address”.",
+	Description: "The value of the user key must contain a user name key, \"name\" and should contain an address key, \"address\".",
 	Code:        "E054",
 	URI:         "https://ocfl.io/1.0/spec/#E054",
 }
@@ -506,9 +506,9 @@ var ErrE073 = OCFLCodeErr{
 	URI:         "https://ocfl.io/1.0/spec/#E073",
 }
 
-//ErrE074: Although implementations may require multiple OCFL Storage Roots - that is, several logical or physical volumes, or multiple “buckets” in an object store - each OCFL Storage Root MUST be independent.
+//ErrE074: Although implementations may require multiple OCFL Storage Roots - that is, several logical or physical volumes, or multiple \"buckets\" in an object store - each OCFL Storage Root MUST be independent.
 var ErrE074 = OCFLCodeErr{
-	Description: "Although implementations may require multiple OCFL Storage Roots - that is, several logical or physical volumes, or multiple “buckets” in an object store - each OCFL Storage Root MUST be independent.",
+	Description: "Although implementations may require multiple OCFL Storage Roots - that is, several logical or physical volumes, or multiple \"buckets\" in an object store - each OCFL Storage Root MUST be independent.",
 	Code:        "E074",
 	URI:         "https://ocfl.io/1.0/spec/#E074",
 }

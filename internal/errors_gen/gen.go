@@ -20,12 +20,13 @@ func main() {
 		log.Fatal(err)
 	}
 	reader := csv.NewReader(f)
-	reader.Comma = '\t'
+	//reader.Comma = ','
 	records, err := reader.ReadAll()
 	//some cleanup
 	for i := range records {
 		for j := range records[i] {
-			records[i][j] = strings.Trim(records[i][j], `’‘ `)
+			records[i][j] = strings.Trim(records[i][j], `'`)
+			records[i][j] = strings.ReplaceAll(records[i][j], `"`, `\"`)
 		}
 	}
 	if err != nil {
