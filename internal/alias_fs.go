@@ -7,23 +7,18 @@ import (
 	"path"
 	"sort"
 	"time"
+
+	"github.com/srerickson/ocfl/internal/pindex"
 )
 
 // AliasFS is used to map logical paths to actual paths
 type AliasFS struct {
 	base  fs.FS
-	index *PathTree
+	index pindex.PathIndex
 }
 
-func NewAliasFS(fsys fs.FS, files map[string]string) (*AliasFS, error) {
-	afs := &AliasFS{fsys, &PathTree{}}
-	for from, to := range files {
-		err := afs.index.Add(from, to)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return afs, nil
+func NewAliasFS(fsys fs.FS, index pindex.PathIndex) *AliasFS {
+	return &AliasFS{fsys, index}
 }
 
 func (afs *AliasFS) Open(name string) (fs.File, error) {
@@ -42,10 +37,10 @@ func (afs *AliasFS) Open(name string) (fs.File, error) {
 			File: base,
 			path: name,
 		}, nil
-	case *PathTree:
+	case pindex.PathIndex:
 		// path to a directory
 		dir := &aliasDir{path: name}
-		for fname := range val.Files {
+		for _, fname := range val.Files() {
 			var target string
 			if name == "." {
 				target = fname
@@ -59,7 +54,7 @@ func (afs *AliasFS) Open(name string) (fs.File, error) {
 			}
 			dir.entry = append(dir.entry, entry)
 		}
-		for dname := range val.Dirs {
+		for _, dname := range val.Dirs() {
 			var target string
 			if name == "." {
 				target = dname
@@ -98,7 +93,7 @@ func (afs *AliasFS) Stat(name string) (fs.FileInfo, error) {
 			info,
 			path.Base(name),
 		}, nil
-	case *PathTree:
+	case pindex.PathIndex:
 		return &dirFileInfo{
 			name: path.Base(name),
 		}, nil

@@ -1,4 +1,4 @@
-package internal
+package pindex
 
 import (
 	"errors"
@@ -6,15 +6,40 @@ import (
 	"strings"
 )
 
+type PathIndex interface {
+	Add(string, interface{}) error
+	Get(string) (interface{}, error)
+	Dirs() []string
+	Files() []string
+}
+
+var _ PathIndex = (*PathTree)(nil)
+
 // PathTree
 type PathTree struct {
-	Files map[string]interface{}
-	Dirs  map[string]*PathTree
+	files map[string]interface{}
+	dirs  map[string]*PathTree
 }
 
 var ErrPathNotFound = errors.New("path not found")
 var ErrPathConflict = errors.New("duplicate path")
 var ErrPathInvalid = errors.New("invalid path")
+
+func (r *PathTree) Dirs() []string {
+	var names []string
+	for d := range r.dirs {
+		names = append(names, d)
+	}
+	return names
+}
+
+func (r *PathTree) Files() []string {
+	var names []string
+	for d := range r.files {
+		names = append(names, d)
+	}
+	return names
+}
 
 // Add implements PathStore for PathTree
 func (r *PathTree) Add(fname string, val interface{}) error {
@@ -26,31 +51,31 @@ func (r *PathTree) Add(fname string, val interface{}) error {
 	}
 	offset := strings.Index(fname, "/")
 	if offset == -1 {
-		if _, exists := r.Files[fname]; exists {
+		if _, exists := r.files[fname]; exists {
 			return ErrPathConflict
 		}
-		if _, exists := r.Dirs[fname]; exists {
+		if _, exists := r.dirs[fname]; exists {
 			return ErrPathConflict
 		}
-		if r.Files == nil {
-			r.Files = make(map[string]interface{})
+		if r.files == nil {
+			r.files = make(map[string]interface{})
 		}
-		r.Files[fname] = val
+		r.files[fname] = val
 		return nil
 	}
 	dir := fname[:offset]
-	if r.Files != nil {
-		if _, exists := r.Files[dir]; exists {
+	if r.files != nil {
+		if _, exists := r.files[dir]; exists {
 			return ErrPathConflict
 		}
 	}
-	if r.Dirs == nil {
-		r.Dirs = make(map[string]*PathTree)
+	if r.dirs == nil {
+		r.dirs = make(map[string]*PathTree)
 	}
-	if _, exists := r.Dirs[dir]; !exists {
-		r.Dirs[dir] = &PathTree{}
+	if _, exists := r.dirs[dir]; !exists {
+		r.dirs[dir] = &PathTree{}
 	}
-	return r.Dirs[dir].Add(fname[offset+1:], val)
+	return r.dirs[dir].Add(fname[offset+1:], val)
 }
 
 // Get implements PathStore for PathTree
@@ -63,14 +88,14 @@ func (r *PathTree) Get(fname string) (interface{}, error) {
 	}
 	offset := strings.Index(fname, "/")
 	if offset == -1 {
-		if r.Files != nil {
-			val, exists := r.Files[fname]
+		if r.files != nil {
+			val, exists := r.files[fname]
 			if exists {
 				return val, nil
 			}
 		}
-		if r.Dirs != nil {
-			val, exists := r.Dirs[fname]
+		if r.dirs != nil {
+			val, exists := r.dirs[fname]
 			if exists {
 				return val, nil
 			}
@@ -78,10 +103,10 @@ func (r *PathTree) Get(fname string) (interface{}, error) {
 		return "", ErrPathNotFound
 	}
 	dir := fname[:offset]
-	if r.Dirs == nil {
-		r.Dirs = make(map[string]*PathTree)
+	if r.dirs == nil {
+		r.dirs = make(map[string]*PathTree)
 	}
-	val, exists := r.Dirs[dir]
+	val, exists := r.dirs[dir]
 	if !exists {
 		return "", ErrPathNotFound
 	}
