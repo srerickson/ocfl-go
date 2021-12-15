@@ -10,6 +10,8 @@ import (
 	"io/ioutil"
 	"path"
 	"strings"
+
+	"github.com/srerickson/ocfl/validation"
 )
 
 type objectRoot struct{ fs.FS }
@@ -20,12 +22,10 @@ func (root *objectRoot) readDeclaration() error {
 	f, err := root.Open(objectDeclarationFile)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return &validationErr{
-				err:  fmt.Errorf(`OCFL object declaration not found`),
-				code: &ErrE003,
-			}
+			err := fmt.Errorf(`OCFL object declaration not found`)
+			return validation.AsVErr(err, &validation.ErrE003)
 		}
-		return &validationErr{err: err, code: &ErrE003}
+		return validation.AsVErr(err, &validation.ErrE003)
 	}
 	defer f.Close()
 	decl, err := io.ReadAll(f)
@@ -33,10 +33,8 @@ func (root *objectRoot) readDeclaration() error {
 		return err
 	}
 	if string(decl) != objectDeclaration+"\n" {
-		return &validationErr{
-			err:  errors.New(`OCFL object declaration has invalid text contents`),
-			code: &ErrE007,
-		}
+		err := errors.New(`OCFL object declaration has invalid text contents`)
+		return validation.AsVErr(err, &validation.ErrE007)
 	}
 	return nil
 }
@@ -61,7 +59,7 @@ func (root *objectRoot) readInventory(dir string, validate bool) (*Inventory, er
 	// json schema validation
 	result := validateInventoryBytes(invBytes)
 	if !result.Valid() {
-		return nil, &result
+		return nil, result
 	}
 	inv, err := ReadInventory(bytes.NewReader(invBytes))
 	if err != nil {
@@ -85,10 +83,8 @@ func (root *objectRoot) readInventory(dir string, validate bool) (*Inventory, er
 		return nil, err
 	}
 	if hex.EncodeToString(inv.digest) != sidecar {
-		return nil, &validationErr{
-			err:  fmt.Errorf(`inventory checksum validation failed for version %s`, dir),
-			code: &ErrE034,
-		}
+		err := fmt.Errorf(`inventory checksum validation failed for version %s`, dir)
+		return nil, validation.AsVErr(err, &validation.ErrE034)
 	}
 	return inv, nil
 }
@@ -98,26 +94,18 @@ func (root *objectRoot) readInventorySidecar(dir string, alg string) (string, er
 	path := path.Join(dir, inventoryFile+"."+alg)
 	file, err := root.Open(path)
 	if err != nil {
-		return "", &validationErr{
-			err:  err,
-			code: &ErrE058,
-		}
+		return "", validation.AsVErr(err, &validation.ErrE058)
 	}
 	defer file.Close()
 	cont, err := io.ReadAll(file)
 	if err != nil {
-		return "", &validationErr{
-			err:  err,
-			code: &ErrE058,
-		}
+		return "", validation.AsVErr(err, &validation.ErrE058)
 	}
 	sidecar := string(cont)
 	offset := strings.Index(string(sidecar), " ")
 	if offset < 0 || !digestRegexp.MatchString(sidecar[:offset]) {
-		return "", &validationErr{
-			err:  fmt.Errorf("invalid sidecar contents: %s", sidecar),
-			code: &ErrE061,
-		}
+		err := fmt.Errorf("invalid sidecar contents: %s", sidecar)
+		return "", validation.AsVErr(err, &validation.ErrE061)
 	}
 	return sidecar[:offset], nil
 }

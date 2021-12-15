@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"io"
 	"time"
+
+	"github.com/srerickson/ocfl/validation"
 )
 
 //var invSidecarRexp = regexp.MustCompile(`inventory\.json\.(\w+)`)
@@ -68,17 +70,17 @@ func ReadInventory(file io.Reader) (*Inventory, error) {
 	if err != nil {
 		switch err := err.(type) {
 		case *time.ParseError:
-			return nil, asValidationErr(err, &ErrE049)
+			return nil, validation.AsVErr(err, &validation.ErrE049)
 		case *json.UnmarshalTypeError:
 			if err.Field == "head" {
-				return nil, asValidationErr(err, &ErrE040)
+				return nil, validation.AsVErr(err, &validation.ErrE040)
 			}
 			if err.Field == `versions.message` {
-				return nil, asValidationErr(err, &ErrE094)
+				return nil, validation.AsVErr(err, &validation.ErrE094)
 			}
 			// Todo other special cases?
 		}
-		return nil, asValidationErr(err, &ErrE033)
+		return nil, validation.AsVErr(err, &validation.ErrE033)
 	}
 	return inv, nil
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/qri-io/jsonschema"
 	"github.com/srerickson/ocfl/internal/schema"
+	"github.com/srerickson/ocfl/validation"
 )
 
 var invJsonSchema *jsonschema.Schema
@@ -20,8 +21,8 @@ func init() {
 	invJsonSchema = jsonschema.Must(string(schema.InventorySchema))
 }
 
-func validateInventoryBytes(inv []byte) validationResult {
-	result := validationResult{}
+func validateInventoryBytes(inv []byte) *validation.Result {
+	result := &validation.Result{}
 	errs, err := invJsonSchema.ValidateBytes(context.Background(), inv)
 	if err != nil {
 		result.AddFatal(err, nil)
@@ -30,21 +31,21 @@ func validateInventoryBytes(inv []byte) validationResult {
 	for _, e := range errs {
 		// FIXME this string matching business is crude
 		if strings.Contains(e.Message, `"id"`) {
-			result.AddFatal(e, &ErrE036)
+			result.AddFatal(e, &validation.ErrE036)
 		} else if strings.Contains(e.Message, `"head"`) {
-			result.AddFatal(e, &ErrE036)
+			result.AddFatal(e, &validation.ErrE036)
 		} else if strings.Contains(e.Message, `"type"`) {
-			result.AddFatal(e, &ErrE036)
+			result.AddFatal(e, &validation.ErrE036)
 		} else if strings.Contains(e.Message, `"digestAlgorithm"`) {
-			result.AddFatal(e, &ErrE036)
+			result.AddFatal(e, &validation.ErrE036)
 		} else if strings.Contains(e.Message, `"versions"`) {
-			result.AddFatal(e, &ErrE041)
+			result.AddFatal(e, &validation.ErrE041)
 		} else if strings.Contains(e.Message, `"manifest"`) {
-			result.AddFatal(e, &ErrE041)
+			result.AddFatal(e, &validation.ErrE041)
 		} else if strings.Contains(e.Message, `array items must be unique`) {
-			result.AddFatal(e, &ErrE095)
+			result.AddFatal(e, &validation.ErrE095)
 		} else {
-			result.AddFatal(e, &ErrE032)
+			result.AddFatal(e, &validation.ErrE032)
 		}
 	}
 	return result
@@ -55,7 +56,7 @@ func (inv *Inventory) Validate() error {
 	// if len(inv.Versions) == 0 {
 	// 	return &validationErr{
 	// 		err:  fmt.Errorf(`inventory has no versions`),
-	// 		code: &ErrE008,
+	// 		code: &validation.ErrE008,
 	// 	}
 	// }
 	// ID
@@ -64,7 +65,7 @@ func (inv *Inventory) Validate() error {
 	// if inv.ID == "" {
 	// 	return &validationErr{
 	// 		err:  fmt.Errorf(`inventory missing 'id' field`),
-	// 		code: &ErrE036,
+	// 		code: &validation.ErrE036,
 	// 	}
 	// }
 	// Type
@@ -72,7 +73,7 @@ func (inv *Inventory) Validate() error {
 	// if inv.Type == "" {
 	// 	return &validationErr{
 	// 		err:  fmt.Errorf(`inventory missing 'type' field`),
-	// 		code: &ErrE036,
+	// 		code: &validation.ErrE036,
 	// 	}
 	// }
 	// Digest Algorithm
@@ -80,7 +81,7 @@ func (inv *Inventory) Validate() error {
 	// if inv.DigestAlgorithm == "" {
 	// 	return &validationErr{
 	// 		err:  fmt.Errorf(`inventory missing 'digestAlgorithm' field`),
-	// 		code: &ErrE036,
+	// 		code: &validation.ErrE036,
 	// 	}
 	// }
 	// Versions
@@ -104,25 +105,23 @@ func (inv *Inventory) Validate() error {
 	// Manifest
 
 	if inv.Manifest == nil {
-		return &validationErr{
-			err:  fmt.Errorf(`inventory missing 'manifest' field`),
-			code: &ErrE041,
-		}
+		err := fmt.Errorf(`inventory missing 'manifest' field`)
+		return validation.AsVErr(err, &validation.ErrE041)
 	}
 	// check manifest path format
 	err := inv.Manifest.Valid()
 	if err != nil {
 		var dcErr *DigestConflictErr
 		if errors.As(err, &dcErr) {
-			return &validationErr{err: err, code: &ErrE096}
+			return validation.AsVErr(err, &validation.ErrE096)
 		}
 		var pcErr *PathConflictErr
 		if errors.As(err, &pcErr) {
-			return &validationErr{err: err, code: &ErrE095}
+			return validation.AsVErr(err, &validation.ErrE095)
 		}
 		var piErr *PathInvalidErr
 		if errors.As(err, &piErr) {
-			return &validationErr{err: err, code: &ErrE099}
+			return validation.AsVErr(err, &validation.ErrE099)
 		}
 		return err
 	}
@@ -137,25 +136,23 @@ func (inv *Inventory) Validate() error {
 			var dcErr *DigestConflictErr
 			if errors.As(err, &dcErr) {
 				// FIXME - E050 seems wrong
-				return &validationErr{err: err, code: &ErrE050}
+				return validation.AsVErr(err, &validation.ErrE050)
 			}
 			var pcErr *PathConflictErr
 			if errors.As(err, &pcErr) {
-				return &validationErr{err: err, code: &ErrE095}
+				return validation.AsVErr(err, &validation.ErrE095)
 			}
 			var piErr *PathInvalidErr
 			if errors.As(err, &piErr) {
-				return &validationErr{err: err, code: &ErrE099}
+				return validation.AsVErr(err, &validation.ErrE099)
 			}
 			return err
 		}
 		// check that each state digest appears in manifest
 		for digest := range v.State {
 			if _, exists := inv.Manifest[digest]; !exists {
-				return &validationErr{
-					err:  fmt.Errorf("digest in % state not in manifest: %s", v, digest),
-					code: &ErrE050,
-				}
+				err := fmt.Errorf("digest in % state not in manifest: %s", v, digest)
+				return validation.AsVErr(err, &validation.ErrE050)
 			}
 		}
 	}
@@ -172,10 +169,8 @@ func (inv *Inventory) Validate() error {
 		if !found {
 			// This error code is used in the fixture
 			// but doesn't makesense
-			return &validationErr{
-				err:  fmt.Errorf("digest not used in state: %s", digest),
-				code: &ErrE050,
-			}
+			err := fmt.Errorf("digest not used in state: %s", digest)
+			return validation.AsVErr(err, &validation.ErrE050)
 		}
 	}
 	// check version state path format
@@ -184,15 +179,15 @@ func (inv *Inventory) Validate() error {
 		if err != nil {
 			var dcErr *DigestConflictErr
 			if errors.As(err, &dcErr) {
-				return &validationErr{err: err, code: &ErrE097}
+				return validation.AsVErr(err, &validation.ErrE097)
 			}
 			var pcErr *PathConflictErr
 			if errors.As(err, &pcErr) {
-				return &validationErr{err: err, code: &ErrE095}
+				return validation.AsVErr(err, &validation.ErrE095)
 			}
 			var piErr *PathInvalidErr
 			if errors.As(err, &piErr) {
-				return &validationErr{err: err, code: &ErrE099}
+				return validation.AsVErr(err, &validation.ErrE099)
 			}
 			return err
 		}
@@ -203,22 +198,16 @@ func (inv *Inventory) Validate() error {
 func (inv *Inventory) validateHead() error {
 	v, _, err := versionParse(inv.Head)
 	if err != nil {
-		return &validationErr{
-			err:  fmt.Errorf(`inventory 'head' not valid: %s`, inv.Head),
-			code: &ErrE040,
-		}
+		err := fmt.Errorf(`inventory 'head' not valid: %s`, inv.Head)
+		return validation.AsVErr(err, &validation.ErrE040)
 	}
 	if _, ok := inv.Versions[inv.Head]; !ok {
-		return &validationErr{
-			err:  fmt.Errorf(`inventory 'head' value does not correspond to a version: %s`, inv.Head),
-			code: &ErrE040,
-		}
+		err := fmt.Errorf(`inventory 'head' value does not correspond to a version: %s`, inv.Head)
+		return validation.AsVErr(err, &validation.ErrE040)
 	}
 	if v != len(inv.Versions) {
-		return &validationErr{
-			err:  fmt.Errorf(`inventory 'head' is not the last version %s`, inv.Head),
-			code: &ErrE040,
-		}
+		err := fmt.Errorf(`inventory 'head' is not the last version %s`, inv.Head)
+		return validation.AsVErr(err, &validation.ErrE040)
 	}
 	return nil
 }

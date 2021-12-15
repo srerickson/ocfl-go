@@ -11,10 +11,36 @@ import (
 
 	"github.com/srerickson/checksum"
 	"github.com/srerickson/checksum/delta"
+	"github.com/srerickson/ocfl/validation"
 )
 
-func (obj *ObjectReader) Validate() ValidationResult {
-	result := &validationResult{}
+// ContentDiffErr represents an error due to
+// unexpected content changes
+type ContentDiffErr struct {
+	Added       []string
+	Removed     []string
+	Modified    []string
+	RenamedFrom []string
+	RenamedTo   []string
+}
+
+func (e *ContentDiffErr) Error() string {
+	return "unexpected files changes"
+}
+
+// ValidateObject validates the object at root
+func ValidateObject(root fs.FS) *validation.Result {
+	vr := &validation.Result{}
+	obj, err := NewObjectReader(root)
+	if err != nil {
+		return vr.AddFatal(err, nil)
+	}
+	vr.Merge(obj.Validate())
+	return vr
+}
+
+func (obj *ObjectReader) Validate() *validation.Result {
+	result := &validation.Result{}
 	var err error
 	obj.inventory, err = obj.root.readInventory(`.`, true)
 	if err != nil {
@@ -58,23 +84,23 @@ func (obj *ObjectReader) validateRoot() error {
 	if err != nil {
 		if errors.Is(err, errDirMatchMissingFile) {
 			if strings.Contains(err.Error(), objectDeclarationFile) {
-				return asValidationErr(err, &ErrE003)
+				return validation.AsVErr(err, &validation.ErrE003)
 			}
 			if strings.Contains(err.Error(), obj.inventory.SidecarFile()) {
-				return asValidationErr(err, &ErrE058)
+				return validation.AsVErr(err, &validation.ErrE058)
 			}
 			if strings.Contains(err.Error(), inventoryFile) {
-				return asValidationErr(err, &ErrE034)
+				return validation.AsVErr(err, &validation.ErrE034)
 			}
 		}
 		if errors.Is(err, errDirMatchInvalidFile) {
-			return asValidationErr(err, &ErrE001)
+			return validation.AsVErr(err, &validation.ErrE001)
 		}
 		if errors.Is(err, errDirMatchMissingDir) {
-			return asValidationErr(err, &ErrE046)
+			return validation.AsVErr(err, &validation.ErrE046)
 		}
 		if errors.Is(err, errDirMatchInvalidDir) {
-			return asValidationErr(err, &ErrE001)
+			return validation.AsVErr(err, &validation.ErrE001)
 		}
 		return err
 	}
@@ -100,7 +126,7 @@ func (obj *ObjectReader) validateVersionDir(v string) error {
 	}
 	err = match.Match(items)
 	if err != nil {
-		return asValidationErr(err, &ErrE015)
+		return validation.AsVErr(err, &validation.ErrE015)
 	}
 	var hasInventory bool
 	for _, i := range items {
@@ -117,7 +143,7 @@ func (obj *ObjectReader) validateVersionDir(v string) error {
 			// if this is the HEAD version, root inventory should match this inventory
 			if !bytes.Equal(obj.inventory.digest, inv.digest) {
 				err := fmt.Errorf(`root inventory doesn't match inventory for %s`, v)
-				return asValidationErr(err, &ErrE064)
+				return validation.AsVErr(err, &validation.ErrE064)
 			}
 		}
 		return nil
@@ -155,9 +181,9 @@ func (obj *ObjectReader) validateContent() error {
 		}
 		err.RenamedFrom, err.RenamedTo = changes.Renamed()
 		if len(err.Modified) != 0 {
-			return asValidationErr(err, &ErrE092)
+			return validation.AsVErr(err, &validation.ErrE092)
 		}
-		return asValidationErr(fmt.Errorf("content includes files not in manifest"), &ErrE023)
+		return validation.AsVErr(fmt.Errorf("content includes files not in manifest"), &validation.ErrE023)
 	}
 	// TODO E024 - empty directories
 	return nil
@@ -177,7 +203,7 @@ func (obj *ObjectReader) validateExtensionsDir() error {
 	}
 	err = match.Match(items)
 	if err != nil {
-		return asValidationErr(err, &ErrE067)
+		return validation.AsVErr(err, &validation.ErrE067)
 	}
 	return nil
 }
@@ -192,15 +218,15 @@ func (obj *ObjectReader) validateFixity() error {
 	for alg, digestMap := range obj.inventory.Fixity {
 		digestMap, err := digestMap.Normalize()
 		if err != nil {
-			return asValidationErr(err, nil)
+			return validation.AsVErr(err, nil)
 		}
 		hash, err := newHash(alg)
 		if err != nil {
-			return asValidationErr(err, nil)
+			return validation.AsVErr(err, nil)
 		}
 		paths, err := digestMap.Paths()
 		if err != nil {
-			return asValidationErr(err, nil)
+			return validation.AsVErr(err, nil)
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		pipe, err := checksum.NewPipe(obj.root,
@@ -209,7 +235,7 @@ func (obj *ObjectReader) validateFixity() error {
 		)
 		if err != nil {
 			cancel()
-			return asValidationErr(err, nil)
+			return validation.AsVErr(err, nil)
 		}
 		go func() {
 			defer pipe.Close()
@@ -220,17 +246,17 @@ func (obj *ObjectReader) validateFixity() error {
 		for job := range pipe.Out() {
 			if err := job.Err(); err != nil {
 				cancel()
-				return asValidationErr(err, nil)
+				return validation.AsVErr(err, nil)
 			}
 			sum, err := job.SumString(alg)
 			if err != nil {
 				cancel()
-				return asValidationErr(err, nil)
+				return validation.AsVErr(err, nil)
 			}
 			if sum != paths[job.Path()] {
 				cancel()
 				err := fmt.Errorf("fixity check failed (%s): %s", alg, job.Path())
-				return asValidationErr(err, &ErrE093)
+				return validation.AsVErr(err, &validation.ErrE093)
 			}
 		}
 		cancel()

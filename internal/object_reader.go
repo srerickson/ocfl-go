@@ -8,6 +8,7 @@ import (
 
 	"github.com/srerickson/checksum"
 	"github.com/srerickson/ocfl/internal/alias"
+	"github.com/srerickson/ocfl/validation"
 )
 
 // ObjectReader represents a readable OCFL Object
@@ -33,7 +34,7 @@ func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 	obj.inventory, err = obj.root.readInventory(`.`, false)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, asValidationErr(err, &ErrE063)
+			return nil, validation.AsVErr(err, &validation.ErrE063)
 		}
 		return nil, err
 	}
@@ -46,7 +47,7 @@ func (obj *ObjectReader) LogicalFS() (fs.FS, error) {
 	for vname, version := range obj.inventory.Versions {
 		paths, err := version.State.Paths()
 		if err != nil {
-			return nil, asValidationErr(err, &ErrE095)
+			return nil, validation.AsVErr(err, &validation.ErrE095)
 		}
 		for p, digest := range paths {
 			targets := obj.inventory.Manifest[digest]
@@ -56,9 +57,9 @@ func (obj *ObjectReader) LogicalFS() (fs.FS, error) {
 			err := files.Add(vname+"/"+p, targets[0])
 			if err != nil {
 				if errors.Is(err, alias.ErrPathInvalid) {
-					return nil, asValidationErr(err, &ErrE099)
+					return nil, validation.AsVErr(err, &validation.ErrE099)
 				}
-				return nil, asValidationErr(err, &ErrE095)
+				return nil, validation.AsVErr(err, &validation.ErrE095)
 			}
 		}
 	}

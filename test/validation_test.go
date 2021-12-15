@@ -1,4 +1,4 @@
-package internal_test
+package test
 
 import (
 	"os"
@@ -11,7 +11,7 @@ import (
 )
 
 var codeRegexp = regexp.MustCompile(`^E\d{3}$`)
-var fixturePath = filepath.Join(`..`, `test`, `fixtures`, `1.0`)
+var fixturePath = filepath.Join(`fixtures`, `1.0`)
 var goodObjPath = filepath.Join(fixturePath, `good-objects`)
 var badObjPath = filepath.Join(fixturePath, `bad-objects`)
 var warnObjPath = filepath.Join(fixturePath, `warn-objects`)

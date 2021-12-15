@@ -1,9 +1,9 @@
 package main
 
-// This program generates error objects based on ocfl spec.
+// This program generates error codes objects based on ocfl spec.
 //
 // from this directory:
-// go run gen.go > ../errors.go
+// go run gen.go > ../codes.go
 
 import (
 	"encoding/csv"
@@ -14,8 +14,8 @@ import (
 )
 
 func main() {
-	tpl := template.Must(template.ParseFiles(`errors_gen.go.tpl`))
-	f, err := os.Open(`errors.csv`)
+	tpl := template.Must(template.ParseFiles(`codes_gen.go.tpl`))
+	f, err := os.Open(`codes.csv`)
 	if err != nil {
 		log.Fatal(err)
 	}

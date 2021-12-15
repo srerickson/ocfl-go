@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+
+	"github.com/srerickson/ocfl/validation"
 )
 
 //const version1 = `v1`
@@ -107,10 +109,7 @@ func nextVersionLike(prev string) (string, error) {
 // is the sequence of versions names ok?
 func versionSeqValid(names []string) error {
 	if len(names) == 0 {
-		return &validationErr{
-			err:  errors.New(`no versions present`),
-			code: &ErrE008,
-		}
+		return validation.AsVErr(errors.New(`no versions present`), &validation.ErrE008)
 	}
 	var padding int
 	var nums = make([]int, 0, len(names))
@@ -122,10 +121,8 @@ func versionSeqValid(names []string) error {
 		if i == 0 {
 			padding = p
 		} else if padding != p {
-			return &validationErr{
-				err:  fmt.Errorf(`inconsistent version padding: %s`, name),
-				code: &ErrE012,
-			}
+			err := fmt.Errorf(`inconsistent version padding: %s`, name)
+			return validation.AsVErr(err, &validation.ErrE012)
 		}
 		nums = append(nums, v)
 	}
@@ -134,15 +131,11 @@ func versionSeqValid(names []string) error {
 		expectedV := i + 1
 		if v != expectedV {
 			if i == 0 {
-				return &validationErr{
-					err:  fmt.Errorf(`missing version 1`),
-					code: &ErrE009,
-				}
+				err := fmt.Errorf(`missing version 1`)
+				return validation.AsVErr(err, &validation.ErrE009)
 			}
-			return &validationErr{
-				err:  fmt.Errorf(`missing version %d`, expectedV),
-				code: &ErrE010,
-			}
+			err := fmt.Errorf(`missing version %d`, expectedV)
+			return validation.AsVErr(err, &validation.ErrE010)
 		}
 	}
 	return nil

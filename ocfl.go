@@ -4,12 +4,12 @@ import (
 	"io/fs"
 
 	"github.com/srerickson/ocfl/internal"
+	"github.com/srerickson/ocfl/validation"
 )
 
 const Version = "0.0.0"
 
 type ObjectReader internal.ObjectReader
-type ValidationResult internal.ValidationResult
 
 func (obj *ObjectReader) LogicalFS() (fs.FS, error) {
 	return (*internal.ObjectReader)(obj).LogicalFS()
@@ -25,6 +25,6 @@ func NewObjectReader(fsys fs.FS) (*ObjectReader, error) {
 }
 
 // ValidateObject returns ValidationResults for object at fsys.
-func ValidateObject(fsys fs.FS) ValidationResult {
+func ValidateObject(fsys fs.FS) *validation.Result {
 	return internal.ValidateObject(fsys)
 }
