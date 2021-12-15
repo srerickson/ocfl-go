@@ -13,6 +13,10 @@ type PathIndex interface {
 	Files() []string
 }
 
+var ErrPathNotFound = errors.New("path not found")
+var ErrPathConflict = errors.New("duplicate path")
+var ErrPathInvalid = errors.New("invalid path")
+
 var _ PathIndex = (*PathTree)(nil)
 
 // PathTree
@@ -20,10 +24,6 @@ type PathTree struct {
 	files map[string]interface{}
 	dirs  map[string]*PathTree
 }
-
-var ErrPathNotFound = errors.New("path not found")
-var ErrPathConflict = errors.New("duplicate path")
-var ErrPathInvalid = errors.New("invalid path")
 
 func (r *PathTree) Dirs() []string {
 	var names []string

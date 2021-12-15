@@ -6,8 +6,7 @@ import (
 	"github.com/srerickson/ocfl/internal/pindex"
 )
 
-func TestPathTree(t *testing.T) {
-	ps := pindex.PathTree{}
+func testPathIndex(ps pindex.PathIndex, t *testing.T) {
 	err := ps.Add("a/b/c/d/e.txt", "123")
 	if err != nil {
 		t.Error(err)
@@ -50,4 +49,11 @@ func TestPathTree(t *testing.T) {
 	if err == nil {
 		t.Error("expected invalid path")
 	}
+}
+func TestPathTree(t *testing.T) {
+	testPathIndex(&pindex.PathTree{}, t)
+}
+
+func TestPathCache(t *testing.T) {
+	testPathIndex(&pindex.PathCache{}, t)
 }
