@@ -1,4 +1,4 @@
-package internal
+package alias
 
 import (
 	"errors"
@@ -7,22 +7,20 @@ import (
 	"path"
 	"sort"
 	"time"
-
-	"github.com/srerickson/ocfl/internal/pindex"
 )
 
-// AliasFS is used to map logical paths to actual paths
-type AliasFS struct {
+// FS is used to map logical paths to actual paths
+type FS struct {
 	base  fs.FS
-	index pindex.PathIndex
+	cache Cache
 }
 
-func NewAliasFS(fsys fs.FS, index pindex.PathIndex) *AliasFS {
-	return &AliasFS{fsys, index}
+func NewFS(fsys fs.FS, cache Cache) *FS {
+	return &FS{fsys, cache}
 }
 
-func (afs *AliasFS) Open(name string) (fs.File, error) {
-	val, err := afs.index.Get(name)
+func (afs *FS) Open(name string) (fs.File, error) {
+	val, err := afs.cache.Get(name)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +35,7 @@ func (afs *AliasFS) Open(name string) (fs.File, error) {
 			File: base,
 			path: name,
 		}, nil
-	case pindex.PathIndex:
+	case Cache:
 		// path to a directory
 		dir := &aliasDir{path: name}
 		for _, fname := range val.Files() {
@@ -77,8 +75,8 @@ func (afs *AliasFS) Open(name string) (fs.File, error) {
 	return nil, errors.New("unexpected value in AliasFS")
 }
 
-func (afs *AliasFS) Stat(name string) (fs.FileInfo, error) {
-	val, err := afs.index.Get(name)
+func (afs *FS) Stat(name string) (fs.FileInfo, error) {
+	val, err := afs.cache.Get(name)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +91,7 @@ func (afs *AliasFS) Stat(name string) (fs.FileInfo, error) {
 			info,
 			path.Base(name),
 		}, nil
-	case pindex.PathIndex:
+	case Cache:
 		return &dirFileInfo{
 			name: path.Base(name),
 		}, nil

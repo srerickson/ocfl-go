@@ -7,7 +7,7 @@ import (
 	"path"
 
 	"github.com/srerickson/checksum"
-	"github.com/srerickson/ocfl/internal/pindex"
+	"github.com/srerickson/ocfl/internal/alias"
 )
 
 // ObjectReader represents a readable OCFL Object
@@ -41,7 +41,7 @@ func NewObjectReader(root fs.FS) (*ObjectReader, error) {
 }
 
 func (obj *ObjectReader) LogicalFS() (fs.FS, error) {
-	files := pindex.PathTree{}
+	files := alias.MapCache{}
 	// add every path from every version to obj.index
 	for vname, version := range obj.inventory.Versions {
 		paths, err := version.State.Paths()
@@ -55,14 +55,14 @@ func (obj *ObjectReader) LogicalFS() (fs.FS, error) {
 			}
 			err := files.Add(vname+"/"+p, targets[0])
 			if err != nil {
-				if errors.Is(err, pindex.ErrPathInvalid) {
+				if errors.Is(err, alias.ErrPathInvalid) {
 					return nil, asValidationErr(err, &ErrE099)
 				}
 				return nil, asValidationErr(err, &ErrE095)
 			}
 		}
 	}
-	return NewAliasFS(obj.root, &files), nil
+	return alias.NewFS(obj.root, &files), nil
 }
 
 // Content returns DigestMap of all version contents

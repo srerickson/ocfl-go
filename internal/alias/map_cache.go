@@ -1,17 +1,17 @@
-package pindex
+package alias
 
 import (
 	"io/fs"
 	"strings"
 )
 
-var _ PathIndex = (*PathCache)(nil)
+var _ Cache = (*MapCache)(nil)
 
-type PathCache struct {
+type MapCache struct {
 	Children map[string]interface{} `json:"C"`
 }
 
-func (pc *PathCache) Add(name string, val interface{}) error {
+func (pc *MapCache) Add(name string, val interface{}) error {
 	if !fs.ValidPath(name) {
 		return ErrPathInvalid
 	}
@@ -35,7 +35,7 @@ func (pc *PathCache) Add(name string, val interface{}) error {
 	rest := name[offset+1:]
 	v, exists := pc.Children[dir]
 	if !exists {
-		newDir := &PathCache{}
+		newDir := &MapCache{}
 		if err := newDir.Add(rest, val); err != nil {
 			return err
 		}
@@ -43,14 +43,14 @@ func (pc *PathCache) Add(name string, val interface{}) error {
 		return nil
 	}
 	switch v := v.(type) {
-	case *PathCache:
+	case *MapCache:
 		return v.Add(rest, val)
 	default:
 		return ErrPathConflict
 	}
 }
 
-func (pc *PathCache) Get(name string) (interface{}, error) {
+func (pc *MapCache) Get(name string) (interface{}, error) {
 	if !fs.ValidPath(name) {
 		return nil, ErrPathInvalid
 	}
@@ -70,7 +70,7 @@ func (pc *PathCache) Get(name string) (interface{}, error) {
 			return nil, ErrPathNotFound
 		}
 		switch val := val.(type) {
-		case *PathCache:
+		case *MapCache:
 			cursor = val
 		default:
 			if i < len(parts)-1 {
@@ -81,22 +81,22 @@ func (pc *PathCache) Get(name string) (interface{}, error) {
 	return val, nil
 
 }
-func (pc *PathCache) Dirs() []string {
+func (pc *MapCache) Dirs() []string {
 	var dirs []string
 	for n, v := range pc.Children {
 		switch v.(type) {
-		case *PathCache:
+		case *MapCache:
 			dirs = append(dirs, n)
 		default:
 		}
 	}
 	return dirs
 }
-func (pc *PathCache) Files() []string {
+func (pc *MapCache) Files() []string {
 	var files []string
 	for n, v := range pc.Children {
 		switch v.(type) {
-		case *PathCache:
+		case *MapCache:
 		default:
 			files = append(files, n)
 		}

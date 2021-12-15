@@ -1,12 +1,12 @@
-package pindex_test
+package alias_test
 
 import (
 	"testing"
 
-	"github.com/srerickson/ocfl/internal/pindex"
+	"github.com/srerickson/ocfl/internal/alias"
 )
 
-func testPathIndex(ps pindex.PathIndex, t *testing.T) {
+func testPathIndex(ps alias.Cache, t *testing.T) {
 	err := ps.Add("a/b/c/d/e.txt", "123")
 	if err != nil {
 		t.Error(err)
@@ -50,10 +50,7 @@ func testPathIndex(ps pindex.PathIndex, t *testing.T) {
 		t.Error("expected invalid path")
 	}
 }
-func TestPathTree(t *testing.T) {
-	testPathIndex(&pindex.PathTree{}, t)
-}
 
 func TestPathCache(t *testing.T) {
-	testPathIndex(&pindex.PathCache{}, t)
+	testPathIndex(&alias.MapCache{}, t)
 }
