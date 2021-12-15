@@ -1,6 +1,5 @@
 package validation
-
-// This is generated code. Do not modify. See errors_gen folder.
+// This is generated code. Do not modify. See gen folder.
 
 // OCFLCodeErr represents an OCFL Validation Codes:
 // see https://ocfl.io/validation/validation-codes.html
@@ -9,6 +8,7 @@ type OCFLCodeErr struct {
 	Code        string // code from spec
 	URI         string // reference URI from spec
 }
+
 
 //ErrE001: The OCFL Object Root must not contain files or directories other than those specified in the following sections.
 var ErrE001 = OCFLCodeErr{

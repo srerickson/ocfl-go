@@ -1,4 +1,4 @@
-package errors
+package validation
 // This is generated code. Do not modify. See gen folder.
 
 // OCFLCodeErr represents an OCFL Validation Codes:
