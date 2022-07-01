@@ -1,57 +1,66 @@
 package validation
 
-import (
-	"errors"
-	"fmt"
-)
+import "sync"
 
-// Result is a validation result. Contains zero or more fatal errors and warning errors.
 type Result struct {
-	fatal    []*VErr
-	warnings []*VErr
+	lock  sync.RWMutex
+	fatal []error
+	warn  []error
 }
 
-func (r *Result) Error() string {
-	return fmt.Sprintf("encountered %d fatal error(s) and %d warning(s)", len(r.fatal), len(r.warnings))
+func (r *Result) AddFatal(err error) error {
+	if err == nil {
+		return nil
+	}
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	r.fatal = append(r.fatal, err)
+	return err
 }
 
-func (r *Result) Fatal() []*VErr {
-	return r.fatal
-}
-
-func (r *Result) Warning() []*VErr {
-	return r.warnings
+func (r *Result) AddWarn(err error) error {
+	if err == nil {
+		return nil
+	}
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	r.warn = append(r.warn, err)
+	return err
 }
 
 func (r *Result) Valid() bool {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
 	return len(r.fatal) == 0
 }
 
-func (r *Result) Merge(err error) bool {
-	// TODO - How to handle nil r, err?
-	var r2 *Result
-	if errors.As(err, &r2) {
-		if r2 == nil {
-			return false
-		}
-		r.fatal = append(r.fatal, r2.fatal...)
-		r.warnings = append(r.warnings, r2.warnings...)
-		return true
-	}
-	return false
+func (r *Result) Fatal() []error {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+	var f []error
+	return append(f, r.fatal...)
 }
 
-func (r *Result) AddFatal(err error, code *OCFLCodeErr) *Result {
-	// merge ignores code!
-	if !r.Merge(err) {
-		r.fatal = append(r.fatal, AsVErr(err, code))
+// Err returns the last fatal err
+func (r *Result) Err() error {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+	if len(r.fatal) == 0 {
+		return nil
 	}
-	return r
+	return r.fatal[len(r.fatal)-1]
 }
 
-func (r *Result) AddWarn(err error, code *OCFLCodeErr) *Result {
-	if !r.Merge(err) {
-		r.warnings = append(r.warnings, AsVErr(err, code))
-	}
-	return r
+func (r *Result) Warn() []error {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+	var f []error
+	return append(f, r.warn...)
+}
+
+func (r *Result) Merge(re *Result) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	r.fatal = append(r.fatal, re.fatal...)
+	r.warn = append(r.warn, re.warn...)
 }
