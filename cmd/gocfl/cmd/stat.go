@@ -44,19 +44,12 @@ func runStat(cmd *coral.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("listing objects: %w", err)
 		}
-		id, err := obj.ID(cmd.Context())
+		inv, err := obj.Inventory(cmd.Context())
 		if err != nil {
-			return fmt.Errorf("reading object: %w", err)
+			return err
 		}
-		head, err := obj.Head(cmd.Context())
-		if err != nil {
-			return fmt.Errorf("reading %s: %w", id, err)
-		}
-		ver, err := obj.Version(cmd.Context(), head)
-		if err != nil {
-			return fmt.Errorf("reading object %s: %w", id, err)
-		}
-		fmt.Printf("%s %s [%v]\n", id, head.String(), ver.Created.Format("2006-01-02 15:04"))
+		ver := inv.Versions[inv.Head]
+		fmt.Printf("%s %s [%v]\n", inv.ID, inv.Head.String(), ver.Created.Format("2006-01-02 15:04"))
 	}
 	return nil
 }

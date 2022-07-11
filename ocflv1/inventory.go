@@ -1,6 +1,7 @@
 package ocflv1
 
 import (
+	"fmt"
 	"sort"
 	"time"
 
@@ -75,4 +76,26 @@ func (inv *Inventory) VState(num object.VNum) *object.VState {
 		state.State[p] = inv.Manifest.DigestPaths(d)
 	}
 	return state
+}
+
+// ContentPath returns the content path for the logical path present in the
+// state for version vnum. The content path is relative to the object's root
+// directory (i.e, as it appears in the inventory manifest). If vnum is empty,
+// the inventories head version is used.
+func (inv *Inventory) ContentPath(vnum object.VNum, logical string) (string, error) {
+	if vnum.Empty() {
+		vnum = inv.Head
+	}
+	vstate := inv.VState(vnum)
+	if vstate == nil {
+		return "", fmt.Errorf("version doesn't exist in inventory: %s", vnum)
+	}
+	paths, exists := vstate.State[logical]
+	if !exists {
+		return "", fmt.Errorf("logical path doesn't exist in inventory %s: %s", vnum, logical)
+	}
+	if len(paths) == 0 {
+		return "", fmt.Errorf("BUG: %s: %s VState is empty slice", vnum, logical)
+	}
+	return paths[0], nil
 }
