@@ -18,8 +18,6 @@ type Object struct {
 	rootDir string
 	// cache of object info
 	info *object.Info
-	// cache of object inventory
-	inventory *Inventory
 }
 
 // GetObject returns a new Object with loaded inventory.
@@ -66,19 +64,16 @@ func (obj *Object) Inventory(ctx context.Context) (*Inventory, error) {
 	if err != nil {
 		return nil, err
 	}
-	if obj.inventory == nil {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		inv, err := ValidateInventory(ctx, &ValidateInventoryConf{
-			FS:              obj.fsys,
-			Name:            path.Join(obj.rootDir, inventoryFile),
-			DigestAlgorithm: info.Algorithm,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("reading inventory: %w", err)
-		}
-		obj.inventory = inv
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	return obj.inventory, nil
+	inv, err := ValidateInventory(ctx, &ValidateInventoryConf{
+		FS:              obj.fsys,
+		Name:            path.Join(obj.rootDir, inventoryFile),
+		DigestAlgorithm: info.Algorithm,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reading inventory: %w", err)
+	}
+	return inv, err
 }
