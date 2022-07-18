@@ -336,7 +336,7 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver o
 	for v := range inv.Versions {
 		rootState := vldr.rootInv.VState(v)
 		verState := inv.VState(v)
-		if changes := rootState.Changes(*verState); !changes.Same() {
+		if changes := verState.Changes(rootState); !changes.Same() {
 			errFmt := "version %s state doesn't match root inventory: %s %s"
 			for _, p := range changes.Add {
 				err := fmt.Errorf(errFmt, v, "unexpected file", p)

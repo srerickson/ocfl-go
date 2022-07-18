@@ -32,7 +32,8 @@ func (changes VersionChanges) Same() bool {
 	return true
 }
 
-func (stateA VState) Changes(stateB VState) VersionChanges {
+// Changes returns VersionChanges describing changes from stateA to stateB
+func (stateA VState) Changes(stateB *VState) VersionChanges {
 	hasCommon := func(a, b []string) bool {
 		for _, i := range a {
 			for _, j := range b {
@@ -50,7 +51,7 @@ func (stateA VState) Changes(stateB VState) VersionChanges {
 				// stateA logical path maps to different content in stateB
 				ch.Mod = append(ch.Mod, logA)
 			}
-			break
+			continue
 		}
 		// stateA logical path not found in stateB
 		ch.Del = append(ch.Del, logA)
@@ -70,6 +71,5 @@ func (stateA VState) Changes(stateB VState) VersionChanges {
 	if stateA.Created != stateB.Created {
 		ch.Created = true
 	}
-
 	return ch
 }
