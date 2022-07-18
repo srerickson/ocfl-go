@@ -25,6 +25,11 @@ type VNum struct {
 	padding int // should be zero, but can be 1,2,3
 }
 
+// V returns a VNum for num with zero padding.
+func V(num int) VNum {
+	return VNum{num: num}
+}
+
 // ParseVNum parses strinv as a spec.Numer and sets the value pointed to be
 // vn
 func ParseVNum(v string, vn *VNum) error {
