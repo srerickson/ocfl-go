@@ -64,7 +64,6 @@ func (f *Backend) Open(name string) (fs.File, error) {
 				Err:  fs.ErrNotExist,
 			}
 		}
-
 		return nil, &fs.PathError{
 			Op:   "open",
 			Path: name,
@@ -101,7 +100,7 @@ func (b *Backend) ReadDir(name string) ([]fs.DirEntry, error) {
 		return nil, &fs.PathError{
 			Op:   "readdir",
 			Path: name,
-			Err:  errors.New("invalid path"),
+			Err:  fs.ErrInvalid,
 		}
 	}
 	var entries []fs.DirEntry
@@ -128,7 +127,7 @@ func (b *Backend) ReadDir(name string) ([]fs.DirEntry, error) {
 			}
 			entries = append(entries, &dirEntry{fileInfo: fi})
 		}
-		return last
+		return !last
 	}
 	// // log.Println("S3=listobjectsv2pages:", name)
 	err := b.cl.ListObjectsV2Pages(in, eachPage)
@@ -136,6 +135,19 @@ func (b *Backend) ReadDir(name string) ([]fs.DirEntry, error) {
 		return nil, err
 	}
 	if len(entries) == 0 {
+		// check if path is a file
+		if name != "." {
+			// empty bucket is not an error
+			_, err := statObject(b.cl, b.bucket, name)
+			if err == nil {
+				return nil, &fs.PathError{
+					Op:   "readdir",
+					Path: name,
+					Err:  errNotDir,
+				}
+			}
+
+		}
 		return nil, &fs.PathError{
 			Op:   "readdir",
 			Path: name,
@@ -218,16 +230,22 @@ func statPrefix(s3cl s3iface.S3API, bucket, name string) (fs.FileInfo, error) {
 		return nil, fs.ErrInvalid
 	}
 	// log.Println("s3=listobjectsv2, prefix:", name+"/")
+	var prefix string
+	if name == "." {
+		prefix = ""
+	} else {
+		prefix = name + "/"
+	}
 	out, err := s3cl.ListObjectsV2(&s3.ListObjectsV2Input{
 		Bucket:    &bucket,
 		Delimiter: aws.String("/"),
-		Prefix:    aws.String(name + "/"),
+		Prefix:    aws.String(prefix),
 		MaxKeys:   aws.Int64(1),
 	})
 	if err != nil {
 		return nil, err
 	}
-	if len(out.CommonPrefixes)+len(out.Contents) == 0 {
+	if len(out.CommonPrefixes)+len(out.Contents) == 0 && name != "." {
 		return nil, fs.ErrNotExist
 	}
 	return &dir{
