@@ -21,6 +21,8 @@ var register = map[string]func() Extension{
 	Ext0002: NewLayoutFlatDirect,
 	Ext0003: NewLayoutHashIDTuple,
 	Ext0004: NewLayoutHashTuple,
+	Ext0006: NewLayoutFlatOmitPrefix,
+	Ext0007: NewLayoutTupleOmitPrefix,
 }
 
 var ErrUnknown = errors.New("unrecognized extension")
