@@ -148,18 +148,20 @@ func (s *storeValidator) validate(ctx context.Context) error {
 	//E088: An OCFL Storage Root MUST NOT contain directories or
 	//sub-directories other than as a directory hierarchy used to store OCFL
 	//Objects or for storage root extensions.
-	scan, err := store.ScanObjects(ctx, s.FS, s.Root)
+	scan, err := ScanObjects(ctx, s.FS, s.Root, &ScanObjectsOpts{
+		Strict: true,
+	})
 	if err != nil {
-		if errors.Is(err, store.ErrEmptyDirs) {
+		if errors.Is(err, ErrEmptyDirs) {
 			s.AddFatal(ec(err, codes.E073.Ref(s.ocflV)))
 		}
-		if errors.Is(err, store.ErrNonObject) {
+		if errors.Is(err, ErrNonObject) {
 			s.AddFatal(ec(err, codes.E084.Ref(s.ocflV)))
 		}
 	}
 	for p, v := range scan {
 		if s.ocflV.Cmp(v) < 0 {
-			err = fmt.Errorf("%w: %s", store.ErrObjectVersion, p)
+			err = fmt.Errorf("%w: %s", ErrObjectVersion, p)
 			s.AddFatal(err)
 		}
 	}

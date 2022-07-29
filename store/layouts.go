@@ -12,7 +12,16 @@ import (
 	"github.com/srerickson/ocfl/extensions"
 )
 
-var ErrNotLayout = errors.New("not a layout extension")
+const layoutName = "ocfl_layout.json"
+
+var (
+	ErrNotLayout  = errors.New("not a layout extension")
+	defaultLayout = extensions.NewLayoutFlatDirect().(extensions.Layout)
+)
+
+func DefaultLayout() extensions.Layout {
+	return defaultLayout
+}
 
 // ReadLayoutFunc reads the layout extension configuration for the extension name
 // in the storage root root, returning the layout func, or an error

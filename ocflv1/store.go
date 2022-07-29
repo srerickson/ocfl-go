@@ -87,7 +87,7 @@ func GetStore(ctx context.Context, fsys fs.FS, root string) (*Store, error) {
 }
 
 func (s *Store) ScanObjects(ctx context.Context) (map[string]spec.Num, error) {
-	return store.ScanObjects(ctx, s.fsys, s.rootDir)
+	return ScanObjects(ctx, s.fsys, s.rootDir, nil)
 }
 
 // Validate performs complete validation on the store
