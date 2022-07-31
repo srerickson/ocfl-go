@@ -30,4 +30,23 @@ func TestLayoutHashIDTuple(t *testing.T) {
 		}
 	}
 
+	// with 4-tuple
+	l.TupleNum = 4
+	table = map[string]string{
+		"ark:123/abc": "a47/817/83d/cec/ark%3a123%2fabc",
+	}
+	f, err = l.NewFunc()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for in, exp := range table {
+		out, err := f(in)
+		if err != nil {
+			t.Error(f)
+		}
+		if out != exp {
+			t.Errorf("got %s, expected %s", out, exp)
+		}
+	}
+
 }
