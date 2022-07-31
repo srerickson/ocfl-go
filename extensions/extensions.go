@@ -1,19 +1,8 @@
 package extensions
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"io/fs"
-	"path"
-
-	"github.com/srerickson/ocfl/backend"
-)
-
-const (
-	extensionsDir       = "extensions"
-	extensionConfigFile = "config.json"
 )
 
 // global register of extensions
@@ -25,6 +14,7 @@ var register = map[string]func() Extension{
 	Ext0007: NewLayoutTupleOmitPrefix,
 }
 
+var ErrNotLayout = errors.New("not a layout extension")
 var ErrUnknown = errors.New("unrecognized extension")
 
 type Extension interface {
@@ -47,52 +37,4 @@ func Get(name string) (Extension, error) {
 		return nil, fmt.Errorf("%s: %w", name, ErrUnknown)
 	}
 	return ext(), nil
-}
-
-//
-func ReadExtension(fsys fs.FS, root, name string) (Extension, error) {
-	ext, err := Get(name)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", name, ErrUnknown)
-	}
-	err = ReadExtensionConfig(fsys, root, ext)
-	if err != nil {
-		return nil, err
-	}
-	return ext, nil
-}
-
-func ReadExtensionConfig(fsys fs.FS, root string, ext Extension) error {
-	confPath := path.Join(root, extensionsDir, ext.Name(), extensionConfigFile)
-	f, err := fsys.Open(confPath)
-	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("%s: %w", ext.Name(), err)
-		}
-		return nil
-	}
-	err = json.NewDecoder(f).Decode(&ext)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func WriteExtensionConfig(fsys backend.Writer, root string, ext Extension) error {
-	confPath := path.Join(root, extensionsDir, ext.Name(), extensionConfigFile)
-	pipeR, encWriter := io.Pipe()
-	errChan := make(chan error, 1)
-	go func() {
-		defer close(errChan)
-		defer encWriter.Close()
-		errChan <- json.NewEncoder(encWriter).Encode(ext)
-	}()
-	_, err := fsys.Write(confPath, pipeR)
-	if err != nil {
-		return err
-	}
-	if err := <-errChan; err != nil {
-		return fmt.Errorf("write inventory failed: %w", err)
-	}
-	return nil
 }

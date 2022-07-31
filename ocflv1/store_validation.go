@@ -11,7 +11,6 @@ import (
 	"github.com/srerickson/ocfl/namaste"
 	"github.com/srerickson/ocfl/ocflv1/codes"
 	"github.com/srerickson/ocfl/spec"
-	"github.com/srerickson/ocfl/store"
 	"github.com/srerickson/ocfl/validation"
 )
 
@@ -35,11 +34,8 @@ type storeValidator struct {
 	FS     fs.FS
 	Root   string
 	ocflV  spec.Num
-	layout struct {
-		Description *string `json:"description"`
-		Extension   *string `json:"extension"`
-	}
-	getPath extensions.LayoutFunc
+	Layout StoreLayout
+	// getPath extensions.LayoutFunc
 }
 
 func (s *storeValidator) validate(ctx context.Context) error {
@@ -117,21 +113,24 @@ func (s *storeValidator) validate(ctx context.Context) error {
 	//registered extension name for the extension defining the arrangement under
 	//the storage root.
 	if hasLayout {
-		err = store.ReadLayout(s.FS, s.Root, &s.layout)
+		err = ReadLayout(s.FS, s.Root, &s.Layout)
 		if err != nil {
 			s.AddFatal(err)
 		}
-		if s.layout.Description == nil {
+		if _, ok := s.Layout.values[descriptionKey]; !ok {
 			err := errors.New(`storage root ocfl_layout.json missing key: "description"`)
 			s.AddFatal(ec(err, codes.E070.Ref(s.ocflV)))
 		}
-		if s.layout.Extension == nil {
+		if _, ok := s.Layout.values[extensionKey]; !ok {
 			err := errors.New(`storage root ocfl_layout.json missing  key:"extension"`)
 			s.AddFatal(ec(err, codes.E070.Ref(s.ocflV)))
 		} else {
-			s.getPath, err = store.ReadLayoutFunc(s.FS, s.Root, *s.layout.Extension)
+			ext, err := extensions.Get(s.Layout.Extension())
 			if err != nil {
 				return s.AddFatal(ec(err, codes.E071.Ref(s.ocflV)))
+			}
+			if _, ok := ext.(extensions.Layout); !ok {
+				return s.AddFatal(ec(extensions.ErrNotLayout, codes.E071.Ref(s.ocflV)))
 			}
 		}
 	}

@@ -35,7 +35,7 @@ func runStat(cmd *coral.Command, args []string) error {
 	if desc := str.Description(); desc != "" {
 		fmt.Println(desc)
 	}
-	scan, err := str.ScanObjects(cmd.Context())
+	scan, err := str.ScanObjects(cmd.Context(), nil)
 	if err != nil {
 		return fmt.Errorf("scanning storage root: %w", err)
 	}

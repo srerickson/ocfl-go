@@ -9,12 +9,15 @@ import (
 
 const (
 	// defaults
-	inventoryFile   = `inventory.json`
-	contentDir      = `content`
-	digestAlgorithm = "sha512"
-	extensionsDir   = "extensions"
-	layoutName      = "ocfl_layout.json"
-	storeRoot       = namaste.StoreType
+	inventoryFile       = `inventory.json`
+	contentDir          = `content`
+	digestAlgorithm     = "sha512"
+	extensionsDir       = "extensions"
+	layoutName          = "ocfl_layout.json"
+	storeRoot           = namaste.StoreType
+	descriptionKey      = `description`
+	extensionKey        = `extension`
+	extensionConfigFile = "config.json"
 )
 
 var (
