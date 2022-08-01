@@ -29,21 +29,22 @@ type ScanObjectsOpts struct {
 // ScanObjects walks fsys from root returning a map of object root paths.
 func ScanObjects(ctx context.Context, fsys fs.FS, root string, conf *ScanObjectsOpts) (map[string]spec.Num, error) {
 	strict := false             // default: don't validate
-	batchLen := 4               // default: process up to 4 paths at a time
+	maxBatchLen := 4            // default: process up to 4 paths at a time
 	timeout := time.Duration(0) // default: no timeout
 	if conf != nil {
 		strict = conf.Strict
-		batchLen = conf.Concurrency
+		maxBatchLen = conf.Concurrency
 		timeout = conf.Timeout
 	}
-	if batchLen < 1 {
-		batchLen = 1
+	if maxBatchLen < 1 {
+		maxBatchLen = 1
 	}
 	objPaths := map[string]spec.Num{}        // results
 	pathQ := []string{root}                  // queue of paths to scan
 	extDir := path.Join(root, extensionsDir) // extensions path
 	for {
 		// process pathQ in batches, breaking if pathQ is empty
+		batchLen := maxBatchLen
 		qLen := len(pathQ)
 		if qLen == 0 {
 			break
@@ -84,7 +85,6 @@ func ScanObjects(ctx context.Context, fsys fs.FS, root string, conf *ScanObjects
 				continue
 			}
 			if strict {
-				// FIXME -- this belongs in ocflv1?
 				switch result.Type {
 				case namaste.StoreType:
 					// store within a store is an error
