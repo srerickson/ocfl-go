@@ -162,6 +162,17 @@ type StoreLayout struct {
 	values map[string]string
 }
 
+// NewStoreLayout returns a new *StoreLayout with the specified description and
+// layout extension
+func NewStoreLayout(description, extension string) *StoreLayout {
+	return &StoreLayout{
+		values: map[string]string{
+			descriptionKey: description,
+			extensionKey:   extension,
+		},
+	}
+}
+
 func (l *StoreLayout) UnmarshalJSON(b []byte) error {
 	return json.Unmarshal(b, &l.values)
 }
