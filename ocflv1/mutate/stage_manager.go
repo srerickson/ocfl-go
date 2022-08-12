@@ -8,9 +8,9 @@ import (
 	"path"
 
 	"github.com/go-logr/logr"
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/backend"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/object"
 )
 
 type memoryStageManager struct {
@@ -30,7 +30,7 @@ func newMemoryStageManager(fsys backend.Interface, root string, logger logr.Logg
 	}
 }
 
-func (m *memoryStageManager) StageId(objectId string, v object.VNum) string {
+func (m *memoryStageManager) StageId(objectId string, v ocfl.VNum) string {
 	byts := sha256.Sum256([]byte(objectId + v.String()))
 	return hex.EncodeToString(byts[:])
 
@@ -76,9 +76,9 @@ func (m *memoryStageManager) InitStage(ctx context.Context, id string) (*objStag
 	}
 	return &objStage{
 		fsys:            m.fsys,
-		stageRoot:       path.Join(m.root, m.StageId(id, object.V1)),
+		stageRoot:       path.Join(m.root, m.StageId(id, ocfl.V1)),
 		objectID:        id,
-		versionNum:      object.V1,
+		versionNum:      ocfl.V1,
 		digestAlgorithm: digest.SHA512,
 	}, nil
 }

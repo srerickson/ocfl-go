@@ -1,4 +1,4 @@
-package object
+package ocfl
 
 import (
 	"encoding"
@@ -10,9 +10,9 @@ import (
 )
 
 var (
-	ErrVNumInvalid = errors.New(`invalid version name`)
-	ErrVNumPadding = errors.New(`inconsistent version padding`)
-	ErrVNumMissing = errors.New(`missing version`)
+	ErrVNumInvalid = errors.New(`invalid version`)
+	ErrVNumPadding = errors.New(`inconsistent version padding in version sequence`)
+	ErrVNumMissing = errors.New(`missing version in version sequence`)
 	ErrVerEmpty    = errors.New("no versions found")
 
 	V0 = VNum{} // warning: zero value is invalid

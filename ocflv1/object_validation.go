@@ -10,11 +10,11 @@ import (
 	"strings"
 
 	"github.com/srerickson/checksum"
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/extensions"
 	"github.com/srerickson/ocfl/logger"
 	"github.com/srerickson/ocfl/namaste"
-	"github.com/srerickson/ocfl/object"
 	"github.com/srerickson/ocfl/ocflv1/codes"
 	"github.com/srerickson/ocfl/spec"
 	"github.com/srerickson/ocfl/validation"
@@ -52,10 +52,10 @@ type objectValidator struct {
 	minOCFLVersion spec.Num // object must have ocfl version greater than
 
 	// entries belows are state set during validation
-	rootInfo object.Info // info from root object
-	rootInv  *Inventory  // TODO: remove, state instead
+	rootInfo ocfl.ObjInfo // info from root object
+	rootInv  *Inventory   // TODO: remove, state instead
 	ledger   *pathLedger
-	verSpecs map[object.VNum]spec.Num
+	verSpecs map[ocfl.VNum]spec.Num
 }
 
 // defaults confirms that the ValidateObjectConfig is OK for use
@@ -70,7 +70,7 @@ func (vldr *objectValidator) defaults(ctx context.Context) error {
 		vldr.ledger = &pathLedger{}
 	}
 	if vldr.verSpecs == nil {
-		vldr.verSpecs = make(map[object.VNum]spec.Num)
+		vldr.verSpecs = make(map[ocfl.VNum]spec.Num)
 	}
 	return nil
 }
@@ -84,7 +84,7 @@ func (vldr *objectValidator) validate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	vldr.rootInfo = *object.NewInfo(rootList)
+	vldr.rootInfo = *ocfl.ObjInfoFromFS(rootList)
 	if vldr.rootInfo.Declaration.Name() == "" {
 		err := ec(namaste.ErrNotExist, codes.E003.Ref(ocflv1_0))
 		return vldr.AddFatal(err)
@@ -129,7 +129,7 @@ func (vldr *objectValidator) validate(ctx context.Context) error {
 		}
 
 	default:
-		err := fmt.Errorf("%w: %s", object.ErrOCFLVersion, ocflV.String())
+		err := fmt.Errorf("%w: %s", ErrOCFLVersion, ocflV.String())
 		vldr.AddFatal(err)
 		return err
 	}
@@ -144,27 +144,27 @@ func (vldr *objectValidator) validateRoot(ctx context.Context) error {
 	ocflV := vldr.rootInfo.Declaration.Version
 	vldr.validateNamaste(ctx)
 	for _, name := range vldr.rootInfo.Unknown {
-		err := fmt.Errorf(`%w: %s`, object.ErrObjRootStructure, name)
+		err := fmt.Errorf(`%w: %s`, ErrObjRootStructure, name)
 		vldr.AddFatal(ec(err, codes.E001.Ref(ocflV)))
 	}
 	if !vldr.rootInfo.HasInventoryFile {
-		err := fmt.Errorf(`%w: not found`, object.ErrInventoryOpen)
+		err := fmt.Errorf(`%w: not found`, ErrInventoryOpen)
 		vldr.AddFatal(ec(err, codes.E063.Ref(ocflV)))
 	}
 	if vldr.rootInfo.Algorithm.ID() == "" { // empty algorithm indicates missing sidecar file in root
-		err := fmt.Errorf(`%w: not found`, object.ErrInvSidecarOpen)
+		err := fmt.Errorf(`%w: not found`, ErrInvSidecarOpen)
 		vldr.AddFatal(ec(err, codes.E058.Ref(ocflV)))
 	} else if !algorithms[vldr.rootInfo.Algorithm] {
-		err := fmt.Errorf(`%w: %s`, object.ErrDigestAlg, vldr.rootInfo.Algorithm)
+		err := fmt.Errorf(`%w: %s`, ErrDigestAlg, vldr.rootInfo.Algorithm)
 		vldr.AddFatal(ec(err, codes.E025.Ref(ocflV)))
 	}
 	err := vldr.rootInfo.VersionDirs.Valid()
 	if err != nil {
-		if errors.Is(err, object.ErrVerEmpty) {
+		if errors.Is(err, ocfl.ErrVerEmpty) {
 			err = ec(err, codes.E008.Ref(ocflV))
-		} else if errors.Is(err, object.ErrVNumPadding) {
+		} else if errors.Is(err, ocfl.ErrVNumPadding) {
 			err = ec(err, codes.E011.Ref(ocflV))
-		} else if errors.Is(err, object.ErrVNumMissing) {
+		} else if errors.Is(err, ocfl.ErrVNumMissing) {
 			err = ec(err, codes.E010.Ref(ocflV))
 		}
 		vldr.AddFatal(err)
@@ -182,7 +182,7 @@ func (vldr *objectValidator) validateNamaste(ctx context.Context) error {
 	}
 	ocflV := vldr.rootInfo.Declaration.Version
 	if vldr.rootInfo.Declaration.Type != namaste.ObjectType {
-		err := fmt.Errorf("%w: %s", object.ErrOCFLVersion, ocflV)
+		err := fmt.Errorf("%w: %s", ErrOCFLVersion, ocflV)
 		vldr.AddFatal(ec(err, codes.E004.Ref(ocflV)))
 	}
 	err := namaste.Validate(ctx, vldr.FS, path.Join(vldr.Root, vldr.rootInfo.Declaration.Name()))
@@ -236,7 +236,7 @@ func (vldr *objectValidator) validateRootInventory(ctx context.Context) error {
 	return nil
 }
 
-func (vldr *objectValidator) validateVersion(ctx context.Context, ver object.VNum) error {
+func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum) error {
 	if err := vldr.defaults(ctx); err != nil {
 		return err
 	}
@@ -272,7 +272,7 @@ func (vldr *objectValidator) validateVersion(ctx context.Context, ver object.VNu
 	}
 	if info.hasInventory {
 		if !algorithms[info.digestAlgorithm] {
-			err := fmt.Errorf("%w: %s", object.ErrDigestAlg, info.digestAlgorithm)
+			err := fmt.Errorf("%w: %s", ErrDigestAlg, info.digestAlgorithm)
 			log.AddFatal(ec(err, codes.E025.Ref(ocflV)))
 		}
 		if err := vldr.validateVersionInventory(ctx, ver, info.digestAlgorithm); err != nil {
@@ -285,7 +285,7 @@ func (vldr *objectValidator) validateVersion(ctx context.Context, ver object.VNu
 }
 
 //
-func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver object.VNum, sidecarAlg digest.Alg) error {
+func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver ocfl.VNum, sidecarAlg digest.Alg) error {
 	log := vldr.WithName(ver.String() + "/inventory.json")
 	ocflV := vldr.rootInfo.Declaration.Version // assumed ocfl version (until inventory is decoded)
 	vDir := path.Join(vldr.Root, ver.String())
@@ -336,7 +336,7 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver o
 	for v := range inv.Versions {
 		rootState := vldr.rootInv.VState(v)
 		verState := inv.VState(v)
-		if changes := verState.Changes(rootState); !changes.Same() {
+		if changes := verState.Diff(rootState); !changes.Same() {
 			errFmt := "version %s state doesn't match root inventory: %s %s"
 			for _, p := range changes.Add {
 				err := fmt.Errorf(errFmt, v, "unexpected file", p)
@@ -510,7 +510,7 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 	return nil
 }
 
-func (vldr *objectValidator) walkVersionContent(ctx context.Context, ver object.VNum) (int, error) {
+func (vldr *objectValidator) walkVersionContent(ctx context.Context, ver ocfl.VNum) (int, error) {
 	contDir := path.Join(vldr.Root, ver.String(), vldr.rootInv.ContentDirectory)
 	var added int
 	err := fs.WalkDir(vldr.FS, contDir, func(name string, info fs.DirEntry, err error) error {

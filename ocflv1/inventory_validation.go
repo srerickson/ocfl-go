@@ -9,8 +9,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/object"
 	"github.com/srerickson/ocfl/ocflv1/codes"
 	"github.com/srerickson/ocfl/spec"
 	"github.com/srerickson/ocfl/validation"
@@ -80,16 +80,16 @@ func (inv *Inventory) Validate() *validation.Result {
 	}
 
 	// version names
-	var versionNums object.VNumSeq = make([]object.VNum, 0, len(inv.Versions))
+	var versionNums ocfl.VNumSeq = make([]ocfl.VNum, 0, len(inv.Versions))
 	for n := range inv.Versions {
 		versionNums = append(versionNums, n)
 	}
 	if err := versionNums.Valid(); err != nil {
-		if errors.Is(err, object.ErrVerEmpty) {
+		if errors.Is(err, ocfl.ErrVerEmpty) {
 			err = ec(err, codes.E008.Ref(inv.Type.Num))
-		} else if errors.Is(err, object.ErrVNumMissing) {
+		} else if errors.Is(err, ocfl.ErrVNumMissing) {
 			err = ec(err, codes.E010.Ref(inv.Type.Num))
-		} else if errors.Is(err, object.ErrVNumPadding) {
+		} else if errors.Is(err, ocfl.ErrVNumPadding) {
 			err = ec(err, codes.E012.Ref(inv.Type.Num))
 		}
 		errs.AddFatal(err)
@@ -232,7 +232,7 @@ func ValidateInventory(ctx context.Context, cfg *ValidateInventoryConf) (*Invent
 
 func decodeInv(ctx context.Context, conf *ValidateInventoryConf) (*decodeInventory, error) {
 	var inv decodeInventory
-	sum, err := object.ReadDigestInventory(ctx, conf.Reader, &inv, conf.DigestAlgorithm)
+	sum, err := ReadDigestInventory(ctx, conf.Reader, &inv, conf.DigestAlgorithm)
 	if err != nil {
 		var decErr *InvDecodeError
 		if errors.As(err, &decErr) {
@@ -243,7 +243,7 @@ func decodeInv(ctx context.Context, conf *ValidateInventoryConf) (*decodeInvento
 			// otherwise set fallback OCFL version
 			decErr.ocflV = conf.FallbackOCFL
 			return nil, conf.AddFatal(decErr)
-		} else if errors.Is(err, object.ErrInventoryOpen) {
+		} else if errors.Is(err, ErrInventoryOpen) {
 			return nil, conf.AddFatal(ec(err, codes.E063.Ref(conf.FallbackOCFL)))
 		}
 		return nil, conf.AddFatal(ec(err, codes.E034.Ref(conf.FallbackOCFL)))
@@ -259,7 +259,7 @@ func decodeInv(ctx context.Context, conf *ValidateInventoryConf) (*decodeInvento
 			return nil, conf.AddFatal(ec(err, codes.E058.Ref(conf.FallbackOCFL)))
 		}
 		defer sidecarReader.Close()
-		expSum, err := object.ReadInventorySidecar(ctx, sidecarReader)
+		expSum, err := ReadInventorySidecar(ctx, sidecarReader)
 		if err != nil {
 			return nil, conf.AddFatal(ec(err, codes.E061.Ref(conf.FallbackOCFL)))
 		}

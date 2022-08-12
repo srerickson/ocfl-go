@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/srerickson/ocfl/object"
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/ocflv1"
 )
 
@@ -34,7 +34,7 @@ func TestReadObject(t *testing.T) {
 	if inv.Head.Num() != 3 {
 		t.Error("expected head to be version 3")
 	}
-	cont, err := inv.ContentPath(object.VNum{}, "foo/bar.xml")
+	cont, err := inv.ContentPath(ocfl.VNum{}, "foo/bar.xml")
 	if err != nil {
 		t.Error(err)
 	}

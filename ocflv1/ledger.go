@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/srerickson/checksum"
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/object"
 )
 
 const (
@@ -22,16 +22,16 @@ const (
 type pathLedger struct {
 	paths map[string]*pathInfo
 	// track all uniq inventories added
-	inventories map[object.VNum]locFlag
+	inventories map[ocfl.VNum]locFlag
 }
 
 type pathInfo struct {
-	existsIn object.VNum
+	existsIn ocfl.VNum
 	digests  map[digest.Alg]*digestInfo // alg -> digestInfo
 }
 
-func (pi *pathInfo) locations() map[object.VNum]locFlag {
-	var loc = map[object.VNum]locFlag{}
+func (pi *pathInfo) locations() map[ocfl.VNum]locFlag {
+	var loc = map[ocfl.VNum]locFlag{}
 	for _, dinfo := range pi.digests {
 		for v, f := range dinfo.locs {
 			loc[v] = loc[v] | f
@@ -42,7 +42,7 @@ func (pi *pathInfo) locations() map[object.VNum]locFlag {
 
 // referencedIn returns bool indicating the path is referenced
 // in object with ver with flags flags
-func (pi *pathInfo) referencedIn(ver object.VNum, flag locFlag) bool {
+func (pi *pathInfo) referencedIn(ver ocfl.VNum, flag locFlag) bool {
 	for _, dinfo := range pi.digests {
 		for v, f := range dinfo.locs {
 			if ver == v && flag&f > 0 {
@@ -65,7 +65,7 @@ func (pi *pathInfo) checksumConfigAlgs() ([]func(*checksum.Config), error) {
 
 type digestInfo struct {
 	digest string
-	locs   map[object.VNum]locFlag
+	locs   map[ocfl.VNum]locFlag
 }
 
 func (l *pathLedger) addInventory(inv *Inventory, isRoot bool) error {
@@ -85,7 +85,7 @@ func (l *pathLedger) addInventory(inv *Inventory, isRoot bool) error {
 	}
 	// track all inventories added to the ledger
 	if l.inventories == nil {
-		l.inventories = make(map[object.VNum]locFlag)
+		l.inventories = make(map[ocfl.VNum]locFlag)
 	}
 	if flag.InRoot() {
 		// check that root hasn't already been added with a different vnum
@@ -112,7 +112,7 @@ func (l *pathLedger) addInventory(inv *Inventory, isRoot bool) error {
 	return nil
 }
 
-func (ledg *pathLedger) addPathExists(p string, ver object.VNum) {
+func (ledg *pathLedger) addPathExists(p string, ver ocfl.VNum) {
 	if ledg.paths == nil {
 		ledg.paths = make(map[string]*pathInfo)
 	}
@@ -124,7 +124,7 @@ func (ledg *pathLedger) addPathExists(p string, ver object.VNum) {
 	ledg.paths[p].existsIn = ver
 }
 
-func (ledg *pathLedger) addPathDigest(path string, alg digest.Alg, dig string, ver object.VNum, flags locFlag) error {
+func (ledg *pathLedger) addPathDigest(path string, alg digest.Alg, dig string, ver ocfl.VNum, flags locFlag) error {
 	if ledg.paths == nil {
 		ledg.paths = make(map[string]*pathInfo)
 	}
@@ -135,7 +135,7 @@ func (ledg *pathLedger) addPathDigest(path string, alg digest.Alg, dig string, v
 			digests: map[digest.Alg]*digestInfo{
 				alg: {
 					digest: dig,
-					locs:   map[object.VNum]locFlag{ver: flags},
+					locs:   map[ocfl.VNum]locFlag{ver: flags},
 				},
 			},
 		}
@@ -146,7 +146,7 @@ func (ledg *pathLedger) addPathDigest(path string, alg digest.Alg, dig string, v
 		// add alg->loc to path entry
 		ledg.paths[path].digests[alg] = &digestInfo{
 			digest: dig,
-			locs:   map[object.VNum]locFlag{ver: flags},
+			locs:   map[ocfl.VNum]locFlag{ver: flags},
 		}
 		return nil
 	}

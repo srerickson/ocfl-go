@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"path"
 
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/object"
 	"github.com/srerickson/ocfl/ocflv1"
 	"github.com/srerickson/ocfl/spec"
 )
@@ -16,7 +16,7 @@ import (
 // next version returns the next version of an inventory based on stage
 func nextVersionInventory(prev *ocflv1.Inventory, stg *objStage) (*ocflv1.Inventory, error) {
 	newInv := &ocflv1.Inventory{
-		Versions: map[object.VNum]*ocflv1.Version{},
+		Versions: map[ocfl.VNum]*ocflv1.Version{},
 		Manifest: digest.NewMap(),
 	}
 	if prev != nil {

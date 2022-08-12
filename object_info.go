@@ -1,4 +1,4 @@
-package object
+package ocfl
 
 import (
 	"context"
@@ -9,9 +9,14 @@ import (
 	"github.com/srerickson/ocfl/namaste"
 )
 
-// Info provides general information on an object
-// based on file and directories in the root.
-type Info struct {
+const (
+	inventoryFile = "inventory.json"
+	extensionsDir = "extensions"
+)
+
+// ObjInfo provides general information on an object
+// based on file and directories in the object root.
+type ObjInfo struct {
 	Declaration      namaste.Declaration
 	VersionDirs      VNumSeq
 	Algorithm        digest.Alg
@@ -20,12 +25,12 @@ type Info struct {
 	Unknown          []string
 }
 
-func NewInfo(dir []fs.DirEntry) *Info {
-	var info Info
+func ObjInfoFromFS(dir []fs.DirEntry) *ObjInfo {
+	var info ObjInfo
 	info.Declaration, _ = namaste.FindDelcaration(dir)
 	for _, e := range dir {
 		if e.IsDir() {
-			if e.Name() == "extensions" {
+			if e.Name() == extensionsDir {
 				info.HasExtensionsDir = true
 				continue
 			}
@@ -48,7 +53,6 @@ func NewInfo(dir []fs.DirEntry) *Info {
 					info.Algorithm = alg
 					continue
 				}
-
 			}
 		}
 		info.Unknown = append(info.Unknown, e.Name())
@@ -56,7 +60,7 @@ func NewInfo(dir []fs.DirEntry) *Info {
 	return &info
 }
 
-func ReadInfo(ctx context.Context, fsys fs.FS, p string) (*Info, error) {
+func ReadObjInfo(ctx context.Context, fsys fs.FS, p string) (*ObjInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -64,5 +68,5 @@ func ReadInfo(ctx context.Context, fsys fs.FS, p string) (*Info, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewInfo(dir), nil
+	return ObjInfoFromFS(dir), nil
 }

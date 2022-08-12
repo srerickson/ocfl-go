@@ -1,10 +1,11 @@
-package object
+package ocfl
 
 import "time"
 
-// VState represents the complete state of an object.
+// VState represents an OCFL object version by mapping logical path (from
+// inventory's version state) to content paths (from inventory's manifest).
 type VState struct {
-	// State maps logical paths to a slice of content paths relative to an object/stage root
+	// map logical paths to content paths relative to the object root
 	State   map[string][]string
 	Message string
 	Created time.Time
@@ -14,17 +15,17 @@ type VState struct {
 	}
 }
 
-// changeSet compares to version states returns the changeSet.
-type VersionChanges struct {
-	Add     []string
-	Del     []string
-	Mod     []string
-	User    bool // user changed
-	Message bool // message changed
-	Created bool // created changed
+// VDiff represents changes between two VStates
+type VDiff struct {
+	Add     []string // added logical paths
+	Del     []string // removed logical paths
+	Mod     []string // modified logical paths
+	User    bool     // user changed
+	Message bool     // message changed
+	Created bool     // created changed
 }
 
-func (changes VersionChanges) Same() bool {
+func (changes VDiff) Same() bool {
 	if len(changes.Add) > 0 || len(changes.Del) > 0 || len(changes.Mod) > 0 ||
 		changes.User || changes.Message || changes.Created {
 		return false
@@ -32,8 +33,8 @@ func (changes VersionChanges) Same() bool {
 	return true
 }
 
-// Changes returns VersionChanges describing changes from stateA to stateB
-func (stateA VState) Changes(stateB *VState) VersionChanges {
+// Diff returns VDiff describing changes from stateA to stateB
+func (stateA VState) Diff(stateB *VState) VDiff {
 	hasCommon := func(a, b []string) bool {
 		for _, i := range a {
 			for _, j := range b {
@@ -44,7 +45,7 @@ func (stateA VState) Changes(stateB *VState) VersionChanges {
 		}
 		return false
 	}
-	var ch VersionChanges
+	var ch VDiff
 	for logA, contA := range stateA.State {
 		if contB, foundA := stateB.State[logA]; foundA {
 			if !hasCommon(contA, contB) {

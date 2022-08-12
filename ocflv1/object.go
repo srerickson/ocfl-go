@@ -2,12 +2,24 @@ package ocflv1
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
 
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/namaste"
-	"github.com/srerickson/ocfl/object"
+)
+
+var (
+	ErrNotObject          = errors.New("not an OCFL object")
+	ErrOCFLVersion        = errors.New("unsupported OCFL version")
+	ErrInventoryOpen      = errors.New("could not read inventory file")
+	ErrInvSidecarOpen     = errors.New("could not read inventory sidecar file")
+	ErrInvSidecarContents = errors.New("invalid inventory sidecar contents")
+	ErrInvSidecarChecksum = errors.New("inventory digest doesn't match expected value from sidecar file")
+	ErrDigestAlg          = errors.New("invalid digest algorithm")
+	ErrObjRootStructure   = errors.New("object includes invalid files or directories")
 )
 
 // Object represents an existing OCFL v1.x object
@@ -17,7 +29,7 @@ type Object struct {
 	// path to object root
 	rootDir string
 	// cache of object info
-	info *object.Info
+	info *ocfl.ObjInfo
 }
 
 // GetObject returns a new Object with loaded inventory.
@@ -25,16 +37,16 @@ func GetObject(ctx context.Context, fsys fs.FS, root string) (*Object, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	inf, err := object.ReadInfo(ctx, fsys, root)
+	inf, err := ocfl.ReadObjInfo(ctx, fsys, root)
 	if err != nil {
 		return nil, fmt.Errorf("reading object: %w", err)
 	}
 	if inf.Declaration.Type != namaste.ObjectType {
-		return nil, fmt.Errorf("declared type: %s: %w", inf.Declaration.Type, object.ErrNotObject)
+		return nil, fmt.Errorf("declared type: %s: %w", inf.Declaration.Type, ErrNotObject)
 
 	}
 	if !ocflVerSupported[inf.Declaration.Version] {
-		return nil, fmt.Errorf("%s: %w", inf.Declaration.Version, object.ErrOCFLVersion)
+		return nil, fmt.Errorf("%s: %w", inf.Declaration.Version, ErrOCFLVersion)
 	}
 	err = namaste.Validate(ctx, fsys, path.Join(root, inf.Declaration.Name()))
 	if err != nil {
@@ -48,10 +60,10 @@ func GetObject(ctx context.Context, fsys fs.FS, root string) (*Object, error) {
 	return obj, nil
 }
 
-func (obj *Object) Info(ctx context.Context) (*object.Info, error) {
+func (obj *Object) Info(ctx context.Context) (*ocfl.ObjInfo, error) {
 	if obj.info == nil {
 		var err error
-		obj.info, err = object.ReadInfo(ctx, obj.fsys, obj.rootDir)
+		obj.info, err = ocfl.ReadObjInfo(ctx, obj.fsys, obj.rootDir)
 		if err != nil {
 			return nil, err
 		}

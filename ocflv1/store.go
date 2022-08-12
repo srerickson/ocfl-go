@@ -12,7 +12,6 @@ import (
 	"github.com/srerickson/ocfl/backend"
 	"github.com/srerickson/ocfl/extensions"
 	"github.com/srerickson/ocfl/namaste"
-	"github.com/srerickson/ocfl/object"
 	"github.com/srerickson/ocfl/spec"
 )
 
@@ -51,7 +50,7 @@ func GetStore(ctx context.Context, fsys fs.FS, root string) (*Store, error) {
 	}
 	ocflVer := decl.Version
 	if !ocflVerSupported[ocflVer] {
-		return nil, fmt.Errorf("%s: %w", ocflVer, object.ErrOCFLVersion)
+		return nil, fmt.Errorf("%s: %w", ocflVer, ErrOCFLVersion)
 	}
 	err = namaste.Validate(ctx, fsys, path.Join(root, decl.Name()))
 	if err != nil {

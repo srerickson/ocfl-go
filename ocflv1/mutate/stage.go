@@ -9,9 +9,9 @@ import (
 	"path"
 
 	"github.com/srerickson/checksum"
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/backend"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/object"
 )
 
 // Stages always use "content" as the content directory
@@ -30,7 +30,7 @@ type objStage struct {
 	//object id
 	objectID string
 	// versionNum name for the new versionNum
-	versionNum object.VNum
+	versionNum ocfl.VNum
 	//OCFL spec.Number (if changing version)
 	//OCFLVersion spec.Num
 	// DigestAlgorithm (inherited from object if v >1 )
@@ -60,7 +60,7 @@ func (s *objStage) ObjectID() string {
 	return s.objectID
 }
 
-func (s *objStage) VersionNum() object.VNum {
+func (s *objStage) VersionNum() ocfl.VNum {
 	return s.versionNum
 }
 

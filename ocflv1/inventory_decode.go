@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/object"
 	"github.com/srerickson/ocfl/ocflv1/codes"
 	"github.com/srerickson/ocfl/spec"
 	"github.com/srerickson/ocfl/validation"
@@ -19,14 +19,14 @@ import (
 // inventory files. The main difference between decodeInventory and Inventory
 // is that a decodeInventory values are pointers.
 type decodeInventory struct {
-	ID               *string                  `json:"id"`
-	Type             *spec.InventoryType      `json:"type"`
-	DigestAlgorithm  *digest.Alg              `json:"digestAlgorithm"`
-	Head             *object.VNum             `json:"head"`
-	ContentDirectory *string                  `json:"contentDirectory,omitempty"`
-	Manifest         *manifest                `json:"manifest"`
-	Versions         map[object.VNum]*version `json:"versions"`
-	Fixity           fixity                   `json:"fixity,omitempty"`
+	ID               *string                `json:"id"`
+	Type             *spec.InventoryType    `json:"type"`
+	DigestAlgorithm  *digest.Alg            `json:"digestAlgorithm"`
+	Head             *ocfl.VNum             `json:"head"`
+	ContentDirectory *string                `json:"contentDirectory,omitempty"`
+	Manifest         *manifest              `json:"manifest"`
+	Versions         map[ocfl.VNum]*version `json:"versions"`
+	Fixity           fixity                 `json:"fixity,omitempty"`
 
 	// private
 	ocflV  spec.Num // OCFL version determined during UnmarshalJSON
@@ -107,7 +107,7 @@ func (inv decodeInventory) asInventory() (*Inventory, *validation.Result) {
 		Fixity:           inv.Fixity,
 		digest:           inv.digest,
 	}
-	newInv.Versions = make(map[object.VNum]*Version, len(inv.Versions))
+	newInv.Versions = make(map[ocfl.VNum]*Version, len(inv.Versions))
 	for num, ver := range inv.Versions {
 		newInv.Versions[num] = ver.Version()
 	}
@@ -168,7 +168,7 @@ func (inv *decodeInventory) UnmarshalJSON(b []byte) error {
 				ocflV: ocflV,
 			}
 		}
-		if errors.Is(err, object.ErrVNumInvalid) {
+		if errors.Is(err, ocfl.ErrVNumInvalid) {
 			return &InvDecodeError{
 				error: err,
 				Field: "head",
