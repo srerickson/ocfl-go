@@ -31,8 +31,8 @@ type objStage struct {
 	objectID string
 	// versionNum name for the new versionNum
 	versionNum ocfl.VNum
-	//OCFL spec.Number (if changing version)
-	//OCFLVersion spec.Num
+	//OCFL ocfl.Number (if changing version)
+	//OCFLVersion ocfl.Num
 	// DigestAlgorithm (inherited from object if v >1 )
 	digestAlgorithm digest.Alg
 	// New version state

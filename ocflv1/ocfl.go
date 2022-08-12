@@ -1,9 +1,8 @@
 package ocflv1
 
 import (
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/namaste"
-	"github.com/srerickson/ocfl/spec"
 	"github.com/srerickson/ocfl/validation"
 )
 
@@ -14,18 +13,18 @@ const (
 	digestAlgorithm     = "sha512"
 	extensionsDir       = "extensions"
 	layoutName          = "ocfl_layout.json"
-	storeRoot           = namaste.StoreType
+	storeRoot           = ocfl.DeclStore
 	descriptionKey      = `description`
 	extensionKey        = `extension`
 	extensionConfigFile = "config.json"
 )
 
 var (
-	ocflv1_0 = spec.Num{1, 0}
-	ocflv1_1 = spec.Num{1, 1}
+	ocflv1_0 = ocfl.Spec{1, 0}
+	ocflv1_1 = ocfl.Spec{1, 1}
 
 	// supported versions
-	ocflVerSupported = map[spec.Num]bool{
+	ocflVerSupported = map[ocfl.Spec]bool{
 		ocflv1_0: true,
 		ocflv1_1: false,
 	}

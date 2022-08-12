@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/namaste"
 )
 
 const (
@@ -17,7 +16,7 @@ const (
 // ObjInfo provides general information on an object
 // based on file and directories in the object root.
 type ObjInfo struct {
-	Declaration      namaste.Declaration
+	Declaration      Declaration
 	VersionDirs      VNumSeq
 	Algorithm        digest.Alg
 	HasInventoryFile bool
@@ -27,7 +26,7 @@ type ObjInfo struct {
 
 func ObjInfoFromFS(dir []fs.DirEntry) *ObjInfo {
 	var info ObjInfo
-	info.Declaration, _ = namaste.FindDelcaration(dir)
+	info.Declaration, _ = FindDeclaration(dir)
 	for _, e := range dir {
 		if e.IsDir() {
 			if e.Name() == extensionsDir {

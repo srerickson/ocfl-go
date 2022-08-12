@@ -30,7 +30,7 @@ func V(num int) VNum {
 	return VNum{num: num}
 }
 
-// ParseVNum parses strinv as a spec.Numer and sets the value pointed to be
+// ParseVNum parses strinv as a ocfl.Numer and sets the value pointed to be
 // vn
 func ParseVNum(v string, vn *VNum) error {
 	var n, p int
@@ -87,7 +87,7 @@ func (v VNum) Empty() bool {
 	return v == V0
 }
 
-// Next returns the next spec.Number after v, with the same padding.
+// Next returns the next ocfl.Number after v, with the same padding.
 // An error is only returned if padding > 0 and next would overflow the padding
 func (v VNum) Next() (VNum, error) {
 	next := VNum{

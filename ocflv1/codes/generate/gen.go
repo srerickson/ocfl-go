@@ -1,6 +1,6 @@
 package main
 
-// This program generates error codes objects based on ocfl spec.
+// This program generates error codes objects based on ocfl ocfl.
 //
 // from this directory:
 // go run gen.go > ../codes.go
@@ -13,7 +13,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/srerickson/ocfl/spec"
+	"github.com/srerickson/ocfl"
 )
 
 var specs = map[string]string{
@@ -29,7 +29,7 @@ type Spec struct {
 type CodeInfo struct {
 	Num     string
 	Comment string
-	Specs   map[spec.Num]Spec
+	Specs   map[ocfl.Spec]Spec
 }
 
 func main() {
@@ -54,7 +54,7 @@ func main() {
 			desc := row[1]
 			url := row[2]
 			comment := fmt.Sprintf("%s: %s", row[0], row[1])
-			v := spec.MustParse(specnum)
+			v := ocfl.MustParseSpec(specnum)
 			if code := codes[num]; code != nil {
 				code.Specs[v] = Spec{
 					Description: desc,
@@ -65,7 +65,7 @@ func main() {
 			codes[num] = &CodeInfo{
 				Num:     num,
 				Comment: comment,
-				Specs: map[spec.Num]Spec{
+				Specs: map[ocfl.Spec]Spec{
 					v: {
 						Description: desc,
 						URL:         url,

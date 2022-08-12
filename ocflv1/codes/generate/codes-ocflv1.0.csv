@@ -1,13 +1,13 @@
 E001,'The OCFL Object Root must not contain files or directories other than those specified in the following sections.',https://ocfl.io/1.0/spec/#E001
 E002,'The version declaration must be formatted according to the NAMASTE specification.',https://ocfl.io/1.0/spec/#E002
 E003,'[The version declaration] must be a file in the base directory of the OCFL Object Root giving the OCFL version in the filename.',https://ocfl.io/1.0/spec/#E003
-E004,"'The [version declaration] filename MUST conform to the pattern T=dvalue, where T must be 0, and dvalue must be ocfl_object_, followed by the OCFL specification spec.Number.'",https://ocfl.io/1.0/spec/#E004
-E005,"'The [version declaration] filename must conform to the pattern T=dvalue, where T MUST be 0, and dvalue must be ocfl_object_, followed by the OCFL specification spec.Number.'",https://ocfl.io/1.0/spec/#E005
-E006,"'The [version declaration] filename must conform to the pattern T=dvalue, where T must be 0, and dvalue MUST be ocfl_object_, followed by the OCFL specification spec.Number.'",https://ocfl.io/1.0/spec/#E006
+E004,"'The [version declaration] filename MUST conform to the pattern T=dvalue, where T must be 0, and dvalue must be ocfl_object_, followed by the OCFL specification ocfl.Number.'",https://ocfl.io/1.0/spec/#E004
+E005,"'The [version declaration] filename must conform to the pattern T=dvalue, where T MUST be 0, and dvalue must be ocfl_object_, followed by the OCFL specification ocfl.Number.'",https://ocfl.io/1.0/spec/#E005
+E006,"'The [version declaration] filename must conform to the pattern T=dvalue, where T must be 0, and dvalue MUST be ocfl_object_, followed by the OCFL specification ocfl.Number.'",https://ocfl.io/1.0/spec/#E006
 E007,"'The text contents of the [version declaration] file must be the same as dvalue, followed by a newline (\n).'",https://ocfl.io/1.0/spec/#E007
 E008,'OCFL Object content must be stored as a sequence of one or more versions.',https://ocfl.io/1.0/spec/#E008
-E009,'The spec.Number sequence MUST start at 1 and must be continuous without missing integers.',https://ocfl.io/1.0/spec/#E009
-E010,'The spec.Number sequence must start at 1 and MUST be continuous without missing integers.',https://ocfl.io/1.0/spec/#E010
+E009,'The ocfl.Number sequence MUST start at 1 and must be continuous without missing integers.',https://ocfl.io/1.0/spec/#E009
+E010,'The ocfl.Number sequence must start at 1 and MUST be continuous without missing integers.',https://ocfl.io/1.0/spec/#E010
 E011,'If zero-padded version directory numbers are used then they must start with the prefix v and then a zero.',https://ocfl.io/1.0/spec/#E011
 E012,"'All version directories of an object must use the same naming convention: either a non-padded version directory number, or a zero-padded version directory number of consistent length.'",https://ocfl.io/1.0/spec/#E012
 E013,'Operations that add a new version to an object must follow the version directory naming convention established by earlier versions.',https://ocfl.io/1.0/spec/#E013
@@ -37,7 +37,7 @@ E036,"'An OCFL Object Inventory must include the following keys: [id, type, dige
 E037,"'[id] must be unique in the local context, and should be a URI [RFC3986].'",https://ocfl.io/1.0/spec/#E037
 E038,'In the object root inventory [the type value] must be the URI of the inventory section of the specification version matching the object conformance declaration.',https://ocfl.io/1.0/spec/#E038
 E039,'[digestAlgorithm] must be the algorithm used in the manifest and state blocks.',https://ocfl.io/1.0/spec/#E039
-E040,[head] must be the version directory name with the highest spec.Number.',https://ocfl.io/1.0/spec/#E040
+E040,[head] must be the version directory name with the highest ocfl.Number.',https://ocfl.io/1.0/spec/#E040
 E041,"'In addition to these keys, there must be two other blocks present, manifest and versions, which are discussed in the next two sections.'",https://ocfl.io/1.0/spec/#E041
 E042,'Content paths within a manifest block must be relative to the OCFL Object Root.',https://ocfl.io/1.0/spec/#E042
 E043,'An OCFL Object Inventory must include a block for storing versions.',https://ocfl.io/1.0/spec/#E043
@@ -73,9 +73,9 @@ E073,'Empty directories MUST NOT appear under a storage root.',https://ocfl.io/1
 E074,"'Although implementations may require multiple OCFL Storage Roots - that is, several logical or physical volumes, or multiple ""buckets"" in an object store - each OCFL Storage Root MUST be independent.'",https://ocfl.io/1.0/spec/#E074
 E075,'The OCFL version declaration MUST be formatted according to the NAMASTE specification.',https://ocfl.io/1.0/spec/#E075
 E076,'[The OCFL version declaration] MUST be a file in the base directory of the OCFL Storage Root giving the OCFL version in the filename.',https://ocfl.io/1.0/spec/#E076
-E077,"'[The OCFL version declaration filename] MUST conform to the pattern T=dvalue, where T must be 0, and dvalue must be ocfl_, followed by the OCFL specification spec.Number.'",https://ocfl.io/1.0/spec/#E077
-E078,"'[The OCFL version declaration filename] must conform to the pattern T=dvalue, where T MUST be 0, and dvalue must be ocfl_, followed by the OCFL specification spec.Number.'",https://ocfl.io/1.0/spec/#E078
-E079,"'[The OCFL version declaration filename] must conform to the pattern T=dvalue, where T must be 0, and dvalue MUST be ocfl_, followed by the OCFL specification spec.Number.'",https://ocfl.io/1.0/spec/#E079
+E077,"'[The OCFL version declaration filename] MUST conform to the pattern T=dvalue, where T must be 0, and dvalue must be ocfl_, followed by the OCFL specification ocfl.Number.'",https://ocfl.io/1.0/spec/#E077
+E078,"'[The OCFL version declaration filename] must conform to the pattern T=dvalue, where T MUST be 0, and dvalue must be ocfl_, followed by the OCFL specification ocfl.Number.'",https://ocfl.io/1.0/spec/#E078
+E079,"'[The OCFL version declaration filename] must conform to the pattern T=dvalue, where T must be 0, and dvalue MUST be ocfl_, followed by the OCFL specification ocfl.Number.'",https://ocfl.io/1.0/spec/#E079
 E080,"'The text contents of [the OCFL version declaration file] MUST be the same as dvalue, followed by a newline (\n).'",https://ocfl.io/1.0/spec/#E080
 E081,'OCFL Objects within the OCFL Storage Root also include a conformance declaration which MUST indicate OCFL Object conformance to the same or earlier version of the specification.',https://ocfl.io/1.0/spec/#E081
 E082,'OCFL Object Roots MUST be stored either as the terminal resource at the end of a directory storage hierarchy or as direct children of a containing OCFL Storage Root.',https://ocfl.io/1.0/spec/#E082
@@ -99,7 +99,7 @@ E099,"'[content] path elements must not be ., .., or empty (//).'",https://ocfl.
 E100,'A content path must not begin or end with a forward slash (/).',https://ocfl.io/1.0/spec/#E100
 E101,"'Within an inventory, content paths must be unique and non-conflicting, so the content path for a file cannot appear as the initial part of another content path.'",https://ocfl.io/1.0/spec/#E101
 E102,'An inventory file must not contain keys that are not specified.',https://ocfl.io/1.0/spec/#E102
-W001,"'Implementations SHOULD use version directory names constructed without zero-padding the spec.Number, ie. v1, v2, v3, etc.'",https://ocfl.io/1.0/spec/#W001
+W001,"'Implementations SHOULD use version directory names constructed without zero-padding the ocfl.Number, ie. v1, v2, v3, etc.'",https://ocfl.io/1.0/spec/#W001
 W002,"'The version directory SHOULD NOT contain any directories other than the designated content sub-directory. Once created, the contents of a version directory are expected to be immutable.'",https://ocfl.io/1.0/spec/#W002
 W003,"'Version directories must contain a designated content sub-directory if the version contains files to be preserved, and SHOULD NOT contain this sub-directory otherwise.'",https://ocfl.io/1.0/spec/#W003
 W004,"'For content-addressing, OCFL Objects SHOULD use sha512.'",https://ocfl.io/1.0/spec/#W004

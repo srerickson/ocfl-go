@@ -7,10 +7,9 @@ import (
 	"io/fs"
 	"path"
 
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/extensions"
-	"github.com/srerickson/ocfl/namaste"
 	"github.com/srerickson/ocfl/ocflv1/codes"
-	"github.com/srerickson/ocfl/spec"
 	"github.com/srerickson/ocfl/validation"
 )
 
@@ -33,7 +32,7 @@ type storeValidator struct {
 	ValidateStoreConf
 	FS     fs.FS
 	Root   string
-	ocflV  spec.Num
+	ocflV  ocfl.Spec
 	Layout StoreLayout
 	// getPath extensions.LayoutFunc
 }
@@ -53,7 +52,7 @@ func (s *storeValidator) validate(ctx context.Context) error {
 	//E076: [The OCFL version declaration] MUST be a file in the base
 	//directory of the OCFL Storage Root giving the OCFL version in the
 	//filename.
-	decl, err := namaste.FindDelcaration(inf)
+	decl, err := ocfl.FindDeclaration(inf)
 	if err != nil {
 		err := fmt.Errorf("not an ocfl storage root: %w", err)
 		return s.AddFatal(ec(err, codes.E076.Ref(ocflv1_0)))
@@ -71,7 +70,7 @@ func (s *storeValidator) validate(ctx context.Context) error {
 	//NAMASTE specification.
 	//E080: The text contents of [the OCFL version declaration file] MUST be
 	//the same as dvalue, followed by a newline (\n).
-	err = namaste.Validate(ctx, s.FS, path.Join(s.Root, decl.Name()))
+	err = ocfl.ValidateDeclaration(ctx, s.FS, path.Join(s.Root, decl.Name()))
 	if err != nil {
 		return s.AddFatal(ec(err, codes.E080.Ref(s.ocflV)))
 	}

@@ -14,9 +14,7 @@ import (
 	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/extensions"
 	"github.com/srerickson/ocfl/logger"
-	"github.com/srerickson/ocfl/namaste"
 	"github.com/srerickson/ocfl/ocflv1/codes"
-	"github.com/srerickson/ocfl/spec"
 	"github.com/srerickson/ocfl/validation"
 )
 
@@ -48,14 +46,14 @@ type objectValidator struct {
 	FS   fs.FS  // required
 	Root string // required
 
-	maxOCFLVersion spec.Num // object must have ocfl version equal to or less than
-	minOCFLVersion spec.Num // object must have ocfl version greater than
+	maxOCFLVersion ocfl.Spec // object must have ocfl version equal to or less than
+	minOCFLVersion ocfl.Spec // object must have ocfl version greater than
 
 	// entries belows are state set during validation
 	rootInfo ocfl.ObjInfo // info from root object
 	rootInv  *Inventory   // TODO: remove, state instead
 	ledger   *pathLedger
-	verSpecs map[ocfl.VNum]spec.Num
+	verSpecs map[ocfl.VNum]ocfl.Spec
 }
 
 // defaults confirms that the ValidateObjectConfig is OK for use
@@ -70,7 +68,7 @@ func (vldr *objectValidator) defaults(ctx context.Context) error {
 		vldr.ledger = &pathLedger{}
 	}
 	if vldr.verSpecs == nil {
-		vldr.verSpecs = make(map[ocfl.VNum]spec.Num)
+		vldr.verSpecs = make(map[ocfl.VNum]ocfl.Spec)
 	}
 	return nil
 }
@@ -86,14 +84,14 @@ func (vldr *objectValidator) validate(ctx context.Context) error {
 	}
 	vldr.rootInfo = *ocfl.ObjInfoFromFS(rootList)
 	if vldr.rootInfo.Declaration.Name() == "" {
-		err := ec(namaste.ErrNotExist, codes.E003.Ref(ocflv1_0))
+		err := ec(ocfl.ErrDeclMissing, codes.E003.Ref(ocflv1_0))
 		return vldr.AddFatal(err)
 	}
 	ocflV := vldr.rootInfo.Declaration.Version
 	switch ocflV {
-	case spec.Num{1, 0}:
+	case ocfl.Spec{1, 0}:
 		fallthrough
-	case spec.Num{1, 1}:
+	case ocfl.Spec{1, 1}:
 		if err := vldr.validateRoot(ctx); err != nil {
 			return err
 		}
@@ -181,11 +179,11 @@ func (vldr *objectValidator) validateNamaste(ctx context.Context) error {
 		return err
 	}
 	ocflV := vldr.rootInfo.Declaration.Version
-	if vldr.rootInfo.Declaration.Type != namaste.ObjectType {
+	if vldr.rootInfo.Declaration.Type != ocfl.DeclObject {
 		err := fmt.Errorf("%w: %s", ErrOCFLVersion, ocflV)
 		vldr.AddFatal(ec(err, codes.E004.Ref(ocflV)))
 	}
-	err := namaste.Validate(ctx, vldr.FS, path.Join(vldr.Root, vldr.rootInfo.Declaration.Name()))
+	err := ocfl.ValidateDeclaration(ctx, vldr.FS, path.Join(vldr.Root, vldr.rootInfo.Declaration.Name()))
 	if err != nil {
 		err = ec(err, codes.E007.Ref(ocflV))
 		vldr.AddFatal(err)
@@ -216,12 +214,12 @@ func (vldr *objectValidator) validateRootInventory(ctx context.Context) error {
 	}
 	// Inventory head/versions are consitent with Object Root
 	if expHead := vldr.rootInfo.VersionDirs.Head(); expHead != inv.Head {
-		invLog.AddFatal(ec(fmt.Errorf("inventory head is not %s", expHead), codes.E040.Ref(inv.Type.Num)))
-		invLog.AddFatal(ec(fmt.Errorf("inventory versions don't include %s", expHead), codes.E046.Ref(inv.Type.Num)))
+		invLog.AddFatal(ec(fmt.Errorf("inventory head is not %s", expHead), codes.E040.Ref(inv.Type.Spec)))
+		invLog.AddFatal(ec(fmt.Errorf("inventory versions don't include %s", expHead), codes.E046.Ref(inv.Type.Spec)))
 	}
 	// inventory has same OCFL version as declaration
-	if inv.Type.Num != ocflV {
-		err := fmt.Errorf("inventory declares OCFL version %s, NAMASTE declares %s", inv.Type.Num, ocflV)
+	if inv.Type.Spec != ocflV {
+		err := fmt.Errorf("inventory declares OCFL version %s, NAMASTE declares %s", inv.Type.Spec, ocflV)
 		invLog.AddFatal(ec(err, codes.E038.Ref(ocflV)))
 	}
 	// add root inventory manifest to digest ledger
@@ -300,10 +298,10 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver o
 		return err
 	}
 	// add the version inventory's OCFL version to validations state (E103)
-	vldr.verSpecs[ver] = inv.Type.Num
+	vldr.verSpecs[ver] = inv.Type.Spec
 	if err := vldr.ledger.addInventory(inv, false); err != nil {
 		// err indicates inventory reports different digest from a previous inventory
-		log.AddFatal(ec(err, codes.E066.Ref(inv.Type.Num)))
+		log.AddFatal(ec(err, codes.E066.Ref(inv.Type.Spec)))
 	}
 	//
 	// head version inventory?
@@ -313,7 +311,7 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver o
 			return nil // don't need to validate any further
 		}
 		err := fmt.Errorf("inventory in last version (%s) is not same as root inventory", ver)
-		log.AddFatal(ec(err, codes.E064.Ref(inv.Type.Num)))
+		log.AddFatal(ec(err, codes.E064.Ref(inv.Type.Spec)))
 	}
 	//
 	// remaining validations should check consistency between version inventory
@@ -322,15 +320,15 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver o
 	// check expected values specified in conf
 	if vldr.rootInv.ID != inv.ID {
 		err := fmt.Errorf("unexpected id: %s", inv.ID)
-		log.AddFatal(ec(err, codes.E037.Ref(inv.Type.Num)))
+		log.AddFatal(ec(err, codes.E037.Ref(inv.Type.Spec)))
 	}
 	if vldr.rootInv.ContentDirectory != inv.ContentDirectory {
 		err := fmt.Errorf("contentDirectory is '%s', but expected '%s'", inv.ContentDirectory, vldr.rootInv.ContentDirectory)
-		log.AddFatal(ec(err, codes.E019.Ref(inv.Type.Num)))
+		log.AddFatal(ec(err, codes.E019.Ref(inv.Type.Spec)))
 	}
 	if ver != inv.Head {
 		err := fmt.Errorf("inventory head is %s, expected %s", inv.Head, ver)
-		log.AddFatal(ec(err, codes.E040.Ref(inv.Type.Num)))
+		log.AddFatal(ec(err, codes.E040.Ref(inv.Type.Spec)))
 	}
 	// confirm version states in the version inventory  match root inventory
 	for v := range inv.Versions {
@@ -340,27 +338,27 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver o
 			errFmt := "version %s state doesn't match root inventory: %s %s"
 			for _, p := range changes.Add {
 				err := fmt.Errorf(errFmt, v, "unexpected file", p)
-				log.AddFatal(ec(err, codes.E066.Ref(inv.Type.Num)))
+				log.AddFatal(ec(err, codes.E066.Ref(inv.Type.Spec)))
 			}
 			for _, p := range changes.Del {
 				err := fmt.Errorf(errFmt, v, `missing file`, p)
-				log.AddFatal(ec(err, codes.E066.Ref(inv.Type.Num)))
+				log.AddFatal(ec(err, codes.E066.Ref(inv.Type.Spec)))
 			}
 			for _, p := range changes.Mod {
 				err := fmt.Errorf(errFmt, v, `changed file content`, p)
-				log.AddFatal(ec(err, codes.E066.Ref(inv.Type.Num)))
+				log.AddFatal(ec(err, codes.E066.Ref(inv.Type.Spec)))
 			}
 			if changes.Message {
 				err := fmt.Errorf(`message for version %s differs from root inventory`, v)
-				log.AddWarn(ec(err, codes.W011.Ref(inv.Type.Num)))
+				log.AddWarn(ec(err, codes.W011.Ref(inv.Type.Spec)))
 			}
 			if changes.User {
 				err := fmt.Errorf(`user information for version %s differs from root inventory`, v)
-				log.AddWarn(ec(err, codes.W011.Ref(inv.Type.Num)))
+				log.AddWarn(ec(err, codes.W011.Ref(inv.Type.Spec)))
 			}
 			if changes.Created {
 				err := fmt.Errorf(`timestamp for version %s differs from root inventory`, v)
-				log.AddWarn(ec(err, codes.W011.Ref(inv.Type.Num)))
+				log.AddWarn(ec(err, codes.W011.Ref(inv.Type.Spec)))
 			}
 		}
 	}
@@ -407,7 +405,7 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 	ocflV := vldr.rootInfo.Declaration.Version
 	// check paths exist are in included in manifsts as necessary
 	for p, pInfo := range vldr.ledger.paths {
-		pVer := pInfo.existsIn // version wheren content file is stored (or empty spec.Num)
+		pVer := pInfo.existsIn // version wheren content file is stored (or empty ocfl.Num)
 		if pVer.Empty() {
 			for v, f := range pInfo.locations() {
 				locStr := "root"

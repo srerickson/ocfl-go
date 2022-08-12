@@ -8,11 +8,11 @@ import "github.com/srerickson/ocfl/spec"
 {{ range $code, $element := . }}
 //{{ $element.Comment }}
 var {{ $code }} = validation.NewCode("{{ $code }}",
-	map[spec.Num]*validation.Ref{
+	map[ocfl.Num]*validation.Ref{
 	{{- range $v, $spec := $element.Specs }}
 		{ {{- index $v 0}},{{ index $v 1 -}} }:{
-			Description: "{{ $spec.Description }}",
-			URL: "{{ $spec.URL }}",
+			Description: "{{ $ocfl.Description }}",
+			URL: "{{ $ocfl.URL }}",
 		},
 	{{- end }}	
 	})

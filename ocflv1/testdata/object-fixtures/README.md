@@ -1,6 +1,6 @@
 # OCFL Test Fixtures
 
-All fixtures are drafts for a proposed 1.0 release of OCFL. Everything in this repository is organized by OCFL spec.Number as the top-level directory.
+All fixtures are drafts for a proposed 1.0 release of OCFL. Everything in this repository is organized by OCFL ocfl.Number as the top-level directory.
 
 ## OCFL v1.0
 

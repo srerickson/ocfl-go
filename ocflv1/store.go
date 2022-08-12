@@ -9,10 +9,9 @@ import (
 	"io/fs"
 	"path"
 
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/backend"
 	"github.com/srerickson/ocfl/extensions"
-	"github.com/srerickson/ocfl/namaste"
-	"github.com/srerickson/ocfl/spec"
 )
 
 var ErrLayoutUndefined = errors.New("storage root layout is undefined")
@@ -23,7 +22,7 @@ type Store struct {
 	Config      *StoreLayout
 	fsys        fs.FS
 	rootDir     string // storage root
-	ocflVersion spec.Num
+	ocflVersion ocfl.Spec
 	getPath     extensions.LayoutFunc
 }
 
@@ -39,12 +38,12 @@ func GetStore(ctx context.Context, fsys fs.FS, root string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	decl, err := namaste.FindDelcaration(dirList)
+	decl, err := ocfl.FindDeclaration(dirList)
 	if err != nil {
 		err := fmt.Errorf("not an ocfl storage root: %w", err)
 		return nil, err
 	}
-	if decl.Type != namaste.StoreType {
+	if decl.Type != ocfl.DeclStore {
 		err := fmt.Errorf("not an ocfl storage root: %s", root)
 		return nil, err
 	}
@@ -52,7 +51,7 @@ func GetStore(ctx context.Context, fsys fs.FS, root string) (*Store, error) {
 	if !ocflVerSupported[ocflVer] {
 		return nil, fmt.Errorf("%s: %w", ocflVer, ErrOCFLVersion)
 	}
-	err = namaste.Validate(ctx, fsys, path.Join(root, decl.Name()))
+	err = ocfl.ValidateDeclaration(ctx, fsys, path.Join(root, decl.Name()))
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +84,7 @@ func (s *Store) Description() string {
 
 // ScanObjects scans the storage root for objects, returning a map of path/ocfl
 // version pairs. No validation checks are performed.
-func (s *Store) ScanObjects(ctx context.Context, opts *ScanObjectsOpts) (map[string]spec.Num, error) {
+func (s *Store) ScanObjects(ctx context.Context, opts *ScanObjectsOpts) (map[string]ocfl.Spec, error) {
 	return ScanObjects(ctx, s.fsys, s.rootDir, opts)
 }
 

@@ -10,7 +10,6 @@ import (
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/ocflv1"
-	"github.com/srerickson/ocfl/spec"
 )
 
 // next version returns the next version of an inventory based on stage
@@ -53,7 +52,7 @@ func nextVersionInventory(prev *ocflv1.Inventory, stg *objStage) (*ocflv1.Invent
 	}
 	newInv.ID = stg.ObjectID()
 	newInv.Head = stg.VersionNum()
-	newInv.Type = spec.Num{1, 0}.AsInventoryType() // FIXME
+	newInv.Type = ocfl.Spec{1, 0}.AsInvType() // FIXME
 	newInv.DigestAlgorithm = stg.DigestAlgorithm()
 	newInv.ContentDirectory = contentDir
 	newInv.Versions[stg.VersionNum()] = &ocflv1.Version{

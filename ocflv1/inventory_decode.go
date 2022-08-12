@@ -11,7 +11,6 @@ import (
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/ocflv1/codes"
-	"github.com/srerickson/ocfl/spec"
 	"github.com/srerickson/ocfl/validation"
 )
 
@@ -20,7 +19,7 @@ import (
 // is that a decodeInventory values are pointers.
 type decodeInventory struct {
 	ID               *string                `json:"id"`
-	Type             *spec.InventoryType    `json:"type"`
+	Type             *ocfl.InvType          `json:"type"`
 	DigestAlgorithm  *digest.Alg            `json:"digestAlgorithm"`
 	Head             *ocfl.VNum             `json:"head"`
 	ContentDirectory *string                `json:"contentDirectory,omitempty"`
@@ -29,7 +28,7 @@ type decodeInventory struct {
 	Fixity           fixity                 `json:"fixity,omitempty"`
 
 	// private
-	ocflV  spec.Num // OCFL version determined during UnmarshalJSON
+	ocflV  ocfl.Spec // OCFL version determined during UnmarshalJSON
 	digest string
 }
 
@@ -133,7 +132,7 @@ func (inv decodeInventory) asValidInventory() (*Inventory, *validation.Result) {
 func (inv *decodeInventory) UnmarshalJSON(b []byte) error {
 	// determine inventory type/version
 	var justType struct {
-		Type spec.InventoryType `json:"type"`
+		Type ocfl.InvType `json:"type"`
 	}
 	err := json.Unmarshal(b, &justType)
 	if err != nil {
@@ -142,7 +141,7 @@ func (inv *decodeInventory) UnmarshalJSON(b []byte) error {
 			Field: "type",
 		}
 	}
-	ocflV := justType.Type.Num
+	ocflV := justType.Type.Spec
 	if ocflV.Empty() {
 		return &InvDecodeError{
 			error: fmt.Errorf("can't determine inventory type/OCFL version"),
@@ -272,7 +271,7 @@ type InvDecodeError struct {
 	error
 	Field   string
 	Unknown bool
-	ocflV   spec.Num
+	ocflV   ocfl.Spec
 }
 
 // InvDecodeError implementes validation.ErrorCode

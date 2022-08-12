@@ -37,7 +37,7 @@ func TestLocalBackend(t *testing.T) {
 
 // 	bak, err := local.NewBackend(tmp)
 // 	is.NoErr(err)
-// 	dec := namaste.NewDeclaration("ocfl_object", "1.1")
+// 	dec := ocfl.NewDeclaration("ocfl_object", "1.1")
 // 	err = dec.Write(bak, path.Join("good-1", "b", "c"))
 // 	is.NoErr(err)
 

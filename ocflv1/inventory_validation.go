@@ -12,7 +12,6 @@ import (
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/ocflv1/codes"
-	"github.com/srerickson/ocfl/spec"
 	"github.com/srerickson/ocfl/validation"
 )
 
@@ -23,11 +22,11 @@ func (inv *Inventory) Validate() *validation.Result {
 	errs := &validation.Result{}
 	if inv.ID == "" {
 		err := errors.New("missing required field: 'id'")
-		errs.AddFatal(ec(err, codes.E036.Ref(inv.Type.Num)))
+		errs.AddFatal(ec(err, codes.E036.Ref(inv.Type.Spec)))
 	}
 	if inv.Head.Empty() {
 		err := errors.New("missing required field: 'head'")
-		errs.AddFatal(ec(err, codes.E036.Ref(inv.Type.Num)))
+		errs.AddFatal(ec(err, codes.E036.Ref(inv.Type.Spec)))
 	}
 	if inv.ContentDirectory == "" {
 		inv.ContentDirectory = contentDir
@@ -38,29 +37,29 @@ func (inv *Inventory) Validate() *validation.Result {
 	}
 	if u, err := url.ParseRequestURI(inv.ID); err != nil || u.Scheme == "" {
 		err := fmt.Errorf(`object ID is not a URI: %s`, inv.ID)
-		errs.AddWarn(ec(err, codes.W005.Ref(inv.Type.Num)))
+		errs.AddWarn(ec(err, codes.W005.Ref(inv.Type.Spec)))
 	}
 	if inv.DigestAlgorithm != digest.SHA512 {
 		if inv.DigestAlgorithm != digest.SHA256 {
 			err := fmt.Errorf(`digestAlgorithm is not %s or %s`, digest.SHA512, digest.SHA256)
-			errs.AddFatal(ec(err, codes.E025.Ref(inv.Type.Num)))
+			errs.AddFatal(ec(err, codes.E025.Ref(inv.Type.Spec)))
 		} else {
 			err := fmt.Errorf(`digestAlgorithm is not %s`, digest.SHA512)
-			errs.AddWarn(ec(err, codes.W004.Ref(inv.Type.Num)))
+			errs.AddWarn(ec(err, codes.W004.Ref(inv.Type.Spec)))
 		}
 	}
 	if err := inv.Head.Valid(); err != nil {
 		// this shouldn't ever trigger since the invalid condition is caught during unmarshal.
 		err = fmt.Errorf("head is invalid: %w", err)
-		errs.AddFatal(ec(err, codes.E011.Ref(inv.Type.Num)))
+		errs.AddFatal(ec(err, codes.E011.Ref(inv.Type.Spec)))
 	}
 	if strings.Contains(inv.ContentDirectory, "/") {
 		err := errors.New("contentDirectory contains '/'")
-		errs.AddFatal(ec(err, codes.E017.Ref(inv.Type.Num)))
+		errs.AddFatal(ec(err, codes.E017.Ref(inv.Type.Spec)))
 	}
 	if inv.ContentDirectory == "." || inv.ContentDirectory == ".." {
 		err := errors.New("contentDirectory is '.' or '..'")
-		errs.AddFatal(ec(err, codes.E017.Ref(inv.Type.Num)))
+		errs.AddFatal(ec(err, codes.E017.Ref(inv.Type.Spec)))
 	}
 	if err := inv.Manifest.Valid(); err != nil {
 		var dcErr *digest.DigestConflictErr
@@ -68,13 +67,13 @@ func (inv *Inventory) Validate() *validation.Result {
 		var pcErr *digest.PathConflictErr
 		var piErr *digest.PathInvalidErr
 		if errors.As(err, &dcErr) {
-			err = ec(err, codes.E096.Ref(inv.Type.Num))
+			err = ec(err, codes.E096.Ref(inv.Type.Spec))
 		} else if errors.As(err, &bpErr) {
-			err = ec(err, codes.E095.Ref(inv.Type.Num))
+			err = ec(err, codes.E095.Ref(inv.Type.Spec))
 		} else if errors.As(err, &pcErr) {
-			err = ec(err, codes.E101.Ref(inv.Type.Num))
+			err = ec(err, codes.E101.Ref(inv.Type.Spec))
 		} else if errors.As(err, &piErr) {
-			err = ec(err, codes.E099.Ref(inv.Type.Num))
+			err = ec(err, codes.E099.Ref(inv.Type.Spec))
 		}
 		errs.AddFatal(err)
 	}
@@ -86,17 +85,17 @@ func (inv *Inventory) Validate() *validation.Result {
 	}
 	if err := versionNums.Valid(); err != nil {
 		if errors.Is(err, ocfl.ErrVerEmpty) {
-			err = ec(err, codes.E008.Ref(inv.Type.Num))
+			err = ec(err, codes.E008.Ref(inv.Type.Spec))
 		} else if errors.Is(err, ocfl.ErrVNumMissing) {
-			err = ec(err, codes.E010.Ref(inv.Type.Num))
+			err = ec(err, codes.E010.Ref(inv.Type.Spec))
 		} else if errors.Is(err, ocfl.ErrVNumPadding) {
-			err = ec(err, codes.E012.Ref(inv.Type.Num))
+			err = ec(err, codes.E012.Ref(inv.Type.Spec))
 		}
 		errs.AddFatal(err)
 	}
 	if versionNums.Head() != inv.Head {
 		err := fmt.Errorf(`version head not most recent version: %s`, inv.Head)
-		errs.AddFatal(ec(err, codes.E040.Ref(inv.Type.Num)))
+		errs.AddFatal(ec(err, codes.E040.Ref(inv.Type.Spec)))
 	}
 
 	// version state
@@ -108,13 +107,13 @@ func (inv *Inventory) Validate() *validation.Result {
 			var pcErr *digest.PathConflictErr
 			var piErr *digest.PathInvalidErr
 			if errors.As(err, &dcErr) {
-				err = ec(err, codes.E050.Ref(inv.Type.Num))
+				err = ec(err, codes.E050.Ref(inv.Type.Spec))
 			} else if errors.As(err, &bpErr) {
-				err = ec(err, codes.E095.Ref(inv.Type.Num))
+				err = ec(err, codes.E095.Ref(inv.Type.Spec))
 			} else if errors.As(err, &pcErr) {
-				err = ec(err, codes.E095.Ref(inv.Type.Num))
+				err = ec(err, codes.E095.Ref(inv.Type.Spec))
 			} else if errors.As(err, &piErr) {
-				err = ec(err, codes.E052.Ref(inv.Type.Num))
+				err = ec(err, codes.E052.Ref(inv.Type.Spec))
 			}
 			errs.AddFatal(err)
 		}
@@ -122,22 +121,22 @@ func (inv *Inventory) Validate() *validation.Result {
 		for digest := range ver.State.AllDigests() {
 			if !inv.Manifest.DigestExists(digest) {
 				err := fmt.Errorf("digest in %s state not in manifest: %s", vname, digest)
-				errs.AddFatal(ec(err, codes.E050.Ref(inv.Type.Num)))
+				errs.AddFatal(ec(err, codes.E050.Ref(inv.Type.Spec)))
 			}
 		}
 		// version message
 		if ver.Message == "" {
 			err := fmt.Errorf("version %s missing recommended field: 'message'", vname)
-			errs.AddWarn(ec(err, codes.W007.Ref(inv.Type.Num)))
+			errs.AddWarn(ec(err, codes.W007.Ref(inv.Type.Spec)))
 		}
 		if ver.User != nil {
 			if ver.User.Address == "" {
 				err := fmt.Errorf("version %s user missing recommended field: 'address'", vname)
-				errs.AddWarn(ec(err, codes.W008.Ref(inv.Type.Num)))
+				errs.AddWarn(ec(err, codes.W008.Ref(inv.Type.Spec)))
 			}
 			if u, err := url.ParseRequestURI(ver.User.Address); err != nil || u.Scheme == "" {
 				err := fmt.Errorf("version %s user address is not a URI", vname)
-				errs.AddWarn(ec(err, codes.W009.Ref(inv.Type.Num)))
+				errs.AddWarn(ec(err, codes.W009.Ref(inv.Type.Spec)))
 			}
 		}
 	}
@@ -155,7 +154,7 @@ func (inv *Inventory) Validate() *validation.Result {
 		}
 		if !found {
 			err := fmt.Errorf("digest in manifest not used in version state: %s", digest)
-			errs.AddFatal(ec(err, codes.E107.Ref(inv.Type.Num)))
+			errs.AddFatal(ec(err, codes.E107.Ref(inv.Type.Spec)))
 		}
 	}
 	//fixity
@@ -166,11 +165,11 @@ func (inv *Inventory) Validate() *validation.Result {
 			var piErr *digest.PathInvalidErr
 			var pcErr *digest.PathConflictErr
 			if errors.As(err, &dcErr) {
-				err = ec(err, codes.E097.Ref(inv.Type.Num))
+				err = ec(err, codes.E097.Ref(inv.Type.Spec))
 			} else if errors.As(err, &piErr) {
-				err = ec(err, codes.E099.Ref(inv.Type.Num))
+				err = ec(err, codes.E099.Ref(inv.Type.Spec))
 			} else if errors.As(err, &pcErr) {
-				err = ec(err, codes.E101.Ref(inv.Type.Num))
+				err = ec(err, codes.E101.Ref(inv.Type.Spec))
 			}
 			errs.AddFatal(err)
 		}
@@ -194,8 +193,8 @@ type ValidateInventoryConf struct {
 	// skip sidecar verification
 	SkipSidecar bool
 	// if the inventory's OCFL version cannot be determined, validation errors
-	// will reference this version of the OCFL spec.
-	FallbackOCFL spec.Num
+	// will reference this version of the OCFL ocfl.
+	FallbackOCFL ocfl.Spec
 }
 
 // ValidateInventory full validates an inventory based on the configuration.

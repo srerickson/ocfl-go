@@ -10,8 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/srerickson/ocfl/namaste"
-	"github.com/srerickson/ocfl/spec"
+	"github.com/srerickson/ocfl"
 )
 
 var (
@@ -27,7 +26,7 @@ type ScanObjectsOpts struct {
 }
 
 // ScanObjects walks fsys from root returning a map of object root paths.
-func ScanObjects(ctx context.Context, fsys fs.FS, root string, conf *ScanObjectsOpts) (map[string]spec.Num, error) {
+func ScanObjects(ctx context.Context, fsys fs.FS, root string, conf *ScanObjectsOpts) (map[string]ocfl.Spec, error) {
 	strict := false             // default: don't validate
 	maxBatchLen := 4            // default: process up to 4 paths at a time
 	timeout := time.Duration(0) // default: no timeout
@@ -39,7 +38,7 @@ func ScanObjects(ctx context.Context, fsys fs.FS, root string, conf *ScanObjects
 	if maxBatchLen < 1 {
 		maxBatchLen = 1
 	}
-	objPaths := map[string]spec.Num{}        // results
+	objPaths := map[string]ocfl.Spec{}       // results
 	pathQ := []string{root}                  // queue of paths to scan
 	extDir := path.Join(root, extensionsDir) // extensions path
 	for {
@@ -79,14 +78,14 @@ func ScanObjects(ctx context.Context, fsys fs.FS, root string, conf *ScanObjects
 			if result.Err != nil {
 				return nil, result.Err
 			}
-			if result.Type == namaste.ObjectType {
+			if result.Type == ocfl.DeclObject {
 				objPath := strings.TrimPrefix(result.Path, root+"/")
 				objPaths[objPath] = result.Version
 				continue
 			}
 			if strict {
 				switch result.Type {
-				case namaste.StoreType:
+				case ocfl.DeclStore:
 					// store within a store is an error
 					if result.Path != root {
 						return nil, fmt.Errorf("%w: %s", ErrNonObject, result.Path)
@@ -116,11 +115,11 @@ func ScanObjects(ctx context.Context, fsys fs.FS, root string, conf *ScanObjects
 
 // storeScanJob represents a readdir operation for store scanning
 type storeScanJob struct {
-	Path                string   // Path in the store to scan
-	Err                 error    // Errors from job
-	Dirs                []string // sub directories
-	namaste.Declaration          // NAMASTE from path, if any
-	NumFiles            int      // number of regular files
+	Path             string   // Path in the store to scan
+	Err              error    // Errors from job
+	Dirs             []string // sub directories
+	ocfl.Declaration          // NAMASTE from path, if any
+	NumFiles         int      // number of regular files
 }
 
 func (j storeScanJob) Empty() bool {
@@ -144,5 +143,5 @@ func (j *storeScanJob) Do(ctx context.Context, fsys fs.FS) {
 			j.NumFiles++
 		}
 	}
-	j.Declaration, _ = namaste.FindDelcaration(entries)
+	j.Declaration, _ = ocfl.FindDeclaration(entries)
 }

@@ -8,7 +8,6 @@ import (
 	"path"
 
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/namaste"
 )
 
 var (
@@ -41,14 +40,14 @@ func GetObject(ctx context.Context, fsys fs.FS, root string) (*Object, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading object: %w", err)
 	}
-	if inf.Declaration.Type != namaste.ObjectType {
+	if inf.Declaration.Type != ocfl.DeclObject {
 		return nil, fmt.Errorf("declared type: %s: %w", inf.Declaration.Type, ErrNotObject)
 
 	}
 	if !ocflVerSupported[inf.Declaration.Version] {
 		return nil, fmt.Errorf("%s: %w", inf.Declaration.Version, ErrOCFLVersion)
 	}
-	err = namaste.Validate(ctx, fsys, path.Join(root, inf.Declaration.Name()))
+	err = ocfl.ValidateDeclaration(ctx, fsys, path.Join(root, inf.Declaration.Name()))
 	if err != nil {
 		return nil, err
 	}

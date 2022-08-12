@@ -1,6 +1,6 @@
 package validation
 
-// ErrorCode is an error that also references an OCFL spec.
+// ErrorCode is an error that also references an OCFL ocfl.
 type ErrorCode interface {
 	error
 	// Unwrap() error

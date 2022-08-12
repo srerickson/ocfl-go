@@ -17,13 +17,12 @@ import (
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/backend"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/spec"
 )
 
 // Inventory represents contents of an OCFL v1.x inventory.json file
 type Inventory struct {
 	ID               string                     `json:"id"`
-	Type             spec.InventoryType         `json:"type"`
+	Type             ocfl.InvType               `json:"type"`
 	DigestAlgorithm  digest.Alg                 `json:"digestAlgorithm"`
 	Head             ocfl.VNum                  `json:"head"`
 	ContentDirectory string                     `json:"contentDirectory,omitempty"`
