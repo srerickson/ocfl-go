@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"path"
 	"regexp"
 	"sort"
@@ -17,6 +16,10 @@ import (
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/backend"
 	"github.com/srerickson/ocfl/digest"
+)
+
+var (
+	invSidecarContentsRexp = regexp.MustCompile(`^([a-fA-F0-9]+)\s+inventory\.json[\n]?$`)
 )
 
 // Inventory represents contents of an OCFL v1.x inventory.json file
@@ -109,18 +112,14 @@ func (inv *Inventory) ContentPath(vnum ocfl.VNum, logical string) (string, error
 	return paths[0], nil
 }
 
-var (
-	invSidecarContentsRexp = regexp.MustCompile(`^([a-fA-F0-9]+)\s+inventory\.json[\n]?$`)
-)
-
-// Write marshals the value pointed to by inv, writing the json to dir/inventory.json in
+// WriteInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
 // fsys. The digest is calculated using alg and the inventory sidecar is also writen to
 // dir/inventory.alg
-func WriteInventory(ctx context.Context, fsys backend.Writer, dir string, alg digest.Alg, inv interface{}) error {
+func WriteInventory(ctx context.Context, fsys backend.Writer, dir string, inv *Inventory) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	checksum := alg.New()
+	checksum := inv.DigestAlgorithm.New()
 	byt, err := json.MarshalIndent(inv, "", " ")
 	if err != nil {
 		return err
@@ -132,7 +131,7 @@ func WriteInventory(ctx context.Context, fsys backend.Writer, dir string, alg di
 	sum := hex.EncodeToString(checksum.Sum(nil))
 	// write inventory.json and sidecar
 	invFile := path.Join(dir, inventoryFile)
-	sideFile := fmt.Sprintf("%s.%s", invFile, alg)
+	sideFile := invFile + "." + inv.DigestAlgorithm.ID()
 	_, err = fsys.Write(invFile, bytes.NewBuffer(byt))
 	if err != nil {
 		return fmt.Errorf("write inventory failed: %w", err)
@@ -144,51 +143,10 @@ func WriteInventory(ctx context.Context, fsys backend.Writer, dir string, alg di
 	return nil
 }
 
-// ReadDigestInventory reads decodes the contents of file into the value pointed to by inv; it also
-// digests the contents of the reader using the digest algorithm alg, returning the digest string.
-func ReadDigestInventory(ctx context.Context, file io.Reader, inv interface{}, alg digest.Alg) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	if alg.ID() != "" {
-		checksum := alg.New()
-		reader := io.TeeReader(file, checksum)
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		if err := json.NewDecoder(reader).Decode(inv); err != nil {
-			return "", err
-		}
-		return hex.EncodeToString(checksum.Sum(nil)), nil
-	}
-
-	// otherwise, need to decode inventory twice
-	byt, err := ioutil.ReadAll(file)
-	if err != nil {
-		return "", err
-	}
-	if err := json.Unmarshal(byt, inv); err != nil {
-		return "", err
-	}
-	// decode to get digestAlgorithm
-	var tmpInv struct {
-		Digest digest.Alg `json:"digestAlgorithm"`
-	}
-	if err = json.Unmarshal(byt, &tmpInv); err != nil {
-		return "", err
-	}
-	checksum := tmpInv.Digest.New()
-	_, err = checksum.Write(byt)
-	if err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(checksum.Sum(nil)), nil
-}
-
-// ReadInventorySidecar parses the contents of file as an inventory sidecar, returning
+// readInventorySidecar parses the contents of file as an inventory sidecar, returning
 // the stored digest on succecss. An error is returned if the sidecar is not in the expected
 // format
-func ReadInventorySidecar(ctx context.Context, file io.Reader) (string, error) {
+func readInventorySidecar(ctx context.Context, file io.Reader) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}

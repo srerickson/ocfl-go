@@ -2,10 +2,13 @@ package ocflv1
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"io/ioutil"
 	"net/url"
 	"strings"
 
@@ -231,7 +234,7 @@ func ValidateInventory(ctx context.Context, cfg *ValidateInventoryConf) (*Invent
 
 func decodeInv(ctx context.Context, conf *ValidateInventoryConf) (*decodeInventory, error) {
 	var inv decodeInventory
-	sum, err := ReadDigestInventory(ctx, conf.Reader, &inv, conf.DigestAlgorithm)
+	sum, err := readDigestInventory(ctx, conf.Reader, &inv, conf.DigestAlgorithm)
 	if err != nil {
 		var decErr *InvDecodeError
 		if errors.As(err, &decErr) {
@@ -258,7 +261,7 @@ func decodeInv(ctx context.Context, conf *ValidateInventoryConf) (*decodeInvento
 			return nil, conf.AddFatal(ec(err, codes.E058.Ref(conf.FallbackOCFL)))
 		}
 		defer sidecarReader.Close()
-		expSum, err := ReadInventorySidecar(ctx, sidecarReader)
+		expSum, err := readInventorySidecar(ctx, sidecarReader)
 		if err != nil {
 			return nil, conf.AddFatal(ec(err, codes.E061.Ref(conf.FallbackOCFL)))
 		}
@@ -271,4 +274,45 @@ func decodeInv(ctx context.Context, conf *ValidateInventoryConf) (*decodeInvento
 	}
 	inv.digest = sum
 	return &inv, nil
+}
+
+// readDigestInventory reads and decodes the contents of file into the value
+// pointed to by inv; it also digests the contents of the reader using the
+// digest algorithm alg, returning the digest string.
+func readDigestInventory(ctx context.Context, file io.Reader, inv interface{}, alg digest.Alg) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if alg.ID() != "" {
+		checksum := alg.New()
+		reader := io.TeeReader(file, checksum)
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if err := json.NewDecoder(reader).Decode(inv); err != nil {
+			return "", err
+		}
+		return hex.EncodeToString(checksum.Sum(nil)), nil
+	}
+	// otherwise, need to decode inventory twice
+	byt, err := ioutil.ReadAll(file)
+	if err != nil {
+		return "", err
+	}
+	if err := json.Unmarshal(byt, inv); err != nil {
+		return "", err
+	}
+	// decode to get digestAlgorithm
+	var tmpInv struct {
+		Digest digest.Alg `json:"digestAlgorithm"`
+	}
+	if err = json.Unmarshal(byt, &tmpInv); err != nil {
+		return "", err
+	}
+	checksum := tmpInv.Digest.New()
+	_, err = checksum.Write(byt)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(checksum.Sum(nil)), nil
 }

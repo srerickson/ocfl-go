@@ -88,3 +88,19 @@ func (obj *Object) Inventory(ctx context.Context) (*Inventory, error) {
 	}
 	return inv, err
 }
+
+// InventorySidecar returns the digest stored in the root inventory sidecar
+// file.
+func (obj *Object) InventorySidecar(ctx context.Context) (string, error) {
+	inf, err := obj.Info(ctx)
+	if err != nil {
+		return "", err
+	}
+	sidecar := inventoryFile + "." + inf.Algorithm.ID()
+	reader, err := obj.fsys.Open(path.Join(obj.rootDir, sidecar))
+	if err != nil {
+		return "", err
+	}
+	defer reader.Close()
+	return readInventorySidecar(ctx, reader)
+}
