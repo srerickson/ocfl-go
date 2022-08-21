@@ -8,10 +8,10 @@ import (
 	"log"
 	"path"
 
-	"github.com/srerickson/checksum"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/backend"
 	"github.com/srerickson/ocfl/digest"
+	"github.com/srerickson/ocfl/internal/checksum"
 )
 
 // Stages always use "content" as the content directory

@@ -9,10 +9,10 @@ import (
 	"path"
 	"strings"
 
-	"github.com/srerickson/checksum"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/extensions"
+	"github.com/srerickson/ocfl/internal/checksum"
 	"github.com/srerickson/ocfl/logger"
 	"github.com/srerickson/ocfl/ocflv1/codes"
 	"github.com/srerickson/ocfl/validation"

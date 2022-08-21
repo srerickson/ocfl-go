@@ -9,7 +9,6 @@ require (
 	github.com/iand/logfmtr v0.2.1
 	github.com/matryer/is v1.4.0
 	github.com/muesli/coral v1.0.0
-	github.com/srerickson/checksum v0.10.0
 	golang.org/x/crypto v0.0.0-20220321153916-2c7772ba3064
 )
 

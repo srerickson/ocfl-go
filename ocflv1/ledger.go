@@ -4,9 +4,9 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/srerickson/checksum"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
+	"github.com/srerickson/ocfl/internal/checksum"
 )
 
 const (
