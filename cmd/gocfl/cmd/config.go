@@ -7,13 +7,9 @@ import (
 	"path/filepath"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/goccy/go-yaml"
 	"github.com/muesli/coral"
-	"github.com/srerickson/ocfl/backend"
-	"github.com/srerickson/ocfl/backend/local"
-	"github.com/srerickson/ocfl/backend/s3fs"
+	"github.com/srerickson/ocfl"
 )
 
 const (
@@ -105,36 +101,38 @@ func (cfg Config) getRepoConfig(name string) (RepoConfig, error) {
 	return repo, nil
 }
 
-func (cfg Config) getBackendPath(name string) (backend.Interface, string, error) {
-	repo, err := cfg.getRepoConfig(name)
-	if err != nil {
-		return nil, "", err
-	}
-	if bucket, awsCfg := repo.awsConfig(); bucket != "" {
-		sess, err := session.NewSession(awsCfg)
-		if err != nil {
-			return nil, "", fmt.Errorf("backend config: %w", err)
-		}
-		vals := []any{
-			"repo_type", s3RepoType,
-			"bucket", bucket,
-		}
-		log.Info("backend settings", vals...)
-		return s3fs.New(s3.New(sess), bucket), repo.StorePath, nil
-	}
-	if root := repo.fsConfig(); root != "" {
-		bak, err := local.NewBackend(root)
-		if err != nil {
-			return nil, "", fmt.Errorf("backend config: %w", err)
-		}
-		vals := []any{
-			"type", fsRepoType,
-			"root", root,
-		}
-		log.Info("backend settings", vals...)
-		return bak, repo.StorePath, nil
-	}
-	return nil, "", fmt.Errorf("could not determine repo type")
+func (cfg Config) getBackendPath(name string) (ocfl.FS, string, error) {
+	return nil, "", errors.New("FIXME")
+
+	// repo, err := cfg.getRepoConfig(name)
+	// if err != nil {
+	// 	return nil, "", err
+	// }
+	// if bucket, awsCfg := repo.awsConfig(); bucket != "" {
+	// 	sess, err := session.NewSession(awsCfg)
+	// 	if err != nil {
+	// 		return nil, "", fmt.Errorf("backend config: %w", err)
+	// 	}
+	// 	vals := []any{
+	// 		"repo_type", s3RepoType,
+	// 		"bucket", bucket,
+	// 	}
+	// 	log.Info("backend settings", vals...)
+	// 	return s3fs.New(s3.New(sess), bucket), repo.StorePath, nil
+	// }
+	// if root := repo.fsConfig(); root != "" {
+	// 	bak, err := local.NewBackend(root)
+	// 	if err != nil {
+	// 		return nil, "", fmt.Errorf("backend config: %w", err)
+	// 	}
+	// 	vals := []any{
+	// 		"type", fsRepoType,
+	// 		"root", root,
+	// 	}
+	// 	log.Info("backend settings", vals...)
+	// 	return bak, repo.StorePath, nil
+	// }
+	// return nil, "", fmt.Errorf("could not determine repo type")
 
 }
 

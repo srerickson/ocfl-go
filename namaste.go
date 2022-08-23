@@ -9,8 +9,6 @@ import (
 	"path"
 	"regexp"
 	"strings"
-
-	"github.com/srerickson/ocfl/backend"
 )
 
 const (
@@ -88,15 +86,12 @@ func ParseDeclaration(name string, dec *Declaration) error {
 }
 
 // ValidateDeclaration validates a namaste declaration with path name
-func ValidateDeclaration(ctx context.Context, root fs.FS, name string) error {
+func ValidateDeclaration(ctx context.Context, root FS, name string) error {
 	var d Declaration
 	if err := ParseDeclaration(path.Base(name), &d); err != nil {
 		return err
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	f, err := root.Open(name)
+	f, err := root.OpenFile(ctx, name)
 	if err != nil {
 		return fmt.Errorf(`%w: %s`, ErrDeclOpen, err.Error())
 	}
@@ -111,9 +106,9 @@ func ValidateDeclaration(ctx context.Context, root fs.FS, name string) error {
 	return nil
 }
 
-func WriteDeclaration(root backend.Writer, dir string, d Declaration) error {
+func WriteDeclaration(ctx context.Context, root WriteFS, dir string, d Declaration) error {
 	cont := strings.NewReader(d.Contents())
-	_, err := root.Write(path.Join(dir, d.Name()), cont)
+	_, err := root.Write(ctx, path.Join(dir, d.Name()), cont)
 	if err != nil {
 		return fmt.Errorf(`%w: %s`, ErrDeclWrite, err.Error())
 	}

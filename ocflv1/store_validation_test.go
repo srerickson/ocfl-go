@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/ocflv1"
 )
 
@@ -30,14 +31,16 @@ func TestStoreValidation(t *testing.T) {
 						continue
 					}
 					t.Run(name, func(t *testing.T) {
-						var fsys fs.FS
+						var fsys ocfl.FS
 						if dir.Type().IsRegular() {
-							fsys, err = zip.OpenReader(filepath.Join(goodPath, name))
+							zFS, err := zip.OpenReader(filepath.Join(goodPath, name))
 							if err != nil {
 								t.Fatal(err)
 							}
+							defer zFS.Close()
+							fsys = ocfl.NewFS(zFS)
 						} else {
-							fsys = os.DirFS(filepath.Join(goodPath, name))
+							fsys = ocfl.NewFS(os.DirFS(filepath.Join(goodPath, name)))
 						}
 						err := ocflv1.ValidateStore(context.Background(), fsys, `.`, nil)
 						if err != nil {
@@ -59,14 +62,16 @@ func TestStoreValidation(t *testing.T) {
 						continue
 					}
 					t.Run(dir.Name(), func(t *testing.T) {
-						var fsys fs.FS
+						var fsys ocfl.FS
 						if dir.Type().IsRegular() {
-							fsys, err = zip.OpenReader(filepath.Join(badPath, name))
+							zFS, err := zip.OpenReader(filepath.Join(badPath, name))
 							if err != nil {
 								t.Fatal(err)
 							}
+							defer zFS.Close()
+							fsys = ocfl.NewFS(zFS)
 						} else {
-							fsys = os.DirFS(filepath.Join(badPath, name))
+							fsys = ocfl.NewFS(os.DirFS(filepath.Join(badPath, name)))
 						}
 						err := ocflv1.ValidateStore(context.Background(), fsys, `.`, nil)
 						if err == nil {

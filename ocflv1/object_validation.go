@@ -18,7 +18,7 @@ import (
 	"github.com/srerickson/ocfl/validation"
 )
 
-func ValidateObject(ctx context.Context, fsys fs.FS, root string, config *ValidateObjectConf) error {
+func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, config *ValidateObjectConf) error {
 	vldr := objectValidator{
 		FS:   fsys,
 		Root: root,
@@ -43,8 +43,8 @@ type ValidateObjectConf struct {
 type objectValidator struct {
 	ValidateObjectConf
 
-	FS   fs.FS  // required
-	Root string // required
+	FS   ocfl.FS // required
+	Root string  // required
 
 	maxOCFLVersion ocfl.Spec // object must have ocfl version equal to or less than
 	minOCFLVersion ocfl.Spec // object must have ocfl version greater than
@@ -78,7 +78,7 @@ func (vldr *objectValidator) validate(ctx context.Context) error {
 	if err := vldr.defaults(ctx); err != nil {
 		return err
 	}
-	rootList, err := fs.ReadDir(vldr.FS, vldr.Root)
+	rootList, err := vldr.FS.ReadDir(ctx, vldr.Root)
 	if err != nil {
 		return err
 	}
@@ -241,7 +241,7 @@ func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum)
 	log := vldr.Log.WithName(ver.String())
 	ocflV := vldr.rootInfo.Declaration.Version // assumed ocfl version (until inventory is decoded)
 	vDir := path.Join(vldr.Root, ver.String())
-	entries, err := fs.ReadDir(vldr.FS, vDir)
+	entries, err := vldr.FS.ReadDir(ctx, vDir)
 	if err != nil {
 		return log.AddFatal(err)
 	}
@@ -367,7 +367,7 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver o
 
 func (vldr *objectValidator) validateExtensionsDir(ctx context.Context) error {
 	extDir := path.Join(vldr.Root, extensionsDir)
-	items, err := fs.ReadDir(vldr.FS, extDir)
+	items, err := vldr.FS.ReadDir(ctx, extDir)
 	log := vldr.Log.WithName(extensionsDir)
 	ocflV := vldr.rootInfo.Declaration.Version
 	if err != nil {
@@ -511,11 +511,8 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 func (vldr *objectValidator) walkVersionContent(ctx context.Context, ver ocfl.VNum) (int, error) {
 	contDir := path.Join(vldr.Root, ver.String(), vldr.rootInv.ContentDirectory)
 	var added int
-	err := fs.WalkDir(vldr.FS, contDir, func(name string, info fs.DirEntry, err error) error {
+	err := ocfl.EachFile(ctx, vldr.FS, contDir, func(name string, info fs.DirEntry, err error) error {
 		if err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if info.Type().IsRegular() {

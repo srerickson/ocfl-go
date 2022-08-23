@@ -1,12 +1,15 @@
 package checksum
 
 import (
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"io/fs"
+
+	"github.com/srerickson/ocfl"
 )
 
 var ErrNotRegularFile = errors.New(`not a regular file`)
@@ -17,7 +20,7 @@ type Job struct {
 	algs map[string]func() hash.Hash // hash constructor function
 	sums map[string][]byte           // checksum result
 	err  error                       // any encountered errors
-	fs   fs.FS
+	fs   ocfl.FS
 }
 
 // do does the job
@@ -26,7 +29,7 @@ func (j *Job) do() {
 		return
 	}
 	var file fs.File
-	file, j.err = j.fs.Open(j.path)
+	file, j.err = j.fs.OpenFile(context.TODO(), j.path)
 	if j.err != nil {
 		return
 	}

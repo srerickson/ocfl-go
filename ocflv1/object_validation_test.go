@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr/funcr"
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/ocflv1"
 	"github.com/srerickson/ocfl/validation"
 )
@@ -29,8 +29,8 @@ func TestObjectValidation(t *testing.T) {
 			warnObjPath := filepath.Join(fixturePath, `warn-objects`)
 			noLogs := funcr.New(func(prefix, args string) {}, funcr.Options{})
 			t.Run("Valid objects", func(t *testing.T) {
-				fsys := os.DirFS(goodObjPath)
-				goodObjects, err := fs.ReadDir(fsys, ".")
+				fsys := ocfl.NewFS(os.DirFS(goodObjPath))
+				goodObjects, err := fsys.ReadDir(context.Background(), ".")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -55,8 +55,8 @@ func TestObjectValidation(t *testing.T) {
 				}
 			})
 			t.Run("Invalid objects", func(t *testing.T) {
-				fsys := os.DirFS(badObjPath)
-				badObjects, err := fs.ReadDir(fsys, ".")
+				fsys := ocfl.NewFS(os.DirFS(badObjPath))
+				badObjects, err := fsys.ReadDir(context.Background(), ".")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -84,8 +84,8 @@ func TestObjectValidation(t *testing.T) {
 			})
 
 			t.Run("Warning objects", func(t *testing.T) {
-				fsys := os.DirFS(warnObjPath)
-				warnObjects, err := fs.ReadDir(fsys, ".")
+				fsys := ocfl.NewFS(os.DirFS(warnObjPath))
+				warnObjects, err := fsys.ReadDir(context.Background(), ".")
 				if err != nil {
 					t.Fatal(err)
 				}

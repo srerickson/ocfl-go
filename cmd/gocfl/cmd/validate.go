@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/muesli/coral"
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/ocflv1"
 	"github.com/srerickson/ocfl/validation"
 )
@@ -54,7 +55,7 @@ func validateFSObject(ctx context.Context, name string) error {
 	}
 	dir := filepath.Dir(name)
 	base := filepath.Base(name)
-	fsys := os.DirFS(dir)
+	fsys := ocfl.NewFS(os.DirFS(dir))
 	vCfg := ocflv1.ValidateObjectConf{
 		Log: validation.NewLog(log),
 	}

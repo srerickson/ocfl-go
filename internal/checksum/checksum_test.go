@@ -8,6 +8,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/internal/checksum"
 )
 
@@ -21,7 +22,7 @@ var testMD5Sums = map[string]string{
 func TestContextCancel(t *testing.T) {
 	errs := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
-	dir := os.DirFS(`.`)
+	dir := ocfl.NewFS(os.DirFS(`.`))
 	pipe, _ := checksum.NewPipe(dir, checksum.WithCtx(ctx), checksum.WithMD5())
 	go func() {
 		defer pipe.Close()
@@ -42,7 +43,7 @@ func TestContextCancel(t *testing.T) {
 }
 
 func TestPipeErr(t *testing.T) {
-	dir := os.DirFS(`.`)
+	dir := ocfl.NewFS(os.DirFS(`.`))
 	pipe, err := checksum.NewPipe(dir, checksum.WithGos(1), checksum.WithMD5())
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +67,7 @@ func TestPipeErr(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
-	dir := os.DirFS(`.`)
+	dir := ocfl.NewFS(os.DirFS(`.`))
 
 	// map of file sha512 from walk
 	shas := make(map[string]string)
@@ -129,7 +130,7 @@ func TestValidate(t *testing.T) {
 }
 
 func TestJobAlgs(t *testing.T) {
-	dir := os.DirFS(`.`)
+	dir := ocfl.NewFS(os.DirFS(`.`))
 	pipe, err := checksum.NewPipe(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +179,8 @@ func TestWalkErr(t *testing.T) {
 		}
 		return nil
 	}
-	err := checksum.Walk(os.DirFS("test/fixture"), ".",
+	dir := ocfl.NewFS(os.DirFS("test/fixture"))
+	err := checksum.Walk(dir, ".",
 		each, checksum.WithMD5())
 	walkErr, ok := err.(*checksum.WalkErr)
 	if !ok {
@@ -188,7 +190,7 @@ func TestWalkErr(t *testing.T) {
 		t.Error(`expected  walkErr.JobErr == expectedErr`)
 	}
 
-	err = checksum.Walk(os.DirFS("test/fixture"), "NOPLACE",
+	err = checksum.Walk(dir, "NOPLACE",
 		each, checksum.WithSHA1())
 	walkErr, ok = err.(*checksum.WalkErr)
 	if !ok {
@@ -200,6 +202,7 @@ func TestWalkErr(t *testing.T) {
 }
 
 func ExampleWalk() {
+	dir := ocfl.NewFS(os.DirFS("test/fixture"))
 	// called for each complete job
 	each := func(done checksum.Job, err error) error {
 		if err != nil {
@@ -212,7 +215,7 @@ func ExampleWalk() {
 		}
 		return nil
 	}
-	err := checksum.Walk(os.DirFS("test/fixture"), ".", each,
+	err := checksum.Walk(dir, ".", each,
 		checksum.WithGos(5), // 5 go routines
 		checksum.WithMD5(),  // md5sum
 		checksum.WithSHA1()) // sha1

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"io/ioutil"
 	"net/url"
 	"strings"
@@ -184,8 +183,8 @@ func (inv *Inventory) Validate() *validation.Result {
 // ValidateInventoryConf
 type ValidateInventoryConf struct {
 	validation.Log
-	// fs.FS for opening inventory file.
-	FS fs.FS
+	// ocfl.FS for opening inventory file.
+	FS ocfl.FS
 	// path of inventory file relative to FS. This options supercedes the
 	// Reader option
 	Name string
@@ -210,7 +209,7 @@ func ValidateInventory(ctx context.Context, cfg *ValidateInventoryConf) (*Invent
 		c.FallbackOCFL = ocflv1_0
 	}
 	if c.FS != nil && c.Name != "" {
-		f, err := c.FS.Open(c.Name)
+		f, err := c.FS.OpenFile(ctx, c.Name)
 		if err != nil {
 			return nil, c.AddFatal(ec(err, codes.E063.Ref(c.FallbackOCFL)))
 		}
@@ -256,7 +255,7 @@ func decodeInv(ctx context.Context, conf *ValidateInventoryConf) (*decodeInvento
 	if !conf.SkipSidecar && conf.FS != nil {
 		// confirm sidecar
 		side := conf.Name + "." + conf.DigestAlgorithm.ID()
-		sidecarReader, err := conf.FS.Open(side)
+		sidecarReader, err := conf.FS.OpenFile(ctx, side)
 		if err != nil {
 			return nil, conf.AddFatal(ec(err, codes.E058.Ref(conf.FallbackOCFL)))
 		}

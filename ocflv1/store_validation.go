@@ -17,7 +17,7 @@ type ValidateStoreConf struct {
 	validation.Log
 }
 
-func ValidateStore(ctx context.Context, fsys fs.FS, root string, config *ValidateStoreConf) error {
+func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, config *ValidateStoreConf) error {
 	vldr := storeValidator{
 		FS:   fsys,
 		Root: root,
@@ -30,7 +30,7 @@ func ValidateStore(ctx context.Context, fsys fs.FS, root string, config *Validat
 
 type storeValidator struct {
 	ValidateStoreConf
-	FS     fs.FS
+	FS     ocfl.FS
 	Root   string
 	ocflV  ocfl.Spec
 	Layout StoreLayout
@@ -42,7 +42,7 @@ func (s *storeValidator) validate(ctx context.Context) error {
 		return err
 	}
 
-	inf, err := fs.ReadDir(s.FS, s.Root)
+	inf, err := s.FS.ReadDir(ctx, s.Root)
 	if err != nil {
 		return s.AddFatal(err)
 	}
@@ -87,7 +87,7 @@ func (s *storeValidator) validate(ctx context.Context) error {
 	}
 	//E067: The extensions directory must not contain any files, and no sub-directories other than extension sub-directories.
 	if hasExtensions {
-		entries, err := fs.ReadDir(s.FS, path.Join(s.Root, extensionsDir))
+		entries, err := s.FS.ReadDir(ctx, path.Join(s.Root, extensionsDir))
 		if err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
 				return s.AddFatal(err)

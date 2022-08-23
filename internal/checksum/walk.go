@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io/fs"
 	"strings"
+
+	"github.com/srerickson/ocfl"
 )
 
 // JobFunc is a function called for each complete job by Walk(). The funciton is
@@ -48,7 +50,7 @@ func DefaultWalkDirFunc(path string, d fs.DirEntry, err error) error {
 	return nil
 }
 
-func Walk(fsys fs.FS, root string, each JobFunc, opts ...func(*Config)) error {
+func Walk(fsys ocfl.FS, root string, each JobFunc, opts ...func(*Config)) error {
 	conf := defaultConfig()
 	for _, opt := range opts {
 		opt(&conf)
@@ -77,7 +79,7 @@ func Walk(fsys fs.FS, root string, each JobFunc, opts ...func(*Config)) error {
 			}
 			return p.Add(path)
 		}
-		walkErrChan <- fs.WalkDir(fsys, root, walk)
+		walkErrChan <- ocfl.EachFile(conf.ctx, fsys, root, walk)
 	}()
 
 	// process job callbacks and capture errors

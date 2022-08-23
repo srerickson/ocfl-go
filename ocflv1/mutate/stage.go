@@ -121,7 +121,8 @@ func (s *objStage) FromFS(fsys fs.FS, dir string) error {
 		}
 		return s.ProvidePath(srcRoot, j.Path(), sum, j.Path())
 	}
-	err = checksum.Walk(srcRoot, ".", each,
+	// FIXME: checksum.Walk is a mess.
+	err = checksum.Walk(ocfl.NewFS(srcRoot), ".", each,
 		checksum.WithAlg(s.digestAlgorithm.ID(), s.digestAlgorithm.New))
 	if err != nil {
 		s.err = err

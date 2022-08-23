@@ -2,14 +2,13 @@ package ocfl_test
 
 import (
 	"context"
-	"io/fs"
 	"os"
 	"testing"
 	"testing/fstest"
 
 	"github.com/matryer/is"
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/backend/local"
+	"github.com/srerickson/ocfl/internal/testfs"
 )
 
 func TestParseName(t *testing.T) {
@@ -45,11 +44,11 @@ func TestValidate(t *testing.T) {
 		"1=hot_tub_12.1": &fstest.MapFile{
 			Data: []byte("hot_tub_12.1\n")},
 	}
-	err := ocfl.ValidateDeclaration(context.Background(), fsys, "0=hot_tub_12.1")
+	err := ocfl.ValidateDeclaration(context.Background(), ocfl.NewFS(fsys), "0=hot_tub_12.1")
 	is.NoErr(err)
-	err = ocfl.ValidateDeclaration(context.Background(), fsys, "0=hot_bath_12.1")
+	err = ocfl.ValidateDeclaration(context.Background(), ocfl.NewFS(fsys), "0=hot_bath_12.1")
 	is.True(err != nil)
-	err = ocfl.ValidateDeclaration(context.Background(), fsys, "1=hot_tub_12.1")
+	err = ocfl.ValidateDeclaration(context.Background(), ocfl.NewFS(fsys), "1=hot_tub_12.1")
 	is.True(err != nil)
 }
 
@@ -60,20 +59,20 @@ func TestWriteDeclaration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpDir)
-	w, _ := local.NewBackend(tmpDir)
-	r := os.DirFS(tmpDir)
+	fsys, err := testfs.NewTestFS(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	v := ocfl.Spec{12, 1}
 	dec := &ocfl.Declaration{"ocfl", v}
-
-	err = ocfl.WriteDeclaration(w, ".", *dec)
+	err = ocfl.WriteDeclaration(context.Background(), fsys, ".", *dec)
 	is.NoErr(err)
-
-	inf, err := fs.ReadDir(r, ".")
+	inf, err := fsys.ReadDir(context.Background(), ".")
 	is.NoErr(err)
 	out, err := ocfl.FindDeclaration(inf)
 	is.NoErr(err)
 	is.True(out.Type == "ocfl")
 	is.True(out.Version == v)
-	err = ocfl.ValidateDeclaration(context.Background(), r, dec.Name())
+	err = ocfl.ValidateDeclaration(context.Background(), fsys, dec.Name())
 	is.NoErr(err)
 }

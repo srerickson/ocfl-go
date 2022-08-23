@@ -59,11 +59,8 @@ func ObjInfoFromFS(dir []fs.DirEntry) *ObjInfo {
 	return &info
 }
 
-func ReadObjInfo(ctx context.Context, fsys fs.FS, p string) (*ObjInfo, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	dir, err := fs.ReadDir(fsys, p)
+func ReadObjInfo(ctx context.Context, fsys FS, p string) (*ObjInfo, error) {
+	dir, err := fsys.ReadDir(ctx, p)
 	if err != nil {
 		return nil, err
 	}

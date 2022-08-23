@@ -16,8 +16,9 @@ package checksum
 
 import (
 	"errors"
-	"io/fs"
 	"sync"
+
+	"github.com/srerickson/ocfl"
 )
 
 // A Pipe performs concurrent checksum processing. It has an input channel and
@@ -31,7 +32,7 @@ import (
 // with NewPipe.
 type Pipe struct {
 	conf Config   // common config options
-	fsys fs.FS    // the pipe's jobs are scoped to the fs
+	fsys ocfl.FS  // the pipe's jobs are scoped to the fs
 	in   chan Job // jop input
 	out  chan Job // job results
 }
@@ -41,7 +42,7 @@ type Pipe struct {
 //  - With[Alg](): Required
 //  - WithCtx(): context.Background().
 //  - WithNumGos():runtime.GOMAXPROCS(0)
-func NewPipe(fsys fs.FS, opts ...func(*Config)) (*Pipe, error) {
+func NewPipe(fsys ocfl.FS, opts ...func(*Config)) (*Pipe, error) {
 	pipe := &Pipe{
 		fsys: fsys,
 		in:   make(chan Job),

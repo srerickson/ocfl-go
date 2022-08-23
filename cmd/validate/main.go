@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/iand/logfmtr"
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/ocflv1"
 	"github.com/srerickson/ocfl/validation"
 )
@@ -26,7 +27,7 @@ func main() {
 		os.Exit(1)
 	}
 	log = log.WithName(root)
-	fsys := os.DirFS(root)
+	fsys := ocfl.NewFS(os.DirFS(root))
 	err := ocflv1.ValidateObject(
 		context.Background(),
 		fsys, ".",

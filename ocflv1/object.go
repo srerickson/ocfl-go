@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"path"
 
 	"github.com/srerickson/ocfl"
@@ -24,7 +23,7 @@ var (
 // Object represents an existing OCFL v1.x object
 type Object struct {
 	// backend filesystem
-	fsys fs.FS
+	fsys ocfl.FS
 	// path to object root
 	rootDir string
 	// cache of object info
@@ -32,7 +31,7 @@ type Object struct {
 }
 
 // GetObject returns a new Object with loaded inventory.
-func GetObject(ctx context.Context, fsys fs.FS, root string) (*Object, error) {
+func GetObject(ctx context.Context, fsys ocfl.FS, root string) (*Object, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -97,7 +96,7 @@ func (obj *Object) InventorySidecar(ctx context.Context) (string, error) {
 		return "", err
 	}
 	sidecar := inventoryFile + "." + inf.Algorithm.ID()
-	reader, err := obj.fsys.Open(path.Join(obj.rootDir, sidecar))
+	reader, err := obj.fsys.OpenFile(ctx, path.Join(obj.rootDir, sidecar))
 	if err != nil {
 		return "", err
 	}

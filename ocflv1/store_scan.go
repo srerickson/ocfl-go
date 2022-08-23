@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"path"
 	"strings"
 	"sync"
@@ -26,7 +25,7 @@ type ScanObjectsOpts struct {
 }
 
 // ScanObjects walks fsys from root returning a map of object root paths.
-func ScanObjects(ctx context.Context, fsys fs.FS, root string, conf *ScanObjectsOpts) (map[string]ocfl.Spec, error) {
+func ScanObjects(ctx context.Context, fsys ocfl.FS, root string, conf *ScanObjectsOpts) (map[string]ocfl.Spec, error) {
 	strict := false             // default: don't validate
 	maxBatchLen := 4            // default: process up to 4 paths at a time
 	timeout := time.Duration(0) // default: no timeout
@@ -126,12 +125,8 @@ func (j storeScanJob) Empty() bool {
 	return len(j.Dirs) == 0 && j.NumFiles == 0
 }
 
-func (j *storeScanJob) Do(ctx context.Context, fsys fs.FS) {
-	if err := ctx.Err(); err != nil {
-		j.Err = err
-		return
-	}
-	entries, err := fs.ReadDir(fsys, j.Path)
+func (j *storeScanJob) Do(ctx context.Context, fsys ocfl.FS) {
+	entries, err := fsys.ReadDir(ctx, j.Path)
 	if err != nil {
 		j.Err = err
 		return

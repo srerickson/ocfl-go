@@ -20,7 +20,7 @@ var ErrLayoutUndefined = errors.New("storage root layout is undefined")
 // access.
 type Store struct {
 	Config      *StoreLayout
-	fsys        fs.FS
+	fsys        ocfl.FS
 	rootDir     string // storage root
 	ocflVersion ocfl.Spec
 	getPath     extensions.LayoutFunc
@@ -30,11 +30,11 @@ type Store struct {
 // root must be a directory/prefix with storage root declaration file. The
 // returned store's active layout is not set -- it should be set with SetLayout()
 // or ReadLayout() before using GetID().
-func GetStore(ctx context.Context, fsys fs.FS, root string) (*Store, error) {
+func GetStore(ctx context.Context, fsys ocfl.FS, root string) (*Store, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	dirList, err := fs.ReadDir(fsys, root)
+	dirList, err := fsys.ReadDir(ctx, root)
 	if err != nil {
 		return nil, err
 	}
@@ -200,12 +200,12 @@ func (l StoreLayout) Extension() string {
 // ReadExtensionConfig reads the extension config file for ext in the storage root's
 // extensions directory. The value is unmarshalled into the value pointed to by
 // ext. If the extension config does not exist, nil is returned.
-func ReadExtensionConfig(ctx context.Context, fsys fs.FS, root string, ext extensions.Extension) error {
+func ReadExtensionConfig(ctx context.Context, fsys ocfl.FS, root string, ext extensions.Extension) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	confPath := path.Join(root, extensionsDir, ext.Name(), extensionConfigFile)
-	f, err := fsys.Open(confPath)
+	f, err := fsys.OpenFile(ctx, confPath)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("%s: %w", ext.Name(), err)
@@ -236,8 +236,8 @@ func WriteExtensionConfig(fsys backend.Writer, root string, ext extensions.Exten
 
 // ReadLayout reads the `ocfl_layout.json` files in the storage root
 // and unmarshals into the value pointed to by layout
-func ReadLayout(fsys fs.FS, root string, layout *StoreLayout) error {
-	f, err := fsys.Open(path.Join(root, layoutName))
+func ReadLayout(fsys ocfl.FS, root string, layout *StoreLayout) error {
+	f, err := fsys.OpenFile(context.TODO(), path.Join(root, layoutName))
 	if err != nil {
 		return err
 	}

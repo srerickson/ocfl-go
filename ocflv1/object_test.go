@@ -2,7 +2,6 @@ package ocflv1_test
 
 import (
 	"context"
-	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -18,7 +17,7 @@ var goodObjPath = filepath.Join(fixturePath, `good-objects`)
 //var badObjPath = filepath.Join(fixturePath, `bad-objects`)
 
 func TestReadObject(t *testing.T) {
-	fsys := os.DirFS(goodObjPath)
+	fsys := ocfl.NewFS(os.DirFS(goodObjPath))
 	obj, err := ocflv1.GetObject(context.Background(), fsys, "spec-ex-full")
 	if err != nil {
 		t.Fatal(err)
@@ -38,8 +37,9 @@ func TestReadObject(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	_, err = fs.Stat(fsys, path.Join("spec-ex-full", cont))
+	f, err := fsys.OpenFile(context.Background(), path.Join("spec-ex-full", cont))
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.Close()
 }

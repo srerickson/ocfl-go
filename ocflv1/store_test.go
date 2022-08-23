@@ -3,13 +3,13 @@ package ocflv1_test
 import (
 	"archive/zip"
 	"context"
-	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/extensions"
 	"github.com/srerickson/ocfl/ocflv1"
 )
@@ -32,7 +32,7 @@ func TestGetStore(t *testing.T) {
 	}
 	for _, sttest := range storeTests {
 		t.Run(sttest.name, func(t *testing.T) {
-			var fsys fs.FS
+			var fsys ocfl.FS
 			var root string
 			if strings.HasSuffix(sttest.name, `.zip`) {
 				root = "."
@@ -41,9 +41,9 @@ func TestGetStore(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer zreader.Close()
-				fsys = zreader
+				fsys = ocfl.NewFS(zreader)
 			} else {
-				fsys = os.DirFS(storePath)
+				fsys = ocfl.NewFS(os.DirFS(storePath))
 				root = sttest.name
 			}
 			store, err := ocflv1.GetStore(ctx, fsys, root)
@@ -112,7 +112,7 @@ func TestScanObjects(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			for _, sttest := range storeTests {
 				t.Run(sttest.name, func(t *testing.T) {
-					var fsys fs.FS
+					var fsys ocfl.FS
 					var root string
 					var store *ocflv1.Store
 					var err error
@@ -127,9 +127,9 @@ func TestScanObjects(t *testing.T) {
 							t.Fatal(err)
 						}
 						defer zreader.Close()
-						fsys = zreader
+						fsys = ocfl.NewFS(zreader)
 					} else {
-						fsys = os.DirFS(storePath)
+						fsys = ocfl.NewFS(os.DirFS(storePath))
 						root = sttest.name
 					}
 					store, err = ocflv1.GetStore(ctx, fsys, root)
