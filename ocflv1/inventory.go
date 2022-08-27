@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/backend"
 	"github.com/srerickson/ocfl/digest"
 )
 
@@ -115,7 +114,7 @@ func (inv *Inventory) ContentPath(vnum ocfl.VNum, logical string) (string, error
 // WriteInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
 // fsys. The digest is calculated using alg and the inventory sidecar is also writen to
 // dir/inventory.alg
-func WriteInventory(ctx context.Context, fsys backend.Writer, dir string, inv *Inventory) error {
+func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, dir string, inv *Inventory) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -132,11 +131,11 @@ func WriteInventory(ctx context.Context, fsys backend.Writer, dir string, inv *I
 	// write inventory.json and sidecar
 	invFile := path.Join(dir, inventoryFile)
 	sideFile := invFile + "." + inv.DigestAlgorithm.ID()
-	_, err = fsys.Write(invFile, bytes.NewBuffer(byt))
+	_, err = fsys.Write(ctx, invFile, bytes.NewBuffer(byt))
 	if err != nil {
 		return fmt.Errorf("write inventory failed: %w", err)
 	}
-	_, err = fsys.Write(sideFile, strings.NewReader(sum+" "+inventoryFile+"\n"))
+	_, err = fsys.Write(ctx, sideFile, strings.NewReader(sum+" "+inventoryFile+"\n"))
 	if err != nil {
 		return fmt.Errorf("write inventory sidecar failed: %w", err)
 	}

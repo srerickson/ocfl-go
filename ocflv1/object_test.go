@@ -11,7 +11,7 @@ import (
 	"github.com/srerickson/ocfl/ocflv1"
 )
 
-var fixturePath = filepath.Join(`testdata`, `object-fixtures`, `1.0`)
+var fixturePath = filepath.Join(`..`, `testdata`, `object-fixtures`, `1.0`)
 var goodObjPath = filepath.Join(fixturePath, `good-objects`)
 
 //var badObjPath = filepath.Join(fixturePath, `bad-objects`)

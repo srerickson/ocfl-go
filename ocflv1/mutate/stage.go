@@ -1,6 +1,7 @@
 package mutate
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,7 +10,6 @@ import (
 	"path"
 
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/backend"
 	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/internal/checksum"
 )
@@ -23,7 +23,7 @@ var errDirtyState = errors.New("stage may be corrupt from previous error")
 // in needs to be marshallable to json for later retrieval by a stage manager
 type objStage struct {
 	// Backend where stage content files are written
-	fsys backend.Interface
+	fsys ocfl.WriteFS
 	// the path to the staged object root in fsys.
 	// Note: content are stored in stageRoot/version/content/...
 	stageRoot string
@@ -68,7 +68,7 @@ func (s *objStage) DigestAlgorithm() digest.Alg {
 	return s.digestAlgorithm
 }
 
-func (s *objStage) Backend() backend.Interface {
+func (s *objStage) Backend() ocfl.WriteFS {
 	return s.fsys
 }
 
@@ -187,7 +187,7 @@ func (s *objStage) ProvideReader(src io.Reader, sum, content string) error {
 		return err
 	}
 	dst := path.Join(s.stageRoot, contentDir, content)
-	_, err = s.fsys.Write(dst, src)
+	_, err = s.fsys.Write(context.TODO(), dst, src)
 	if err != nil {
 		s.err = err
 		return s.err
@@ -235,10 +235,10 @@ func (s *objStage) BuildManifest(f ContentPathFunc) (*digest.Map, error) {
 	return man, nil
 }
 
-func (s *objStage) Clear() error {
-	s.err = errors.New("stage was cleared")
-	if s.stageRoot == "" {
-		return nil
-	}
-	return s.fsys.RemoveAll(s.stageRoot)
-}
+// func (s *objStage) Clear() error {
+// 	s.err = errors.New("stage was cleared")
+// 	if s.stageRoot == "" {
+// 		return nil
+// 	}
+// 	return s.fsys.RemoveAll(s.stageRoot)
+// }

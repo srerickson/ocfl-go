@@ -9,20 +9,19 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/backend"
 	"github.com/srerickson/ocfl/digest"
 )
 
 type memoryStageManager struct {
 	// backend storage for staged content
-	fsys backend.Interface
+	fsys ocfl.WriteFS
 	// directory in fsys where are all stages are created
 	root   string
 	stages map[string]*objStage
 	logger logr.Logger
 }
 
-func newMemoryStageManager(fsys backend.Interface, root string, logger logr.Logger) *memoryStageManager {
+func newMemoryStageManager(fsys ocfl.WriteFS, root string, logger logr.Logger) *memoryStageManager {
 	return &memoryStageManager{fsys: fsys,
 		root:   root,
 		stages: map[string]*objStage{},

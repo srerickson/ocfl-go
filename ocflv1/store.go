@@ -10,7 +10,6 @@ import (
 	"path"
 
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/backend"
 	"github.com/srerickson/ocfl/extensions"
 )
 
@@ -221,13 +220,13 @@ func ReadExtensionConfig(ctx context.Context, fsys ocfl.FS, root string, ext ext
 
 // WriteExtensionConfig writes the configuration files for the ext to the
 // extensions directory in the storage root with at root.
-func WriteExtensionConfig(fsys backend.Writer, root string, ext extensions.Extension) error {
+func WriteExtensionConfig(fsys ocfl.WriteFS, root string, ext extensions.Extension) error {
 	confPath := path.Join(root, extensionsDir, ext.Name(), extensionConfigFile)
 	b, err := json.Marshal(ext)
 	if err != nil {
 		return err
 	}
-	_, err = fsys.Write(confPath, bytes.NewBuffer(b))
+	_, err = fsys.Write(context.TODO(), confPath, bytes.NewBuffer(b))
 	if err != nil {
 		return err
 	}
@@ -247,12 +246,12 @@ func ReadLayout(fsys ocfl.FS, root string, layout *StoreLayout) error {
 
 // WriteLayout marshals the value pointe to by layout and writes the result to
 // the `ocfl_layout.json` files in the storage root.
-func WriteLayout(fsys backend.Writer, root string, layout *StoreLayout) error {
+func WriteLayout(fsys ocfl.WriteFS, root string, layout *StoreLayout) error {
 	b, err := json.Marshal(layout)
 	if err != nil {
 		return err
 	}
-	_, err = fsys.Write(path.Join(root, layoutName), bytes.NewBuffer(b))
+	_, err = fsys.Write(context.TODO(), path.Join(root, layoutName), bytes.NewBuffer(b))
 	if err != nil {
 		return err
 	}

@@ -23,7 +23,7 @@ func TestObjectValidation(t *testing.T) {
 	specs := []string{`1.0`, `1.1`}
 	for _, spec := range specs {
 		t.Run(spec, func(t *testing.T) {
-			fixturePath := filepath.Join(`testdata`, `object-fixtures`, spec)
+			fixturePath := filepath.Join(`..`, `testdata`, `object-fixtures`, spec)
 			goodObjPath := filepath.Join(fixturePath, `good-objects`)
 			badObjPath := filepath.Join(fixturePath, `bad-objects`)
 			warnObjPath := filepath.Join(fixturePath, `warn-objects`)

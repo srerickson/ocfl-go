@@ -14,7 +14,7 @@ import (
 	"github.com/srerickson/ocfl/ocflv1"
 )
 
-var storePath = filepath.Join(`testdata`, `store-fixtures`, `1.0`)
+var storePath = filepath.Join(`..`, `testdata`, `store-fixtures`, `1.0`)
 
 type storeTest struct {
 	name   string

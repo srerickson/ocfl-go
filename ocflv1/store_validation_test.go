@@ -17,7 +17,7 @@ func TestStoreValidation(t *testing.T) {
 	specs := []string{`1.0`}
 	for _, spec := range specs {
 		t.Run(spec, func(t *testing.T) {
-			fixturePath := filepath.Join(`testdata`, `store-fixtures`, spec)
+			fixturePath := filepath.Join(`..`, `testdata`, `store-fixtures`, spec)
 			goodPath := filepath.Join(fixturePath, `good-stores`)
 			badPath := filepath.Join(fixturePath, `bad-stores`)
 			t.Run("Valid storage roots", func(t *testing.T) {
