@@ -1,4 +1,4 @@
-package s3fs
+package cloud
 
 import (
 	"io"
@@ -7,17 +7,14 @@ import (
 	"time"
 )
 
-var (
-	_ fs.File     = (*file)(nil)
-	_ fs.FileInfo = (*fileInfo)(nil)
-)
-
 type file struct {
 	io.ReadCloser
-	stat func() (fs.FileInfo, error)
+	info *fileInfo
 }
 
-func (f file) Stat() (fs.FileInfo, error) { return f.stat() }
+func (f file) Stat() (fs.FileInfo, error) {
+	return f.info, nil
+}
 
 type fileInfo struct {
 	name    string
@@ -26,6 +23,7 @@ type fileInfo struct {
 	modTime time.Time
 }
 
+// fileInfo implements fs.FileInfo
 func (fi fileInfo) Name() string       { return path.Base(fi.name) }
 func (fi fileInfo) Size() int64        { return fi.size }
 func (fi fileInfo) Mode() fs.FileMode  { return fi.mode }
@@ -33,9 +31,12 @@ func (fi fileInfo) ModTime() time.Time { return fi.modTime }
 func (fi fileInfo) IsDir() bool        { return fi.mode.IsDir() }
 func (fi fileInfo) Sys() interface{}   { return nil }
 
-type dirEntry struct {
-	fileInfo
-}
+// fileInfo implements fs.DirEntry
+func (fi fileInfo) Type() fs.FileMode          { return fi.Mode().Type() }
+func (fi fileInfo) Info() (fs.FileInfo, error) { return fi, nil }
 
-func (de dirEntry) Type() fs.FileMode          { return de.Mode().Type() }
-func (de dirEntry) Info() (fs.FileInfo, error) { return de.fileInfo, nil }
+var (
+	_ fs.File     = (*file)(nil)
+	_ fs.FileInfo = (*fileInfo)(nil)
+	_ fs.DirEntry = (*fileInfo)(nil)
+)
