@@ -6,7 +6,6 @@ import (
 
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/internal/checksum"
 )
 
 const (
@@ -51,16 +50,6 @@ func (pi *pathInfo) referencedIn(ver ocfl.VNum, flag locFlag) bool {
 		}
 	}
 	return false
-}
-
-// checksumConfigAlgs returns the digest algorithms as a slice of
-// checksum.Config functions. for easier configuration of checksum pipe.
-func (pi *pathInfo) checksumConfigAlgs() ([]func(*checksum.Config), error) {
-	var checksumAlgs []func(*checksum.Config)
-	for alg := range pi.digests {
-		checksumAlgs = append(checksumAlgs, checksum.WithAlg(alg.ID(), alg.New))
-	}
-	return checksumAlgs, nil
 }
 
 type digestInfo struct {

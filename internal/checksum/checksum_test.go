@@ -1,14 +1,17 @@
 package checksum_test
 
 import (
-	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io/fs"
 	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 
-	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/internal/checksum"
 )
 
@@ -19,209 +22,99 @@ var testMD5Sums = map[string]string{
 	"test/fixture/hello.csv":                                            "9d02fa6e9dd9f38327f7b213daa28be6",
 }
 
-func TestContextCancel(t *testing.T) {
-	errs := make(chan error, 1)
-	ctx, cancel := context.WithCancel(context.Background())
-	dir := ocfl.NewFS(os.DirFS(`.`))
-	pipe, _ := checksum.NewPipe(dir, checksum.WithCtx(ctx), checksum.WithMD5())
-	go func() {
-		defer pipe.Close()
-		pipe.Add(`nofile1`)
-		cancel() // <-- Add() should return err after this
-		errs <- pipe.Add(`nofile2`)
-	}()
-	var numResults int
-	for range pipe.Out() {
-		numResults++
+func TestPipe(t *testing.T) {
+	algs := map[string]func() hash.Hash{
+		`md5`: md5.New,
 	}
-	if numResults > 1 {
-		t.Error(`expected only one result`)
-	}
-	if <-errs == nil {
-		t.Error(`expected canceled context error`)
-	}
-}
-
-func TestPipeErr(t *testing.T) {
-	dir := ocfl.NewFS(os.DirFS(`.`))
-	pipe, err := checksum.NewPipe(dir, checksum.WithGos(1), checksum.WithMD5())
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		defer pipe.Close()
-		pipe.Add(`nofile`) // doesn't exist
-		pipe.Add(`.`)      // not a regular file
-	}()
-	for range []int{1, 2} {
-		result := <-pipe.Out()
-		if result.Err() == nil {
-			t.Error(`expected error`)
+	t.Run("zero values, zero files", func(t *testing.T) {
+		setup := func(add checksum.AddFunc) error {
+			return nil
 		}
-	}
-	_, alive := <-pipe.Out()
-	if alive {
-		t.Error(`expected closed chan`)
-	}
-	//pipe.Add(`file`) // panic
-}
-
-func TestValidate(t *testing.T) {
-	dir := ocfl.NewFS(os.DirFS(`.`))
-
-	// map of file sha512 from walk
-	shas := make(map[string]string)
-	each := func(j checksum.Job, err error) error {
-		if err != nil {
+		cb := func(name string, results checksum.HashResult, err error) error {
 			return err
 		}
-		shas[j.Path()], err = j.SumString(checksum.SHA512)
-		if err != nil {
+		if err := checksum.Run(setup, cb); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("zero values, one file", func(t *testing.T) {
+		setup := func(add checksum.AddFunc) error {
+			add(filepath.Join("test", "fixture", "hello.csv"), algs)
+			return nil
+		}
+		cb := func(name string, results checksum.HashResult, err error) error {
 			return err
 		}
-		return nil
-	}
-	err := checksum.Walk(dir, `.`, each, checksum.WithSHA512())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// a pipe with multiple checksums
-	pipe, err := checksum.NewPipe(dir,
-		checksum.WithGos(3),
-		checksum.WithMD5(),
-		checksum.WithSHA512())
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		defer pipe.Close()
-		for path := range testMD5Sums {
-			pipe.Add(path)
+		if err := checksum.Run(setup, cb); err != nil {
+			t.Fatal(err)
 		}
-	}()
-	var numResults int
-	for j := range pipe.Out() {
-		numResults++
-		if err := j.Err(); err != nil {
-			t.Error(err)
-			continue
-		}
-		gotMD5, err := j.SumString(checksum.MD5)
-		if err != nil {
-			t.Error(err)
-		}
-		gotSHA, err := j.SumString(checksum.SHA512)
-		if err != nil {
-			t.Error(err)
-		}
-		wantSHA := shas[j.Path()]
-		wantMD5 := testMD5Sums[j.Path()]
-		if gotMD5 != wantMD5 {
-			t.Errorf(`expected MD5 %s, got %s for %s`, wantMD5, gotMD5, j.Path())
-		}
-		if gotSHA != wantSHA {
-			t.Errorf(`expected SHA512 %s, got %s for %s`, wantSHA, gotSHA, j.Path())
-		}
-	}
-	if numResults != len(testMD5Sums) {
-		t.Errorf("expected %d results, got %d", len(testMD5Sums), numResults)
-	}
-}
-
-func TestJobAlgs(t *testing.T) {
-	dir := ocfl.NewFS(os.DirFS(`.`))
-	pipe, err := checksum.NewPipe(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		defer pipe.Close()
-		for path := range testMD5Sums {
-			err := pipe.Add(path, checksum.WithMD5())
-			if err == nil {
-				break
+	})
+	t.Run("walk test dir", func(t *testing.T) {
+		fsys := os.DirFS(`.`)
+		results := map[string]string{}
+		setup := func(add checksum.AddFunc) error {
+			// walk fs
+			walkFunc := func(p string, entr fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if entr.Type().IsRegular() {
+					if !add(p, algs) {
+						return fmt.Errorf("%s not added", p)
+					}
+				}
+				return nil
 			}
+			return fs.WalkDir(fsys, `test`, walkFunc)
 		}
-	}()
-	var numResults int
-	for j := range pipe.Out() {
-		numResults++
-		if err := j.Err(); err != nil {
-			t.Error(err)
-			continue
+		cb := func(name string, sums checksum.HashResult, err error) error {
+			sum, ok := sums[`md5`]
+			if !ok {
+				return errors.New("expected md5")
+			}
+			results[name] = hex.EncodeToString(sum)
+			return nil
 		}
-		gotMD5, err := j.SumString(checksum.MD5)
+		err := checksum.Run(setup, cb, checksum.WithFS(fsys), checksum.WithNumGos(4))
 		if err != nil {
-			t.Error(err)
+			t.Fatal(err)
 		}
-		wantMD5 := testMD5Sums[j.Path()]
-		if gotMD5 != wantMD5 {
-			t.Errorf(`expected MD5 %s, got %s for %s`, wantMD5, gotMD5, j.Path())
+		if !reflect.DeepEqual(testMD5Sums, results) {
+			t.Fatalf("md5sums don't match expected values")
 		}
-	}
-}
+	})
+	t.Run("callback error", func(t *testing.T) {
+		fsys := os.DirFS(`.`)
+		cb := func(name string, sums checksum.HashResult, err error) error {
+			return errors.New("catch me")
+		}
+		setup := func(add checksum.AddFunc) error {
+			if !add("test/fixture/hello.csv", algs) {
+				return fmt.Errorf("add failed")
+			}
+			return nil
+		}
+		err := checksum.Run(setup, cb, checksum.WithFS(fsys))
+		if err == nil {
+			t.Error("expected error from close")
+		} else if err.Error() != "catch me" {
+			t.Error("expected: catch me")
+		}
+	})
 
-func TestWalkErr(t *testing.T) {
-	expectedErr := errors.New(`stop`)
-
-	// called for each complete job
-	each := func(done checksum.Job, err error) error {
-		if err != nil {
+	t.Run("setup error", func(t *testing.T) {
+		cb := func(name string, sums checksum.HashResult, err error) error {
 			return err
 		}
-		s, err := done.SumString(checksum.MD5)
-		if err != nil {
-			return err
+		setup := func(add checksum.AddFunc) error {
+			return errors.New("catch me")
 		}
-		if s == "e8c078f0e4ad79b16fcb618a3790c2df" {
-			return expectedErr
+		err := checksum.Run(setup, cb)
+		if err == nil {
+			t.Error("expected error from close")
+		} else if err.Error() != "catch me" {
+			t.Error("expected: catch me")
 		}
-		return nil
-	}
-	dir := ocfl.NewFS(os.DirFS("test/fixture"))
-	err := checksum.Walk(dir, ".",
-		each, checksum.WithMD5())
-	walkErr, ok := err.(*checksum.WalkErr)
-	if !ok {
-		t.Error(`expected checksum.WalkErr`)
-	}
-	if walkErr.JobFuncErr != expectedErr {
-		t.Error(`expected  walkErr.JobErr == expectedErr`)
-	}
+	})
 
-	err = checksum.Walk(dir, "NOPLACE",
-		each, checksum.WithSHA1())
-	walkErr, ok = err.(*checksum.WalkErr)
-	if !ok {
-		t.Error(`expected checksum.WalkErr`)
-	}
-	if !errors.Is(walkErr.WalkDirErr, fs.ErrNotExist) {
-		t.Error(`errors.Is(walkErr.WalkDirErr, fs.ErrNotExist)`)
-	}
-}
-
-func ExampleWalk() {
-	dir := ocfl.NewFS(os.DirFS("test/fixture"))
-	// called for each complete job
-	each := func(done checksum.Job, err error) error {
-		if err != nil {
-			return err
-		}
-		md5, err := done.SumString(checksum.MD5)
-		sha, err := done.SumString(checksum.SHA1)
-		if md5 == "e8c078f0e4ad79b16fcb618a3790c2df" {
-			fmt.Println(sha)
-		}
-		return nil
-	}
-	err := checksum.Walk(dir, ".", each,
-		checksum.WithGos(5), // 5 go routines
-		checksum.WithMD5(),  // md5sum
-		checksum.WithSHA1()) // sha1
-
-	if err != nil {
-		fmt.Println(err)
-	}
-	// Output: a0556088c3b6a78b2d8ef7b318cfca54589f68c0
 }

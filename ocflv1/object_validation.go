@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"strings"
@@ -436,48 +437,34 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 		return err
 	}
 	// digests
-	pipe, err := checksum.NewPipe(vldr.FS, checksum.WithCtx(ctx))
-	if err != nil {
-		err := fmt.Errorf("validating content digests: %w", err)
-		return vldr.AddFatal(err)
-	}
-	errChan := make(chan error, 1)
-	go func() {
-		defer pipe.Close()
-		defer close(errChan)
+	digestSetup := func(add checksum.AddFunc) error {
 		for name, pInfo := range vldr.ledger.paths {
-			checksumAlgs, err := pInfo.checksumConfigAlgs()
-			if err != nil {
-				errChan <- fmt.Errorf("validating content digests: %w", err)
-				return
+			algs := checksum.HashSet{}
+			for h := range pInfo.digests {
+				algs[h.ID()] = h.New
 			}
-			if len(checksumAlgs) == 0 {
+			if len(algs) == 0 {
 				// no digests associate with the path
 				err := fmt.Errorf("path not referenecd in manifest as expected: %s", name)
-				errChan <- ec(err, codes.E023.Ref(ocflV))
-				return
+				return ec(err, codes.E023.Ref(ocflV))
 			}
-			fsPath := path.Join(vldr.Root, name) // path relative to FS
-			err = pipe.Add(fsPath, checksumAlgs...)
-			if err != nil {
-				errChan <- fmt.Errorf("validating content digests: %w", err)
-				return
+			if !add(path.Join(vldr.Root, name), algs) {
+				return fmt.Errorf("checksum interupted near: %s", name)
 			}
 		}
-	}()
-	for job := range pipe.Out() {
-		if err := job.Err(); err != nil {
-			// should have already caught path-not-existing problems, but just
-			// in case ...
+		return nil
+	}
+	digestCallback := func(name string, results checksum.HashResult, err error) error {
+		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				err = ec(err, codes.E092.Ref(ocflV))
 			}
 			return vldr.AddFatal(err)
 		}
-		for algID, b := range job.Sums() {
+		for algID, b := range results {
 			dig := hex.EncodeToString(b)
 			// convert path back from FS-relative to object-relative path
-			objPath := strings.TrimPrefix(job.Path(), vldr.Root+"/")
+			objPath := strings.TrimPrefix(name, vldr.Root+"/")
 			alg, _ := digest.NewAlg(algID)
 			entry, exists := vldr.ledger.getDigest(objPath, alg)
 			if !exists {
@@ -485,7 +472,7 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 			}
 			if !strings.EqualFold(dig, entry.digest) {
 				err := &ContentDigestErr{
-					Path:   job.Path(),
+					Path:   name,
 					Alg:    alg,
 					Entry:  *entry,
 					Digest: dig,
@@ -500,8 +487,13 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 				return err
 			}
 		}
+		return nil
 	}
-	if err := <-errChan; err != nil {
+	digestOpen := func(name string) (io.ReadCloser, error) {
+		return vldr.FS.OpenFile(ctx, name)
+	}
+	err := checksum.Run(digestSetup, digestCallback, checksum.WithOpenFunc(digestOpen))
+	if err != nil {
 		vldr.AddFatal(err)
 		return err
 	}

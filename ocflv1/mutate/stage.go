@@ -2,6 +2,7 @@ package mutate
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -106,26 +107,37 @@ func (s *objStage) FromFS(fsys fs.FS, dir string) error {
 	// clear existing stage state, build new stage state using
 	// stage.digestAlgorithm.
 	s.Logical = digest.NewMap()
-	// checksum.WalkFunc
-	each := func(j checksum.Job, err error) error {
-		if err != nil {
-			return err
+	setup := func(add checksum.AddFunc) error {
+		walkFn := func(name string, inf fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if inf.Type().IsRegular() {
+				if !add(name, checksum.HashSet{s.digestAlgorithm.ID(): s.digestAlgorithm.New}) {
+					return fmt.Errorf("not added: %s", name)
+				}
+			}
+			return nil
 		}
-		sum, err := j.SumString(s.digestAlgorithm.ID())
-		if err != nil {
-			return err
-		}
-		err = s.Logical.Add(sum, j.Path())
-		if err != nil {
-			return err
-		}
-		return s.ProvidePath(srcRoot, j.Path(), sum, j.Path())
+		return fs.WalkDir(srcRoot, ".", walkFn)
 	}
-	// FIXME: checksum.Walk is a mess.
-	err = checksum.Walk(ocfl.NewFS(srcRoot), ".", each,
-		checksum.WithAlg(s.digestAlgorithm.ID(), s.digestAlgorithm.New))
-	if err != nil {
-		s.err = err
+	cb := func(name string, results checksum.HashResult, err error) error {
+		if err != nil {
+			return err
+		}
+		alg := s.digestAlgorithm.ID()
+		byts, ok := results[alg]
+		if !ok {
+			return fmt.Errorf("missing %s digest for %s", alg, name)
+		}
+		sum := hex.EncodeToString(byts)
+		err = s.Logical.Add(sum, name)
+		if err != nil {
+			return err
+		}
+		return s.ProvidePath(srcRoot, name, sum, name)
+	}
+	if err := checksum.Run(setup, cb, checksum.WithFS(srcRoot)); err != nil {
 		return err
 	}
 	// err = stage.writeInventory()
