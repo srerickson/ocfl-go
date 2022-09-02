@@ -112,7 +112,7 @@ func (s *storeValidator) validate(ctx context.Context) error {
 	//registered extension name for the extension defining the arrangement under
 	//the storage root.
 	if hasLayout {
-		err = ReadLayout(s.FS, s.Root, &s.Layout)
+		err = ReadLayout(ctx, s.FS, s.Root, &s.Layout)
 		if err != nil {
 			s.AddFatal(err)
 		}
