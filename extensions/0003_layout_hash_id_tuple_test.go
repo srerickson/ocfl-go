@@ -12,10 +12,7 @@ func TestLayoutHashIDTuple(t *testing.T) {
 		`..hor/rib:le-$id`: `487/326/d8c/%2e%2ehor%2frib%3ale-%24id`,
 		`..Hor/rib:lè-$id`: `373/529/21a/%2e%2eHor%2frib%3al%c3%a8-%24id`,
 	}
-	l, ok := extensions.NewLayoutHashIDTuple().(*extensions.LayoutHashIDTuple)
-	if !ok {
-		t.Fatal("not a layout")
-	}
+	l := extensions.NewLayoutHashIDTuple()
 	f, err := l.NewFunc()
 	if err != nil {
 		t.Fatal(err)

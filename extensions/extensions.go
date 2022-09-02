@@ -7,11 +7,11 @@ import (
 
 // global register of extensions
 var register = map[string]func() Extension{
-	Ext0002: NewLayoutFlatDirect,
-	Ext0003: NewLayoutHashIDTuple,
-	Ext0004: NewLayoutHashTuple,
-	Ext0006: NewLayoutFlatOmitPrefix,
-	Ext0007: NewLayoutTupleOmitPrefix,
+	Ext0002: func() Extension { return NewLayoutFlatDirect() },
+	Ext0003: func() Extension { return NewLayoutHashIDTuple() },
+	Ext0004: func() Extension { return NewLayoutHashTuple() },
+	Ext0006: func() Extension { return NewLayoutFlatOmitPrefix() },
+	Ext0007: func() Extension { return NewLayoutTupleOmitPrefix() },
 }
 
 var ErrNotLayout = errors.New("not a layout extension")

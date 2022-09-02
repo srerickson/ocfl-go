@@ -4,6 +4,7 @@ import "errors"
 
 const Ext0006 = "0006-flat-omit-prefix-storage-layout"
 
+// Extension 0006-flat-omit-prefix-storage-layout
 type LayoutFlatOmitPrefix struct {
 	ExtensionName string `json:"extensionName"`
 	Delimiter     string `json:"delimiter"`
@@ -12,7 +13,7 @@ type LayoutFlatOmitPrefix struct {
 var _ Layout = (*LayoutFlatOmitPrefix)(nil)
 var _ Extension = (*LayoutFlatOmitPrefix)(nil)
 
-func NewLayoutFlatOmitPrefix() Extension {
+func NewLayoutFlatOmitPrefix() *LayoutFlatOmitPrefix {
 	return &LayoutFlatOmitPrefix{
 		ExtensionName: Ext0007,
 		Delimiter:     ``,

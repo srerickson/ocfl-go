@@ -10,6 +10,7 @@ import (
 
 const Ext0004 = "0004-hashed-n-tuple-storage-layout"
 
+// Extension 0004-hashed-n-tuple-storage-layout
 type LayoutHashTuple struct {
 	ExtensionName   string      `json:"extensionName"`
 	DigestAlgorithm *digest.Alg `json:"digestAlgorithm"`
@@ -21,7 +22,7 @@ type LayoutHashTuple struct {
 var _ Layout = (*LayoutHashTuple)(nil)
 var _ Extension = (*LayoutHashTuple)(nil)
 
-func NewLayoutHashTuple() Extension {
+func NewLayoutHashTuple() *LayoutHashTuple {
 	return &LayoutHashTuple{
 		ExtensionName:   Ext0004,
 		DigestAlgorithm: &digest.SHA256,

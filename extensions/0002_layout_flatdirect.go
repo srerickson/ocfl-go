@@ -4,6 +4,7 @@ import "fmt"
 
 const Ext0002 = "0002-flat-direct-storage-layout"
 
+// Extension 0002-flat-direct-storage-layout
 type LayoutFlatDirect struct {
 	ExtensionName string `json:"extensionName"`
 }
@@ -11,7 +12,7 @@ type LayoutFlatDirect struct {
 var _ Layout = (*LayoutFlatDirect)(nil)
 var _ Extension = (*LayoutFlatDirect)(nil)
 
-func NewLayoutFlatDirect() Extension {
+func NewLayoutFlatDirect() *LayoutFlatDirect {
 	return &LayoutFlatDirect{
 		ExtensionName: Ext0002,
 	}

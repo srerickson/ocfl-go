@@ -13,6 +13,7 @@ const (
 	lowerhex = "0123456789abcdef"
 )
 
+// Extension 0003-hash-and-id-n-tuple-storage-layout
 type LayoutHashIDTuple struct {
 	ExtensionName   string      `json:"extensionName"`
 	DigestAlgorithm *digest.Alg `json:"digestAlgorithm"`
@@ -23,7 +24,7 @@ type LayoutHashIDTuple struct {
 var _ Layout = (*LayoutHashIDTuple)(nil)
 var _ Extension = (*LayoutHashIDTuple)(nil)
 
-func NewLayoutHashIDTuple() Extension {
+func NewLayoutHashIDTuple() *LayoutHashIDTuple {
 	return &LayoutHashIDTuple{
 		ExtensionName:   Ext0003,
 		DigestAlgorithm: &digest.SHA256,

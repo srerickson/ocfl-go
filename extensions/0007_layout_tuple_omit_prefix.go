@@ -4,6 +4,7 @@ import "errors"
 
 const Ext0007 = "0007-n-tuple-omit-prefix-storage-layout"
 
+// Extension 0007-n-tuple-omit-prefix-storage-layout
 type LayoutTupleOmitPrefix struct {
 	ExtensionName string `json:"extensionName"`
 	Delimiter     string `json:"delimiter"`
