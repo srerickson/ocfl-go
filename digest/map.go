@@ -138,6 +138,15 @@ func (dm *Map) Add(digest string, p string) error {
 	return nil
 }
 
+func (dm Map) Copy() *Map {
+	m := NewMap()
+	for digest, paths := range dm.digests {
+		m.digests[digest] = make([]string, 0, len(paths))
+		m.digests[digest] = append(m.digests[digest], dm.digests[digest]...)
+	}
+	return m
+}
+
 func (dm Map) GetDigest(p string) string {
 	if dm.isDirty() && dm.init() != nil {
 		return ""
