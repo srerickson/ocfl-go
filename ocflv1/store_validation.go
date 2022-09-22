@@ -33,7 +33,7 @@ type storeValidator struct {
 	FS     ocfl.FS
 	Root   string
 	ocflV  ocfl.Spec
-	Layout StoreLayout
+	Layout storeLayout
 	// getPath extensions.LayoutFunc
 }
 
@@ -112,19 +112,19 @@ func (s *storeValidator) validate(ctx context.Context) error {
 	//registered extension name for the extension defining the arrangement under
 	//the storage root.
 	if hasLayout {
-		err = ReadLayout(ctx, s.FS, s.Root, &s.Layout)
+		err = readLayout(ctx, s.FS, s.Root, &s.Layout)
 		if err != nil {
 			s.AddFatal(err)
 		}
-		if _, ok := s.Layout.values[descriptionKey]; !ok {
+		if _, ok := s.Layout[descriptionKey]; !ok {
 			err := errors.New(`storage root ocfl_layout.json missing key: "description"`)
 			s.AddFatal(ec(err, codes.E070.Ref(s.ocflV)))
 		}
-		if _, ok := s.Layout.values[extensionKey]; !ok {
-			err := errors.New(`storage root ocfl_layout.json missing  key:"extension"`)
+		if _, ok := s.Layout[extensionKey]; !ok {
+			err := errors.New(`storage root ocfl_layout.json missing key:"extension"`)
 			s.AddFatal(ec(err, codes.E070.Ref(s.ocflV)))
 		} else {
-			ext, err := extensions.Get(s.Layout.Extension())
+			ext, err := extensions.Get(s.Layout[extensionKey])
 			if err != nil {
 				return s.AddFatal(ec(err, codes.E071.Ref(s.ocflV)))
 			}

@@ -26,7 +26,7 @@ var (
 	// supported versions
 	ocflVerSupported = map[ocfl.Spec]bool{
 		ocflv1_0: true,
-		ocflv1_1: false,
+		ocflv1_1: true,
 	}
 
 	// algs set to true can be used as digestAlgorithms

@@ -111,6 +111,33 @@ func (inv *Inventory) ContentPath(vnum ocfl.VNum, logical string) (string, error
 	return paths[0], nil
 }
 
+// Copy creates an identical Inventory without any references to values in the
+// original inventory
+func (inv Inventory) Copy() *Inventory {
+	newInv := inv
+	newInv.digest = "" // don't copy digest value (read from sidecar)
+	newInv.Manifest = newInv.Manifest.Copy()
+	newInv.Versions = make(map[ocfl.VNum]*Version, len(inv.Versions))
+	for v, ver := range inv.Versions {
+		newInv.Versions[v] = &Version{
+			Created: ver.Created,
+			Message: ver.Message,
+			State:   ver.State.Copy(),
+		}
+		if newInv.Versions[v].User != nil {
+			newInv.Versions[v].User = &User{
+				Name:    newInv.Versions[v].User.Name,
+				Address: newInv.Versions[v].User.Address,
+			}
+		}
+	}
+	newInv.Fixity = make(map[digest.Alg]*digest.Map, len(inv.Fixity))
+	for alg, m := range inv.Fixity {
+		newInv.Fixity[alg] = m.Copy()
+	}
+	return &newInv
+}
+
 // WriteInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
 // fsys. The digest is calculated using alg and the inventory sidecar is also writen to
 // dir/inventory.alg

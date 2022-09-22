@@ -46,11 +46,11 @@ func TestGetStore(t *testing.T) {
 				fsys = ocfl.NewFS(os.DirFS(storePath))
 				root = sttest.name
 			}
-			store, err := ocflv1.GetStore(ctx, fsys, root)
+			store, err := ocflv1.GetStore(ctx, fsys, root, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if store.Config == nil {
+			if store.LayoutName() == "" {
 				// set custom layout defined in test
 				err := store.SetLayout(sttest.layout)
 				if err != nil {
@@ -58,17 +58,20 @@ func TestGetStore(t *testing.T) {
 				}
 			} else {
 				// read extension from store's layout config
-				err := store.ReadLayout(ctx, store.Config.Extension())
+				err := store.ReadLayout(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
+			}
+			if !store.LayoutOK() {
+				t.Fatal("store should have set layout")
 			}
 			scan, err := store.ScanObjects(ctx, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			for p := range scan {
-				obj, err := store.GetPath(ctx, p)
+				obj, err := store.GetObjectPath(ctx, p)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -77,7 +80,7 @@ func TestGetStore(t *testing.T) {
 					t.Fatal(err)
 				}
 				// test layout works
-				_, err = store.GetID(ctx, inv.ID)
+				_, err = store.GetObject(ctx, inv.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -132,7 +135,7 @@ func TestScanObjects(t *testing.T) {
 						fsys = ocfl.NewFS(os.DirFS(storePath))
 						root = sttest.name
 					}
-					store, err = ocflv1.GetStore(ctx, fsys, root)
+					store, err = ocflv1.GetStore(ctx, fsys, root, nil)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -150,7 +153,7 @@ func TestScanObjects(t *testing.T) {
 						t.Fatalf("expected %d objects, got %d", sttest.size, l)
 					}
 					for p := range obj {
-						_, err := store.GetPath(ctx, p)
+						_, err := store.GetObjectPath(ctx, p)
 						if err != nil {
 							t.Fatal(err)
 						}

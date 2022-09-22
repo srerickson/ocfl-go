@@ -2,9 +2,15 @@ package ocfl
 
 import (
 	"context"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"io/fs"
 	"path"
+	"strings"
+
+	"github.com/srerickson/ocfl/digest"
+	"github.com/srerickson/ocfl/internal/checksum"
 )
 
 type FS interface {
@@ -67,4 +73,38 @@ func EachFile(ctx context.Context, fsys FS, root string, walkFn fs.WalkDirFunc) 
 		}
 	}
 	return nil
+}
+
+// DirTree build a digest.Tree from the contents of dir in fsys using
+// digest algorithm alg.
+func DirTree(ctx context.Context, fsys FS, dir string, alg digest.Alg) (*digest.Tree, error) {
+	tree := &digest.Tree{}
+	setup := func(add checksum.AddFunc) error {
+		walkfn := func(name string, e fs.DirEntry, err error) error {
+			if err != nil {
+				return fmt.Errorf("during source directory scan: %w", err)
+			}
+			if !add(name, checksum.HashSet{alg.ID(): alg.New}) {
+				return fmt.Errorf("source directory scan ended prematurely")
+			}
+			return nil
+		}
+		return EachFile(ctx, fsys, dir, walkfn)
+	}
+	cb := func(name string, result checksum.HashResult, err error) error {
+		if err != nil {
+			return err
+		}
+		// logical paths added to the stage stage should be relative to srcDir
+		logical := strings.TrimPrefix(name, dir+"/")
+		sum := hex.EncodeToString(result[alg.ID()])
+		return tree.SetDigest(logical, sum, false)
+	}
+	open := func(name string) (io.ReadCloser, error) {
+		return fsys.OpenFile(ctx, name)
+	}
+	if err := checksum.Run(setup, cb, checksum.WithOpenFunc(open)); err != nil {
+		return nil, err
+	}
+	return tree, nil
 }

@@ -103,3 +103,7 @@ func (obj *Object) InventorySidecar(ctx context.Context) (string, error) {
 	defer reader.Close()
 	return readInventorySidecar(ctx, reader)
 }
+
+func (obj *Object) Validate(ctx context.Context) error {
+	return ValidateObject(ctx, obj.fsys, obj.rootDir, nil)
+}

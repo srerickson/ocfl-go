@@ -28,7 +28,7 @@ func runStat(cmd *coral.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("stat: %w", err)
 	}
-	str, err := ocflv1.GetStore(cmd.Context(), bk, root)
+	str, err := ocflv1.GetStore(cmd.Context(), bk, root, nil)
 	if err != nil {
 		return fmt.Errorf("stat: %w", err)
 	}
@@ -40,7 +40,7 @@ func runStat(cmd *coral.Command, args []string) error {
 		return fmt.Errorf("scanning storage root: %w", err)
 	}
 	for p := range scan {
-		obj, err := str.GetPath(cmd.Context(), p)
+		obj, err := str.GetObjectPath(cmd.Context(), p)
 		if err != nil {
 			return fmt.Errorf("listing objects: %w", err)
 		}
