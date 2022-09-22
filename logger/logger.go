@@ -15,6 +15,10 @@ var opts = logfmtr.Options{
 }
 var defaultLogger = logfmtr.NewWithOptions(opts)
 
+func SetVerbosity(v int) {
+	logfmtr.SetVerbosity(v)
+}
+
 func DefaultLogger() logr.Logger {
 	return defaultLogger
 }

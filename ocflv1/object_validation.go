@@ -10,11 +10,11 @@ import (
 	"path"
 	"strings"
 
+	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/extensions"
 	"github.com/srerickson/ocfl/internal/checksum"
-	"github.com/srerickson/ocfl/logger"
 	"github.com/srerickson/ocfl/ocflv1/codes"
 	"github.com/srerickson/ocfl/validation"
 )
@@ -63,7 +63,7 @@ func (vldr *objectValidator) defaults(ctx context.Context) error {
 		return err
 	}
 	if vldr.Logger.GetSink() == nil {
-		vldr.Log = validation.NewLog(logger.DefaultLogger())
+		vldr.Log = validation.NewLog(logr.Discard())
 	}
 	if vldr.ledger == nil {
 		vldr.ledger = &pathLedger{}

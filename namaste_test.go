@@ -2,7 +2,6 @@ package ocfl_test
 
 import (
 	"context"
-	"os"
 	"testing"
 	"testing/fstest"
 
@@ -54,25 +53,18 @@ func TestValidate(t *testing.T) {
 
 func TestWriteDeclaration(t *testing.T) {
 	is := is.New(t)
-	tmpDir, err := os.MkdirTemp("", "tmp-namaste-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-	fsys, err := testfs.NewTestFS(tmpDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	fsys := testfs.NewMemFS()
+	ctx := context.Background()
 	v := ocfl.Spec{12, 1}
 	dec := &ocfl.Declaration{"ocfl", v}
-	err = ocfl.WriteDeclaration(context.Background(), fsys, ".", *dec)
+	err := ocfl.WriteDeclaration(ctx, fsys, ".", *dec)
 	is.NoErr(err)
-	inf, err := fsys.ReadDir(context.Background(), ".")
+	inf, err := fsys.ReadDir(ctx, ".")
 	is.NoErr(err)
 	out, err := ocfl.FindDeclaration(inf)
 	is.NoErr(err)
 	is.True(out.Type == "ocfl")
 	is.True(out.Version == v)
-	err = ocfl.ValidateDeclaration(context.Background(), fsys, dec.Name())
+	err = ocfl.ValidateDeclaration(ctx, fsys, dec.Name())
 	is.NoErr(err)
 }

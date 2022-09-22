@@ -8,26 +8,42 @@ import (
 	"io/fs"
 	"path"
 
+	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"gocloud.dev/blob"
 )
 
 var ErrNotDir = fmt.Errorf("not a directory")
 
-// FS is a generic backend for cloud storage based on gocloud.dev/blob
+// FS is a generic backend for cloud storage backends using a blob.Bucket
 type FS struct {
-	buck *blob.Bucket
+	*blob.Bucket
+	log logr.Logger
 }
 
 var _ ocfl.WriteFS = (*FS)(nil)
 
-func NewFS(b *blob.Bucket) *FS {
-	return &FS{
-		buck: b,
+type fsOption func(*FS)
+
+func NewFS(b *blob.Bucket, opts ...fsOption) *FS {
+	fsys := &FS{
+		Bucket: b,
+		log:    logr.Discard(),
+	}
+	for _, opt := range opts {
+		opt(fsys)
+	}
+	return fsys
+}
+
+func WithLogger(l logr.Logger) fsOption {
+	return func(fsys *FS) {
+		fsys.log = l
 	}
 }
 
-func (b *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
+func (fsys *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
+	fsys.log.V(ocfl.LevelDebug).Info("open file", "name", name)
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{
 			Op:   "openfile",
@@ -35,7 +51,7 @@ func (b *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 			Err:  fs.ErrInvalid,
 		}
 	}
-	reader, err := b.buck.NewReader(ctx, name, nil)
+	reader, err := fsys.Bucket.NewReader(ctx, name, nil)
 	if err != nil {
 		return nil, &fs.PathError{
 			Op:   "openfile",
@@ -53,7 +69,8 @@ func (b *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	}, nil
 }
 
-func (b *FS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
+func (fsys *FS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
+	fsys.log.V(ocfl.LevelDebug).Info("read dir", "name", name)
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{
 			Op:   "readdir",
@@ -75,7 +92,7 @@ func (b *FS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
 		opts.Prefix = name + "/"
 	}
 	for {
-		list, token, err = b.buck.ListPage(ctx, token, pageSize, opts)
+		list, token, err = fsys.Bucket.ListPage(ctx, token, pageSize, opts)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
@@ -114,8 +131,9 @@ func (b *FS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
 }
 
 func (b *FS) Write(ctx context.Context, name string, r io.Reader) (int64, error) {
+	b.log.V(ocfl.LevelDebug).Info("write file", "name", name)
 	opts := &blob.WriterOptions{}
-	writer, err := b.buck.NewWriter(ctx, name, opts)
+	writer, err := b.Bucket.NewWriter(ctx, name, opts)
 	if err != nil {
 		return 0, err
 	}
