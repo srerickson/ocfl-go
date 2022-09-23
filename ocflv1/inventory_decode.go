@@ -274,7 +274,7 @@ type InvDecodeError struct {
 	ocflV   ocfl.Spec
 }
 
-// InvDecodeError implementes validation.ErrorCode
+// InvDecodeError implements validation.ErrorCode
 var _ validation.ErrorCode = &InvDecodeError{}
 
 func (invErr *InvDecodeError) Error() string {

@@ -75,10 +75,10 @@ func (p *BasePathErr) Error() string {
 // functionality of the Manifest, Version State, and Fixity fields in the OCFL
 // object Inventory
 //
-// A note on digest format: The OCFL spec requires the case of digest string to
-// be preserved. We can't convert all digests to lowercase because digest string
-// must match excactly between the manifest and and version state; it's an error
-// when they don't match, so automatically converting digests would cause
+// A note on digest format: The OCFL spec requires the case of digest strings to
+// be preserved. We can't convert all digests to lowercase because digest
+// strings must match excactly between the manifest and version state; it's an
+// error when they don't match. Automatically converting digests would cause
 // invalid inventories to pass validation.
 //
 type Map struct {

@@ -21,7 +21,7 @@ var (
 	ErrDeclMultiple = errors.New("multiple NAMASTE declarations found")
 	ErrDeclOpen     = errors.New("could not open NAMASTE declaration")
 	ErrDeclWrite    = errors.New("could not write NAMASTE declaration")
-	ErrDeclInvalid  = errors.New("invalid NAMASTE decleration contents")
+	ErrDeclInvalid  = errors.New("invalid NAMASTE declaration contents")
 	namasteRE       = regexp.MustCompile(`^0=([a-z_]+)_([0-9]+\.[0-9]+)$`)
 )
 

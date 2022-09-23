@@ -139,7 +139,7 @@ func (inv Inventory) Copy() *Inventory {
 }
 
 // WriteInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
-// fsys. The digest is calculated using alg and the inventory sidecar is also writen to
+// fsys. The digest is calculated using alg and the inventory sidecar is also written to
 // dir/inventory.alg
 func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, dir string, inv *Inventory) error {
 	if err := ctx.Err(); err != nil {
