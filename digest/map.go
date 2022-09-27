@@ -22,7 +22,7 @@ import (
 	"strings"
 )
 
-// DigestConflictErr indicates same digest found multiple time in the digest map
+// DigestConflictErr indicates same digest found multiple times in the digest map
 // (i.e., with different cases)
 type DigestConflictErr struct {
 	Digest string

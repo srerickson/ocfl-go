@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
+	"github.com/srerickson/ocfl/digest/checksum"
 )
 
 var ErrVersionExists = errors.New("version already exists")
@@ -68,31 +71,55 @@ func DefaultContentPathFunc(logical string, digest string) string {
 	return logical
 }
 
-func (stage *Stage) Add(ctx context.Context, logical, src, digest string) error {
-	if err := stage.state.SetDigest(logical, digest, true); err != nil {
-		return err
-	}
-	return stage.addManifest(digest, src)
+type StageAddConf struct {
+	log      logr.Logger
+	progress io.Writer
+	dstDir   string
 }
 
-func (stage *Stage) AddDir(ctx context.Context, srcDir string, logicalDir string) error {
+type StageAddOpt func(*StageAddConf)
+
+func StageAddProgress(w io.Writer) StageAddOpt {
+	return func(c *StageAddConf) {
+		c.progress = w
+	}
+}
+
+func (stage *Stage) AddDir(ctx context.Context, srcDir string, opts ...StageAddOpt) error {
 	if stage.srcFS == nil {
 		return fmt.Errorf("stage's source FS for added files is not set")
 	}
-	tree, err := ocfl.DirTree(ctx, stage.srcFS, srcDir, stage.alg)
+	conf := StageAddConf{
+		log:    logr.Discard(),
+		dstDir: ".",
+	}
+	for _, o := range opts {
+		o(&conf)
+	}
+	// digest map of srcdir
+	// convert map to tree and and add tree to stage fs at logical dr
+	tree, err := ocfl.DirTree(ctx, stage.srcFS, srcDir, []digest.Alg{stage.alg}, checksum.WithProgress(conf.progress))
 	if err != nil {
 		return fmt.Errorf("while scanning %s: %w", srcDir, err)
 	}
-	// add tree items to the stage manifest
-	tree.Walk(func(n string, isdir bool, sum string) error {
+	walkFn := func(n string, isdir bool, sums digest.Set) error {
 		if isdir {
 			return nil
 		}
-		// the path from tree is relative to srcDir but the path in the stage
-		// manifest should be relative to the stage fsys
-		return stage.addManifest(sum, path.Join(srcDir, n))
-	})
-	return stage.state.SetDir(logicalDir, tree, true)
+		sum, ok := sums[stage.alg]
+		if !ok {
+			return fmt.Errorf("missing required digest for '%s'", stage.alg)
+		}
+		return stage.addManifest(sum, n)
+	}
+	if err = tree.Walk(walkFn); err != nil {
+		return err
+	}
+	sub, err := tree.Sub(srcDir)
+	if err != nil {
+		return fmt.Errorf("shouldn't happen, need better message: %w", err)
+	}
+	return stage.state.SetDir(conf.dstDir, sub, true)
 }
 
 func (stage *Stage) addManifest(sum, path string) error {
@@ -123,9 +150,13 @@ func buildManifestNext(stage *Stage, prev *digest.Map) (*digest.Map, error) {
 	if stage.contentDir == "" {
 		stage.contentDir = contentDir
 	}
-	walkfn := func(p string, isdir bool, digest string) error {
+	walkfn := func(p string, isdir bool, sums digest.Set) error {
 		if isdir {
 			return nil
+		}
+		digest, ok := sums[stage.alg]
+		if !ok {
+			return fmt.Errorf("missing digest for '%s'", stage.alg)
 		}
 		if m.DigestExists(digest) {
 			return nil
@@ -149,7 +180,7 @@ func buildInventoryV1(ctx context.Context, stage *Stage) (*Inventory, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error while building manifest: %w", err)
 	}
-	state, err := stage.state.AsMap()
+	state, err := stage.state.AsMap(stage.alg)
 	if err != nil {
 		return nil, fmt.Errorf("error while converting state: %w", err)
 	}
@@ -183,7 +214,7 @@ func buildInventoryNext(ctx context.Context, stage *Stage, prev *Inventory) (*In
 	if err != nil {
 		return nil, fmt.Errorf("error while updating manifest: %w", err)
 	}
-	state, err := stage.state.AsMap()
+	state, err := stage.state.AsMap(stage.alg)
 	if err != nil {
 		return nil, fmt.Errorf("error while converting state: %w", err)
 	}
@@ -228,7 +259,7 @@ func (stage *Stage) validate(inv *Inventory) error {
 	}
 	// all digests in stage state should be accounted for in either the
 	// the stage's "add" manifest or the inventory manifest
-	stateMap, err := stage.state.AsMap()
+	stateMap, err := stage.state.AsMap(stage.alg)
 	if err != nil {
 		return fmt.Errorf("stage state is invalid: %w", err)
 	}

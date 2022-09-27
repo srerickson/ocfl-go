@@ -10,12 +10,15 @@ import (
 var invalidPaths = []string{"", "..", "/", "/file.txt", "dir//file.txt", "dir/"}
 
 var testTrees = map[string]treeTest{
-	`empty`: {},
+	`empty`: {
+		Alg: &digest.SHA256,
+	},
 	`empty-sha256`: {
 		Alg: &digest.SHA256,
 	},
 	`single-file`: {
 		Paths: map[string]string{"a.txt": "abcdef0123456789"},
+		Alg:   &digest.SHA256,
 	},
 	`single-file-sha256`: {
 		Paths: map[string]string{"a.txt": "abcdef0123456789"},
@@ -40,7 +43,7 @@ type treeTest struct {
 func (tt treeTest) Tree() *digest.Tree {
 	tree := digest.Tree{}
 	for p, d := range tt.Paths {
-		if err := tree.SetDigest(p, d, false); err != nil {
+		if err := tree.SetDigest(p, *tt.Alg, d, false); err != nil {
 			panic(err)
 		}
 	}
@@ -53,7 +56,7 @@ func testTreeSetDigest(t *testing.T, tt treeTest) {
 	t.Run("invalid path error", func(t *testing.T) {
 		tree := tt.Tree()
 		for _, p := range invalidPaths {
-			err := tree.SetDigest(p, "", false)
+			err := tree.SetDigest(p, *tt.Alg, "", false)
 			if err == nil {
 				t.Fatalf("expected an error for '%s'", p)
 			}
@@ -68,12 +71,12 @@ func testTreeSetDigest(t *testing.T, tt treeTest) {
 	// SetDigest should return error if path is a directory
 	t.Run("path not file error", func(t *testing.T) {
 		tree := tt.Tree()
-		if err := tree.SetDigest("dir/path", "abcd", false); err != nil {
+		if err := tree.SetDigest("dir/path", digest.MD5, "abcd", false); err != nil {
 			t.Fatal(err)
 		}
 		// replace=false
 		for _, dir := range []string{".", "dir"} {
-			err := tree.SetDigest(dir, "abcd", false)
+			err := tree.SetDigest(dir, digest.MD5, "abcd", false)
 			if err == nil {
 				t.Fatalf("expected and error for %s", dir)
 			}
@@ -89,11 +92,11 @@ func testTreeSetDigest(t *testing.T, tt treeTest) {
 	// SetDigest should return an error if replacing digest and replace is false
 	t.Run("replacement", func(t *testing.T) {
 		tree := tt.Tree()
-		if err := tree.SetDigest("path", "abcd", false); err != nil {
+		if err := tree.SetDigest("path", digest.MD5, "abcd", false); err != nil {
 			t.Fatal(err)
 		}
 		// replace=false
-		err := tree.SetDigest("path", "efgh", false)
+		err := tree.SetDigest("path", digest.MD5, "efgh", false)
 		if err == nil {
 			t.Fatal("expected an error")
 		}
@@ -101,7 +104,7 @@ func testTreeSetDigest(t *testing.T, tt treeTest) {
 			t.Fatal("expected digest exists error")
 		}
 		// replace=true
-		if err := tree.SetDigest("path", "efgh", true); err != nil {
+		if err := tree.SetDigest("path", digest.MD5, "efgh", true); err != nil {
 			t.Fatal(err)
 		}
 		// should have one new path
@@ -119,7 +122,7 @@ func testTreeGetDigest(t *testing.T, tt treeTest) {
 	t.Run("existing file", func(t *testing.T) {
 		tree := tt.Tree()
 		for f, expect := range tt.Paths {
-			got, err := tree.GetDigest(f)
+			got, err := tree.GetDigest(f, *tt.Alg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -149,7 +152,7 @@ func testTreeGetDigest(t *testing.T, tt treeTest) {
 	t.Run("invalid path error", func(t *testing.T) {
 		tree := tt.Tree()
 		for _, p := range invalidPaths {
-			_, err := tree.GetDigest(p)
+			_, err := tree.GetDigest(p, *tt.Alg)
 			if err == nil {
 				t.Fatalf("expected an error for '%s'", p)
 			}
@@ -174,7 +177,7 @@ func testTreeGetDigest(t *testing.T, tt treeTest) {
 	// GetDigest should return error for missing paths
 	t.Run("not found error", func(t *testing.T) {
 		tree := tt.Tree()
-		_, err := tree.GetDigest("a/b/none.txt")
+		_, err := tree.GetDigest("a/b/none.txt", *tt.Alg)
 		if err == nil {
 			t.Fatal("expected an error")
 		}
@@ -212,10 +215,10 @@ func testTreeRemove(t *testing.T, tt treeTest) {
 	t.Run("remove dirs", func(t *testing.T) {
 		tree := tt.Tree()
 		// all tests should have one file
-		if err := tree.SetDigest("a-new.txt", "000000", true); err != nil {
+		if err := tree.SetDigest("a-new.txt", *tt.Alg, "000000", true); err != nil {
 			t.Fatal(err)
 		}
-		if err := tree.SetDigest("a/new.txt", "012345", false); err != nil {
+		if err := tree.SetDigest("a/new.txt", *tt.Alg, "012345", false); err != nil {
 			t.Fatal(err)
 		}
 		if err := tree.Remove("a", true); err != nil {

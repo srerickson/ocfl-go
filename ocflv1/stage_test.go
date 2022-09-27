@@ -39,7 +39,7 @@ func TestStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stage.AddDir(ctx, `src1`, `.`); err != nil {
+	if err := stage.AddDir(ctx, `src1`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Commit(ctx, stage); err != nil {
@@ -58,7 +58,7 @@ func TestStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stage.AddDir(ctx, `src2`, `.`); err != nil {
+	if err := stage.AddDir(ctx, `src2`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Commit(ctx, stage); err != nil {
@@ -77,7 +77,7 @@ func TestStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stage.AddDir(ctx, `src3`, `.`); err != nil {
+	if err := stage.AddDir(ctx, `src3`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Commit(ctx, stage); err != nil {
@@ -96,7 +96,7 @@ func TestStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stage.AddDir(ctx, `src4`, `.`); err != nil {
+	if err := stage.AddDir(ctx, `src4`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Commit(ctx, stage); err != nil {

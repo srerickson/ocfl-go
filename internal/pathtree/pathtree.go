@@ -49,6 +49,9 @@ func Children[T any](node *Node[T]) []DirEntry {
 }
 
 func Get[T any](node *Node[T], p string) (*Node[T], error) {
+	if !fs.ValidPath(p) {
+		return nil, ErrInvalidPath
+	}
 	if p == "." {
 		return node, nil
 	}

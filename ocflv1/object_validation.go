@@ -2,7 +2,6 @@ package ocflv1
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -13,8 +12,8 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
+	"github.com/srerickson/ocfl/digest/checksum"
 	"github.com/srerickson/ocfl/extensions"
-	"github.com/srerickson/ocfl/internal/checksum"
 	"github.com/srerickson/ocfl/ocflv1/codes"
 	"github.com/srerickson/ocfl/validation"
 )
@@ -439,9 +438,9 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 	// digests
 	digestSetup := func(add checksum.AddFunc) error {
 		for name, pInfo := range vldr.ledger.paths {
-			algs := checksum.HashSet{}
-			for h := range pInfo.digests {
-				algs[h.ID()] = h.New
+			algs := make([]digest.Alg, 0, len(pInfo.digests))
+			for alg := range pInfo.digests {
+				algs = append(algs, alg)
 			}
 			if len(algs) == 0 {
 				// no digests associate with the path
@@ -454,28 +453,26 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 		}
 		return nil
 	}
-	digestCallback := func(name string, results checksum.HashResult, err error) error {
+	digestCallback := func(name string, result digest.Set, err error) error {
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				err = ec(err, codes.E092.Ref(ocflV))
 			}
 			return vldr.AddFatal(err)
 		}
-		for algID, b := range results {
-			dig := hex.EncodeToString(b)
+		for alg, sum := range result {
 			// convert path back from FS-relative to object-relative path
 			objPath := strings.TrimPrefix(name, vldr.Root+"/")
-			alg, _ := digest.NewAlg(algID)
 			entry, exists := vldr.ledger.getDigest(objPath, alg)
 			if !exists {
 				panic(`BUG: path/algorithm not a valid key as expected`)
 			}
-			if !strings.EqualFold(dig, entry.digest) {
+			if !strings.EqualFold(sum, entry.digest) {
 				err := &ContentDigestErr{
 					Path:   name,
 					Alg:    alg,
 					Entry:  *entry,
-					Digest: dig,
+					Digest: sum,
 				}
 				for _, l := range entry.locs {
 					if l.InManifest() {
@@ -489,7 +486,7 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 		}
 		return nil
 	}
-	digestOpen := func(name string) (io.ReadCloser, error) {
+	digestOpen := func(name string) (io.Reader, error) {
 		return vldr.FS.OpenFile(ctx, name)
 	}
 	err := checksum.Run(digestSetup, digestCallback, checksum.WithOpenFunc(digestOpen))

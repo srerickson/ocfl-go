@@ -1,11 +1,14 @@
 package checksum
 
 import (
+	"encoding/hex"
 	"hash"
 	"io"
 	"io/fs"
 	"os"
 	"sync"
+
+	"github.com/srerickson/ocfl/digest"
 )
 
 type checksum struct {
@@ -19,29 +22,25 @@ type checksum struct {
 	// Number of goroutines dedicated to processing checksums. Defaults to 1.
 	NumGos int
 
+	Progress io.Writer
+
 	workQ   chan *job     // jobs todo
 	resultQ chan *job     // job results
 	cancel  chan struct{} // cancel remaining jobs
 	errChan chan error    // return values for Close()
 }
 
-// HashSet is used to configure the hashes to calculate for a file
-type HashSet map[string]func() hash.Hash
-
-// HashResult is a map of hash results using same keys as the HashSet
-type HashResult map[string][]byte
-
 // OpenFunc is a function used to
-type OpenFunc func(name string) (io.ReadCloser, error)
+type OpenFunc func(name string) (io.Reader, error)
 
 // CallbackFunc is a function used to handle results of a file digest.
-type CallbackFunc func(name string, results HashResult, err error) error
+type CallbackFunc func(name string, results digest.Set, err error) error
 
-// AddFunc is a funcion used to pass a filename and HashSet for checksuming
-type AddFunc func(name string, algs HashSet) bool
+// AddFunc is a funcion used to pass a filename and algorithms to use for checksuming
+type AddFunc func(name string, algs []digest.Alg) bool
 
 // Run does concurrent checksumming.
-func Run(setupFn func(AddFunc) error, cbFn CallbackFunc, opts ...optFunc) error {
+func Run(setupFn func(AddFunc) error, cbFn CallbackFunc, opts ...Option) error {
 	ch := checksum{}
 	for _, o := range opts {
 		o(&ch)
@@ -62,10 +61,10 @@ func Run(setupFn func(AddFunc) error, cbFn CallbackFunc, opts ...optFunc) error 
 
 // checksum job
 type job struct {
-	path string                      // path to file
-	algs map[string]func() hash.Hash // hash name -> hash constructor
-	sums map[string][]byte           // hash name -> result value
-	err  error                       // any error from job
+	path string       // path to file
+	algs []digest.Alg // hash name -> hash constructor
+	sums digest.Set   // hash name -> result value
+	err  error        // any error from job
 }
 
 func (ch *checksum) open(cb CallbackFunc) error {
@@ -74,7 +73,7 @@ func (ch *checksum) open(cb CallbackFunc) error {
 		gos = 1
 	}
 	if ch.FS != nil {
-		ch.Open = func(name string) (io.ReadCloser, error) {
+		ch.Open = func(name string) (io.Reader, error) {
 			return ch.FS.Open(name)
 		}
 	}
@@ -123,26 +122,35 @@ func (ch *checksum) worker(wg *sync.WaitGroup) {
 }
 
 func (ch *checksum) doJob(j *job) *job {
-	var r io.ReadCloser
+	var r io.Reader
 	r, j.err = ch.Open(j.path)
 	if j.err != nil {
 		return j
 	}
-	defer r.Close()
-	var hashes = make(map[string]hash.Hash, len(j.algs))
-	var writers []io.Writer
-	for name, newHash := range j.algs {
-		h := newHash()
-		hashes[name] = h
+	if closer, ok := r.(io.Closer); ok {
+		defer closer.Close()
+	}
+	multiLen := len(j.algs)
+	if ch.Progress != nil {
+		multiLen += 1
+	}
+	var hashes = make(map[digest.Alg]hash.Hash, multiLen)
+	var writers = make([]io.Writer, 0, multiLen)
+	for _, alg := range j.algs {
+		h := alg.New()
+		hashes[alg] = h
 		writers = append(writers, io.Writer(h))
 	}
-	multi := io.MultiWriter(writers...)
-	if _, j.err = io.Copy(multi, r); j.err != nil {
+	if ch.Progress != nil {
+		writers = append(writers, ch.Progress)
+	}
+	_, j.err = io.Copy(io.MultiWriter(writers...), r)
+	if j.err != nil {
 		return j
 	}
-	j.sums = make(HashResult, len(j.algs))
+	j.sums = make(digest.Set, len(j.algs))
 	for name, h := range hashes {
-		j.sums[name] = h.Sum(nil)
+		j.sums[name] = hex.EncodeToString(h.Sum(nil))
 	}
 	return j
 }
@@ -156,7 +164,7 @@ func (ch *checksum) close() error {
 }
 
 // add adds a checksum job for path to the Pipe.
-func (ch *checksum) add(path string, algs HashSet) bool {
+func (ch *checksum) add(path string, algs []digest.Alg) bool {
 	j := &job{
 		path: path,
 		algs: algs,
@@ -169,7 +177,7 @@ func (ch *checksum) add(path string, algs HashSet) bool {
 	}
 }
 
-func defaultOpener(name string) (io.ReadCloser, error) {
+func defaultOpener(name string) (io.Reader, error) {
 	return os.Open(name)
 }
 
@@ -201,10 +209,10 @@ func (err Err) Unwrap() error {
 	return err.CallbackErr
 }
 
-type optFunc func(*checksum)
+type Option func(*checksum)
 
 // WithFS is a functional option used to set an FS backend for the checksum.
-func WithFS(fsys fs.FS) optFunc {
+func WithFS(fsys fs.FS) Option {
 	return func(c *checksum) {
 		c.FS = fsys
 	}
@@ -212,7 +220,7 @@ func WithFS(fsys fs.FS) optFunc {
 
 // WithOpenFunc is a functional options to set a function used to open filenames
 // passed to the checksum process
-func WithOpenFunc(open OpenFunc) optFunc {
+func WithOpenFunc(open OpenFunc) Option {
 	return func(c *checksum) {
 		c.Open = open
 	}
@@ -220,8 +228,14 @@ func WithOpenFunc(open OpenFunc) optFunc {
 
 // WithNumGos sets the number of goroutines dedicated to processing checksums.
 // Defaults to 1.
-func WithNumGos(gos int) optFunc {
+func WithNumGos(gos int) Option {
 	return func(c *checksum) {
 		c.NumGos = gos
+	}
+}
+
+func WithProgress(w io.Writer) Option {
+	return func(c *checksum) {
+		c.Progress = w
 	}
 }

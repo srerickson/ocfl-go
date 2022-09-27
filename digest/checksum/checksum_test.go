@@ -1,18 +1,16 @@
 package checksum_test
 
 import (
-	"crypto/md5"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 
-	"github.com/srerickson/ocfl/internal/checksum"
+	"github.com/srerickson/ocfl/digest"
+	"github.com/srerickson/ocfl/digest/checksum"
 )
 
 var testMD5Sums = map[string]string{
@@ -23,14 +21,12 @@ var testMD5Sums = map[string]string{
 }
 
 func TestPipe(t *testing.T) {
-	algs := map[string]func() hash.Hash{
-		`md5`: md5.New,
-	}
+	algs := []digest.Alg{digest.MD5}
 	t.Run("zero values, zero files", func(t *testing.T) {
 		setup := func(add checksum.AddFunc) error {
 			return nil
 		}
-		cb := func(name string, results checksum.HashResult, err error) error {
+		cb := func(name string, results digest.Set, err error) error {
 			return err
 		}
 		if err := checksum.Run(setup, cb); err != nil {
@@ -42,7 +38,7 @@ func TestPipe(t *testing.T) {
 			add(filepath.Join("test", "fixture", "hello.csv"), algs)
 			return nil
 		}
-		cb := func(name string, results checksum.HashResult, err error) error {
+		cb := func(name string, results digest.Set, err error) error {
 			return err
 		}
 		if err := checksum.Run(setup, cb); err != nil {
@@ -67,12 +63,12 @@ func TestPipe(t *testing.T) {
 			}
 			return fs.WalkDir(fsys, `test`, walkFunc)
 		}
-		cb := func(name string, sums checksum.HashResult, err error) error {
-			sum, ok := sums[`md5`]
+		cb := func(name string, sums digest.Set, err error) error {
+			sum, ok := sums[digest.MD5]
 			if !ok {
 				return errors.New("expected md5")
 			}
-			results[name] = hex.EncodeToString(sum)
+			results[name] = sum
 			return nil
 		}
 		err := checksum.Run(setup, cb, checksum.WithFS(fsys), checksum.WithNumGos(4))
@@ -85,7 +81,7 @@ func TestPipe(t *testing.T) {
 	})
 	t.Run("callback error", func(t *testing.T) {
 		fsys := os.DirFS(`.`)
-		cb := func(name string, sums checksum.HashResult, err error) error {
+		cb := func(name string, sums digest.Set, err error) error {
 			return errors.New("catch me")
 		}
 		setup := func(add checksum.AddFunc) error {
@@ -103,7 +99,7 @@ func TestPipe(t *testing.T) {
 	})
 
 	t.Run("setup error", func(t *testing.T) {
-		cb := func(name string, sums checksum.HashResult, err error) error {
+		cb := func(name string, sums digest.Set, err error) error {
 			return err
 		}
 		setup := func(add checksum.AddFunc) error {
