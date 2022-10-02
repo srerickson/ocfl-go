@@ -1,54 +1,48 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/goccy/go-yaml"
 	"github.com/muesli/coral"
 	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl/backend/cloud"
+	"github.com/srerickson/ocfl/backend/local"
+	"gocloud.dev/blob"
+	_ "gocloud.dev/blob/azureblob"
+	"gocloud.dev/blob/s3blob"
 )
 
 const (
 	defaultRepoName = "default"
-	s3RepoType      = "s3"
-	fsRepoType      = "fs"
+	fileDriver      = "file"
+	s3Driver        = "s3"
+	azureDriver     = "azure"
 )
 
+var configFlags = struct {
+	saveConfig bool
+}{}
+
 type Config struct {
-	Name  string                `yaml:"name"`
-	Email string                `yaml:"email"`
-	Repos map[string]RepoConfig `yaml:"repos"`
+	Name  string                 `yaml:"name"`
+	Email string                 `yaml:"email"`
+	Repos map[string]*RepoConfig `yaml:"repos"`
 }
 
 type RepoConfig struct {
-	Type string `yaml:"type"` // repo type: "fs" or "s3"
-
-	// store_path is the location of an OCFL Storage Root. It is evaluatated in
-	// the context of a backend configuration (see below). Slash-separated
-	// sequences of path elements, like “x/y/z” are supported. "/" should always
-	// be used as a path separator. Values must not contain an element that is
-	// “.” or “..” or the empty string. Paths must not start or end with a
-	// slash: “/x” and “x/” are invalid.
-	StorePath string `yaml:"store_path"`
-
-	// fs_root is used for the fs backend configuration: it should be an
-	// absolute path to a directory where OCFL storage roots are created (the
-	// parent directory for an OCFL storage root, not the storage root itself).
-	// The default value is the current working directory. The store_path
-	// setting is interpreted as a relative path (using "/" as a path separator)
-	// to a director under fs_root.
-	Root    *string `yaml:"fs_root,omitempty"`
-	absRoot string  // absolute path version of Root
-
-	// S3 backend configutation. The store_path setting is interpreted as
-	// the prefix for objects in the storage root.
-	Endpoint *string `yaml:"s3_endpoint,omitempty"`
-	Bucket   *string `yaml:"s3_bucket,omitempty"`
-	Region   *string `yaml:"s3_region,omitempty"`
+	Driver   string  `yaml:"driver"` // storage driver: "file", "s3", or "azure"
+	Path     string  `yaml:"path,omitempty"`
+	Bucket   *string `yaml:"bucket,omitempty"`
+	Endpoint *string `yaml:"endpoint,omitempty"`
+	Region   *string `yaml:"region,omitempty"`
 }
 
 // configCmd represents the config command
@@ -56,133 +50,183 @@ var configCmd = &coral.Command{
 	Use:   "config",
 	Short: "print configs",
 	Long:  "print gocfl configuration",
-	RunE:  runConfig,
-	Args:  coral.MaximumNArgs(2),
+	Run:   runConfig,
 }
 
 func init() {
 	rootCmd.AddCommand(configCmd)
+	configCmd.Flags().BoolVar(&configFlags.saveConfig, "save", false, "save config used in current command")
 }
 
-func runConfig(cmd *coral.Command, args []string) error {
-	conf, err := getConfig(cfgFile)
+func runConfig(cmd *coral.Command, args []string) {
+	conf, err := getConfig()
 	if err != nil {
-		return fmt.Errorf("config: %w", err)
+		log.Error(err, "can't load config", "file", rootFlags.cfgFile)
+		return
 	}
-	return printConfig(conf)
+	writer := io.Writer(os.Stdout)
+	if configFlags.saveConfig {
+		f, err := os.OpenFile(rootFlags.cfgFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+		if err != nil {
+			log.Error(err, "can't open config file for writing")
+			return
+		}
+		defer f.Close()
+		writer = io.MultiWriter(os.Stdout, f)
+		log.Info("saving config to file", "file", rootFlags.cfgFile)
+	}
+	if err := yaml.NewEncoder(writer).Encode(conf); err != nil {
+		log.Error(err, "error encoding or writing config")
+	}
 }
 
-func getConfig(name string) (*Config, error) {
+func getConfig() (*Config, error) {
+	var cfg *Config
+	name := rootFlags.cfgFile
 	f, err := os.Open(name)
-	if err != nil {
-		return nil, fmt.Errorf("reading config file %s: %w", name, err)
-	}
-	defer f.Close()
-	var cfg Config
-	err = yaml.NewDecoder(f).Decode(&cfg)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("config error: %w", err)
-	} else if err != nil {
-		log.Info("using default config, not found: %s", name)
-		return &Config{}, nil
+		return nil, fmt.Errorf("failed read config file %s: %w", name, err)
 	}
-	log.WithValues("file", name).Info("read config")
-	return &cfg, nil
+	if errors.Is(err, os.ErrNotExist) {
+		log.Info("config file not found", "file", name)
+		log.Info("using default settings")
+		cfg = &Config{
+			Repos: map[string]*RepoConfig{
+				defaultRepoName: defaultRepo(),
+			},
+		}
+	}
+	if f != nil {
+		defer f.Close()
+		cfg = &Config{}
+		err = yaml.NewDecoder(f).Decode(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("parsing config file: %w", err)
+		}
+		log.Info("read config", "file", name)
+	}
+	// apply root command flags
+	repo := cfg.Repo(rootFlags.repoName, true)
+	repo.applyRootFlags()
+	return cfg, nil
 }
 
-func (cfg Config) getRepoConfig(name string) (RepoConfig, error) {
+func defaultRepo() *RepoConfig {
+	return &RepoConfig{
+		Driver: "file",
+		Path:   ".",
+	}
+}
+
+func (cfg *Config) Repo(name string, create bool) *RepoConfig {
 	if name == "" {
-		name = defaultRepoName
+		name = defaultCfg
 	}
-	repo, ok := cfg.Repos[name]
-	if !ok {
-		return RepoConfig{}, fmt.Errorf("repo not configured: %s", name)
+	repo := cfg.Repos[name]
+	if repo == nil && create {
+		repo = defaultRepo()
+		cfg.Repos[name] = repo
 	}
-	return repo, nil
+	return repo
 }
 
-func (cfg Config) getBackendPath(name string) (ocfl.FS, string, error) {
-	return nil, "", errors.New("FIXME")
-
-	// repo, err := cfg.getRepoConfig(name)
-	// if err != nil {
-	// 	return nil, "", err
-	// }
-	// if bucket, awsCfg := repo.awsConfig(); bucket != "" {
-	// 	sess, err := session.NewSession(awsCfg)
-	// 	if err != nil {
-	// 		return nil, "", fmt.Errorf("backend config: %w", err)
-	// 	}
-	// 	vals := []any{
-	// 		"repo_type", s3RepoType,
-	// 		"bucket", bucket,
-	// 	}
-	// 	log.Info("backend settings", vals...)
-	// 	return s3fs.New(s3.New(sess), bucket), repo.StorePath, nil
-	// }
-	// if root := repo.fsConfig(); root != "" {
-	// 	bak, err := local.NewBackend(root)
-	// 	if err != nil {
-	// 		return nil, "", fmt.Errorf("backend config: %w", err)
-	// 	}
-	// 	vals := []any{
-	// 		"type", fsRepoType,
-	// 		"root", root,
-	// 	}
-	// 	log.Info("backend settings", vals...)
-	// 	return bak, repo.StorePath, nil
-	// }
-	// return nil, "", fmt.Errorf("could not determine repo type")
-
+func (cfg *Config) NewFSPath(ctx context.Context, name string) (ocfl.FS, string, error) {
+	repo := cfg.Repo(name, false)
+	if repo == nil {
+		return nil, "", fmt.Errorf("no repo named '%s' in config", name)
+	}
+	return repo.GetFSPath(ctx)
 }
 
-// func writeConfig(name string, cfg *Config) error {
-// 	f, err := os.OpenFile(name, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0600)
-// 	if err != nil {
-// 		return fmt.Errorf("saving config %s: %w", name, err)
-// 	}
-// 	defer f.Close()
-// 	err = yaml.NewEncoder(f).Encode(cfg)
-// 	if err != nil {
-// 		return fmt.Errorf("saving config %s: %w", name, err)
-// 	}
-// 	log.WithValues("file", name).Info("write config")
-// 	return nil
-// }
-
-func printConfig(cfg *Config) error {
-	return yaml.NewEncoder(os.Stdout).Encode(cfg)
+func (repo *RepoConfig) GetFSPath(ctx context.Context) (ocfl.FS, string, error) {
+	var (
+		fsys ocfl.FS
+		path string = repo.Path
+		err  error
+	)
+	if path == "" {
+		path = "."
+	}
+	switch repo.Driver {
+	case fileDriver:
+		// repo.Path is used to create the ocfl.FS, so the path returned is just "."
+		// A problem with this is it means we can't open files outside the storage
+		// root using this fsys.
+		path = "."
+		fsys, err = repo.NewLocalFS()
+	case s3Driver:
+		fsys, err = repo.NewS3FS(ctx) // fsys needs to be closed!
+	case azureDriver:
+		fsys, err = repo.NewAzureFS(ctx) // fsys needs to be closed!
+	default:
+		return nil, "", fmt.Errorf("invalid storage driver: '%s'", repo.Driver)
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("in '%s' storage driver: %w", repo.Driver, err)
+	}
+	return fsys, path, nil
 }
 
 // return s3 bucket and aws config from config
-func (repo *RepoConfig) awsConfig() (string, *aws.Config) {
-	if repo.Type != s3RepoType || repo.Bucket == nil {
-		return "", nil
+func (repo *RepoConfig) NewS3FS(ctx context.Context) (*cloud.FS, error) {
+	if repo.Bucket == nil {
+		return nil, errors.New("'bucket' config is required")
 	}
+	bucketName := *repo.Bucket
 	awsCfg := aws.Config{
 		Region:   repo.Region,
 		Endpoint: repo.Endpoint,
 	}
-	return *repo.Bucket, &awsCfg
+	sess, err := session.NewSession(&awsCfg)
+	if err != nil {
+		return nil, err
+	}
+	bucket, err := s3blob.OpenBucket(ctx, sess, bucketName, nil)
+	if err != nil {
+		return nil, err
+	}
+	log.Info("storage backend settings", "driver", s3Driver, "bucket", bucketName)
+	return cloud.NewFS(bucket, cloud.WithLogger(log)), nil
 }
 
-// return root
-func (repo *RepoConfig) fsConfig() string {
-	if repo.Type != fsRepoType {
-		return ""
+func (repo *RepoConfig) NewAzureFS(ctx context.Context) (*cloud.FS, error) {
+	if repo.Bucket == nil {
+		return nil, errors.New("'bucket' config is required")
 	}
-	if repo.Root == nil {
-		return ""
+	bucketName := *repo.Bucket
+	bucket, err := blob.OpenBucket(ctx, "azblob://"+bucketName)
+	if err != nil {
+		return nil, err
 	}
-	root := filepath.Clean(*repo.Root)
+	log.Info("storage backend settings", "driver", azureDriver, "container", bucketName)
+	return cloud.NewFS(bucket), nil
+}
+
+func (repo *RepoConfig) NewLocalFS() (*local.FS, error) {
+	root := repo.Path
+	if root == "" {
+		root = "."
+	}
+	root = filepath.Clean(root)
 	if !filepath.IsAbs(root) {
 		wd, err := os.Getwd()
 		if err != nil {
-			log.Error(err, "error during backend configuration")
-			return ""
+			return nil, err
 		}
 		root = filepath.Join(wd, root)
 	}
-	repo.absRoot = root
-	return root
+	log.Info("storage backend settings", "driver", fileDriver, "root", root)
+	return local.NewFS(root)
+}
+
+func (repo *RepoConfig) applyRootFlags() {
+	if rootFlags.driver != "" {
+		repo.Driver = rootFlags.driver
+	}
+	if rootFlags.driverPath != "" {
+		repo.Path = rootFlags.driverPath
+	}
+	if rootFlags.driverBucket != "" {
+		repo.Bucket = &rootFlags.driverBucket
+	}
 }

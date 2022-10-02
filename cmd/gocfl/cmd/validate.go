@@ -2,17 +2,16 @@ package cmd
 
 import (
 	"context"
-	"os"
-	"path/filepath"
+	"io"
+	"path"
 
 	"github.com/muesli/coral"
-	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/ocflv1"
 	"github.com/srerickson/ocfl/validation"
 )
 
 var validateFlags = struct {
-	objPath string
+	objectID string
 }{}
 
 // validateCmd represents the validate command
@@ -20,48 +19,56 @@ var validateCmd = &coral.Command{
 	Use:   "validate",
 	Short: "Validates an OCFL Object or Storage Root",
 	Long:  `Validates an OCFL Object or Storage Root`,
-	RunE:  runValidate,
+	Run: func(cmd *coral.Command, args []string) {
+		conf, err := getConfig()
+		if err != nil {
+			log.Error(err, "can't load config")
+			return
+		}
+		runValidate(cmd.Context(), conf)
+	},
 }
 
 func init() {
 	rootCmd.AddCommand(validateCmd)
-	validateCmd.Flags().StringVarP(&validateFlags.objPath, "object", "o", "", "path to object")
+	validateCmd.Flags().StringVar(&validateFlags.objectID, "id", "", "ID of object to validate")
 }
 
-func runValidate(cmd *coral.Command, args []string) error {
-	if validateFlags.objPath != "" {
-		return validateFSObject(cmd.Context(), validateFlags.objPath)
-	}
-	cfg, err := getConfig(cfgFile)
+func runValidate(ctx context.Context, conf *Config) {
+	fsys, root, err := conf.NewFSPath(ctx, rootFlags.repoName)
 	if err != nil {
-		return err
+		log.Error(err, "could not initialize storage driver", "repo", rootFlags.repoName)
+		return
 	}
-	bk, root, err := cfg.getBackendPath(repoName)
+	if closer, ok := fsys.(io.Closer); ok {
+		defer closer.Close()
+	}
+	str, err := ocflv1.GetStore(ctx, fsys, root, nil)
 	if err != nil {
-		return err
+		log.Error(err, "could not read storage root", "path", root)
+		return
 	}
-	vCfg := ocflv1.ValidateStoreConf{Log: validation.NewLog(log)}
-	err = ocflv1.ValidateStore(cmd.Context(), bk, root, &vCfg)
-	if err != nil {
-		return err
+	if validateFlags.objectID != "" {
+		pth, err := str.ResolveID(validateFlags.objectID)
+		if err != nil {
+			log.Error(err, "invalid object ID")
+			return
+		}
+		vconf := &ocflv1.ValidateObjectConf{
+			Log: validation.NewLog(log),
+		}
+		if err := ocflv1.ValidateObject(ctx, fsys, path.Join(root, pth), vconf); err != nil {
+			log.Error(err, "object is not valid")
+			return
+		}
+		log.Info("object is valid", "id", validateFlags.objectID)
+		return
 	}
-	return nil
-}
-
-func validateFSObject(ctx context.Context, name string) error {
-	name, err := filepath.Abs(name)
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(name)
-	base := filepath.Base(name)
-	fsys := ocfl.NewFS(os.DirFS(dir))
-	vCfg := ocflv1.ValidateObjectConf{
+	if err := str.Validate(ctx, &ocflv1.ValidateStoreConf{
 		Log: validation.NewLog(log),
+	}); err != nil {
+		log.Error(err, "store is not valid")
 	}
-	err = ocflv1.ValidateObject(ctx, fsys, base, &vCfg)
-	if err != nil {
-		log.Error(err, "not a valid object")
-	}
-	return nil
+	log.Info("store is valid")
+
 }

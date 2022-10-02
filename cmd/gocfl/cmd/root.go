@@ -9,14 +9,18 @@ import (
 	"github.com/muesli/coral"
 )
 
-const (
-	defaultCfg = `.gocfl.yaml`
-)
+const defaultCfg = `.gocfl.yaml`
 
 var (
 	// cfgFile is complete path to configuation file
-	cfgFile  string
-	repoName string
+	rootFlags = struct {
+		cfgFile      string
+		repoName     string
+		driver       string // override repo settings
+		driverPath   string // override repo settings
+		driverBucket string // override repo settings
+		saveConfig   bool
+	}{}
 
 	// rootCmd represents the base command when called without any subcommands
 	rootCmd = &coral.Command{
@@ -37,43 +41,30 @@ var (
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
-
 	ctx := context.Background()
-
-	// trap Ctrl+C and call cancel on the context
-	// ctx, cancel := context.WithCancel(ctx)
-	// c := make(chan os.Signal, 1)
-	// signal.Notify(c, os.Interrupt)
-	// defer func() {
-	// 	signal.Stop(c)
-	// 	cancel()
-	// }()
-	// go func() {
-	// 	select {
-	// 	case <-c:
-	// 		cancel()
-	// 	case <-ctx.Done():
-	// 	}
-	// }()
 	err := rootCmd.ExecuteContext(ctx)
 	if err != nil {
+		//log.Error(err, "quiting")
 		os.Exit(1)
 	}
+	logfmtr.SetVerbosity(10)
 }
 
 func init() {
 	coral.OnInitialize(initConfig)
-	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file (default is $HOME/.gocfl.yaml)")
-	rootCmd.PersistentFlags().StringVarP(&repoName, "repo", "r", "", "name of repo in configuration to use")
-
+	rootCmd.PersistentFlags().StringVarP(&rootFlags.cfgFile, "config", "c", "", "config file (default is HOME/.gocfl.yaml)")
+	rootCmd.PersistentFlags().StringVarP(&rootFlags.repoName, "repo", "r", "default", "name of repo in configuration to use")
+	rootCmd.PersistentFlags().StringVarP(&rootFlags.driver, "driver", "d", "", "override active repo's 'driver' setting")
+	rootCmd.PersistentFlags().StringVarP(&rootFlags.driverPath, "path", "p", "", "override active repo's 'path' setting")
+	rootCmd.PersistentFlags().StringVarP(&rootFlags.driverBucket, "bucket", "b", "", "override active repo's 'bucket' setting")
 }
 
 func initConfig() {
-	if cfgFile == "" {
+	if rootFlags.cfgFile == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			log.Error(err, "could not get home dir")
+			log.Error(err, "can't determine home directory")
 		}
-		cfgFile = filepath.Join(home, defaultCfg)
+		rootFlags.cfgFile = filepath.Join(home, defaultCfg)
 	}
 }
