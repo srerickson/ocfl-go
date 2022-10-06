@@ -20,6 +20,7 @@ var (
 		driverPath   string // override repo settings
 		driverBucket string // override repo settings
 		saveConfig   bool
+		verbose      bool
 	}{}
 
 	// rootCmd represents the base command when called without any subcommands
@@ -47,7 +48,6 @@ func Execute() {
 		//log.Error(err, "quiting")
 		os.Exit(1)
 	}
-	logfmtr.SetVerbosity(10)
 }
 
 func init() {
@@ -57,9 +57,14 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&rootFlags.driver, "driver", "d", "", "override active repo's 'driver' setting")
 	rootCmd.PersistentFlags().StringVarP(&rootFlags.driverPath, "path", "p", "", "override active repo's 'path' setting")
 	rootCmd.PersistentFlags().StringVarP(&rootFlags.driverBucket, "bucket", "b", "", "override active repo's 'bucket' setting")
+	rootCmd.PersistentFlags().BoolVarP(&rootFlags.verbose, "verbose", "v", false, "override active repo's 'bucket' setting")
 }
 
 func initConfig() {
+	if rootFlags.verbose {
+		logfmtr.SetVerbosity(10)
+	}
+
 	if rootFlags.cfgFile == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {

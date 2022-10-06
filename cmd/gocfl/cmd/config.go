@@ -199,7 +199,7 @@ func (repo *RepoConfig) NewAzureFS(ctx context.Context) (*cloud.FS, error) {
 		return nil, err
 	}
 	log.Info("storage backend settings", "driver", azureDriver, "container", bucketName)
-	return cloud.NewFS(bucket), nil
+	return cloud.NewFS(bucket, cloud.WithLogger(log)), nil
 }
 
 func (repo *RepoConfig) NewLocalFS() (*local.FS, error) {
