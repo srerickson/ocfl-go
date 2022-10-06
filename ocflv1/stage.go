@@ -1,63 +1,140 @@
 package ocflv1
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"path"
 	"time"
 
-	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/digest/checksum"
 )
 
 var ErrVersionExists = errors.New("version already exists")
 
-// Stage represents an OCFL object transformation
-type Stage struct {
-	id              string          // object id
+// objectStage represents an OCFL object transformation
+type objectStage struct {
+	id      string      // object id from Commit()
+	index   *ocfl.Index // index from Commit()
+	prevInv *Inventory  // for
+
+	// object options
 	vnum            ocfl.VNum       // version number for the stage
 	spec            ocfl.Spec       // OCFL spec for new version
 	alg             digest.Alg      // digest alg
-	state           *digest.Tree    // logical state for new version
-	manifest        *digest.Map     // content to be added during commit
-	srcFS           ocfl.FS         // source FS for paths in NewManifest
 	contentDir      string          // content directory setting
 	contentPathFunc ContentPathFunc // function used to configure content paths
+	progress        io.Writer
+	user            User
+	message         string
+	nowrite         bool    // used for "dry run" commit
+	srcFS           ocfl.FS // source FS for paths in NewManifest
+
+	// generated
+	state    *digest.Map // new version state: index.StateMap(alg)
+	manifest *digest.Map // manifest relative to srFS index.ManifestMap
 }
 
-type StageOpt func(*Stage)
-
-// StageFS is functional option used to set the source FS for files
-// added to the stage.
-func StageFS(fsys ocfl.FS) StageOpt {
-	return func(stage *Stage) {
-		stage.srcFS = fsys
+func newStage(id string, idx *ocfl.Index, prev *Inventory, opts ...ObjectOption) (*objectStage, error) {
+	stg := &objectStage{
+		id:              id,
+		alg:             digest.SHA512,
+		spec:            defaultSpec,
+		vnum:            ocfl.V(1),
+		contentPathFunc: DefaultContentPathFunc,
+		index:           idx,
+		prevInv:         prev,
+		srcFS:           idx.FS,
 	}
+	for _, opt := range opts {
+		opt(stg)
+	}
+	if prev != nil {
+		nextv, err := prev.Head.Next()
+		if err != nil {
+			return nil, fmt.Errorf("version scheme doesn't support versions after %s: %w", prev.Head, err)
+		}
+		stg.vnum = nextv                       // this ignore VNum options
+		stg.alg = prev.DigestAlgorithm         // ignore DigestAlg option
+		stg.contentDir = prev.ContentDirectory // ignore ContentDirectory Option
+	}
+	manifest, err := idx.ManifestMap(stg.alg)
+	if err != nil {
+		return nil, fmt.Errorf("cannot build manifest from index using %s: %w", stg.alg, err)
+	}
+	state, err := idx.StateMap(stg.alg)
+	if err != nil {
+		return nil, fmt.Errorf("cannot build version state from index using %s: %w", stg.alg, err)
+	}
+	stg.manifest = manifest
+	stg.state = state
+	if prev != nil {
+		if err := stg.validate(prev); err != nil {
+			return nil, fmt.Errorf("stage options are not valid for this object: %w", err)
+		}
+	}
+	return stg, nil
 }
 
-// StageDigest
-func StageDigestAlgorithm(alg digest.Alg) StageOpt {
-	return func(stage *Stage) {
+type ObjectOption func(*objectStage)
+
+// WithAlg is used to set the digest algorithm for the first version of an
+// object. It is ignored for subsequent versions.
+func WithAlg(alg digest.Alg) ObjectOption {
+	return func(stage *objectStage) {
 		stage.alg = alg
 	}
 }
 
-// // StageContentDir is functional option used to set the stage's content directory
-// func StageContentDir(cd string) StageOpt {
-// 	return func(stage *Stage) {
-// 		stage.contentDir = cd
-// 	}
-// }
+// WithContentDir is used to set the ContentDirectory value for the first
+// version of an object. It is ignored for subsequent versions.
+func WithContentDir(cd string) ObjectOption {
+	return func(stage *objectStage) {
+		stage.contentDir = cd
+	}
+}
 
-// StageContentPathFunc is a functional option used to set the stage's content path
+// WithVersionPadding is used to set the version number padding for the first
+// version of an object. It is ignored for subsequent versions.
+func WithVersionPadding(p int) ObjectOption {
+	return func(stage *objectStage) {
+		stage.vnum = ocfl.V(stage.vnum.Num(), p)
+	}
+}
+
+// WithContentPathFunc is a functional option used to set the stage's content path
 // function
-func StageContentPathFunc(fn ContentPathFunc) StageOpt {
-	return func(stage *Stage) {
+func WithContentPathFunc(fn ContentPathFunc) ObjectOption {
+	return func(stage *objectStage) {
 		stage.contentPathFunc = fn
+	}
+}
+
+func WithMessage(msg string) ObjectOption {
+	return func(stage *objectStage) {
+		stage.message = msg
+	}
+}
+
+func WithUser(name, addr string) ObjectOption {
+	return func(stage *objectStage) {
+		stage.user.Name = name
+		stage.user.Address = addr
+	}
+}
+
+// WithNoWrite configures the commit to prevent any writes to the storage root.
+// This enables "dry run" commits.
+func WithNoWrite() ObjectOption {
+	return func(stage *objectStage) {
+		stage.nowrite = true
+	}
+}
+
+func WithProgressWriter(w io.Writer) ObjectOption {
+	return func(stage *objectStage) {
+		stage.progress = w
 	}
 }
 
@@ -71,78 +148,14 @@ func DefaultContentPathFunc(logical string, digest string) string {
 	return logical
 }
 
-type StageAddConf struct {
-	log      logr.Logger
-	progress io.Writer
-	dstDir   string
-}
-
-type StageAddOpt func(*StageAddConf)
-
-func StageAddProgress(w io.Writer) StageAddOpt {
-	return func(c *StageAddConf) {
-		c.progress = w
-	}
-}
-
-func (stage *Stage) AddDir(ctx context.Context, srcDir string, opts ...StageAddOpt) error {
-	if stage.srcFS == nil {
-		return fmt.Errorf("stage's source FS for added files is not set")
-	}
-	conf := StageAddConf{
-		log:    logr.Discard(),
-		dstDir: ".",
-	}
-	for _, o := range opts {
-		o(&conf)
-	}
-	// digest map of srcdir
-	// convert map to tree and and add tree to stage fs at logical dr
-	tree, err := ocfl.DirTree(ctx, stage.srcFS, srcDir, []digest.Alg{stage.alg}, checksum.WithProgress(conf.progress))
-	if err != nil {
-		return fmt.Errorf("while scanning %s: %w", srcDir, err)
-	}
-	walkFn := func(n string, isdir bool, sums digest.Set) error {
-		if isdir {
-			return nil
-		}
-		sum, ok := sums[stage.alg]
-		if !ok {
-			return fmt.Errorf("missing required digest for '%s'", stage.alg)
-		}
-		return stage.addManifest(sum, n)
-	}
-	if err = tree.Walk(walkFn); err != nil {
-		return err
-	}
-	sub, err := tree.Sub(srcDir)
-	if err != nil {
-		return fmt.Errorf("shouldn't happen, need better message: %w", err)
-	}
-	return stage.state.SetDir(conf.dstDir, sub, true)
-}
-
-func (stage *Stage) addManifest(sum, path string) error {
-	if stage.manifest == nil {
-		stage.manifest = digest.NewMap()
-	}
-	if stage.manifest.DigestExists(sum) {
-		return nil
-	}
-	if err := stage.manifest.Add(sum, path); err != nil {
-		return fmt.Errorf("adding digest to stage manifest: %w", err)
-	}
-	return nil
-}
-
-// buildManifestNext generates the manifest for the next version inventory based on
-// the stage
-func buildManifestNext(stage *Stage, prev *digest.Map) (*digest.Map, error) {
-	var m *digest.Map
+// nextManifest builds the next version of the manifest using stage stage
+// and any previous manifest, which may be nil
+func (stage *objectStage) nextManifest(prev *digest.Map) (*digest.Map, error) {
+	var man *digest.Map
 	if prev != nil {
-		m = prev.Copy()
+		man = prev.Copy()
 	} else {
-		m = digest.NewMap()
+		man = digest.NewMap()
 	}
 	if stage.contentPathFunc == nil {
 		stage.contentPathFunc = DefaultContentPathFunc
@@ -150,78 +163,72 @@ func buildManifestNext(stage *Stage, prev *digest.Map) (*digest.Map, error) {
 	if stage.contentDir == "" {
 		stage.contentDir = contentDir
 	}
-	walkfn := func(p string, isdir bool, sums digest.Set) error {
+	walkfn := func(p string, isdir bool, inf *ocfl.IndexItem) error {
 		if isdir {
 			return nil
 		}
-		digest, ok := sums[stage.alg]
+		sum, ok := inf.Digests[stage.alg]
 		if !ok {
 			return fmt.Errorf("missing digest for '%s'", stage.alg)
 		}
-		if m.DigestExists(digest) {
+		if man.DigestExists(sum) {
 			return nil
 		}
 		// content path in manifest
-		cont := stage.contentPathFunc(p, digest)
+		cont := stage.contentPathFunc(p, sum)
 		cont = path.Join(stage.vnum.String(), stage.contentDir, cont)
-		if err := m.Add(digest, cont); err != nil {
+		if err := man.Add(sum, cont); err != nil {
 			return err
 		}
 		return nil
 	}
-	if err := stage.state.Walk(walkfn); err != nil {
+	if err := stage.index.Walk(walkfn); err != nil {
 		return nil, err
 	}
-	return m, nil
+	return man, nil
 }
 
-func buildInventoryV1(ctx context.Context, stage *Stage) (*Inventory, error) {
-	manifest, err := buildManifestNext(stage, nil)
+// nextInventory generates the next inventory based the previous inventory (if it exists)
+func (stage *objectStage) nextInventory(prevInv *Inventory) (*Inventory, error) {
+	var inv *Inventory
+	var prevMan *digest.Map
+	if prevInv != nil {
+		if err := stage.validate(prevInv); err != nil {
+			return nil, fmt.Errorf("the object settings are not compatible with the existing object: %w", err)
+		}
+		prevMan = prevInv.Manifest
+	}
+	newMan, err := stage.nextManifest(prevMan)
 	if err != nil {
 		return nil, fmt.Errorf("error while building manifest: %w", err)
 	}
-	state, err := stage.state.AsMap(stage.alg)
-	if err != nil {
-		return nil, fmt.Errorf("error while converting state: %w", err)
-	}
-	inv := &Inventory{
-		ID:              stage.id,
-		Head:            stage.vnum,
-		Type:            stage.spec.AsInvType(),
-		DigestAlgorithm: stage.alg,
-		Manifest:        manifest,
-		Versions:        map[ocfl.VNum]*Version{},
-	}
-	inv.Versions[inv.Head] = &Version{
-		Created: time.Now().Truncate(time.Second),
-		State:   state,
-	}
-	if err := inv.Validate().Err(); err != nil {
-		return nil, err
-	}
-	return inv, nil
-}
-
-// buildInventoryNext creates a new inventory from a stage and a previous inventory.
-func buildInventoryNext(ctx context.Context, stage *Stage, prev *Inventory) (*Inventory, error) {
-	if err := stage.validate(prev); err != nil {
-		return nil, fmt.Errorf("the stage is incompatible with the object inventory: %w", err)
-	}
-	inv := prev.Copy()
-	inv.Head, _ = inv.Head.Next()
-	var err error
-	inv.Manifest, err = buildManifestNext(stage, inv.Manifest)
-	if err != nil {
-		return nil, fmt.Errorf("error while updating manifest: %w", err)
-	}
-	state, err := stage.state.AsMap(stage.alg)
-	if err != nil {
-		return nil, fmt.Errorf("error while converting state: %w", err)
+	if prevInv == nil {
+		inv = &Inventory{
+			ID:               stage.id,
+			Head:             stage.vnum,
+			Type:             stage.spec.AsInvType(),
+			DigestAlgorithm:  stage.alg,
+			ContentDirectory: stage.contentDir,
+			Manifest:         newMan,
+			Versions:         map[ocfl.VNum]*Version{},
+		}
+	} else {
+		inv = prevInv.Copy()
+		inv.Head = stage.vnum
+		inv.Manifest = newMan
 	}
 	// add the new version directory to the Inventory object
 	inv.Versions[inv.Head] = &Version{
 		Created: time.Now().Truncate(time.Second),
-		State:   state,
+		State:   stage.state,
+		Message: stage.message,
+	}
+	// only add user if name from stage is not empty
+	if stage.user.Name != "" {
+		inv.Versions[inv.Head].User = &User{
+			Name:    stage.user.Name,
+			Address: stage.user.Address,
+		}
 	}
 	if err := inv.Validate().Err(); err != nil {
 		return nil, err
@@ -230,23 +237,23 @@ func buildInventoryNext(ctx context.Context, stage *Stage, prev *Inventory) (*In
 }
 
 // stageErrs checks that stage represent a valid next version for the inventory
-func (stage *Stage) validate(inv *Inventory) error {
+func (stage *objectStage) validate(inv *Inventory) error {
 	if inv.ID != stage.id {
-		return fmt.Errorf("stage ID doesn't match inventory ID: %s", stage.id)
+		return fmt.Errorf("new version ID doesn't match previous ID: %s", stage.id)
 	}
 	next, err := inv.Head.Next()
 	if err != nil {
-		return fmt.Errorf("the version numbering scheme does support additional versions: %w", err)
+		return fmt.Errorf("the version numbering scheme does support another version: %w", err)
 	}
 	if next != stage.vnum {
-		return fmt.Errorf("stage version (%s) is not next for the inventory (%s)",
-			stage.vnum, next)
+		return fmt.Errorf("new version number (%s) is not a valid successor of previous (%s)",
+			stage.vnum, inv.Head)
 	}
 	if stage.alg != inv.DigestAlgorithm {
-		return errors.New("stage and inventory have different digest algorithms")
+		return fmt.Errorf("new version must have same digest algorith as previous: %s", inv.DigestAlgorithm)
 	}
 	if inv.Type.Spec.Cmp(stage.spec) > 0 {
-		return errors.New("stage has lower OCFL spec version than inventory")
+		return errors.New("new version cannot have lower OCFL spec than previous version")
 	}
 	cd := func(c string) string {
 		if c == "" {
@@ -257,9 +264,9 @@ func (stage *Stage) validate(inv *Inventory) error {
 	if cd(inv.ContentDirectory) != cd(stage.contentDir) {
 		return errors.New("stage and inventory have different contentDirectory settings")
 	}
-	// all digests in stage state should be accounted for in either the
+	// all digests in stage index should be accounted for in either the
 	// the stage's "add" manifest or the inventory manifest
-	stateMap, err := stage.state.AsMap(stage.alg)
+	stateMap, err := stage.index.StateMap(stage.alg)
 	if err != nil {
 		return fmt.Errorf("stage state is invalid: %w", err)
 	}

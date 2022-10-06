@@ -528,6 +528,25 @@ var testInventories = []testInventory{
 			}
 		  }`,
 	},
+	{
+		valid:       false,
+		description: `empty_version_user_name`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"head": "v1",
+			"id": "http://example.org/minimal_no_content",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"state": {},
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"user": { "address": "mailto:Person_A@example.org", "name": ""}
+			  }
+			}
+		  }`,
+	},
 }
 
 func TestValidateInventory(t *testing.T) {

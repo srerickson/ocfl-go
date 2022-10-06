@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"sync"
 
 	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
@@ -24,6 +25,7 @@ type Store struct {
 	spec       ocfl.Spec
 	layoutFunc extensions.LayoutFunc
 	logger     logr.Logger
+	commitLock sync.Mutex
 }
 
 // store layout represent ocfl_layout.json file
@@ -41,9 +43,8 @@ func InitStore(ctx context.Context, fsys ocfl.WriteFS, root string, conf *InitSt
 	if conf == nil {
 		conf = &InitStoreConf{}
 	}
-	// default to ocfl v1.1
 	if conf.Spec == (ocfl.Spec{}) {
-		conf.Spec = ocflv1_1
+		conf.Spec = defaultSpec
 	}
 	if !ocflVerSupported[conf.Spec] {
 		return fmt.Errorf("%s: %w", conf.Spec, ErrOCFLVersion)
@@ -202,6 +203,18 @@ func (s *Store) GetObject(ctx context.Context, id string) (*Object, error) {
 		return nil, err
 	}
 	return GetObject(ctx, s.fsys, path.Join(s.rootDir, pth))
+}
+
+// ObjectExists returns true if an object with the given ID exists in the store
+func (s *Store) ObjectExists(ctx context.Context, id string) (bool, error) {
+	_, err := s.GetObject(ctx, id)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // SetLayout sets the store's active layout. If no error is returned, subsequent

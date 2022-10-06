@@ -38,6 +38,9 @@ type Alg struct {
 	id string
 }
 
+// Set is a collection of digests for the same content
+type Set map[Alg]string
+
 func NewAlg(id string) (Alg, error) {
 	alg, ok := algs[id]
 	if !ok {

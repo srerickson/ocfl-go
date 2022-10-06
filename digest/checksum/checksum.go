@@ -12,22 +12,15 @@ import (
 )
 
 type checksum struct {
-	// FS to read filenames. If set, the Open function is ignored.
-	FS fs.FS
-
-	// Open is the function used to open file names added to the workq. Defaults to
-	// os.Open.
-	Open OpenFunc
-
-	// Number of goroutines dedicated to processing checksums. Defaults to 1.
-	NumGos int
-
-	Progress io.Writer
-
-	workQ   chan *job     // jobs todo
-	resultQ chan *job     // job results
-	cancel  chan struct{} // cancel remaining jobs
-	errChan chan error    // return values for Close()
+	fs       fs.FS        // fs to read filenames. If set, the Open function is ignored.
+	openFunc OpenFunc     // Defaults to os.Open.
+	numGos   int          // Number of goroutines dedicated to processing checksums. Defaults to 1.
+	algs     []digest.Alg // default algs
+	progress io.Writer
+	workQ    chan *job     // jobs todo
+	resultQ  chan *job     // job results
+	cancel   chan struct{} // cancel remaining jobs
+	errChan  chan error    // return values for Close()
 }
 
 // OpenFunc is a function used to
@@ -68,17 +61,17 @@ type job struct {
 }
 
 func (ch *checksum) open(cb CallbackFunc) error {
-	gos := ch.NumGos
+	gos := ch.numGos
 	if gos < 1 {
 		gos = 1
 	}
-	if ch.FS != nil {
-		ch.Open = func(name string) (io.Reader, error) {
-			return ch.FS.Open(name)
+	if ch.fs != nil {
+		ch.openFunc = func(name string) (io.Reader, error) {
+			return ch.fs.Open(name)
 		}
 	}
-	if ch.Open == nil {
-		ch.Open = defaultOpener
+	if ch.openFunc == nil {
+		ch.openFunc = defaultOpener
 	}
 	ch.workQ = make(chan *job, gos)
 	ch.resultQ = make(chan *job, gos)
@@ -123,7 +116,7 @@ func (ch *checksum) worker(wg *sync.WaitGroup) {
 
 func (ch *checksum) doJob(j *job) *job {
 	var r io.Reader
-	r, j.err = ch.Open(j.path)
+	r, j.err = ch.openFunc(j.path)
 	if j.err != nil {
 		return j
 	}
@@ -131,7 +124,7 @@ func (ch *checksum) doJob(j *job) *job {
 		defer closer.Close()
 	}
 	multiLen := len(j.algs)
-	if ch.Progress != nil {
+	if ch.progress != nil {
 		multiLen += 1
 	}
 	var hashes = make(map[digest.Alg]hash.Hash, multiLen)
@@ -141,8 +134,8 @@ func (ch *checksum) doJob(j *job) *job {
 		hashes[alg] = h
 		writers = append(writers, io.Writer(h))
 	}
-	if ch.Progress != nil {
-		writers = append(writers, ch.Progress)
+	if ch.progress != nil {
+		writers = append(writers, ch.progress)
 	}
 	_, j.err = io.Copy(io.MultiWriter(writers...), r)
 	if j.err != nil {
@@ -165,6 +158,9 @@ func (ch *checksum) close() error {
 
 // add adds a checksum job for path to the Pipe.
 func (ch *checksum) add(path string, algs []digest.Alg) bool {
+	if len(algs) == 0 {
+		algs = ch.algs
+	}
 	j := &job{
 		path: path,
 		algs: algs,
@@ -214,7 +210,7 @@ type Option func(*checksum)
 // WithFS is a functional option used to set an FS backend for the checksum.
 func WithFS(fsys fs.FS) Option {
 	return func(c *checksum) {
-		c.FS = fsys
+		c.fs = fsys
 	}
 }
 
@@ -222,7 +218,7 @@ func WithFS(fsys fs.FS) Option {
 // passed to the checksum process
 func WithOpenFunc(open OpenFunc) Option {
 	return func(c *checksum) {
-		c.Open = open
+		c.openFunc = open
 	}
 }
 
@@ -230,12 +226,40 @@ func WithOpenFunc(open OpenFunc) Option {
 // Defaults to 1.
 func WithNumGos(gos int) Option {
 	return func(c *checksum) {
-		c.NumGos = gos
+		c.numGos = gos
 	}
 }
 
 func WithProgress(w io.Writer) Option {
 	return func(c *checksum) {
-		c.Progress = w
+		c.progress = w
 	}
 }
+
+func WithDigest(d digest.Alg) Option {
+	return func(c *checksum) {
+		for _, a := range c.algs {
+			if a == d {
+				return
+			}
+		}
+		c.algs = append(c.algs, d)
+	}
+}
+
+var SHA256 = WithDigest(digest.SHA256)
+
+// func SHA512() Option {
+// 	return WithDigest(digest.SHA512)
+// }
+
+// func MD5() Option {
+// 	return WithDigest(digest.MD5)
+// }
+// func SHA1() Option {
+// 	return WithDigest(digest.SHA1)
+// }
+
+// func BLAKE2B() Option {
+// 	return WithDigest(digest.BLAKE2B)
+// }

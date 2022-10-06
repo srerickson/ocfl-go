@@ -80,7 +80,6 @@ func (p *BasePathErr) Error() string {
 // strings must match excactly between the manifest and version state; it's an
 // error when they don't match. Automatically converting digests would cause
 // invalid inventories to pass validation.
-//
 type Map struct {
 	// digest -> file paths
 	// mixed case digests are possible!
@@ -101,13 +100,13 @@ func NewMap() *Map {
 
 // Add adds a digest->path to the Map.
 // An error is returned if:
-// - digest map is invalid
-// - path string is not valid
-// - path alread exists
-// - path is a basedir for existing path, or
-//   existing path is basedir for path
-// - digest is empty string
-// - digest doesn't exist but normalized version does
+//   - digest map is invalid
+//   - path string is not valid
+//   - path alread exists
+//   - path is a basedir for existing path, or
+//     existing path is basedir for path
+//   - digest is empty string
+//   - digest doesn't exist but normalized version does
 func (dm *Map) Add(digest string, p string) error {
 	if !validPath(p) {
 		return &PathInvalidErr{p}
@@ -152,6 +151,17 @@ func (dm Map) GetDigest(p string) string {
 		return ""
 	}
 	return dm.files[p]
+}
+
+func (dm Map) EachPath(fn func(name, digest string) error) error {
+	for d, paths := range dm.digests {
+		for _, p := range paths {
+			if err := fn(p, d); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (dm Map) AllDigests() map[string]interface{} {

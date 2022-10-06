@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"path"
+	"reflect"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -282,7 +283,6 @@ func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum)
 	return vldr.Err()
 }
 
-//
 func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver ocfl.VNum, sidecarAlg digest.Alg) error {
 	log := vldr.WithName(ver.String() + "/inventory.json")
 	ocflV := vldr.rootInfo.Declaration.Version // assumed ocfl version (until inventory is decoded)
@@ -330,36 +330,42 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver o
 		err := fmt.Errorf("inventory head is %s, expected %s", inv.Head, ver)
 		log.AddFatal(ec(err, codes.E040.Ref(inv.Type.Spec)))
 	}
-	// confirm version states in the version inventory  match root inventory
-	for v := range inv.Versions {
-		rootState := vldr.rootInv.VState(v)
-		verState := inv.VState(v)
-		if changes := verState.Diff(rootState); !changes.Same() {
-			errFmt := "version %s state doesn't match root inventory: %s %s"
-			for _, p := range changes.Add {
-				err := fmt.Errorf(errFmt, v, "unexpected file", p)
+	// confirm version states in the version inventory match root inventory
+	for v, ver := range inv.Versions {
+		rootVer := vldr.rootInv.Versions[v]
+		rootState, _ := vldr.rootInv.IndexFull(v, true, false)
+		verState, _ := inv.IndexFull(v, true, false)
+		changes, err := verState.Diff(rootState, inv.DigestAlgorithm)
+		if err != nil {
+			err := fmt.Errorf("unexpected err durring inventory diff: %w", err)
+			return log.AddFatal(err)
+		}
+		if !changes.Equal() {
+			errFmt := "version %s state doesn't match root inventory: %s"
+			if changes.Added.Len() > 0 {
+				err := fmt.Errorf(errFmt, v, "unexpected files")
 				log.AddFatal(ec(err, codes.E066.Ref(inv.Type.Spec)))
 			}
-			for _, p := range changes.Del {
-				err := fmt.Errorf(errFmt, v, `missing file`, p)
+			if changes.Removed.Len() > 0 {
+				err := fmt.Errorf(errFmt, v, `missing file`)
 				log.AddFatal(ec(err, codes.E066.Ref(inv.Type.Spec)))
 			}
-			for _, p := range changes.Mod {
-				err := fmt.Errorf(errFmt, v, `changed file content`, p)
+			if changes.Changed.Len() > 0 {
+				err := fmt.Errorf(errFmt, v, `changed file content`)
 				log.AddFatal(ec(err, codes.E066.Ref(inv.Type.Spec)))
 			}
-			if changes.Message {
-				err := fmt.Errorf(`message for version %s differs from root inventory`, v)
-				log.AddWarn(ec(err, codes.W011.Ref(inv.Type.Spec)))
-			}
-			if changes.User {
-				err := fmt.Errorf(`user information for version %s differs from root inventory`, v)
-				log.AddWarn(ec(err, codes.W011.Ref(inv.Type.Spec)))
-			}
-			if changes.Created {
-				err := fmt.Errorf(`timestamp for version %s differs from root inventory`, v)
-				log.AddWarn(ec(err, codes.W011.Ref(inv.Type.Spec)))
-			}
+		}
+		if ver.Message != rootVer.Message {
+			err := fmt.Errorf(`message for version %s differs from root inventory`, v)
+			log.AddWarn(ec(err, codes.W011.Ref(inv.Type.Spec)))
+		}
+		if !reflect.DeepEqual(ver.User, rootVer.User) {
+			err := fmt.Errorf(`user information for version %s differs from root inventory`, v)
+			log.AddWarn(ec(err, codes.W011.Ref(inv.Type.Spec)))
+		}
+		if ver.Created != rootVer.Created {
+			err := fmt.Errorf(`timestamp for version %s differs from root inventory`, v)
+			log.AddWarn(ec(err, codes.W011.Ref(inv.Type.Spec)))
 		}
 	}
 	return vldr.Err()

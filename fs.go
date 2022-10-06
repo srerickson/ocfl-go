@@ -86,16 +86,17 @@ func EachFile(ctx context.Context, fsys FS, root string, walkFn fs.WalkDirFunc) 
 	return nil
 }
 
-// DirTree build a digest.Tree from the contents of dir in fsys using algs. All
+// IndexDir build an Index from the contents of dir in fsys using algs. All
 // paths in the tree are relative to fsys.
-func DirTree(ctx context.Context, fsys FS, dir string, algs []digest.Alg, opts ...checksum.Option) (*digest.Tree, error) {
-	tree := &digest.Tree{}
-	setup := func(add checksum.AddFunc) error {
+func IndexDir(ctx context.Context, fsys FS, dir string, opts ...checksum.Option) (*Index, error) {
+	tree := NewIndex()
+	tree.FS = fsys
+	setup := func(addfn checksum.AddFunc) error {
 		walkfn := func(name string, e fs.DirEntry, err error) error {
 			if err != nil {
 				return fmt.Errorf("during source directory scan: %w", err)
 			}
-			if !add(name, algs) {
+			if !addfn(name, nil) {
 				return fmt.Errorf("source directory scan ended prematurely")
 			}
 			return nil
@@ -106,7 +107,11 @@ func DirTree(ctx context.Context, fsys FS, dir string, algs []digest.Alg, opts .
 		if err != nil {
 			return err
 		}
-		return tree.SetDigests(name, result, false)
+		info := &IndexItem{
+			Digests:  result,
+			SrcPaths: []string{name},
+		}
+		return tree.Set(name, info)
 	}
 	open := func(name string) (io.Reader, error) {
 		f, err := fsys.OpenFile(ctx, name)
@@ -115,9 +120,11 @@ func DirTree(ctx context.Context, fsys FS, dir string, algs []digest.Alg, opts .
 		}
 		return f, nil
 	}
+
 	opts = append(opts, checksum.WithOpenFunc(open))
 	if err := checksum.Run(setup, cb, opts...); err != nil {
 		return nil, err
 	}
-	return tree, nil
+	return tree.Sub(dir)
+	// return tree, nil
 }

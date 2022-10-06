@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/url"
 	"strings"
 
@@ -22,6 +21,10 @@ import (
 // result includes no fatal errors (it may include warning errors).
 func (inv *Inventory) Validate() *validation.Result {
 	errs := &validation.Result{}
+	if inv.Type.Empty() {
+		err := errors.New("missing required field: 'type'")
+		errs.AddFatal(err)
+	}
 	if inv.ID == "" {
 		err := errors.New("missing required field: 'id'")
 		errs.AddFatal(ec(err, codes.E036.Ref(inv.Type.Spec)))
@@ -132,6 +135,10 @@ func (inv *Inventory) Validate() *validation.Result {
 			errs.AddWarn(ec(err, codes.W007.Ref(inv.Type.Spec)))
 		}
 		if ver.User != nil {
+			if ver.User.Name == "" {
+				err := fmt.Errorf("version %s user missing required field: 'name'", vname)
+				errs.AddFatal(ec(err, codes.E054.Ref(inv.Type.Spec)))
+			}
 			if ver.User.Address == "" {
 				err := fmt.Errorf("version %s user missing recommended field: 'address'", vname)
 				errs.AddWarn(ec(err, codes.W008.Ref(inv.Type.Spec)))
@@ -294,7 +301,7 @@ func readDigestInventory(ctx context.Context, file io.Reader, inv interface{}, a
 		return hex.EncodeToString(checksum.Sum(nil)), nil
 	}
 	// otherwise, need to decode inventory twice
-	byt, err := ioutil.ReadAll(file)
+	byt, err := io.ReadAll(file)
 	if err != nil {
 		return "", err
 	}

@@ -14,20 +14,25 @@ var (
 	ErrVNumPadding = errors.New(`inconsistent version padding in version sequence`)
 	ErrVNumMissing = errors.New(`missing version in version sequence`)
 	ErrVerEmpty    = errors.New("no versions found")
-
-	V0 = VNum{} // warning: zero value is invalid
-	V1 = VNum{num: 1}
+	Head           = VNum{}
 )
 
 // VNum represents an OCFL object version name ("v1","v02")
 type VNum struct {
 	num     int // positive integers 1,2,3..
-	padding int // should be zero, but can be 1,2,3
+	padding int // should be zero, but can be 2,3,4
 }
 
 // V returns a VNum for num with zero padding.
-func V(num int) VNum {
-	return VNum{num: num}
+func V(ns ...int) VNum {
+	switch len(ns) {
+	case 1:
+		return VNum{num: ns[0]}
+	case 2:
+		return VNum{num: ns[0], padding: ns[1]}
+	default:
+		return Head
+	}
 }
 
 // ParseVNum parses strinv as a ocfl.Numer and sets the value pointed to be
@@ -84,7 +89,11 @@ func (v VNum) Padding() int {
 }
 
 func (v VNum) Empty() bool {
-	return v == V0
+	return v == Head
+}
+
+func (v VNum) First() bool {
+	return v.num == 1
 }
 
 // Next returns the next ocfl.Number after v, with the same padding.
@@ -105,7 +114,7 @@ func (v VNum) Next() (VNum, error) {
 // An error is returned if v.Num() == 1
 func (v VNum) Prev() (VNum, error) {
 	if v.num == 1 {
-		return V0, errors.New("no previous version")
+		return Head, errors.New("no previous version")
 	}
 	return VNum{
 		num:     v.num - 1,
@@ -211,7 +220,7 @@ func (vs VNumSeq) Head() VNum {
 	if len(vs) > 0 {
 		return vs[len(vs)-1]
 	}
-	return V0
+	return VNum{}
 }
 
 // Padding returns the padding for the VNums in vs

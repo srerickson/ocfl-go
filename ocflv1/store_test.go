@@ -8,9 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl/digest"
+	"github.com/srerickson/ocfl/digest/checksum"
 	"github.com/srerickson/ocfl/extensions"
+	"github.com/srerickson/ocfl/internal/testfs"
 	"github.com/srerickson/ocfl/ocflv1"
 )
 
@@ -162,7 +166,121 @@ func TestScanObjects(t *testing.T) {
 			}
 		})
 	}
+}
 
+func TestStoreUpdateObject(t *testing.T) {
+	storePath := "test-stage"
+	ctx := context.Background()
+	storeFS := testfs.NewMemFS() // store
+	stgFS := stageFS()
+	// initialize store
+	if err := ocflv1.InitStore(ctx, storeFS, storePath, nil); err != nil {
+		t.Fatal(err)
+	}
+	store, err := ocflv1.GetStore(ctx, storeFS, storePath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// v1
+	stage, err := ocfl.IndexDir(ctx, stgFS, `src1`, checksum.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := stage.Get("tmp.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Commit(ctx, "object-1", stage,
+		ocflv1.WithAlg(digest.SHA256),
+		ocflv1.WithContentDir("foo"),
+		ocflv1.WithVersionPadding(2),
+		ocflv1.WithUser("Bill", "mailto:me@no.com"),
+		ocflv1.WithMessage("first commit"),
+	); err != nil {
+		t.Fatal(err)
+	}
+	obj, err := store.GetObject(ctx, "object-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := obj.Validate(ctx); err != nil {
+		t.Fatal("object is invalid", err)
+	}
+	inv, err := obj.Inventory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inv.ContentDirectory != "foo" {
+		t.Fatal("expected foo")
+	}
+	if inv.DigestAlgorithm != digest.SHA256 {
+		t.Fatalf("expected sha256")
+	}
+	if inv.Head.Padding() != 2 {
+		t.Fatalf("expected 2")
+	}
+	if u := inv.Versions[inv.Head].User; u == nil || u.Name != "Bill" {
+		t.Fatal("expected Bill")
+	}
+	if u := inv.Versions[inv.Head].User; u == nil || u.Address != "mailto:me@no.com" {
+		t.Fatal("expected Bill")
+	}
+	if inv.Versions[inv.Head].Message != "first commit" {
+		t.Fatal("expected 'first commit'")
+	}
+	stage2, err := inv.IndexFull(ocfl.Head, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff, err := stage.Diff(stage2, digest.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !diff.Equal() {
+		t.Fatal("expected head state to be the same as the stage state")
+	}
+
+	//v2 - empty
+	if _, err := stage2.Remove("tmp.txt", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(ctx, "object-1", stage2); err != nil {
+		t.Fatal(err)
+	}
+	obj, err = store.GetObject(ctx, "object-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := obj.Validate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	inv, err = obj.Inventory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := inv.Index(ocfl.Head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head.Len() != 0 {
+		t.Fatal("expected head state to be empty")
+	}
+
+	// v3
+	stage3, err := ocfl.IndexDir(ctx, stgFS, "src2", checksum.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(ctx, "object-1", stage3); err != nil {
+		t.Fatal(err)
+	}
+	obj, err = store.GetObject(ctx, "object-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := obj.Validate(ctx); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // layout used for fixture stores w/o layout file
@@ -180,4 +298,15 @@ func (l customLayout) NewFunc() (extensions.LayoutFunc, error) {
 	return func(id string) (string, error) {
 		return url.QueryEscape(id), nil
 	}, nil
+}
+
+func stageFS() ocfl.FS {
+	fsys := fstest.MapFS{
+		`src1/tmp.txt`:       &fstest.MapFile{Data: []byte(`content1`)},
+		`src2/a/tmp.txt`:     &fstest.MapFile{Data: []byte(`content2`)},
+		`src3/a/tmp.txt`:     &fstest.MapFile{Data: []byte(`content3`)},
+		`src3/b/another.txt`: &fstest.MapFile{Data: []byte(`another`)},
+		`src4/b/another.txt`: &fstest.MapFile{Data: []byte(`another`)},
+	}
+	return ocfl.NewFS(fsys)
 }
