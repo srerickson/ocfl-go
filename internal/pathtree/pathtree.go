@@ -2,6 +2,7 @@ package pathtree
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"path"
 	"sort"
@@ -14,41 +15,42 @@ var (
 	ErrNotDir      = errors.New("not a directory node")
 	ErrNotFile     = errors.New("not a file node")
 	ErrValueExists = errors.New("cannot replace existing node value")
+	ErrCycle       = errors.New("this operation may introduce a cycle")
 )
 
 type Node[T any] struct {
-	Val      T
-	children map[string]*Node[T]
+	Val      T                   `json:"v,omitempty"`
+	Children map[string]*Node[T] `json:"c,omitempty"`
 }
 
 func NewDir[T any]() *Node[T] {
 	return &Node[T]{
-		children: make(map[string]*Node[T]),
+		Children: make(map[string]*Node[T]),
 	}
 }
 
-func IsDir[T any](node *Node[T]) bool {
-	return node.children != nil
+func (node *Node[T]) IsDir() bool {
+	return node.Children != nil
 }
 
-func Children[T any](node *Node[T]) []DirEntry {
-	if node.children == nil {
+func (node *Node[T]) ReadDir() []DirEntry {
+	if node.Children == nil {
 		return nil
 	}
-	entries := make([]DirEntry, len(node.children))
+	entries := make([]DirEntry, len(node.Children))
 	i := 0
-	for n, ch := range node.children {
+	for n, ch := range node.Children {
 		entries[i] = DirEntry{
 			name:  n,
-			isDir: ch.children != nil,
+			isDir: ch.Children != nil,
 		}
 		i++
 	}
-	sort.Sort(dirEntries(entries))
+	sort.Sort(DirEntries(entries))
 	return entries
 }
 
-func Get[T any](node *Node[T], p string) (*Node[T], error) {
+func (node *Node[T]) Get(p string) (*Node[T], error) {
 	if !fs.ValidPath(p) {
 		return nil, ErrInvalidPath
 	}
@@ -57,7 +59,7 @@ func Get[T any](node *Node[T], p string) (*Node[T], error) {
 	}
 	for {
 		first, rest, more := strings.Cut(p, `/`)
-		child, exists := node.children[first]
+		child, exists := node.Children[first]
 		if !exists {
 			return nil, ErrNotFound
 		}
@@ -70,24 +72,28 @@ func Get[T any](node *Node[T], p string) (*Node[T], error) {
 	return node, nil
 }
 
-func Set[T any](node *Node[T], p string, child *Node[T], replace bool) error {
+// To prevent cycles the receiver should be the root of the tree.
+func (node *Node[T]) Set(p string, child *Node[T], replace bool) error {
 	if !fs.ValidPath(p) {
 		return ErrInvalidPath
 	}
 	if p == "." {
 		return ErrInvalidPath // cannot set value on self
 	}
+	if node.IsParent(child) {
+		return fmt.Errorf("node is alread part of the tree: %w", ErrCycle)
+	}
 	dirName := path.Dir(p)
 	baseName := path.Base(p)
-	parent, err := MkdirAll(node, dirName)
+	parent, err := node.MkdirAll(dirName)
 	if err != nil {
 		return err
 	}
-	_, exists := parent.children[baseName]
+	_, exists := parent.Children[baseName]
 	if exists && !replace {
 		return ErrValueExists
 	}
-	parent.children[baseName] = child
+	parent.Children[baseName] = child
 	return nil
 }
 
@@ -103,16 +109,16 @@ func SetVal[T any](node *Node[T], p string, val T, replace bool) error {
 	}
 	dirName := path.Dir(p)
 	baseName := path.Base(p)
-	parent, err := MkdirAll(node, dirName)
+	parent, err := node.MkdirAll(dirName)
 	if err != nil {
 		return err
 	}
-	child, exists := parent.children[baseName]
+	child, exists := parent.Children[baseName]
 	if !exists {
-		parent.children[baseName] = &Node[T]{Val: val}
+		parent.Children[baseName] = &Node[T]{Val: val}
 		return nil
 	}
-	if child.children != nil {
+	if child.Children != nil {
 		return ErrNotFile
 	}
 	if !replace {
@@ -122,22 +128,22 @@ func SetVal[T any](node *Node[T], p string, val T, replace bool) error {
 	return nil
 }
 
-func MkdirAll[T any](node *Node[T], p string) (*Node[T], error) {
+func (node *Node[T]) MkdirAll(p string) (*Node[T], error) {
 	if !fs.ValidPath(p) {
 		return nil, ErrInvalidPath
 	}
-	if p == "." && node.children != nil {
+	if p == "." && node.Children != nil {
 		return node, nil
 	}
 	for {
-		if node.children == nil {
+		if node.Children == nil {
 			return nil, ErrNotDir
 		}
 		first, rest, more := strings.Cut(p, "/")
-		nextNode, exists := node.children[first]
+		nextNode, exists := node.Children[first]
 		if !exists {
 			nextNode = NewDir[T]()
-			node.children[first] = nextNode
+			node.Children[first] = nextNode
 		}
 		node = nextNode
 		p = rest
@@ -148,7 +154,7 @@ func MkdirAll[T any](node *Node[T], p string) (*Node[T], error) {
 	return node, nil
 }
 
-func Remove[T any](node *Node[T], p string, recursive bool) (*Node[T], error) {
+func (node *Node[T]) Remove(p string, recursive bool) (*Node[T], error) {
 	if !fs.ValidPath(p) {
 		return nil, ErrInvalidPath
 	}
@@ -157,35 +163,77 @@ func Remove[T any](node *Node[T], p string, recursive bool) (*Node[T], error) {
 	}
 	dirName := path.Dir(p)
 	baseName := path.Base(p)
-	parent, err := Get(node, dirName)
+	parent, err := node.Get(dirName)
 	if err != nil {
 		return nil, err
 	}
-	if parent.children == nil {
+	if parent.Children == nil {
 		return nil, ErrNotFound
 	}
-	ch, exists := parent.children[baseName]
+	ch, exists := parent.Children[baseName]
 	if !exists {
 		return nil, ErrNotFound
 	}
-	if IsDir(ch) && !recursive {
+	if ch.IsDir() && !recursive {
 		return nil, ErrNotFile
 	}
-	delete(parent.children, baseName)
+	delete(parent.Children, baseName)
 	return ch, nil
 }
 
 // Remove any directories that do not have file nodes as descendants.
-func RemoveEmptyDirs[T any](node *Node[T]) {
-	if node.children == nil {
+func (node *Node[T]) RemoveEmptyDirs() {
+	if node.Children == nil {
 		return
 	}
-	for name, ch := range node.children {
-		RemoveEmptyDirs(ch)
-		if ch.children != nil && len(ch.children) == 0 {
-			delete(node.children, name)
+	for name, ch := range node.Children {
+		ch.RemoveEmptyDirs()
+		if ch.Children != nil && len(ch.Children) == 0 {
+			delete(node.Children, name)
 		}
 	}
+}
+
+func (parent *Node[T]) IsParent(child *Node[T]) bool {
+	for _, ch := range parent.Children {
+		if ch == child {
+			return true
+		}
+		if ch.IsParent(child) {
+			return true
+		}
+	}
+	return false
+}
+
+func (node *Node[T]) Len() int {
+	var l int
+	if node.Children == nil {
+		return 1
+	}
+	for _, ch := range node.Children {
+		l += ch.Len()
+	}
+	return l
+}
+
+// check that all nodes are referenced only once
+func (root *Node[T]) HasCycle() bool {
+	refs := map[*Node[T]]struct{}{}
+	return hasCycleVisit(refs, root)
+}
+
+func hasCycleVisit[T any](refs map[*Node[T]]struct{}, n *Node[T]) bool {
+	if _, exists := refs[n]; exists {
+		return true
+	}
+	refs[n] = struct{}{}
+	for _, ch := range n.Children {
+		if hasCycleVisit(refs, ch) {
+			return true
+		}
+	}
+	return false
 }
 
 // Walk runs fn on every node in the tree
@@ -198,15 +246,15 @@ type WalkFunc[T any] func(name string, isdir bool, val T) error
 var ErrSkipDir error
 
 func walk[T any](node *Node[T], p string, fn WalkFunc[T]) error {
-	isdir := node.children != nil
+	isdir := node.Children != nil
 	if err := fn(p, isdir, node.Val); err != nil {
 		if err == ErrSkipDir {
 			return nil
 		}
 		return err
 	}
-	for _, de := range Children(node) {
-		child := node.children[de.name]
+	for _, de := range node.ReadDir() {
+		child := node.Children[de.name]
 		chPath := path.Join(p, de.name)
 		if err := walk(child, chPath, fn); err != nil {
 			return err
@@ -223,8 +271,8 @@ type DirEntry struct {
 func (de DirEntry) Name() string { return de.name }
 func (de DirEntry) IsDir() bool  { return de.isDir }
 
-type dirEntries []DirEntry
+type DirEntries []DirEntry
 
-func (a dirEntries) Len() int           { return len(a) }
-func (a dirEntries) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a dirEntries) Less(i, j int) bool { return a[i].Name() < a[j].Name() }
+func (a DirEntries) Len() int           { return len(a) }
+func (a DirEntries) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a DirEntries) Less(i, j int) bool { return a[i].Name() < a[j].Name() }
