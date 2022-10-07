@@ -1,3 +1,4 @@
+// Package [ocflv1] provides an implementation of OCFL v1.0 and v1.1.
 package ocflv1
 
 import (
