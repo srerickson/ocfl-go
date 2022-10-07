@@ -109,16 +109,11 @@ func runCommit(ctx context.Context, conf *Config) {
 	if err != nil {
 		log.Error(err, "could not initialize storage driver for staging directory")
 	}
-	// get store
-	storeOpts := &ocflv1.GetStoreConf{
-		Logger: log,
-	}
-	store, err := ocflv1.GetStore(ctx, writeFS, root, storeOpts)
+	store, err := ocflv1.GetStore(ctx, writeFS, root)
 	if err != nil {
 		log.Error(err, "can't commit")
 		return
 	}
-
 	// set digest algorith from exsting object
 	var obj *ocflv1.Object
 	if !commitFlags.newObject {
@@ -152,6 +147,7 @@ func runCommit(ctx context.Context, conf *Config) {
 		ocflv1.WithAlg(digestAlg),
 		ocflv1.WithMessage(commitFlags.commitMsg),
 		ocflv1.WithUser(commitFlags.userName, commitFlags.userAddr),
+		ocflv1.WithLogger(log),
 	}
 	if commitFlags.dryRun {
 		commitOpts = append(commitOpts, ocflv1.WithNoWrite())

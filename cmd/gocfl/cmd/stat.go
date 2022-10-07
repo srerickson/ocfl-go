@@ -46,7 +46,7 @@ func runStat(ctx context.Context, conf *Config) {
 	if closer, ok := fsys.(io.Closer); ok {
 		defer closer.Close()
 	}
-	str, err := ocflv1.GetStore(ctx, fsys, root, nil)
+	str, err := ocflv1.GetStore(ctx, fsys, root)
 	if err != nil {
 		log.Error(err, "could not read storage root", "path", root)
 		return

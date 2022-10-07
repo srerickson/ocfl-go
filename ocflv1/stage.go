@@ -7,6 +7,7 @@ import (
 	"path"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
 )
@@ -30,6 +31,7 @@ type objectStage struct {
 	message         string
 	nowrite         bool    // used for "dry run" commit
 	srcFS           ocfl.FS // source FS for paths in NewManifest
+	logger          logr.Logger
 
 	// generated
 	state    *digest.Map // new version state: index.StateMap(alg)
@@ -46,6 +48,7 @@ func newStage(id string, idx *ocfl.Index, prev *Inventory, opts ...ObjectOption)
 		index:           idx,
 		prevInv:         prev,
 		srcFS:           idx.FS,
+		logger:          logr.Discard(),
 	}
 	for _, opt := range opts {
 		opt(stg)
@@ -135,6 +138,12 @@ func WithNoWrite() ObjectOption {
 func WithProgressWriter(w io.Writer) ObjectOption {
 	return func(stage *objectStage) {
 		stage.progress = w
+	}
+}
+
+func WithLogger(logger logr.Logger) ObjectOption {
+	return func(stage *objectStage) {
+		stage.logger = logger
 	}
 }
 

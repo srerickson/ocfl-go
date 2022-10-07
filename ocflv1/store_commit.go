@@ -53,7 +53,7 @@ func (s *Store) commit(ctx context.Context, stage *objectStage) error {
 	if len(xfer) > 0 && stage.srcFS == nil {
 		return fmt.Errorf("stage doesn't provide an FS for reading files to upload")
 	}
-	s.logger.Info("committing new object version", "id", stage.id, "head", stage.vnum, "alg", stage.alg, "message", stage.message)
+	stage.logger.Info("committing new object version", "id", stage.id, "head", stage.vnum, "alg", stage.alg, "message", stage.message)
 	// expect version directory to ErrNotExist or be empty
 	if stage.vnum.First() {
 		entries, err := s.fsys.ReadDir(ctx, objPath)
@@ -76,7 +76,7 @@ func (s *Store) commit(ctx context.Context, stage *objectStage) error {
 	// write declaration for first version
 	if stage.vnum.First() {
 		if stage.nowrite {
-			s.logger.Info("skipping object declaration", "object_path", objPath)
+			stage.logger.Info("skipping object declaration", "object_path", objPath)
 		} else {
 			decl := ocfl.Declaration{
 				Type:    ocfl.DeclObject,
@@ -99,7 +99,7 @@ func (s *Store) commit(ctx context.Context, stage *objectStage) error {
 			reader = io.TeeReader(f, stage.progress)
 		}
 		if stage.nowrite {
-			s.logger.Info("skipping file transfer", "src", src, "dst", dst)
+			stage.logger.Info("skipping file transfer", "src", src, "dst", dst)
 		} else {
 			if _, err := writeFS.Write(ctx, dst, reader); err != nil {
 				f.Close()
@@ -110,7 +110,7 @@ func (s *Store) commit(ctx context.Context, stage *objectStage) error {
 	}
 	vPath := path.Join(objPath, stage.vnum.String())
 	if stage.nowrite {
-		s.logger.Info("skipping inventory write", "object_path", objPath, "version_path", vPath)
+		stage.logger.Info("skipping inventory write", "object_path", objPath, "version_path", vPath)
 	} else {
 		if err := WriteInventory(ctx, writeFS, newInv, objPath, vPath); err != nil {
 			return err

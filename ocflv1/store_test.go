@@ -50,7 +50,7 @@ func TestGetStore(t *testing.T) {
 				fsys = ocfl.NewFS(os.DirFS(storePath))
 				root = sttest.name
 			}
-			store, err := ocflv1.GetStore(ctx, fsys, root, nil)
+			store, err := ocflv1.GetStore(ctx, fsys, root)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -139,7 +139,7 @@ func TestScanObjects(t *testing.T) {
 						fsys = ocfl.NewFS(os.DirFS(storePath))
 						root = sttest.name
 					}
-					store, err = ocflv1.GetStore(ctx, fsys, root, nil)
+					store, err = ocflv1.GetStore(ctx, fsys, root)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -177,7 +177,7 @@ func TestStoreUpdateObject(t *testing.T) {
 	if err := ocflv1.InitStore(ctx, storeFS, storePath, nil); err != nil {
 		t.Fatal(err)
 	}
-	store, err := ocflv1.GetStore(ctx, storeFS, storePath, nil)
+	store, err := ocflv1.GetStore(ctx, storeFS, storePath)
 	if err != nil {
 		t.Fatal(err)
 	}

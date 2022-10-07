@@ -10,7 +10,6 @@ import (
 	"path"
 	"sync"
 
-	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/extensions"
 )
@@ -24,7 +23,7 @@ type Store struct {
 	config     storeLayout
 	spec       ocfl.Spec
 	layoutFunc extensions.LayoutFunc
-	logger     logr.Logger
+	layoutErr  error // error from ReadLayout()
 	commitLock sync.Mutex
 }
 
@@ -84,19 +83,9 @@ func InitStore(ctx context.Context, fsys ocfl.WriteFS, root string, conf *InitSt
 	return nil
 }
 
-type GetStoreConf struct {
-	Logger     logr.Logger
-	SkipLayout bool
-}
-
 // GetStore returns a *Store for the OCFL Storage Root at root in fsys. The path
 // root must be a directory/prefix with storage root declaration file.
-func GetStore(ctx context.Context, fsys ocfl.FS, root string, conf *GetStoreConf) (*Store, error) {
-	if conf == nil {
-		conf = &GetStoreConf{
-			Logger: logr.Discard(),
-		}
-	}
+func GetStore(ctx context.Context, fsys ocfl.FS, root string) (*Store, error) {
 	dirList, err := fsys.ReadDir(ctx, root)
 	if err != nil {
 		return nil, fmt.Errorf("reading storage root: %w", err)
@@ -122,7 +111,6 @@ func GetStore(ctx context.Context, fsys ocfl.FS, root string, conf *GetStoreConf
 		fsys:    fsys,
 		rootDir: root,
 		spec:    ocflVer,
-		logger:  conf.Logger,
 	}
 	for _, inf := range dirList {
 		if inf.Type().IsRegular() && inf.Name() == layoutName {
@@ -134,13 +122,11 @@ func GetStore(ctx context.Context, fsys ocfl.FS, root string, conf *GetStoreConf
 			break
 		}
 	}
-	if str.config != nil && !conf.SkipLayout {
-		if err := str.ReadLayout(ctx); err != nil {
-			return nil, fmt.Errorf("failed to set store's layout: %w", err)
-		}
-	}
-	if !str.LayoutOK() {
-		str.logger.V(ocfl.LevelWarning).Info("storage root's layout is not set")
+	if str.config != nil {
+		// if ReadLayout fails, we don't return the error here. The store can
+		// still be used, however, the error should be returned by ResolveID()
+		// or other methods requiring the layout from the configuration.
+		str.ReadLayout(ctx)
 	}
 	return str, nil
 }
@@ -182,6 +168,9 @@ func (s *Store) Validate(ctx context.Context, config *ValidateStoreConf) error {
 // ResolveID resolves the storage path for the given id relative using the
 // storage root's layout extension
 func (s *Store) ResolveID(id string) (string, error) {
+	if s.layoutErr != nil {
+		return "", s.layoutErr
+	}
 	if s.layoutFunc == nil {
 		return "", ErrLayoutUndefined
 	}
@@ -239,19 +228,28 @@ func (s *Store) LayoutOK() bool {
 // returned, subsequent calls to ResolveID() will resolve object ids using the
 // new layout.
 func (s *Store) ReadLayout(ctx context.Context) error {
+	s.layoutErr = nil
 	name := s.LayoutName()
 	if name == "" {
-		return ErrLayoutUndefined
+		s.layoutErr = ErrLayoutUndefined
+		return s.layoutErr
 	}
 	ext, err := s.readExtensionConfig(ctx, name)
 	if err != nil {
-		return err
+		s.layoutErr = err
+		return s.layoutErr
 	}
 	layoutExt, ok := ext.(extensions.Layout)
 	if !ok {
-		return fmt.Errorf("%s: %w", name, extensions.ErrNotLayout)
+		err := fmt.Errorf("%s: %w", name, extensions.ErrNotLayout)
+		s.layoutErr = err
+		return s.layoutErr
 	}
-	return s.SetLayout(layoutExt)
+	if err := s.SetLayout(layoutExt); err != nil {
+		s.layoutErr = err
+		return s.layoutErr
+	}
+	return nil
 }
 
 // readExtensionConfig resolves the named extension and loads the extensions'
