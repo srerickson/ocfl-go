@@ -386,6 +386,9 @@ func digestDirNode(node *pathtree.Node[*IndexItem], alg digest.Alg) error {
 			return err
 		}
 	}
+	if node.Val == nil {
+		node.Val = &IndexItem{}
+	}
 	if node.Val.Digests == nil {
 		node.Val.Digests = make(digest.Set)
 	}
