@@ -71,7 +71,7 @@ if err := ocflv1.InitStore(ctx, storeFS, storePath, nil); err != nil {
 }
 
 // get a handle for the storage root
-store, err := ocflv1.GetStore(ctx, storeFS, storePath, nil)
+store, err := ocflv1.GetStore(ctx, storeFS, storePath)
 if err != nil {
     t.Fatal(err)
 }
