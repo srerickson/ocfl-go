@@ -5,11 +5,11 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/srerickson/ocfl/internal/pathtree"
+	"github.com/srerickson/ocfl/pathtree"
 )
 
 func newPathTree(paths map[string]string) (*pathtree.Node[string], error) {
-	tree := pathtree.NewDir[string]()
+	tree := pathtree.NewRoot[string]()
 	for p, v := range paths {
 		if err := pathtree.SetVal(tree, p, v, false); err != nil {
 			return nil, err
@@ -28,7 +28,7 @@ func TestSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Set existing w/o replace
-	err = tree.Set("a", pathtree.NewDir[string](), false)
+	err = tree.Set("a", pathtree.NewRoot[string](), false)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -36,7 +36,7 @@ func TestSet(t *testing.T) {
 		t.Fatalf("expected error to be ErrValueExists, not %v", err)
 	}
 	// Set existing w/ replace
-	err = tree.Set("a", pathtree.NewDir[string](), true)
+	err = tree.Set("a", pathtree.NewRoot[string](), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestGet(t *testing.T) {
 }
 
 func TestMkdirAll(t *testing.T) {
-	tree := pathtree.NewDir[string]()
+	tree := pathtree.NewRoot[string]()
 	n, err := tree.MkdirAll("a/b/c")
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestRemove(t *testing.T) {
 	if _, err := sub.Get(`c/file1.txt`); err != nil {
 		t.Fatal(err)
 	}
-	if tree.IsParent(sub) {
+	if tree.IsParentOf(sub) {
 		t.Fatal("expected sub to not be part of tree")
 	}
 }

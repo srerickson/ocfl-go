@@ -1,3 +1,6 @@
+// Package pathree provides Node[T] and generic functions used for storing
+// arbitrary values in a hierarchical data structure following filesystem naming
+// conventions.
 package pathtree
 
 import (
@@ -18,21 +21,31 @@ var (
 	ErrCycle       = errors.New("this operation may introduce a cycle")
 )
 
+// Node is the primary type for pathtree: it includes a value, Val, of generic
+// type T and map of named references to direct descendats, Children. Descendant
+// nodes are mapped by their name, which cannot include '/'. If Children is nil,
+// the node is considered a directory node. Otherwise, it is considered a file
+// node.
 type Node[T any] struct {
 	Val      T                   `json:"v,omitempty"`
 	Children map[string]*Node[T] `json:"c,omitempty"`
 }
 
-func NewDir[T any]() *Node[T] {
+// NewRoot returns a new directory node for storing values of type T in
+// descendant nodes.
+func NewRoot[T any]() *Node[T] {
 	return &Node[T]{
 		Children: make(map[string]*Node[T]),
 	}
 }
 
+// IsDir indicates whther the node is directory node.
 func (node *Node[T]) IsDir() bool {
 	return node.Children != nil
 }
 
+// ReadDir returns a sorted slice of DirEntry structs representing the children
+// in node. If node is not a directory, nil is returned.
 func (node *Node[T]) ReadDir() []DirEntry {
 	if node.Children == nil {
 		return nil
@@ -50,6 +63,8 @@ func (node *Node[T]) ReadDir() []DirEntry {
 	return entries
 }
 
+// Get returns the node corresponding to the path p, relative to node n.
+// The path p must be fs.ValidPath
 func (node *Node[T]) Get(p string) (*Node[T], error) {
 	if !fs.ValidPath(p) {
 		return nil, ErrInvalidPath
@@ -72,15 +87,24 @@ func (node *Node[T]) Get(p string) (*Node[T], error) {
 	return node, nil
 }
 
-// To prevent cycles the receiver should be the root of the tree.
+// Set sets child as the Node for path p under node, creating any directory
+// nodes if necessary. For example, for a path 'a/b/c.txt', Set will create
+// directory nodes for a and a/b if they do not already exist. If a node for p
+// exists and and replace is true, the existing node is replaced with child;
+// otherwise, an error is returned.
 func (node *Node[T]) Set(p string, child *Node[T], replace bool) error {
 	if !fs.ValidPath(p) {
 		return ErrInvalidPath
 	}
 	if p == "." {
-		return ErrInvalidPath // cannot set value on self
+		if !replace {
+			return ErrValueExists
+		}
+		node.Children = child.Children
+		node.Val = child.Val
+		return nil
 	}
-	if node.IsParent(child) {
+	if node.IsParentOf(child) {
 		return fmt.Errorf("node is alread part of the tree: %w", ErrCycle)
 	}
 	dirName := path.Dir(p)
@@ -97,9 +121,10 @@ func (node *Node[T]) Set(p string, child *Node[T], replace bool) error {
 	return nil
 }
 
-// SetVal sets the value for a leaf node in the tree. If the path does not
-// exist, it is created. If the path refers to a directory node, ErrNotFile is a
-// returned. If the path exists and replace is false, ErrValueExists is returned
+// SetVal sets the value of the child node for path p under node. If the path
+// does not exist, it is created. If the path refers to a directory node,
+// ErrNotFile is a returned. If the path exists and replace is false,
+// ErrValueExists is returned
 func SetVal[T any](node *Node[T], p string, val T, replace bool) error {
 	if !fs.ValidPath(p) {
 		return ErrInvalidPath
@@ -128,6 +153,7 @@ func SetVal[T any](node *Node[T], p string, val T, replace bool) error {
 	return nil
 }
 
+// MkdirALL creates a directory node named p, along with any necessary parents.
 func (node *Node[T]) MkdirAll(p string) (*Node[T], error) {
 	if !fs.ValidPath(p) {
 		return nil, ErrInvalidPath
@@ -142,7 +168,7 @@ func (node *Node[T]) MkdirAll(p string) (*Node[T], error) {
 		first, rest, more := strings.Cut(p, "/")
 		nextNode, exists := node.Children[first]
 		if !exists {
-			nextNode = NewDir[T]()
+			nextNode = NewRoot[T]()
 			node.Children[first] = nextNode
 		}
 		node = nextNode
@@ -154,6 +180,8 @@ func (node *Node[T]) MkdirAll(p string) (*Node[T], error) {
 	return node, nil
 }
 
+// Remove removes the node for path p and returns it. If the node is a directory
+// node, recursive must be true or an error is returned.
 func (node *Node[T]) Remove(p string, recursive bool) (*Node[T], error) {
 	if !fs.ValidPath(p) {
 		return nil, ErrInvalidPath
@@ -194,18 +222,20 @@ func (node *Node[T]) RemoveEmptyDirs() {
 	}
 }
 
-func (parent *Node[T]) IsParent(child *Node[T]) bool {
+// IsParentOf returns true if child is a descendant of parent.
+func (parent *Node[T]) IsParentOf(child *Node[T]) bool {
 	for _, ch := range parent.Children {
 		if ch == child {
 			return true
 		}
-		if ch.IsParent(child) {
+		if ch.IsParentOf(child) {
 			return true
 		}
 	}
 	return false
 }
 
+// Let returns the number of file nodes under node.
 func (node *Node[T]) Len() int {
 	var l int
 	if node.Children == nil {
@@ -276,3 +306,24 @@ type DirEntries []DirEntry
 func (a DirEntries) Len() int           { return len(a) }
 func (a DirEntries) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a DirEntries) Less(i, j int) bool { return a[i].Name() < a[j].Name() }
+
+// Map maps values of type T1 in root to values of type T2 in a new root node.
+func Map[T1 any, T2 any](root *Node[T1], fn func(T1) (T2, error)) (*Node[T2], error) {
+	newRoot := &Node[T2]{}
+	err := Walk(root, func(name string, isdir bool, val T1) error {
+		newVal, err := fn(val)
+		if err != nil {
+			return err
+		}
+		newNode := &Node[T2]{}
+		if isdir {
+			newNode.Children = make(map[string]*Node[T2])
+		}
+		newNode.Val = newVal
+		return newRoot.Set(name, newNode, true)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return newRoot, nil
+}

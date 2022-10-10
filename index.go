@@ -8,7 +8,7 @@ import (
 	"sort"
 
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/internal/pathtree"
+	"github.com/srerickson/ocfl/pathtree"
 )
 
 var (
@@ -37,18 +37,16 @@ type Index struct {
 	// The FS 'backing' entries in SrcPaths. It may be nil. If set, paths in
 	// SrcPaths should be relative to the FS
 	FS FS
-	//
 	// The 'primary' algorithm for items in the index. It may be empty. If set,
 	// all index entries should include a digest for this algorithm in Digests.
 	Alg digest.Alg
-
 	// root is the root node in index. It must a directory node.
 	root *pathtree.Node[*IndexItem]
 }
 
 func NewIndex() *Index {
 	return &Index{
-		root: pathtree.NewDir[*IndexItem](),
+		root: pathtree.NewRoot[*IndexItem](),
 	}
 }
 
@@ -117,7 +115,7 @@ func (item *IndexItem) SameContentAs(other *IndexItem) (bool, error) {
 
 // Get returns the *IndexItem associated with path logical and a boolean
 // indicating if path is a directory. The *IndexItem may be nil. An error
-// is returned the path is invalid or does exist in the tree.
+// is returned if the path is invalid or does exist in the tree.
 func (idx Index) Get(logical string) (*IndexItem, bool, error) {
 	n, err := idx.root.Get(logical)
 	if err != nil {
@@ -148,10 +146,10 @@ func (idx *Index) Sub(p string) (*Index, error) {
 	return &Index{root: n, FS: idx.FS}, nil
 }
 
-// SetDir attaches the tree sub to t at path p. If replace is false and error is
+// SetDir attaches the tree sub to t at path p. If replace is false, an error is
 // returned if path p already exists. If path p exists as a file node and
-// replace is true, the file node will be converted to a directory node. If the
-// additition would cause a cycle in tree, an error is returned
+// replace is true, the file node will be converted to a directory node. If sub
+// is is part of the tree, an error is returned.
 func (idx *Index) SetDir(logical string, sub *Index, replace bool) error {
 	if idx.FS != nil && sub.FS != nil && idx.FS != sub.FS {
 		return errors.New("cannot attach index from a different fs")
@@ -181,6 +179,8 @@ func (idx *Index) ReadDir(p string) ([]DirEntry, error) {
 	return n.ReadDir(), nil
 }
 
+// Remove removes the node at path p from the index. If p is a directory
+// node recursive must be set to true to
 func (idx *Index) Remove(p string, recursive bool) (*Index, error) {
 	n, err := idx.root.Remove(p, recursive)
 	idx.root.RemoveEmptyDirs()
@@ -246,11 +246,12 @@ func (tree Index) MarshalJSON() ([]byte, error) {
 	return json.Marshal(tree.root)
 }
 
+// Diff returns an IndexDiff representing changes from idx to next.
 func (idx *Index) Diff(next *Index, alg digest.Alg) (IndexDiff, error) {
-	return indexNodeDiff(idx.root, next.root, alg)
+	return indexNodeDiff(idx.root, next.root)
 }
 
-func indexNodeDiff(a, b *pathtree.Node[*IndexItem], alg digest.Alg) (IndexDiff, error) {
+func indexNodeDiff(a, b *pathtree.Node[*IndexItem]) (IndexDiff, error) {
 	diff := IndexDiff{
 		Added:     NewIndex(),
 		Removed:   NewIndex(),
@@ -275,7 +276,7 @@ func indexNodeDiff(a, b *pathtree.Node[*IndexItem], alg digest.Alg) (IndexDiff, 
 		// nA exists in both a and b: it may be a directory in both, a file in
 		// both, or a directory in one and a file in the other.
 		if chA.IsDir() && chB.IsDir() {
-			subdiff, err := indexNodeDiff(chA, chB, alg)
+			subdiff, err := indexNodeDiff(chA, chB)
 			if err != nil {
 				return IndexDiff{}, err
 			}
@@ -394,4 +395,10 @@ func digestDirNode(node *pathtree.Node[*IndexItem], alg digest.Alg) error {
 	}
 	node.Val.Digests[alg] = hex.EncodeToString(h.Sum(nil))
 	return nil
+}
+
+// MapIndex returns a pathtree.Node[T] with the same structure as the index and values
+// derrived using the map function fn.
+func MapIndex[T any](idx *Index, fn func(*IndexItem) (T, error)) (*pathtree.Node[T], error) {
+	return pathtree.Map(idx.root, fn)
 }
