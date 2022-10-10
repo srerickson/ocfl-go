@@ -7,7 +7,7 @@ package ocfl
 
 const (
 	// package version
-	Version = "0.0.9"
+	Version = "0.0.10"
 
 	// log levels
 	LevelDebug   = 10
