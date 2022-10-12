@@ -18,7 +18,9 @@ var ErrNotDir = fmt.Errorf("not a directory")
 // FS is a generic backend for cloud storage backends using a blob.Bucket
 type FS struct {
 	*blob.Bucket
-	log logr.Logger
+	log        logr.Logger
+	writerOpts *blob.WriterOptions
+	readerOpts *blob.ReaderOptions
 }
 
 var _ ocfl.WriteFS = (*FS)(nil)
@@ -42,6 +44,22 @@ func WithLogger(l logr.Logger) fsOption {
 	}
 }
 
+func (fsys *FS) WriterOptions(opts *blob.WriterOptions) *FS {
+	return &FS{
+		Bucket:     fsys.Bucket,
+		log:        fsys.log,
+		writerOpts: opts,
+	}
+}
+
+func (fsys *FS) ReaderOptions(opts *blob.ReaderOptions) *FS {
+	return &FS{
+		Bucket:     fsys.Bucket,
+		log:        fsys.log,
+		readerOpts: opts,
+	}
+}
+
 func (fsys *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	fsys.log.V(ocfl.LevelDebug).Info("open file", "name", name)
 	if !fs.ValidPath(name) {
@@ -51,7 +69,7 @@ func (fsys *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 			Err:  fs.ErrInvalid,
 		}
 	}
-	reader, err := fsys.Bucket.NewReader(ctx, name, nil)
+	reader, err := fsys.Bucket.NewReader(ctx, name, fsys.readerOpts)
 	if err != nil {
 		return nil, &fs.PathError{
 			Op:   "openfile",
@@ -130,10 +148,9 @@ func (fsys *FS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error)
 	return results, nil
 }
 
-func (b *FS) Write(ctx context.Context, name string, r io.Reader) (int64, error) {
-	b.log.V(ocfl.LevelDebug).Info("write file", "name", name)
-	opts := &blob.WriterOptions{}
-	writer, err := b.Bucket.NewWriter(ctx, name, opts)
+func (fsys *FS) Write(ctx context.Context, name string, r io.Reader) (int64, error) {
+	fsys.log.V(ocfl.LevelDebug).Info("write file", "name", name)
+	writer, err := fsys.Bucket.NewWriter(ctx, name, fsys.writerOpts)
 	if err != nil {
 		return 0, err
 	}
