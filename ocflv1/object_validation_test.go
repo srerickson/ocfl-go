@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-logr/logr/funcr"
+	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/ocflv1"
 	"github.com/srerickson/ocfl/validation"
@@ -27,7 +28,7 @@ func TestObjectValidation(t *testing.T) {
 			goodObjPath := filepath.Join(fixturePath, `good-objects`)
 			badObjPath := filepath.Join(fixturePath, `bad-objects`)
 			warnObjPath := filepath.Join(fixturePath, `warn-objects`)
-			noLogs := funcr.New(func(prefix, args string) {}, funcr.Options{})
+			noLogs := logr.Discard()
 			t.Run("Valid objects", func(t *testing.T) {
 				fsys := ocfl.NewFS(os.DirFS(goodObjPath))
 				goodObjects, err := fsys.ReadDir(context.Background(), ".")
@@ -109,6 +110,27 @@ func TestObjectValidation(t *testing.T) {
 		})
 	}
 
+}
+
+func TestObjectValidatioNoDigest(t *testing.T) {
+	objPath := filepath.Join("..", "testdata", "object-fixtures", "1.0", "bad-objects", "E092_content_file_digest_mismatch")
+	fsys := ocfl.DirFS(objPath)
+	opts := ocflv1.ValidateObjectConf{
+		Log: validation.NewLog(logr.Discard()),
+	}
+	err := ocflv1.ValidateObject(context.Background(), fsys, ".", &opts)
+	if err == nil {
+		t.Fatal("expect an error if checking digests")
+	}
+	// validating this object without digest check should return no errors
+	opts = ocflv1.ValidateObjectConf{
+		Log:      validation.NewLog(logr.Discard()),
+		NoDigest: true,
+	}
+	err = ocflv1.ValidateObject(context.Background(), fsys, ".", &opts)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 // for a fixture name and set of errors, returns if the errors include expected

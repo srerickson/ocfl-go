@@ -35,7 +35,7 @@ func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, config *Vali
 
 type ValidateObjectConf struct {
 	validation.Log
-	//NoDigest     bool
+	NoDigest bool
 	//LazyDigest   bool
 	//RequiredID   string
 }
@@ -440,6 +440,10 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 	// don't continue if there are previous errors
 	if err := vldr.Err(); err != nil {
 		return err
+	}
+	// don't continue if NoDigest is set
+	if vldr.NoDigest {
+		return nil
 	}
 	// digests
 	digestSetup := func(add checksum.AddFunc) error {
