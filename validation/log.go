@@ -38,7 +38,7 @@ func (l Log) WithName(name string) Log {
 
 func (l *Log) logWarning(err error) {
 	if l.Logger.GetSink() != nil {
-		vals := []interface{}{"type", "fatal"}
+		vals := []interface{}{"type", "warning"}
 		var verr *vErr
 		if errors.As(err, &verr) && verr.Code() != "" {
 			vals = append(vals, "OCFL", verr.Code())
