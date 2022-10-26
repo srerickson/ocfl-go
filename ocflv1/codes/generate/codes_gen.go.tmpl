@@ -2,18 +2,18 @@ package codes
 // This is generated code. Do not modify. See gen folder.
 
 import "github.com/srerickson/ocfl/validation"
-import "github.com/srerickson/ocfl/spec"
+import "github.com/srerickson/ocfl"
 
 
 {{ range $code, $element := . }}
 //{{ $element.Comment }}
 var {{ $code }} = validation.NewCode("{{ $code }}",
-	map[ocfl.Num]*validation.Ref{
+	map[ocfl.Spec]*validation.Ref{
 	{{- range $v, $spec := $element.Specs }}
-		{ {{- index $v 0}},{{ index $v 1 -}} }:{
-			Description: "{{ $ocfl.Description }}",
-			URL: "{{ $ocfl.URL }}",
+		{ {{- index $v 0}}, {{ index $v 1 -}} }: {
+			Description: "{{ $spec.Description }}",
+			URL:         "{{ $spec.URL }}",
 		},
-	{{- end }}	
+	{{- end }}
 	})
 {{ end }}
