@@ -124,8 +124,8 @@ func TestObjectValidatioNoDigest(t *testing.T) {
 	}
 	// validating this object without digest check should return no errors
 	opts = ocflv1.ValidateObjectConf{
-		Log:      validation.NewLog(logr.Discard()),
-		NoDigest: true,
+		Log:         validation.NewLog(logr.Discard()),
+		SkipDigests: true,
 	}
 	err = ocflv1.ValidateObject(context.Background(), fsys, ".", &opts)
 	if err != nil {

@@ -9,17 +9,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/ocflv1"
+	"github.com/srerickson/ocfl/validation"
 )
 
 func TestStoreValidation(t *testing.T) {
 	specs := []string{`1.0`}
 	for _, spec := range specs {
 		t.Run(spec, func(t *testing.T) {
+
 			fixturePath := filepath.Join(`..`, `testdata`, `store-fixtures`, spec)
 			goodPath := filepath.Join(fixturePath, `good-stores`)
 			badPath := filepath.Join(fixturePath, `bad-stores`)
+			warnPath := filepath.Join(fixturePath, `warn-stores`)
+
 			t.Run("Valid storage roots", func(t *testing.T) {
 				dirs, err := os.ReadDir(goodPath)
 				if err != nil {
@@ -40,16 +45,24 @@ func TestStoreValidation(t *testing.T) {
 							defer zFS.Close()
 							fsys = ocfl.NewFS(zFS)
 						} else {
-							fsys = ocfl.NewFS(os.DirFS(filepath.Join(goodPath, name)))
+							fsys = ocfl.DirFS(filepath.Join(goodPath, name))
 						}
-						err := ocflv1.ValidateStore(context.Background(), fsys, `.`, nil)
+						results := validation.NewLog(logr.Discard())
+						conf := &ocflv1.ValidateStoreConf{Log: results}
+						err := ocflv1.ValidateStore(context.Background(), fsys, `.`, conf)
 						if err != nil {
 							t.Error(err)
+						}
+						if len(results.Warn()) != 0 {
+							for _, w := range results.Warn() {
+								t.Fatalf("unexpected warning: %s", w.Error())
+							}
 						}
 
 					})
 				}
 			})
+
 			t.Run("Invalid storage roots", func(t *testing.T) {
 				fsys := os.DirFS(badPath)
 				dirs, err := fs.ReadDir(fsys, ".")
@@ -71,13 +84,49 @@ func TestStoreValidation(t *testing.T) {
 							defer zFS.Close()
 							fsys = ocfl.NewFS(zFS)
 						} else {
-							fsys = ocfl.NewFS(os.DirFS(filepath.Join(badPath, name)))
+							fsys = ocfl.DirFS(filepath.Join(badPath, name))
 						}
 						err := ocflv1.ValidateStore(context.Background(), fsys, `.`, nil)
 						if err == nil {
 							t.Error(`validated but shouldn't`)
 						}
 
+					})
+				}
+			})
+
+			t.Run("Warning storage roots", func(t *testing.T) {
+				fsys := os.DirFS(warnPath)
+				dirs, err := fs.ReadDir(fsys, ".")
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, dir := range dirs {
+					name := dir.Name()
+					if dir.Type().IsRegular() && !strings.HasSuffix(name, ".zip") {
+						continue
+					}
+					t.Run(dir.Name(), func(t *testing.T) {
+						var fsys ocfl.FS
+						if dir.Type().IsRegular() {
+							zFS, err := zip.OpenReader(filepath.Join(warnPath, name))
+							if err != nil {
+								t.Fatal(err)
+							}
+							defer zFS.Close()
+							fsys = ocfl.NewFS(zFS)
+						} else {
+							fsys = ocfl.DirFS(filepath.Join(warnPath, name))
+						}
+						results := validation.NewLog(logr.Discard())
+						conf := &ocflv1.ValidateStoreConf{Log: results}
+						err := ocflv1.ValidateStore(context.Background(), fsys, `.`, conf)
+						if err != nil {
+							t.Error(err)
+						}
+						if len(results.Warn()) == 0 {
+							t.Fatal("expected warnings, got none")
+						}
 					})
 				}
 			})

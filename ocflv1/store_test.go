@@ -101,7 +101,7 @@ func TestScanObjects(t *testing.T) {
 		{name: `good-stores/reg-extension-dir-root`, size: 1, layout: nil},
 		{name: `good-stores/unreg-extension-dir-root`, size: 1, layout: testStoreLayout},
 		{name: `good-stores/simple-root`, size: 3, layout: testStoreLayout},
-		{name: `good-stores/fedora-root.zip`, size: 176, layout: testStoreLayout},
+		{name: `warn-stores/fedora-root.zip`, size: 176, layout: testStoreLayout},
 		{name: `bad-stores/E072_root_with_file_not_in_object`, size: 1, layout: testStoreLayout},
 		{name: `bad-stores/E073_root_with_empty_dir.zip`, size: 0, layout: testStoreLayout},
 	}
@@ -203,7 +203,7 @@ func TestStoreUpdateObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := obj.Validate(ctx); err != nil {
+	if err := obj.Validate(ctx, nil); err != nil {
 		t.Fatal("object is invalid", err)
 	}
 	inv, err := obj.Inventory(ctx)
@@ -251,7 +251,7 @@ func TestStoreUpdateObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := obj.Validate(ctx); err != nil {
+	if err := obj.Validate(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	inv, err = obj.Inventory(ctx)
@@ -278,7 +278,7 @@ func TestStoreUpdateObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := obj.Validate(ctx); err != nil {
+	if err := obj.Validate(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 }

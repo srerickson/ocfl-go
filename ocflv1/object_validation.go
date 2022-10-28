@@ -35,9 +35,7 @@ func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, config *Vali
 
 type ValidateObjectConf struct {
 	validation.Log
-	NoDigest bool
-	//LazyDigest   bool
-	//RequiredID   string
+	SkipDigests bool // skip digest check
 }
 
 // objectValidator represents state of an object validation process
@@ -442,7 +440,7 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 		return err
 	}
 	// don't continue if NoDigest is set
-	if vldr.NoDigest {
+	if vldr.SkipDigests {
 		return nil
 	}
 	// digests

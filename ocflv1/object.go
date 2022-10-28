@@ -32,9 +32,6 @@ type Object struct {
 
 // GetObject returns a new Object with loaded inventory.
 func GetObject(ctx context.Context, fsys ocfl.FS, root string) (*Object, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	inf, err := ocfl.ReadObjInfo(ctx, fsys, root)
 	if err != nil {
 		return nil, fmt.Errorf("reading object: %w", err)
@@ -104,6 +101,6 @@ func (obj *Object) InventorySidecar(ctx context.Context) (string, error) {
 	return readInventorySidecar(ctx, reader)
 }
 
-func (obj *Object) Validate(ctx context.Context) error {
-	return ValidateObject(ctx, obj.fsys, obj.rootDir, nil)
+func (obj *Object) Validate(ctx context.Context, conf *ValidateObjectConf) error {
+	return ValidateObject(ctx, obj.fsys, obj.rootDir, conf)
 }

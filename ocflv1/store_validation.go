@@ -15,6 +15,8 @@ import (
 
 type ValidateStoreConf struct {
 	validation.Log
+	SkipObjects bool // don't validate objects in the store
+	SkipDigests bool // don't validate object digiests
 }
 
 func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, config *ValidateStoreConf) error {
@@ -30,11 +32,11 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, config *Valid
 
 type storeValidator struct {
 	ValidateStoreConf
-	FS     ocfl.FS
-	Root   string
-	ocflV  ocfl.Spec
-	Layout storeLayout
-	// getPath extensions.LayoutFunc
+	FS         ocfl.FS
+	Root       string
+	ocflV      ocfl.Spec
+	Layout     storeLayout
+	layoutFunc extensions.LayoutFunc
 }
 
 func (s *storeValidator) validate(ctx context.Context) error {
@@ -120,16 +122,27 @@ func (s *storeValidator) validate(ctx context.Context) error {
 			err := errors.New(`storage root ocfl_layout.json missing key: "description"`)
 			s.AddFatal(ec(err, codes.E070.Ref(s.ocflV)))
 		}
-		if _, ok := s.Layout[extensionKey]; !ok {
-			err := errors.New(`storage root ocfl_layout.json missing key:"extension"`)
+		_, ok := s.Layout[extensionKey]
+		if !ok {
+			err := errors.New(`storage root ocfl_layout.json missing key: "extension"`)
 			s.AddFatal(ec(err, codes.E070.Ref(s.ocflV)))
 		} else {
 			ext, err := extensions.Get(s.Layout[extensionKey])
 			if err != nil {
 				return s.AddFatal(ec(err, codes.E071.Ref(s.ocflV)))
 			}
-			if _, ok := ext.(extensions.Layout); !ok {
+			if err := readExtensionConfig(ctx, s.FS, s.Root, ext); err != nil {
+				err := fmt.Errorf("storage root has misconfigured layout extension: %w", err)
+				return s.AddFatal(err)
+			}
+			lyt, ok := ext.(extensions.Layout)
+			if !ok {
 				return s.AddFatal(ec(extensions.ErrNotLayout, codes.E071.Ref(s.ocflV)))
+			}
+			s.layoutFunc, err = lyt.NewFunc()
+			if err != nil {
+				err := fmt.Errorf("storage root has misconfigured layout extension: %w", err)
+				return s.AddFatal(err)
 			}
 		}
 	}
@@ -162,6 +175,41 @@ func (s *storeValidator) validate(ctx context.Context) error {
 			err = fmt.Errorf("%w: %s", ErrObjectVersion, p)
 			s.AddFatal(err)
 		}
+		if s.SkipObjects {
+			continue
+		}
+		errMsg := "storage root includes an invalid object"
+		objPath := path.Join(s.Root, p)
+		// FIXME: the object inventory is read twice, for GetObject and then
+		// again ValidateObject. The first time is just to get the ID for
+		// checking the object location. The second time is for validation.
+		obj, err := GetObject(ctx, s.FS, objPath)
+		if err != nil {
+			s.AddFatal(fmt.Errorf("%s: %w", errMsg, err))
+			continue
+		}
+		inv, err := obj.Inventory(ctx) // I just need the ID
+		if err != nil {
+			s.AddFatal(fmt.Errorf("%s: %w", errMsg, err))
+			continue
+		}
+		if s.layoutFunc != nil {
+			p, err := s.layoutFunc(inv.ID)
+			if err != nil {
+				err := fmt.Errorf("object id '%s' is not compatible with the storage root layout: %w", inv.ID, err)
+				s.AddWarn(err)
+				continue
+			}
+			if p != objPath {
+				err := fmt.Errorf("object path '%s' does not conform with storage root layout. expected '%s'", objPath, p)
+				s.AddWarn(err)
+			}
+		}
+		objVCnf := ValidateObjectConf{
+			Log:         s.Log,
+			SkipDigests: s.SkipDigests,
+		}
+		ValidateObject(ctx, s.FS, objPath, &objVCnf)
 	}
 	return s.Err()
 }
