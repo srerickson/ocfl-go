@@ -1,6 +1,7 @@
 package ocflv1
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -316,7 +317,7 @@ func readDigestInventory(ctx context.Context, file io.Reader, inv interface{}, a
 		return "", err
 	}
 	checksum := tmpInv.Digest.New()
-	_, err = checksum.Write(byt)
+	_, err = io.Copy(checksum, bytes.NewReader(byt))
 	if err != nil {
 		return "", err
 	}
