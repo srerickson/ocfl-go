@@ -1,8 +1,6 @@
 package validation
 
 import (
-	"errors"
-
 	"github.com/go-logr/logr"
 )
 
@@ -39,9 +37,10 @@ func (l Log) WithName(name string) Log {
 func (l *Log) logWarning(err error) {
 	if l.Logger.GetSink() != nil {
 		vals := []interface{}{"type", "warning"}
-		var verr *vErr
-		if errors.As(err, &verr) && verr.Code() != "" {
-			vals = append(vals, "OCFL", verr.Code())
+		if vErr, ok := err.(ErrorCode); ok {
+			if ref := vErr.OCFLRef(); ref != nil {
+				vals = append(vals, "OCFL", ref.Code)
+			}
 		}
 		l.Logger.Info(err.Error(), vals...)
 	}
@@ -50,9 +49,10 @@ func (l *Log) logWarning(err error) {
 func (l *Log) logFatal(err error) {
 	if l.Logger.GetSink() != nil {
 		vals := []interface{}{"type", "fatal"}
-		var verr *vErr
-		if errors.As(err, &verr) && verr.Code() != "" {
-			vals = append(vals, "OCFL", verr.Code())
+		if vErr, ok := err.(ErrorCode); ok {
+			if ref := vErr.OCFLRef(); ref != nil {
+				vals = append(vals, "OCFL", ref.Code)
+			}
 		}
 		l.Logger.Info(err.Error(), vals...)
 	}
