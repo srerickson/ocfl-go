@@ -279,7 +279,7 @@ var _ validation.ErrorCode = &InvDecodeError{}
 
 func (invErr *InvDecodeError) Error() string {
 	if invErr.Field != "" {
-		return fmt.Sprintf("error in inventory %s field: %s", invErr.Field, invErr.error.Error())
+		return fmt.Sprintf("error in inventory '%s': %s", invErr.Field, invErr.error.Error())
 	}
 	return fmt.Sprintf("error in inventory: %s", invErr.error.Error())
 }
@@ -291,7 +291,7 @@ func (invErr *InvDecodeError) Unwrap() error {
 func (invErr *InvDecodeError) OCFLRef() *validation.Ref {
 	switch invErr.Field {
 	case "head":
-		return codes.E040.Ref(invErr.ocflV)
+		return codes.E104.Ref(invErr.ocflV)
 	case "type":
 		return codes.E038.Ref(invErr.ocflV)
 	case "version":

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -73,12 +74,8 @@ func TestObjectValidation(t *testing.T) {
 							t.Error(`validated but shouldn't`)
 							return
 						}
-						ok, desc := fixtureExpectedErrs(dir.Name(), logs.Fatal()...)
-						if !ok {
-							t.Error(desc)
-							for _, err := range logs.Fatal() {
-								t.Logf("\t - err: %s", err.Error())
-							}
+						if ok, desc := fixtureExpectedErrs(dir.Name(), logs.Fatal()...); !ok {
+							t.Log(path.Join(spec, dir.Name())+":", desc)
 						}
 					})
 				}
@@ -165,11 +162,14 @@ func fixtureExpectedErrs(name string, errs ...error) (bool, string) {
 		gotKeys = append(gotKeys, k)
 	}
 	sort.Strings(gotKeys)
+	if len(gotKeys) == 0 {
+		gotKeys = append(gotKeys, "[none]")
+	}
 	var desc string
 	if !gotExpected {
 		got := strings.Join(gotKeys, ", ")
 		exp := strings.Join(expKeys, ", ")
-		desc = fmt.Sprintf("got %s, expected %s", got, exp)
+		desc = fmt.Sprintf("didn't get expected error code: got %s, expected %s", got, exp)
 	}
 	return gotExpected, desc
 }
