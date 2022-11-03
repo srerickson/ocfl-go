@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/matryer/is"
+	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/ocflv1"
 	"github.com/srerickson/ocfl/validation"
 )
@@ -550,18 +551,17 @@ var testInventories = []testInventory{
 }
 
 func TestValidateInventory(t *testing.T) {
-	// testFS := initInventoryTestFS()
+	ctx := context.Background()
+	alg := digest.Alg{}
 	for _, test := range testInventories {
 		t.Run(test.description, func(t *testing.T) {
 			is := is.New(t)
-			_, err := ocflv1.ValidateInventory(
-				context.Background(),
-				&ocflv1.ValidateInventoryConf{
-					Reader: strings.NewReader(test.data),
-				})
+			reader := strings.NewReader(test.data)
+			_, result := ocflv1.ValidateInventoryReader(ctx, reader, alg)
 			if test.valid {
-				is.NoErr(err)
+				is.NoErr(result.Err())
 			} else {
+				err := result.Err()
 				is.True(err != nil)
 				if err != nil {
 					var eCode validation.ErrorCode
@@ -581,14 +581,15 @@ func TestValidateInventory(t *testing.T) {
 }
 
 func FuzzValidateInventory(f *testing.F) {
+	ctx := context.Background()
+	alg := digest.Alg{}
 	for _, test := range testInventories {
 		f.Add([]byte(test.data))
 	}
 	f.Fuzz(func(t *testing.T, b []byte) {
-		conf := &ocflv1.ValidateInventoryConf{
-			Reader: bytes.NewReader(b),
-		}
-		_, err := ocflv1.ValidateInventory(context.Background(), conf)
+		reader := bytes.NewReader(b)
+		_, result := ocflv1.ValidateInventoryReader(ctx, reader, alg)
+		err := result.Err()
 		if err != nil {
 			var eCode validation.ErrorCode
 			if !errors.As(err, &eCode) {

@@ -13,42 +13,13 @@ import (
 	"github.com/srerickson/ocfl/validation"
 )
 
-type ValidateStoreConf struct {
-	validation.Log
-	SkipObjects bool // don't validate objects in the store
-	SkipDigests bool // don't validate object digiests
-}
-
-func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, config *ValidateStoreConf) error {
-	vldr := storeValidator{
-		FS:   fsys,
-		Root: root,
-	}
-	if config != nil {
-		vldr.ValidateStoreConf = *config
-	}
-	return vldr.validate(ctx)
-}
-
-type storeValidator struct {
-	ValidateStoreConf
-	FS         ocfl.FS
-	Root       string
-	ocflV      ocfl.Spec
-	Layout     storeLayout
-	layoutFunc extensions.LayoutFunc
-}
-
-func (s *storeValidator) validate(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	inf, err := s.FS.ReadDir(ctx, s.Root)
+func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...ValidationOption) *validation.Result {
+	opts, result := validationSetup(vops)
+	lgr := opts.Logger
+	inf, err := fsys.ReadDir(ctx, root)
 	if err != nil {
-		return s.AddFatal(err)
+		return result.LogFatal(lgr, err)
 	}
-
 	//E069: An OCFL Storage Root MUST contain a Root Conformance Declaration
 	//identifying it as such.
 	//E076: [The OCFL version declaration] MUST be a file in the base
@@ -57,13 +28,13 @@ func (s *storeValidator) validate(ctx context.Context) error {
 	decl, err := ocfl.FindDeclaration(inf)
 	if err != nil {
 		err := fmt.Errorf("not an ocfl storage root: %w", err)
-		return s.AddFatal(ec(err, codes.E076.Ref(ocflv1_0)))
+		return result.LogFatal(lgr, ec(err, codes.E076.Ref(ocflv1_0)))
 	}
 	if decl.Type != storeRoot {
-		err := fmt.Errorf("not an ocfl storage root: %s", s.Root)
-		return s.AddFatal(ec(err, codes.E069.Ref(ocflv1_0)))
+		err := fmt.Errorf("not an ocfl storage root: %s", root)
+		return result.LogFatal(lgr, ec(err, codes.E069.Ref(ocflv1_0)))
 	}
-	s.ocflV = decl.Version
+	ocflV := decl.Version
 	// if !ocflVerSupported[*ocflVer] {
 	// 	return nil, fmt.Errorf("%s: %w", *ocflVer, ErrOCFLVersion)
 	// }
@@ -72,9 +43,9 @@ func (s *storeValidator) validate(ctx context.Context) error {
 	//NAMASTE specification.
 	//E080: The text contents of [the OCFL version declaration file] MUST be
 	//the same as dvalue, followed by a newline (\n).
-	err = ocfl.ValidateDeclaration(ctx, s.FS, path.Join(s.Root, decl.Name()))
+	err = ocfl.ValidateDeclaration(ctx, fsys, path.Join(root, decl.Name()))
 	if err != nil {
-		return s.AddFatal(ec(err, codes.E080.Ref(s.ocflV)))
+		result.LogFatal(lgr, ec(err, codes.E080.Ref(ocflV)))
 	}
 
 	var hasExtensions, hasLayout bool
@@ -89,16 +60,16 @@ func (s *storeValidator) validate(ctx context.Context) error {
 	}
 	//E067: The extensions directory must not contain any files, and no sub-directories other than extension sub-directories.
 	if hasExtensions {
-		entries, err := s.FS.ReadDir(ctx, path.Join(s.Root, extensionsDir))
+		entries, err := fsys.ReadDir(ctx, path.Join(root, extensionsDir))
 		if err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
-				return s.AddFatal(err)
+				return result.LogFatal(lgr, err)
 			}
 		}
 		for _, e := range entries {
 			if !e.IsDir() {
 				err := fmt.Errorf("unexpected file in extensions directory: %s", e.Name())
-				return s.AddFatal(ec(err, codes.E067.Ref(s.ocflV)))
+				return result.LogFatal(lgr, ec(err, codes.E067.Ref(ocflV)))
 			}
 		}
 	}
@@ -113,36 +84,38 @@ func (s *storeValidator) validate(ctx context.Context) error {
 	//E071: The value of the [ocfl_layout.json] extension key must be the
 	//registered extension name for the extension defining the arrangement under
 	//the storage root.
+	var layout storeLayout
+	var layoutFunc extensions.LayoutFunc
 	if hasLayout {
-		err = readLayout(ctx, s.FS, s.Root, &s.Layout)
+		err = readLayout(ctx, fsys, root, &layout)
 		if err != nil {
-			s.AddFatal(err)
+			result.LogFatal(lgr, err)
 		}
-		if _, ok := s.Layout[descriptionKey]; !ok {
+		if _, ok := layout[descriptionKey]; !ok {
 			err := errors.New(`storage root ocfl_layout.json missing key: "description"`)
-			s.AddFatal(ec(err, codes.E070.Ref(s.ocflV)))
+			result.LogFatal(lgr, ec(err, codes.E070.Ref(ocflV)))
 		}
-		_, ok := s.Layout[extensionKey]
+		_, ok := layout[extensionKey]
 		if !ok {
 			err := errors.New(`storage root ocfl_layout.json missing key: "extension"`)
-			s.AddFatal(ec(err, codes.E070.Ref(s.ocflV)))
+			result.LogFatal(lgr, ec(err, codes.E070.Ref(ocflV)))
 		} else {
-			ext, err := extensions.Get(s.Layout[extensionKey])
+			ext, err := extensions.Get(layout[extensionKey])
 			if err != nil {
-				return s.AddFatal(ec(err, codes.E071.Ref(s.ocflV)))
+				return result.LogFatal(lgr, ec(err, codes.E071.Ref(ocflV)))
 			}
-			if err := readExtensionConfig(ctx, s.FS, s.Root, ext); err != nil {
+			if err := readExtensionConfig(ctx, fsys, root, ext); err != nil {
 				err := fmt.Errorf("storage root has misconfigured layout extension: %w", err)
-				return s.AddFatal(err)
+				return result.LogFatal(lgr, err)
 			}
 			lyt, ok := ext.(extensions.Layout)
 			if !ok {
-				return s.AddFatal(ec(extensions.ErrNotLayout, codes.E071.Ref(s.ocflV)))
+				return result.LogFatal(lgr, ec(extensions.ErrNotLayout, codes.E071.Ref(ocflV)))
 			}
-			s.layoutFunc, err = lyt.NewFunc()
+			layoutFunc, err = lyt.NewFunc()
 			if err != nil {
 				err := fmt.Errorf("storage root has misconfigured layout extension: %w", err)
-				return s.AddFatal(err)
+				return result.LogFatal(lgr, err)
 			}
 		}
 	}
@@ -159,57 +132,57 @@ func (s *storeValidator) validate(ctx context.Context) error {
 	//E088: An OCFL Storage Root MUST NOT contain directories or
 	//sub-directories other than as a directory hierarchy used to store OCFL
 	//Objects or for storage root extensions.
-	scan, err := ScanObjects(ctx, s.FS, s.Root, &ScanObjectsOpts{
+	scan, err := ScanObjects(ctx, fsys, root, &ScanObjectsOpts{
 		Strict: true,
 	})
 	if err != nil {
 		if errors.Is(err, ErrEmptyDirs) {
-			s.AddFatal(ec(err, codes.E073.Ref(s.ocflV)))
+			result.LogFatal(lgr, ec(err, codes.E073.Ref(ocflV)))
 		}
 		if errors.Is(err, ErrNonObject) {
-			s.AddFatal(ec(err, codes.E084.Ref(s.ocflV)))
+			result.LogFatal(lgr, ec(err, codes.E084.Ref(ocflV)))
 		}
 	}
 	for p, v := range scan {
-		if s.ocflV.Cmp(v) < 0 {
-			err = fmt.Errorf("%w: %s", ErrObjectVersion, p)
-			s.AddFatal(err)
+		objLgr := lgr.WithName(p)
+		if ocflV.Cmp(v) < 0 {
+			result.LogFatal(objLgr, ErrObjectVersion)
 		}
-		if s.SkipObjects {
+		if opts.SkipObjects {
 			continue
 		}
-		errMsg := "storage root includes an invalid object"
-		objPath := path.Join(s.Root, p)
-		// FIXME: the object inventory is read twice, for GetObject and then
-		// again ValidateObject. The first time is just to get the ID for
-		// checking the object location. The second time is for validation.
-		obj, err := GetObject(ctx, s.FS, objPath)
-		if err != nil {
-			s.AddFatal(fmt.Errorf("%s: %w", errMsg, err))
+		errMsg := "invalid object"
+		objPath := path.Join(root, p)
+		objValidOpts := []ValidationOption{
+			copyValidationOptions(opts),
+			ValidationLogger(objLgr),
+			appendResult(result),
+		}
+		obj, _ := ValidateObject(ctx, fsys, objPath, objValidOpts...)
+		if err := result.Err(); err != nil {
 			continue
 		}
+		// FIXME: the object inventory is read twice, for Validation and then
+		// again here. The is a case where caching the inventory in the object
+		// would be nice
 		inv, err := obj.Inventory(ctx) // I just need the ID
 		if err != nil {
-			s.AddFatal(fmt.Errorf("%s: %w", errMsg, err))
+			result.LogFatal(objLgr, fmt.Errorf("%s: %w", errMsg, err))
 			continue
 		}
-		if s.layoutFunc != nil {
-			p, err := s.layoutFunc(inv.ID)
+		if layoutFunc != nil {
+			p, err := layoutFunc(inv.ID)
 			if err != nil {
 				err := fmt.Errorf("object id '%s' is not compatible with the storage root layout: %w", inv.ID, err)
-				s.AddWarn(err)
+				result.LogWarn(objLgr, err)
 				continue
 			}
 			if p != objPath {
 				err := fmt.Errorf("object path '%s' does not conform with storage root layout. expected '%s'", objPath, p)
-				s.AddWarn(err)
+				result.LogWarn(objLgr, err)
+				continue
 			}
 		}
-		objVCnf := ValidateObjectConf{
-			Log:         s.Log,
-			SkipDigests: s.SkipDigests,
-		}
-		ValidateObject(ctx, s.FS, objPath, &objVCnf)
 	}
-	return s.Err()
+	return result
 }

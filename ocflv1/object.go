@@ -7,6 +7,7 @@ import (
 	"path"
 
 	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl/validation"
 )
 
 var (
@@ -74,12 +75,9 @@ func (obj *Object) Inventory(ctx context.Context) (*Inventory, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	inv, err := ValidateInventory(ctx, &ValidateInventoryConf{
-		FS:              obj.fsys,
-		Name:            path.Join(obj.rootDir, inventoryFile),
-		DigestAlgorithm: info.Algorithm,
-	})
-	if err != nil {
+	name := path.Join(obj.rootDir, inventoryFile)
+	inv, results := ValidateInventory(ctx, obj.fsys, name, info.Algorithm)
+	if err := results.Err(); err != nil {
 		return nil, fmt.Errorf("reading inventory: %w", err)
 	}
 	return inv, err
@@ -92,15 +90,11 @@ func (obj *Object) InventorySidecar(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sidecar := inventoryFile + "." + inf.Algorithm.ID()
-	reader, err := obj.fsys.OpenFile(ctx, path.Join(obj.rootDir, sidecar))
-	if err != nil {
-		return "", err
-	}
-	defer reader.Close()
-	return readInventorySidecar(ctx, reader)
+	sidecar := path.Join(obj.rootDir, inventoryFile+"."+inf.Algorithm.ID())
+	return readInventorySidecar(ctx, obj.fsys, sidecar)
 }
 
-func (obj *Object) Validate(ctx context.Context, conf *ValidateObjectConf) error {
-	return ValidateObject(ctx, obj.fsys, obj.rootDir, conf)
+func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) *validation.Result {
+	_, r := ValidateObject(ctx, obj.fsys, obj.rootDir, opts...)
+	return r
 }

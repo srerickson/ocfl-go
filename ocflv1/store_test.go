@@ -203,8 +203,8 @@ func TestStoreUpdateObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := obj.Validate(ctx, nil); err != nil {
-		t.Fatal("object is invalid", err)
+	if result := obj.Validate(ctx); result.Err() != nil {
+		t.Fatal("object is invalid", result.Err())
 	}
 	inv, err := obj.Inventory(ctx)
 	if err != nil {
@@ -251,8 +251,8 @@ func TestStoreUpdateObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := obj.Validate(ctx, nil); err != nil {
-		t.Fatal(err)
+	if result := obj.Validate(ctx); result.Err() != nil {
+		t.Fatal("object is invalid", result.Err())
 	}
 	inv, err = obj.Inventory(ctx)
 	if err != nil {
@@ -278,8 +278,8 @@ func TestStoreUpdateObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := obj.Validate(ctx, nil); err != nil {
-		t.Fatal(err)
+	if result := obj.Validate(ctx); result.Err() != nil {
+		t.Fatal("object is invalid", result.Err())
 	}
 }
 

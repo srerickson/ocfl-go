@@ -12,6 +12,7 @@ import (
 
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/extensions"
+	"github.com/srerickson/ocfl/validation"
 )
 
 var ErrLayoutUndefined = errors.New("storage root layout is undefined")
@@ -161,8 +162,8 @@ func (s *Store) ScanObjects(ctx context.Context, opts *ScanObjectsOpts) (map[str
 }
 
 // Validate performs complete validation on the store
-func (s *Store) Validate(ctx context.Context, config *ValidateStoreConf) error {
-	return ValidateStore(ctx, s.fsys, s.rootDir, config)
+func (s *Store) Validate(ctx context.Context, opts ...ValidationOption) *validation.Result {
+	return ValidateStore(ctx, s.fsys, s.rootDir, opts...)
 }
 
 // ResolveID resolves the storage path for the given id relative using the

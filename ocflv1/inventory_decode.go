@@ -36,7 +36,7 @@ type decodeInventory struct {
 // values. An the returned Result will include a fatal error for each nil value
 // encountered.
 func (inv *decodeInventory) validateNils() *validation.Result {
-	result := &validation.Result{}
+	result := validation.NewResult(-1)
 	if inv.ID == nil {
 		err := errors.New("missing required field: 'id'")
 		result.AddFatal(ec(err, codes.E036.Ref(inv.ocflV)))
@@ -92,9 +92,9 @@ func (inv decodeInventory) contentDirectory() string {
 // to nil values, the returned validation.Result includes fatal errors. Otherwise,
 // the validation.Result is nil.
 func (inv decodeInventory) asInventory() (*Inventory, *validation.Result) {
-	errs := inv.validateNils()
-	if errs.Err() != nil {
-		return nil, errs
+	result := inv.validateNils()
+	if result.Err() != nil {
+		return nil, result
 	}
 	newInv := &Inventory{
 		ID:               *inv.ID,
@@ -110,23 +110,23 @@ func (inv decodeInventory) asInventory() (*Inventory, *validation.Result) {
 	for num, ver := range inv.Versions {
 		newInv.Versions[num] = ver.Version()
 	}
-	return newInv, nil
+	return newInv, result
 }
 
 // asValidInventory converts inv to an Inventory and checks its validity. If the
 // inv cannot be converted, or if the new Inventory is not valid, the returned
-// validation.Result will include fatal errors. Note, if the new Inventory is
-// validation, the validation.Result may include warning errors
+// validation.Result will include fatal errors. The result is always non-nil and
+// has no associated Logger (errors have not been logged).
 func (inv decodeInventory) asValidInventory() (*Inventory, *validation.Result) {
-	newInv, errs := inv.asInventory()
-	if errs != nil {
-		return nil, errs
+	newInv, result := inv.asInventory()
+	if err := result.Err(); err != nil {
+		return nil, result
 	}
-	errs = newInv.Validate()
-	if err := errs.Err(); err != nil {
-		return nil, errs
+	result.Merge(newInv.Validate())
+	if err := result.Err(); err != nil {
+		return nil, result
 	}
-	return newInv, errs
+	return newInv, result
 }
 
 func (inv *decodeInventory) UnmarshalJSON(b []byte) error {

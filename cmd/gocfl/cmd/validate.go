@@ -7,7 +7,6 @@ import (
 
 	"github.com/muesli/coral"
 	"github.com/srerickson/ocfl/ocflv1"
-	"github.com/srerickson/ocfl/validation"
 )
 
 var validateFlags = struct {
@@ -54,21 +53,21 @@ func runValidate(ctx context.Context, conf *Config) {
 			log.Error(err, "invalid object ID")
 			return
 		}
-		vconf := &ocflv1.ValidateObjectConf{
-			Log: validation.NewLog(log),
-		}
-		if err := ocflv1.ValidateObject(ctx, fsys, path.Join(root, pth), vconf); err != nil {
+		name := path.Join(root, pth)
+		_, result := ocflv1.ValidateObject(ctx, fsys, name, ocflv1.ValidationLogger(log))
+
+		if err := result.Err(); err != nil {
 			log.Error(err, "object is not valid")
 			return
 		}
 		log.Info("object is valid", "id", validateFlags.objectID)
 		return
 	}
-	if err := str.Validate(ctx, &ocflv1.ValidateStoreConf{
-		Log: validation.NewLog(log),
-	}); err != nil {
+	result := str.Validate(ctx, ocflv1.ValidationLogger(log))
+
+	if err := result.Err(); err != nil {
 		log.Error(err, "store is not valid")
+		return
 	}
 	log.Info("store is valid")
-
 }

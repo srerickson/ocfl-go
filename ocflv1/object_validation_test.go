@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -13,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/ocflv1"
 	"github.com/srerickson/ocfl/validation"
@@ -29,7 +27,6 @@ func TestObjectValidation(t *testing.T) {
 			goodObjPath := filepath.Join(fixturePath, `good-objects`)
 			badObjPath := filepath.Join(fixturePath, `bad-objects`)
 			warnObjPath := filepath.Join(fixturePath, `warn-objects`)
-			noLogs := logr.Discard()
 			t.Run("Valid objects", func(t *testing.T) {
 				fsys := ocfl.NewFS(os.DirFS(goodObjPath))
 				goodObjects, err := fsys.ReadDir(context.Background(), ".")
@@ -38,18 +35,16 @@ func TestObjectValidation(t *testing.T) {
 				}
 				for _, dir := range goodObjects {
 					t.Run(dir.Name(), func(t *testing.T) {
-						logs := validation.NewLog(noLogs)
-						conf := ocflv1.ValidateObjectConf{Log: logs}
-						ocflv1.ValidateObject(context.Background(), fsys, dir.Name(), &conf)
-						if len(logs.Fatal()) > 0 {
+						_, result := ocflv1.ValidateObject(context.Background(), fsys, dir.Name())
+						if result.Err() != nil {
 							t.Error(`should be valid but got errors`)
-							for _, err := range logs.Fatal() {
+							for _, err := range result.Fatal() {
 								t.Errorf("\t - err: %s", err.Error())
 							}
 						}
-						if len(logs.Warn()) > 0 {
+						if len(result.Warn()) > 0 {
 							t.Error(`should be no warnings`)
-							for _, err := range logs.Warn() {
+							for _, err := range result.Warn() {
 								t.Errorf("\t - warn: %s", err.Error())
 							}
 						}
@@ -67,14 +62,12 @@ func TestObjectValidation(t *testing.T) {
 						continue
 					}
 					t.Run(dir.Name(), func(t *testing.T) {
-						logs := validation.NewLog(noLogs)
-						conf := ocflv1.ValidateObjectConf{Log: logs}
-						ocflv1.ValidateObject(context.Background(), fsys, dir.Name(), &conf)
-						if errs := logs.Fatal(); len(errs) == 0 {
+						_, result := ocflv1.ValidateObject(context.Background(), fsys, dir.Name())
+						if result.Err() == nil {
 							t.Error(`validated but shouldn't`)
 							return
 						}
-						if ok, desc := fixtureExpectedErrs(dir.Name(), logs.Fatal()...); !ok {
+						if ok, desc := fixtureExpectedErrs(dir.Name(), result.Fatal()...); !ok {
 							t.Log(path.Join(spec, dir.Name())+":", desc)
 						}
 					})
@@ -89,16 +82,14 @@ func TestObjectValidation(t *testing.T) {
 				}
 				for _, dir := range warnObjects {
 					t.Run(dir.Name(), func(t *testing.T) {
-						logs := validation.NewLog(noLogs)
-						conf := ocflv1.ValidateObjectConf{Log: logs}
-						ocflv1.ValidateObject(context.Background(), fsys, dir.Name(), &conf)
-						if errs := logs.Fatal(); len(errs) > 0 {
+						_, result := ocflv1.ValidateObject(context.Background(), fsys, dir.Name())
+						if result.Err() != nil {
 							t.Error(`should be valid, but got errors:`)
-							for _, err := range errs {
+							for _, err := range result.Fatal() {
 								t.Logf("\t - err: %s", err.Error())
 							}
 						}
-						if len(logs.Warn()) == 0 {
+						if len(result.Warn()) == 0 {
 							t.Error(`should have warning but got none.`)
 						}
 					})
@@ -109,24 +100,17 @@ func TestObjectValidation(t *testing.T) {
 
 }
 
-func TestObjectValidatioNoDigest(t *testing.T) {
+func TestObjectValidatioSkipDigest(t *testing.T) {
 	objPath := filepath.Join("..", "testdata", "object-fixtures", "1.0", "bad-objects", "E092_content_file_digest_mismatch")
 	fsys := ocfl.DirFS(objPath)
-	opts := ocflv1.ValidateObjectConf{
-		Log: validation.NewLog(logr.Discard()),
-	}
-	err := ocflv1.ValidateObject(context.Background(), fsys, ".", &opts)
-	if err == nil {
+	_, result := ocflv1.ValidateObject(context.Background(), fsys, ".")
+	if err := result.Err(); err == nil {
 		t.Fatal("expect an error if checking digests")
 	}
 	// validating this object without digest check should return no errors
-	opts = ocflv1.ValidateObjectConf{
-		Log:         validation.NewLog(logr.Discard()),
-		SkipDigests: true,
-	}
-	err = ocflv1.ValidateObject(context.Background(), fsys, ".", &opts)
-	if err != nil {
-		log.Fatal(err)
+	_, result = ocflv1.ValidateObject(context.Background(), fsys, ".", ocflv1.SkipDigests())
+	if err := result.Err(); err != nil {
+		t.Fatal(err)
 	}
 }
 

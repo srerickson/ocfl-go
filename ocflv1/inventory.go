@@ -149,10 +149,12 @@ func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs
 // readInventorySidecar parses the contents of file as an inventory sidecar, returning
 // the stored digest on succecss. An error is returned if the sidecar is not in the expected
 // format
-func readInventorySidecar(ctx context.Context, file io.Reader) (string, error) {
-	if err := ctx.Err(); err != nil {
+func readInventorySidecar(ctx context.Context, fsys ocfl.FS, name string) (string, error) {
+	file, err := fsys.OpenFile(ctx, name)
+	if err != nil {
 		return "", err
 	}
+	defer file.Close()
 	cont, err := io.ReadAll(file)
 	if err != nil {
 		return "", fmt.Errorf("%w: %s", ErrInvSidecarOpen, err.Error())

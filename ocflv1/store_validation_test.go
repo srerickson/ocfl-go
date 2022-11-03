@@ -9,10 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/ocflv1"
-	"github.com/srerickson/ocfl/validation"
 )
 
 func TestStoreValidation(t *testing.T) {
@@ -47,14 +45,12 @@ func TestStoreValidation(t *testing.T) {
 						} else {
 							fsys = ocfl.DirFS(filepath.Join(goodPath, name))
 						}
-						results := validation.NewLog(logr.Discard())
-						conf := &ocflv1.ValidateStoreConf{Log: results}
-						err := ocflv1.ValidateStore(context.Background(), fsys, `.`, conf)
-						if err != nil {
+						result := ocflv1.ValidateStore(context.Background(), fsys, `.`)
+						if result.Err() != nil {
 							t.Error(err)
 						}
-						if len(results.Warn()) != 0 {
-							for _, w := range results.Warn() {
+						if len(result.Warn()) != 0 {
+							for _, w := range result.Warn() {
 								t.Fatalf("unexpected warning: %s", w.Error())
 							}
 						}
@@ -86,8 +82,8 @@ func TestStoreValidation(t *testing.T) {
 						} else {
 							fsys = ocfl.DirFS(filepath.Join(badPath, name))
 						}
-						err := ocflv1.ValidateStore(context.Background(), fsys, `.`, nil)
-						if err == nil {
+						result := ocflv1.ValidateStore(context.Background(), fsys, `.`)
+						if result.Err() == nil {
 							t.Error(`validated but shouldn't`)
 						}
 
@@ -118,13 +114,11 @@ func TestStoreValidation(t *testing.T) {
 						} else {
 							fsys = ocfl.DirFS(filepath.Join(warnPath, name))
 						}
-						results := validation.NewLog(logr.Discard())
-						conf := &ocflv1.ValidateStoreConf{Log: results}
-						err := ocflv1.ValidateStore(context.Background(), fsys, `.`, conf)
-						if err != nil {
+						result := ocflv1.ValidateStore(context.Background(), fsys, `.`)
+						if err := result.Err(); err != nil {
 							t.Error(err)
 						}
-						if len(results.Warn()) == 0 {
+						if len(result.Warn()) == 0 {
 							t.Fatal("expected warnings, got none")
 						}
 					})
