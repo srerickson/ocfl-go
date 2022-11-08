@@ -10,7 +10,6 @@ require (
 	github.com/iand/logfmtr v0.2.1
 	github.com/matryer/is v1.4.0
 	github.com/muesli/coral v1.0.0
-	github.com/spf13/pflag v1.0.5
 	gocloud.dev v0.26.0
 	golang.org/x/crypto v0.0.0-20220331220935-ae2d96664a29
 )
@@ -59,6 +58,7 @@ require (
 	github.com/muesli/reflow v0.2.1-0.20210115123740-9e1d0d53df68 // indirect
 	github.com/muesli/termenv v0.11.1-0.20220204035834-5ac8409525e0 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
+	github.com/spf13/pflag v1.0.5 // indirect
 	go.opencensus.io v0.23.0 // indirect
 	golang.org/x/net v0.0.0-20220401154927-543a649e0bdd // indirect
 	golang.org/x/oauth2 v0.0.0-20220309155454-6242fa91716a // indirect

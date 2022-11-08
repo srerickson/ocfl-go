@@ -10,7 +10,6 @@ import (
 
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/backend/cloud"
-	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/ocflv1"
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/fileblob"
@@ -67,7 +66,7 @@ func TestOpenFile(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer f.Close()
-		_, result := ocflv1.ValidateInventoryReader(context.Background(), f, digest.Alg{})
+		_, result := ocflv1.ValidateInventoryReader(context.Background(), f, nil)
 		if err := result.Err(); err != nil {
 			t.Fatal(err)
 		}

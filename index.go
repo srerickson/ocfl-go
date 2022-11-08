@@ -37,9 +37,6 @@ type Index struct {
 	// The FS 'backing' entries in SrcPaths. It may be nil. If set, paths in
 	// SrcPaths should be relative to the FS
 	FS FS
-	// The 'primary' algorithm for items in the index. It may be empty. If set,
-	// all index entries should include a digest for this algorithm in Digests.
-	Alg digest.Alg
 	// root is the root node in index. It must a directory node.
 	root *pathtree.Node[*IndexItem]
 }
@@ -198,7 +195,7 @@ func (idx *Index) Len() int {
 	return idx.root.Len()
 }
 
-func (idx *Index) StateMap(alg digest.Alg) (*digest.Map, error) {
+func (idx *Index) StateMap(alg string) (*digest.Map, error) {
 	m := digest.NewMap()
 	walkFn := func(p string, isdir bool, inf *IndexItem) error {
 		if isdir {
@@ -219,7 +216,7 @@ func (idx *Index) StateMap(alg digest.Alg) (*digest.Map, error) {
 	return m, nil
 }
 
-func (idx *Index) ManifestMap(alg digest.Alg) (*digest.Map, error) {
+func (idx *Index) ManifestMap(alg string) (*digest.Map, error) {
 	m := digest.NewMap()
 	walkFn := func(p string, isdir bool, inf *IndexItem) error {
 		if isdir {
@@ -247,7 +244,7 @@ func (tree Index) MarshalJSON() ([]byte, error) {
 }
 
 // Diff returns an IndexDiff representing changes from idx to next.
-func (idx *Index) Diff(next *Index, alg digest.Alg) (IndexDiff, error) {
+func (idx *Index) Diff(next *Index, alg string) (IndexDiff, error) {
 	return indexNodeDiff(idx.root, next.root)
 }
 
@@ -379,7 +376,7 @@ func digestDirNode(node *pathtree.Node[*IndexItem], alg digest.Alg) error {
 	h := alg.New()
 	for _, d := range node.ReadDir() {
 		ch := node.Children[d.Name()]
-		sum, exists := ch.Val.Digests[alg]
+		sum, exists := ch.Val.Digests[alg.ID()]
 		if !exists {
 			return fmt.Errorf("missing %s digest value: %w", alg, ErrNoValue)
 		}
@@ -393,7 +390,7 @@ func digestDirNode(node *pathtree.Node[*IndexItem], alg digest.Alg) error {
 	if node.Val.Digests == nil {
 		node.Val.Digests = make(digest.Set)
 	}
-	node.Val.Digests[alg] = hex.EncodeToString(h.Sum(nil))
+	node.Val.Digests[alg.ID()] = hex.EncodeToString(h.Sum(nil))
 	return nil
 }
 

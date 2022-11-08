@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/ocflv1"
 )
 
@@ -22,8 +21,7 @@ func TestInventoryIndex(t *testing.T) {
 	for _, dir := range goodObjects {
 		t.Run(dir.Name(), func(t *testing.T) {
 			name := path.Join(dir.Name(), "inventory.json")
-			alg := digest.Alg{}
-			inv, result := ocflv1.ValidateInventory(ctx, fsys, name, alg)
+			inv, result := ocflv1.ValidateInventory(ctx, fsys, name, nil)
 			if err := result.Err(); err != nil {
 				t.Fatal(err)
 			}

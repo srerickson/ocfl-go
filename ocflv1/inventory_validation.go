@@ -47,12 +47,12 @@ func (inv *Inventory) Validate() *validation.Result {
 		err := fmt.Errorf(`object ID is not a URI: %s`, inv.ID)
 		result.AddWarn(ec(err, codes.W005.Ref(inv.Type.Spec)))
 	}
-	if inv.DigestAlgorithm != digest.SHA512 {
-		if inv.DigestAlgorithm != digest.SHA256 {
-			err := fmt.Errorf(`digestAlgorithm is not %s or %s`, digest.SHA512, digest.SHA256)
+	if alg := inv.DigestAlgorithm; alg != digest.SHA512id {
+		if alg != digest.SHA256id {
+			err := fmt.Errorf(`digestAlgorithm is not %s or %s`, digest.SHA512id, digest.SHA256id)
 			result.AddFatal(ec(err, codes.E025.Ref(inv.Type.Spec)))
 		} else {
-			err := fmt.Errorf(`digestAlgorithm is not %s`, digest.SHA512)
+			err := fmt.Errorf(`digestAlgorithm is not %s`, digest.SHA512id)
 			result.AddWarn(ec(err, codes.W004.Ref(inv.Type.Spec)))
 		}
 	}
@@ -206,7 +206,7 @@ func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, alg diges
 		return nil, invResult
 	}
 	ocflV = inv.Type.Spec
-	side := name + "." + inv.DigestAlgorithm.ID()
+	side := name + "." + inv.DigestAlgorithm
 	expSum, err := readInventorySidecar(ctx, fsys, side)
 	if err != nil {
 		if errors.Is(err, ErrInvSidecarContents) {
@@ -258,10 +258,10 @@ func ValidateInventoryReader(ctx context.Context, reader io.Reader, alg digest.A
 // readDigestInventory reads and decodes the contents of file into the value
 // pointed to by inv; it also digests the contents of the reader using the
 // digest algorithm alg, returning the digest string.
-func readDigestInventory(ctx context.Context, file io.Reader, inv interface{}, alg digest.Alg) (string, error) {
-	if alg.ID() != "" {
+func readDigestInventory(ctx context.Context, reader io.Reader, inv interface{}, alg digest.Alg) (string, error) {
+	if alg != nil {
 		checksum := alg.New()
-		reader := io.TeeReader(file, checksum)
+		reader := io.TeeReader(reader, checksum)
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
@@ -271,7 +271,7 @@ func readDigestInventory(ctx context.Context, file io.Reader, inv interface{}, a
 		return hex.EncodeToString(checksum.Sum(nil)), nil
 	}
 	// otherwise, need to decode inventory twice
-	byt, err := io.ReadAll(file)
+	byt, err := io.ReadAll(reader)
 	if err != nil {
 		return "", err
 	}
@@ -280,12 +280,17 @@ func readDigestInventory(ctx context.Context, file io.Reader, inv interface{}, a
 	}
 	// decode to get digestAlgorithm
 	var tmpInv struct {
-		Digest digest.Alg `json:"digestAlgorithm"`
+		Digest string `json:"digestAlgorithm"`
 	}
 	if err = json.Unmarshal(byt, &tmpInv); err != nil {
 		return "", err
 	}
-	checksum := tmpInv.Digest.New()
+	// lookup alg in digest.Registry
+	alg, err = digest.RegistryFromContext(ctx).Get(tmpInv.Digest)
+	if err != nil {
+		return "", err
+	}
+	checksum := alg.New()
 	_, err = io.Copy(checksum, bytes.NewReader(byt))
 	if err != nil {
 		return "", err

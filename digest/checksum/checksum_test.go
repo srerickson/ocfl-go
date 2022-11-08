@@ -20,9 +20,10 @@ var testMD5Sums = map[string]string{
 	"test/fixture/hello.csv":                                            "9d02fa6e9dd9f38327f7b213daa28be6",
 }
 
-func TestPipe(t *testing.T) {
-	algs := []digest.Alg{digest.MD5}
-	t.Run("zero values, zero files", func(t *testing.T) {
+func TestChecksum(t *testing.T) {
+	algsMD5 := []digest.Alg{digest.MD5()}
+	algsMD5SHA1 := []digest.Alg{digest.MD5(), digest.SHA1()}
+	t.Run("minimal", func(t *testing.T) {
 		setup := func(add checksum.AddFunc) error {
 			return nil
 		}
@@ -33,16 +34,111 @@ func TestPipe(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	t.Run("zero values, one file", func(t *testing.T) {
+	t.Run("setup err", func(t *testing.T) {
 		setup := func(add checksum.AddFunc) error {
-			add(filepath.Join("test", "fixture", "hello.csv"), algs)
+			return errors.New("catch me")
+		}
+		cb := func(name string, results digest.Set, err error) error {
+			return err
+		}
+		if err := checksum.Run(setup, cb); err == nil {
+			t.Fatal("expected an error")
+		}
+	})
+	t.Run("callback err", func(t *testing.T) {
+		setup := func(add checksum.AddFunc) error {
+			add(filepath.Join("test", "fixture", "hello.csv"), []digest.Alg{})
+			return nil
+		}
+		cb := func(name string, results digest.Set, err error) error {
+			return errors.New("catch me")
+		}
+		if err := checksum.Run(setup, cb); err == nil {
+			t.Fatal("expected an error")
+		}
+	})
+	t.Run("minimal, one existing file, md5", func(t *testing.T) {
+		setup := func(add checksum.AddFunc) error {
+			add(filepath.Join("test", "fixture", "hello.csv"), algsMD5)
+			return nil
+		}
+		cb := func(name string, results digest.Set, err error) error {
+			if err != nil {
+				return err
+			}
+			if results[digest.MD5id] == "" {
+				return errors.New("missing result")
+			}
+			return nil
+		}
+		if err := checksum.Run(setup, cb); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("minimal, one existing file, md5,sha1", func(t *testing.T) {
+		setup := func(add checksum.AddFunc) error {
+			add(filepath.Join("test", "fixture", "hello.csv"), algsMD5SHA1)
+			return nil
+		}
+		cb := func(name string, results digest.Set, err error) error {
+			if err != nil {
+				return err
+			}
+			if results[digest.MD5id] == "" {
+				return errors.New("missing result")
+			}
+			if results[digest.SHA1id] == "" {
+				return errors.New("missing result")
+			}
+			if len(results) > 2 {
+				return errors.New("should ony have two results")
+			}
+			return nil
+		}
+		if err := checksum.Run(setup, cb); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("minimal, one existing file, no algs", func(t *testing.T) {
+		setup := func(add checksum.AddFunc) error {
+			add(filepath.Join("test", "fixture", "hello.csv"), []digest.Alg{})
+			return nil
+		}
+		cb := func(name string, results digest.Set, err error) error {
+			if err != nil {
+				return err
+			}
+			if len(results) > 0 {
+				return errors.New("results should be empty")
+			}
+			return nil
+		}
+		if err := checksum.Run(setup, cb); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("minimal, non-existing file, no algs", func(t *testing.T) {
+		setup := func(add checksum.AddFunc) error {
+			add("missingfile.txt", []digest.Alg{})
 			return nil
 		}
 		cb := func(name string, results digest.Set, err error) error {
 			return err
 		}
-		if err := checksum.Run(setup, cb); err != nil {
-			t.Fatal(err)
+		if err := checksum.Run(setup, cb); err == nil {
+			t.Fatal("expected an error: no file")
+		}
+	})
+	t.Run("minimal, non-existing file, md5", func(t *testing.T) {
+		setup := func(add checksum.AddFunc) error {
+			add("missingfile.txt", algsMD5)
+			return nil
+		}
+		cb := func(name string, results digest.Set, err error) error {
+			return err
+		}
+		if err := checksum.Run(setup, cb); err == nil {
+			t.Fatal("expected an error: no file")
 		}
 	})
 	t.Run("walk test dir", func(t *testing.T) {
@@ -55,7 +151,7 @@ func TestPipe(t *testing.T) {
 					return err
 				}
 				if entr.Type().IsRegular() {
-					if !add(p, algs) {
+					if !add(p, algsMD5) {
 						return fmt.Errorf("%s not added", p)
 					}
 				}
@@ -64,7 +160,7 @@ func TestPipe(t *testing.T) {
 			return fs.WalkDir(fsys, `test`, walkFunc)
 		}
 		cb := func(name string, sums digest.Set, err error) error {
-			sum, ok := sums[digest.MD5]
+			sum, ok := sums[digest.MD5().ID()]
 			if !ok {
 				return errors.New("expected md5")
 			}
@@ -79,38 +175,4 @@ func TestPipe(t *testing.T) {
 			t.Fatalf("md5sums don't match expected values")
 		}
 	})
-	t.Run("callback error", func(t *testing.T) {
-		fsys := os.DirFS(`.`)
-		cb := func(name string, sums digest.Set, err error) error {
-			return errors.New("catch me")
-		}
-		setup := func(add checksum.AddFunc) error {
-			if !add("test/fixture/hello.csv", algs) {
-				return fmt.Errorf("add failed")
-			}
-			return nil
-		}
-		err := checksum.Run(setup, cb, checksum.WithFS(fsys))
-		if err == nil {
-			t.Error("expected error from close")
-		} else if err.Error() != "catch me" {
-			t.Error("expected: catch me")
-		}
-	})
-
-	t.Run("setup error", func(t *testing.T) {
-		cb := func(name string, sums digest.Set, err error) error {
-			return err
-		}
-		setup := func(add checksum.AddFunc) error {
-			return errors.New("catch me")
-		}
-		err := checksum.Run(setup, cb)
-		if err == nil {
-			t.Error("expected error from close")
-		} else if err.Error() != "catch me" {
-			t.Error("expected: catch me")
-		}
-	})
-
 }

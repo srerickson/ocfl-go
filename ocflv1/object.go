@@ -7,6 +7,7 @@ import (
 	"path"
 
 	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/validation"
 )
 
@@ -76,7 +77,11 @@ func (obj *Object) Inventory(ctx context.Context) (*Inventory, error) {
 		return nil, err
 	}
 	name := path.Join(obj.rootDir, inventoryFile)
-	inv, results := ValidateInventory(ctx, obj.fsys, name, info.Algorithm)
+	alg, err := digest.RegistryFromContext(ctx).Get(info.Algorithm)
+	if err != nil {
+		return nil, fmt.Errorf("reading inventory: %w", err)
+	}
+	inv, results := ValidateInventory(ctx, obj.fsys, name, alg)
 	if err := results.Err(); err != nil {
 		return nil, fmt.Errorf("reading inventory: %w", err)
 	}
@@ -90,7 +95,7 @@ func (obj *Object) InventorySidecar(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sidecar := path.Join(obj.rootDir, inventoryFile+"."+inf.Algorithm.ID())
+	sidecar := path.Join(obj.rootDir, inventoryFile+"."+inf.Algorithm)
 	return readInventorySidecar(ctx, obj.fsys, sidecar)
 }
 

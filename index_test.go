@@ -51,22 +51,22 @@ func TestIndex(t *testing.T) {
 func TestIndexDiff(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
 		a, b := ocfl.NewIndex(), ocfl.NewIndex()
-		if diff, _ := a.Diff(b, digest.SHA256); !diff.Equal() {
+		if diff, _ := a.Diff(b, digest.SHA256id); !diff.Equal() {
 			t.Fatal("expected a,b to be equal")
 		}
 	})
 	t.Run("same files", func(t *testing.T) {
 		a, b := ocfl.NewIndex(), ocfl.NewIndex()
-		addDigest(a, "a/b/c.txt", digest.SHA256, "abcdef")
-		addDigest(b, "a/b/c.txt", digest.SHA256, "abcdef")
-		if diff, _ := a.Diff(b, digest.SHA256); !diff.Equal() {
+		addDigest(a, "a/b/c.txt", digest.SHA256id, "abcdef")
+		addDigest(b, "a/b/c.txt", digest.SHA256id, "abcdef")
+		if diff, _ := a.Diff(b, digest.SHA256id); !diff.Equal() {
 			t.Fatal("expected a,b to be equal")
 		}
 	})
 	t.Run("empty, single addition", func(t *testing.T) {
 		a, b := ocfl.NewIndex(), ocfl.NewIndex()
-		addDigest(b, "a/b/c.txt", digest.SHA256, "abcdef")
-		diff, err := a.Diff(b, digest.SHA256)
+		addDigest(b, "a/b/c.txt", digest.SHA256id, "abcdef")
+		diff, err := a.Diff(b, digest.SHA256id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -89,14 +89,14 @@ func TestIndexDiff(t *testing.T) {
 		if isdir {
 			t.Fatal("expected file entry")
 		}
-		if inf.Digests[digest.SHA256] != "abcdef" {
+		if inf.Digests[digest.SHA256id] != "abcdef" {
 			t.Fatal("expcted correct checksum")
 		}
 	})
 	t.Run("single file removed", func(t *testing.T) {
 		a, b := ocfl.NewIndex(), ocfl.NewIndex()
-		addDigest(a, "a/b/c.txt", digest.SHA256, "abcdef")
-		diff, err := a.Diff(b, digest.SHA256)
+		addDigest(a, "a/b/c.txt", digest.SHA256id, "abcdef")
+		diff, err := a.Diff(b, digest.SHA256id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -119,15 +119,15 @@ func TestIndexDiff(t *testing.T) {
 		if isdir {
 			t.Fatal("expected file entry")
 		}
-		if inf.Digests[digest.SHA256] != "abcdef" {
+		if inf.Digests[digest.SHA256id] != "abcdef" {
 			t.Fatal("expcted correct checksum")
 		}
 	})
 	t.Run("single file changed", func(t *testing.T) {
 		a, b := ocfl.NewIndex(), ocfl.NewIndex()
-		addDigest(a, "a/b/c.txt", digest.SHA256, "abcdef1")
-		addDigest(b, "a/b/c.txt", digest.SHA256, "abcdef2")
-		diff, err := a.Diff(b, digest.SHA256)
+		addDigest(a, "a/b/c.txt", digest.SHA256id, "abcdef1")
+		addDigest(b, "a/b/c.txt", digest.SHA256id, "abcdef2")
+		diff, err := a.Diff(b, digest.SHA256id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -150,22 +150,22 @@ func TestIndexDiff(t *testing.T) {
 		if isdir {
 			t.Fatal("expected file entry")
 		}
-		if inf.Digests[digest.SHA256] != "abcdef1" {
+		if inf.Digests[digest.SHA256id] != "abcdef1" {
 			t.Fatal("expected checksum from inital index")
 		}
 	})
 	t.Run("combination", func(t *testing.T) {
 		a, b := ocfl.NewIndex(), ocfl.NewIndex()
-		addDigest(a, "a/b/removed1.txt", digest.SHA256, "abcdef0")
-		addDigest(a, "a/b/removed2.txt", digest.SHA256, "abcdef1")
-		addDigest(a, "a/b/c/unchanged.txt", digest.SHA256, "abcdef2")
-		addDigest(b, "a/b/c/unchanged.txt", digest.SHA256, "abcdef2")
-		addDigest(a, "a/b/changed.txt", digest.SHA256, "abcdef3")
-		addDigest(b, "a/b/changed.txt", digest.SHA256, "abcdef4")
-		addDigest(b, "a/b/added1.txt", digest.SHA256, "abcdef5")
-		addDigest(b, "a/b/added2.txt", digest.SHA256, "abcdef6")
-		addDigest(b, "a/b/added3.txt", digest.SHA256, "abcdef7")
-		diff, err := a.Diff(b, digest.SHA256)
+		addDigest(a, "a/b/removed1.txt", digest.SHA256id, "abcdef0")
+		addDigest(a, "a/b/removed2.txt", digest.SHA256id, "abcdef1")
+		addDigest(a, "a/b/c/unchanged.txt", digest.SHA256id, "abcdef2")
+		addDigest(b, "a/b/c/unchanged.txt", digest.SHA256id, "abcdef2")
+		addDigest(a, "a/b/changed.txt", digest.SHA256id, "abcdef3")
+		addDigest(b, "a/b/changed.txt", digest.SHA256id, "abcdef4")
+		addDigest(b, "a/b/added1.txt", digest.SHA256id, "abcdef5")
+		addDigest(b, "a/b/added2.txt", digest.SHA256id, "abcdef6")
+		addDigest(b, "a/b/added3.txt", digest.SHA256id, "abcdef7")
+		diff, err := a.Diff(b, digest.SHA256id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -185,16 +185,16 @@ func TestIndexDiff(t *testing.T) {
 
 	t.Run("wrong digest", func(t *testing.T) {
 		a, b := ocfl.NewIndex(), ocfl.NewIndex()
-		addDigest(a, "a/b/c.txt", digest.SHA256, "abcdef")
-		addDigest(b, "a/b/c.txt", digest.SHA256, "abcdef")
-		if diff, _ := a.Diff(b, digest.SHA512); !diff.Equal() {
+		addDigest(a, "a/b/c.txt", digest.SHA256id, "abcdef")
+		addDigest(b, "a/b/c.txt", digest.SHA256id, "abcdef")
+		if diff, _ := a.Diff(b, digest.SHA512id); !diff.Equal() {
 			t.Fatal("expected a,b to be equal")
 		}
 	})
 
 }
 
-func addDigest(idx *ocfl.Index, logical string, alg digest.Alg, sum string) error {
+func addDigest(idx *ocfl.Index, logical string, alg string, sum string) error {
 	n, isdir, err := idx.Get(logical)
 	if err != nil && errors.Is(err, ocfl.ErrNotFound) {
 		val := &ocfl.IndexItem{Digests: digest.Set{alg: sum}}

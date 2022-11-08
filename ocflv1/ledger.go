@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/digest"
 )
 
 const (
@@ -26,7 +25,7 @@ type pathLedger struct {
 
 type pathInfo struct {
 	existsIn ocfl.VNum
-	digests  map[digest.Alg]*digestInfo // alg -> digestInfo
+	digests  map[string]*digestInfo // alg -> digestInfo
 }
 
 func (pi *pathInfo) locations() map[ocfl.VNum]locFlag {
@@ -113,7 +112,7 @@ func (ledg *pathLedger) addPathExists(p string, ver ocfl.VNum) {
 	ledg.paths[p].existsIn = ver
 }
 
-func (ledg *pathLedger) addPathDigest(path string, alg digest.Alg, dig string, ver ocfl.VNum, flags locFlag) error {
+func (ledg *pathLedger) addPathDigest(path string, alg string, dig string, ver ocfl.VNum, flags locFlag) error {
 	if ledg.paths == nil {
 		ledg.paths = make(map[string]*pathInfo)
 	}
@@ -121,7 +120,7 @@ func (ledg *pathLedger) addPathDigest(path string, alg digest.Alg, dig string, v
 	if !exists {
 		// create path->alg->loc
 		ledg.paths[path] = &pathInfo{
-			digests: map[digest.Alg]*digestInfo{
+			digests: map[string]*digestInfo{
 				alg: {
 					digest: dig,
 					locs:   map[ocfl.VNum]locFlag{ver: flags},
@@ -149,7 +148,7 @@ func (ledg *pathLedger) addPathDigest(path string, alg digest.Alg, dig string, v
 	return nil
 }
 
-func (ledg *pathLedger) getDigest(path string, alg digest.Alg) (*digestInfo, bool) {
+func (ledg *pathLedger) getDigest(path string, alg string) (*digestInfo, bool) {
 	if pInfo, exists := ledg.paths[path]; exists {
 		if dInfo, exists := pInfo.digests[alg]; exists {
 			return dInfo, true
@@ -183,7 +182,7 @@ func (l locFlag) String() string {
 // ChangedDigestErr: different digests for same content/alg in two locations
 type ChangedDigestErr struct {
 	Path string
-	Alg  digest.Alg
+	Alg  string
 }
 
 func (err ChangedDigestErr) Error() string {
@@ -199,7 +198,7 @@ func (err ChangedDigestErr) Error() string {
 // ContentDigestErr content digest doesn't match recorded digest
 type ContentDigestErr struct {
 	Path   string
-	Alg    digest.Alg
+	Alg    string
 	Entry  digestInfo
 	Digest string
 }

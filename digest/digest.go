@@ -5,103 +5,65 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
-	"errors"
-	"fmt"
 	"hash"
 
 	"golang.org/x/crypto/blake2b"
 )
 
-var (
-	SHA512  = Alg{id: `sha512`}
-	SHA256  = Alg{id: `sha256`}
-	SHA224  = Alg{id: `sha224`}
-	SHA1    = Alg{id: `sha1`}
-	MD5     = Alg{id: `md5`}
-	BLAKE2B = Alg{id: `blake2b-512`}
-
-	AlgEmpty = Alg{}
-	algs     = map[string]Alg{
-		`sha512`:      SHA512,
-		`sha256`:      SHA256,
-		`sha224`:      SHA224,
-		`sha1`:        SHA1,
-		`md5`:         MD5,
-		`blake2b-512`: BLAKE2B,
-	}
-
-	ErrUnknownAlg = errors.New("unsupported digest algorithm")
+const (
+	SHA512id  = `sha512`
+	SHA256id  = `sha256`
+	SHA224id  = `sha224`
+	SHA1id    = `sha1`
+	MD5id     = `md5`
+	BLAKE2Bid = `blake2b-512`
 )
 
-// Alg represents a supported digest algorithm (e.g., "sha512")
-type Alg struct {
-	id string
+type Alg interface {
+	ID() string
+	New() hash.Hash
 }
 
-// Set is a collection of digests for the same content
-type Set map[Alg]string
+// Set is a set of digest results
+type Set map[string]string
 
-func NewAlg(id string) (Alg, error) {
-	alg, ok := algs[id]
-	if !ok {
-		return Alg{}, fmt.Errorf(`%w: %s`, ErrUnknownAlg, id)
-	}
-	return alg, nil
-}
+// builtin algorithms
+func SHA512() Alg  { return algSHA512{} }
+func SHA256() Alg  { return algSHA256{} }
+func SHA224() Alg  { return algSHA224{} }
+func SHA1() Alg    { return algSHA1{} }
+func MD5() Alg     { return algMD5{} }
+func BLAKE2B() Alg { return algBlake2B512{} }
 
-func (a Alg) New() hash.Hash {
-	switch a.id {
-	case `sha512`:
-		return sha512.New()
-	case `sha256`:
-		return sha256.New()
-	case `sha224`:
-		return sha256.New224()
-	case `sha1`:
-		return sha1.New()
-	case `md5`:
-		return md5.New()
-	case `blake2b-512`:
-		return newBlake2b()
-	}
-	err := fmt.Errorf("%w: '%s'", ErrUnknownAlg, a.id)
-	panic(err)
-}
+type algSHA512 struct{}
 
-func (a Alg) ID() string {
-	return a.String()
-}
+func (alg algSHA512) ID() string     { return SHA512id }
+func (alg algSHA512) New() hash.Hash { return sha512.New() }
 
-func (a Alg) String() string {
-	if _, exists := algs[a.id]; !exists {
-		return ""
-	}
-	return a.id
-}
+type algSHA256 struct{}
 
-func (a *Alg) UnmarshalText(t []byte) error {
-	alg, ok := algs[string(t)]
-	if !ok {
-		return fmt.Errorf(`%w: %s`, ErrUnknownAlg, alg)
-	}
-	a.id = alg.id
-	return nil
-}
+func (alg algSHA256) ID() string     { return SHA256id }
+func (alg algSHA256) New() hash.Hash { return sha256.New() }
 
-func (a Alg) MarshalText() ([]byte, error) {
-	return []byte(a.String()), nil
-}
+type algSHA224 struct{}
 
-// Deprecated
-func NewHash(a string) (func() hash.Hash, error) {
-	alg, ok := algs[a]
-	if !ok {
-		return nil, fmt.Errorf(`%w: %s`, ErrUnknownAlg, alg)
-	}
-	return alg.New, nil
-}
+func (alg algSHA224) ID() string     { return SHA224id }
+func (alg algSHA224) New() hash.Hash { return sha512.New512_224() }
 
-func newBlake2b() hash.Hash {
+type algSHA1 struct{}
+
+func (alg algSHA1) ID() string     { return SHA1id }
+func (alg algSHA1) New() hash.Hash { return sha1.New() }
+
+type algMD5 struct{}
+
+func (alg algMD5) ID() string     { return MD5id }
+func (alg algMD5) New() hash.Hash { return md5.New() }
+
+type algBlake2B512 struct{}
+
+func (alg algBlake2B512) ID() string { return BLAKE2Bid }
+func (alg algBlake2B512) New() hash.Hash {
 	h, err := blake2b.New512(nil)
 	if err != nil {
 		panic("cannot create blake2b hash")

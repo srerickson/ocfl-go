@@ -73,6 +73,7 @@ func (node *Node[T]) Get(p string) (*Node[T], error) {
 		return node, nil
 	}
 	for {
+		// first/rest...
 		first, rest, more := strings.Cut(p, `/`)
 		child, exists := node.Children[first]
 		if !exists {

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/matryer/is"
-	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/ocflv1"
 	"github.com/srerickson/ocfl/validation"
 )
@@ -552,12 +551,11 @@ var testInventories = []testInventory{
 
 func TestValidateInventory(t *testing.T) {
 	ctx := context.Background()
-	alg := digest.Alg{}
 	for _, test := range testInventories {
 		t.Run(test.description, func(t *testing.T) {
 			is := is.New(t)
 			reader := strings.NewReader(test.data)
-			_, result := ocflv1.ValidateInventoryReader(ctx, reader, alg)
+			_, result := ocflv1.ValidateInventoryReader(ctx, reader, nil)
 			if test.valid {
 				is.NoErr(result.Err())
 			} else {
@@ -582,13 +580,12 @@ func TestValidateInventory(t *testing.T) {
 
 func FuzzValidateInventory(f *testing.F) {
 	ctx := context.Background()
-	alg := digest.Alg{}
 	for _, test := range testInventories {
 		f.Add([]byte(test.data))
 	}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		reader := bytes.NewReader(b)
-		_, result := ocflv1.ValidateInventoryReader(ctx, reader, alg)
+		_, result := ocflv1.ValidateInventoryReader(ctx, reader, nil)
 		err := result.Err()
 		if err != nil {
 			var eCode validation.ErrorCode

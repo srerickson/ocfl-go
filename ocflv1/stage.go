@@ -41,7 +41,7 @@ type objectStage struct {
 func newStage(id string, idx *ocfl.Index, prev *Inventory, opts ...ObjectOption) (*objectStage, error) {
 	stg := &objectStage{
 		id:              id,
-		alg:             digest.SHA512,
+		alg:             digest.SHA512(),
 		spec:            defaultSpec,
 		vnum:            ocfl.V(1),
 		contentPathFunc: DefaultContentPathFunc,
@@ -58,15 +58,18 @@ func newStage(id string, idx *ocfl.Index, prev *Inventory, opts ...ObjectOption)
 		if err != nil {
 			return nil, fmt.Errorf("version scheme doesn't support versions after %s: %w", prev.Head, err)
 		}
-		stg.vnum = nextv                       // this ignore VNum options
-		stg.alg = prev.DigestAlgorithm         // ignore DigestAlg option
-		stg.contentDir = prev.ContentDirectory // ignore ContentDirectory Option
+		stg.vnum = nextv                                // this ignore VNum options
+		stg.contentDir = prev.ContentDirectory          // ignore ContentDirectory Option
+		stg.alg, err = digest.Get(prev.DigestAlgorithm) // ignore DigestAlg option
+		if err != nil {
+			return nil, fmt.Errorf("cannot build stage from inventory: %w", err)
+		}
 	}
-	manifest, err := idx.ManifestMap(stg.alg)
+	manifest, err := idx.ManifestMap(stg.alg.ID())
 	if err != nil {
 		return nil, fmt.Errorf("cannot build manifest from index using %s: %w", stg.alg, err)
 	}
-	state, err := idx.StateMap(stg.alg)
+	state, err := idx.StateMap(stg.alg.ID())
 	if err != nil {
 		return nil, fmt.Errorf("cannot build version state from index using %s: %w", stg.alg, err)
 	}
@@ -176,7 +179,7 @@ func (stage *objectStage) nextManifest(prev *digest.Map) (*digest.Map, error) {
 		if isdir {
 			return nil
 		}
-		sum, ok := inf.Digests[stage.alg]
+		sum, ok := inf.Digests[stage.alg.ID()]
 		if !ok {
 			return fmt.Errorf("missing digest for '%s'", stage.alg)
 		}
@@ -216,7 +219,7 @@ func (stage *objectStage) nextInventory(prevInv *Inventory) (*Inventory, error) 
 			ID:               stage.id,
 			Head:             stage.vnum,
 			Type:             stage.spec.AsInvType(),
-			DigestAlgorithm:  stage.alg,
+			DigestAlgorithm:  stage.alg.ID(),
 			ContentDirectory: stage.contentDir,
 			Manifest:         newMan,
 			Versions:         map[ocfl.VNum]*Version{},
@@ -258,7 +261,7 @@ func (stage *objectStage) validate(inv *Inventory) error {
 		return fmt.Errorf("new version number (%s) is not a valid successor of previous (%s)",
 			stage.vnum, inv.Head)
 	}
-	if stage.alg != inv.DigestAlgorithm {
+	if stage.alg.ID() != inv.DigestAlgorithm {
 		return fmt.Errorf("new version must have same digest algorith as previous: %s", inv.DigestAlgorithm)
 	}
 	if inv.Type.Spec.Cmp(stage.spec) > 0 {
@@ -275,7 +278,7 @@ func (stage *objectStage) validate(inv *Inventory) error {
 	}
 	// all digests in stage index should be accounted for in either the
 	// the stage's "add" manifest or the inventory manifest
-	stateMap, err := stage.index.StateMap(stage.alg)
+	stateMap, err := stage.index.StateMap(stage.alg.ID())
 	if err != nil {
 		return fmt.Errorf("stage state is invalid: %w", err)
 	}

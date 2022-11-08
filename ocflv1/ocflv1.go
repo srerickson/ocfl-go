@@ -32,13 +32,13 @@ var (
 	}
 
 	// algs set to true can be used as digestAlgorithms
-	algorithms = map[digest.Alg]bool{
-		digest.SHA512:  true,
-		digest.SHA256:  true,
-		digest.SHA224:  false,
-		digest.SHA1:    false,
-		digest.MD5:     false,
-		digest.BLAKE2B: false,
+	algorithms = map[string]bool{
+		digest.SHA512id:  true,
+		digest.SHA256id:  true,
+		digest.SHA224id:  false,
+		digest.SHA1id:    false,
+		digest.MD5id:     false,
+		digest.BLAKE2Bid: false,
 	}
 
 	// shorthand

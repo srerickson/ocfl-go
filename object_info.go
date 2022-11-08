@@ -4,8 +4,6 @@ import (
 	"context"
 	"io/fs"
 	"strings"
-
-	"github.com/srerickson/ocfl/digest"
 )
 
 const (
@@ -18,7 +16,7 @@ const (
 type ObjInfo struct {
 	Declaration      Declaration
 	VersionDirs      VNumSeq
-	Algorithm        digest.Alg
+	Algorithm        string
 	HasInventoryFile bool
 	HasExtensionsDir bool
 	Unknown          []string
@@ -46,12 +44,9 @@ func ObjInfoFromFS(dir []fs.DirEntry) *ObjInfo {
 			if e.Name() == info.Declaration.Name() {
 				continue
 			}
-			if info.Algorithm.ID() == "" {
-				algID := strings.TrimPrefix(e.Name(), inventoryFile+".")
-				if alg, err := digest.NewAlg(algID); err == nil {
-					info.Algorithm = alg
-					continue
-				}
+			if info.Algorithm == "" && strings.HasPrefix(e.Name(), inventoryFile+".") {
+				info.Algorithm = strings.TrimPrefix(e.Name(), inventoryFile+".")
+				continue
 			}
 		}
 		info.Unknown = append(info.Unknown, e.Name())

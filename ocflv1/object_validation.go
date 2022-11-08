@@ -123,7 +123,7 @@ func (vldr *objectValidator) validateRoot(ctx context.Context) error {
 		err := fmt.Errorf(`%w: not found`, ErrInventoryOpen)
 		vldr.LogFatal(lgr, ec(err, codes.E063.Ref(ocflV)))
 	}
-	if vldr.rootInfo.Algorithm.ID() == "" { // empty algorithm indicates missing sidecar file in root
+	if vldr.rootInfo.Algorithm == "" { // empty algorithm indicates missing sidecar file in root
 		err := fmt.Errorf(`%w: not found`, ErrInvSidecarOpen)
 		vldr.LogFatal(lgr, ec(err, codes.E058.Ref(ocflV)))
 	} else if !algorithms[vldr.rootInfo.Algorithm] {
@@ -167,7 +167,12 @@ func (vldr *objectValidator) validateRootInventory(ctx context.Context) error {
 	ocflV := vldr.rootInfo.Declaration.Version
 	lgr := vldr.opts.Logger
 	name := path.Join(vldr.Root, inventoryFile)
-	alg := vldr.rootInfo.Algorithm
+	algID := vldr.rootInfo.Algorithm
+	alg, err := digest.RegistryFromContext(ctx).Get(algID)
+	if err != nil {
+		vldr.LogFatal(lgr, err)
+		return err
+	}
 	opts := []ValidationOption{
 		copyValidationOptions(vldr.opts),
 		appendResult(vldr.Result),
@@ -234,11 +239,16 @@ func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum)
 		vldr.LogWarn(lgr, ec(err, codes.W002.Ref(ocflV)))
 	}
 	if info.hasInventory {
-		if !algorithms[info.digestAlgorithm] {
-			err := fmt.Errorf("%w: %s", ErrDigestAlg, info.digestAlgorithm)
+		if !algorithms[info.algID] {
+			err := fmt.Errorf("%w: %s", ErrDigestAlg, info.algID)
 			vldr.LogFatal(lgr, ec(err, codes.E025.Ref(ocflV)))
 		}
-		if err := vldr.validateVersionInventory(ctx, ver, info.digestAlgorithm); err != nil {
+		alg, err := digest.RegistryFromContext(ctx).Get(info.algID)
+		if err != nil {
+			vldr.LogFatal(lgr, err)
+			return err
+		}
+		if err := vldr.validateVersionInventory(ctx, ver, alg); err != nil {
 			return err
 		}
 	} else {
@@ -413,10 +423,15 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 		return nil
 	}
 	// digests
+	registry := digest.RegistryFromContext(ctx)
 	digestSetup := func(add checksum.AddFunc) error {
 		for name, pInfo := range vldr.ledger.paths {
 			algs := make([]digest.Alg, 0, len(pInfo.digests))
-			for alg := range pInfo.digests {
+			for id := range pInfo.digests {
+				alg, err := registry.Get(id)
+				if err != nil {
+					return err
+				}
 				algs = append(algs, alg)
 			}
 			if len(algs) == 0 {
@@ -494,10 +509,10 @@ func (vldr *objectValidator) walkVersionContent(ctx context.Context, ver ocfl.VN
 }
 
 type versionDirInfo struct {
-	hasInventory    bool
-	digestAlgorithm digest.Alg
-	extraFiles      []string
-	dirs            []string
+	hasInventory bool
+	algID        string
+	extraFiles   []string
+	dirs         []string
 }
 
 func newVersionDirInfo(entries []fs.DirEntry) versionDirInfo {
@@ -508,12 +523,9 @@ func newVersionDirInfo(entries []fs.DirEntry) versionDirInfo {
 				info.hasInventory = true
 				continue
 			}
-			if info.digestAlgorithm.ID() == "" {
-				algID := strings.TrimPrefix(e.Name(), inventoryFile+".")
-				if alg, err := digest.NewAlg(algID); err == nil {
-					info.digestAlgorithm = alg
-					continue
-				}
+			if info.algID == "" && strings.HasPrefix(e.Name(), inventoryFile+".") {
+				info.algID = strings.TrimPrefix(e.Name(), inventoryFile+".")
+				continue
 			}
 			info.extraFiles = append(info.extraFiles, e.Name())
 			continue

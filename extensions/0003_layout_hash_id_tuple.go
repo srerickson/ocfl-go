@@ -15,10 +15,10 @@ const (
 
 // Extension 0003-hash-and-id-n-tuple-storage-layout
 type LayoutHashIDTuple struct {
-	ExtensionName   string      `json:"extensionName"`
-	DigestAlgorithm *digest.Alg `json:"digestAlgorithm"`
-	TupleSize       int         `json:"tupleSize"`
-	TupleNum        int         `json:"numberOfTuples"`
+	ExtensionName   string `json:"extensionName"`
+	DigestAlgorithm string `json:"digestAlgorithm"`
+	TupleSize       int    `json:"tupleSize"`
+	TupleNum        int    `json:"numberOfTuples"`
 }
 
 var _ Layout = (*LayoutHashIDTuple)(nil)
@@ -27,7 +27,7 @@ var _ Extension = (*LayoutHashIDTuple)(nil)
 func NewLayoutHashIDTuple() *LayoutHashIDTuple {
 	return &LayoutHashIDTuple{
 		ExtensionName:   Ext0003,
-		DigestAlgorithm: &digest.SHA256,
+		DigestAlgorithm: digest.SHA256id,
 		TupleSize:       3,
 		TupleNum:        3,
 	}
@@ -41,8 +41,9 @@ func (l *LayoutHashIDTuple) NewFunc() (LayoutFunc, error) {
 	if l.ExtensionName != l.Name() {
 		return nil, fmt.Errorf("%s: unexpected extensionName %s", l.Name(), l.ExtensionName)
 	}
-	if l.DigestAlgorithm == nil {
-		l.DigestAlgorithm = &digest.SHA256
+	alg, err := digest.Get(l.DigestAlgorithm)
+	if err != nil {
+		return nil, err
 	}
 	tupSize, tupNum := l.TupleSize, l.TupleNum
 	if tupSize == 0 && tupNum != 0 {
@@ -52,7 +53,7 @@ func (l *LayoutHashIDTuple) NewFunc() (LayoutFunc, error) {
 		return nil, fmt.Errorf("%s: tupleSize must be 0", l.Name())
 	}
 	return func(id string) (string, error) {
-		h := l.DigestAlgorithm.New()
+		h := alg.New()
 		h.Write([]byte(id))
 		hID := hex.EncodeToString(h.Sum(nil))
 		if tupSize*(tupNum) > len(hID) {

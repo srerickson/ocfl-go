@@ -24,16 +24,16 @@ var (
 
 // Inventory represents contents of an OCFL v1.x inventory.json file
 type Inventory struct {
-	ID               string                     `json:"id"`
-	Type             ocfl.InvType               `json:"type"`
-	DigestAlgorithm  digest.Alg                 `json:"digestAlgorithm"`
-	Head             ocfl.VNum                  `json:"head"`
-	ContentDirectory string                     `json:"contentDirectory,omitempty"`
-	Manifest         *digest.Map                `json:"manifest"`
-	Versions         map[ocfl.VNum]*Version     `json:"versions"`
-	Fixity           map[digest.Alg]*digest.Map `json:"fixity,omitempty"`
+	ID               string                 `json:"id"`
+	Type             ocfl.InvType           `json:"type"`
+	DigestAlgorithm  string                 `json:"digestAlgorithm"`
+	Head             ocfl.VNum              `json:"head"`
+	ContentDirectory string                 `json:"contentDirectory,omitempty"`
+	Manifest         *digest.Map            `json:"manifest"`
+	Versions         map[ocfl.VNum]*Version `json:"versions"`
+	Fixity           map[string]*digest.Map `json:"fixity,omitempty"`
 
-	digest string
+	digest string // inventory digest using alg
 }
 
 // Version represents object version state and metadata
@@ -106,7 +106,7 @@ func (inv Inventory) Copy() *Inventory {
 			}
 		}
 	}
-	newInv.Fixity = make(map[digest.Alg]*digest.Map, len(inv.Fixity))
+	newInv.Fixity = make(map[string]*digest.Map, len(inv.Fixity))
 	for alg, m := range inv.Fixity {
 		newInv.Fixity[alg] = m.Copy()
 	}
@@ -120,7 +120,11 @@ func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	checksum := inv.DigestAlgorithm.New()
+	alg, err := digest.RegistryFromContext(ctx).Get(inv.DigestAlgorithm)
+	if err != nil {
+		return err
+	}
+	checksum := alg.New()
 	byt, err := json.MarshalIndent(inv, "", " ")
 	if err != nil {
 		return fmt.Errorf("encoding inventory: %w", err)
@@ -133,7 +137,7 @@ func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs
 	// write inventory.json and sidecar
 	for _, dir := range dirs {
 		invFile := path.Join(dir, inventoryFile)
-		sideFile := invFile + "." + inv.DigestAlgorithm.ID()
+		sideFile := invFile + "." + inv.DigestAlgorithm
 		_, err = fsys.Write(ctx, invFile, bytes.NewBuffer(byt))
 		if err != nil {
 			return fmt.Errorf("write inventory failed: %w", err)

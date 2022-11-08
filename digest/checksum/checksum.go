@@ -23,7 +23,7 @@ type checksum struct {
 	errChan  chan error    // return values for Close()
 }
 
-// OpenFunc is a function used to
+// OpenFunc is a function used to open return a new reader for checksumming
 type OpenFunc func(name string) (io.Reader, error)
 
 // CallbackFunc is a function used to handle results of a file digest.
@@ -121,17 +121,20 @@ func (ch *checksum) doJob(j *job) *job {
 		return j
 	}
 	if closer, ok := r.(io.Closer); ok {
-		defer closer.Close()
+		defer func() { j.err = closer.Close() }()
 	}
 	multiLen := len(j.algs)
+	if multiLen == 0 {
+		return j
+	}
 	if ch.progress != nil {
 		multiLen += 1
 	}
-	var hashes = make(map[digest.Alg]hash.Hash, multiLen)
+	var hashes = make(map[string]hash.Hash, multiLen)
 	var writers = make([]io.Writer, 0, multiLen)
 	for _, alg := range j.algs {
 		h := alg.New()
-		hashes[alg] = h
+		hashes[alg.ID()] = h
 		writers = append(writers, io.Writer(h))
 	}
 	if ch.progress != nil {
@@ -236,18 +239,18 @@ func WithProgress(w io.Writer) Option {
 	}
 }
 
-func WithDigest(d digest.Alg) Option {
+func WithAlgs(algs ...digest.Alg) Option {
 	return func(c *checksum) {
-		for _, a := range c.algs {
-			if a == d {
-				return
+		for _, alg := range algs {
+			for _, hasAlg := range c.algs {
+				if hasAlg.ID() == alg.ID() {
+					continue
+				}
 			}
+			c.algs = append(c.algs, alg)
 		}
-		c.algs = append(c.algs, d)
 	}
 }
-
-var SHA256 = WithDigest(digest.SHA256)
 
 // func SHA512() Option {
 // 	return WithDigest(digest.SHA512)

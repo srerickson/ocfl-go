@@ -6,7 +6,6 @@ import (
 	"io"
 
 	"github.com/muesli/coral"
-	"github.com/spf13/pflag"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/digest/checksum"
@@ -22,27 +21,8 @@ var commitFlags = struct {
 	commitMsg string
 	userName  string
 	userAddr  string
-	digestAlg algFlag
+	digestAlg string
 }{}
-
-type algFlag struct {
-	digest.Alg
-}
-
-var _ pflag.Value = (*algFlag)(nil)
-
-func (a *algFlag) Set(id string) error {
-	alg, err := digest.NewAlg(id)
-	if err != nil {
-		return err
-	}
-	a.Alg = alg
-	return nil
-}
-
-func (a algFlag) Type() string {
-	return "string"
-}
 
 var commitCmd = &coral.Command{
 	Use:   "commit",
@@ -65,7 +45,7 @@ func init() {
 	commitCmd.Flags().StringVar(&commitFlags.srcPath, "stage", "", "staging directory for the new object version")
 	// commitCmd.Flags().StringVar(&commitFlags.srcRepo, "stage-repo", "", "repo name for staged files")
 	commitCmd.Flags().BoolVar(&commitFlags.dryRun, "dry-run", false, "dry run commit. No files are written to the storage root")
-	commitCmd.Flags().VarP(&commitFlags.digestAlg, "alg", "", "digest algorithm for new objects (sha512 or sha256). Ignored for updates.")
+	commitCmd.Flags().StringVarP(&commitFlags.digestAlg, "alg", "", "sha512", "digest algorithm for new objects (sha512 or sha256). Ignored for updates.")
 	commitCmd.Flags().StringVarP(&commitFlags.userAddr, "addr", "a", "", "committer's email address")
 	commitCmd.Flags().StringVarP(&commitFlags.userName, "name", "n", "", "committer's name")
 	commitCmd.Flags().StringVarP(&commitFlags.commitMsg, "msg", "m", "", "commit message")
@@ -83,10 +63,8 @@ func runCommit(ctx context.Context, conf *Config) {
 	if commitFlags.userName == "" {
 		commitFlags.userName = conf.Name
 	}
-	if commitFlags.digestAlg.Alg.ID() == "" {
-		commitFlags.digestAlg.Alg = digest.SHA512
-	}
-	digestAlg := commitFlags.digestAlg.Alg
+	digestAlg := commitFlags.digestAlg
+
 	// storage root repo
 	fsys, root, err := conf.NewFSPath(ctx, rootFlags.repoName)
 	if err != nil {
@@ -130,12 +108,15 @@ func runCommit(ctx context.Context, conf *Config) {
 		}
 		digestAlg = inv.DigestAlgorithm
 	}
-
+	alg, err := digest.Get(digestAlg)
+	if err != nil {
+		log.Error(err, "can't commit")
+	}
 	var index *ocfl.Index
 	digestUI := &ProgressWriter{preamble: "computing digests "}
 	digestFn := func(w io.Writer) error {
 		var err error
-		index, err = ocfl.IndexDir(ctx, srcFS, srcRoot, checksum.WithDigest(digestAlg), checksum.WithProgress(w))
+		index, err = ocfl.IndexDir(ctx, srcFS, srcRoot, checksum.WithAlgs(alg), checksum.WithProgress(w))
 		return err
 	}
 	if err := digestUI.Start(digestFn); err != nil {
@@ -144,7 +125,7 @@ func runCommit(ctx context.Context, conf *Config) {
 	}
 	commitUI := &ProgressWriter{preamble: "committing " + commitFlags.objectID + " "}
 	commitOpts := []ocflv1.ObjectOption{
-		ocflv1.WithAlg(digestAlg),
+		ocflv1.WithAlg(alg),
 		ocflv1.WithMessage(commitFlags.commitMsg),
 		ocflv1.WithUser(commitFlags.userName, commitFlags.userAddr),
 		ocflv1.WithLogger(log),

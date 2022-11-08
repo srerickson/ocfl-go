@@ -183,7 +183,7 @@ func TestStoreUpdateObject(t *testing.T) {
 	}
 
 	// v1
-	stage, err := ocfl.IndexDir(ctx, stgFS, `src1`, checksum.SHA256)
+	stage, err := ocfl.IndexDir(ctx, stgFS, `src1`, checksum.WithAlgs(digest.SHA256()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestStoreUpdateObject(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err = store.Commit(ctx, "object-1", stage,
-		ocflv1.WithAlg(digest.SHA256),
+		ocflv1.WithAlg(digest.SHA256()),
 		ocflv1.WithContentDir("foo"),
 		ocflv1.WithVersionPadding(2),
 		ocflv1.WithUser("Bill", "mailto:me@no.com"),
@@ -213,7 +213,7 @@ func TestStoreUpdateObject(t *testing.T) {
 	if inv.ContentDirectory != "foo" {
 		t.Fatal("expected foo")
 	}
-	if inv.DigestAlgorithm != digest.SHA256 {
+	if inv.DigestAlgorithm != digest.SHA256id {
 		t.Fatalf("expected sha256")
 	}
 	if inv.Head.Padding() != 2 {
@@ -232,7 +232,7 @@ func TestStoreUpdateObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	diff, err := stage.Diff(stage2, digest.SHA256)
+	diff, err := stage.Diff(stage2, digest.SHA256id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestStoreUpdateObject(t *testing.T) {
 	}
 
 	// v3
-	stage3, err := ocfl.IndexDir(ctx, stgFS, "src2", checksum.SHA256)
+	stage3, err := ocfl.IndexDir(ctx, stgFS, "src2", checksum.WithAlgs(digest.SHA256()))
 	if err != nil {
 		t.Fatal(err)
 	}

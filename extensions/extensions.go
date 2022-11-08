@@ -34,7 +34,7 @@ type LayoutFunc func(string) (string, error)
 func Get(name string) (Extension, error) {
 	ext, ok := register[name]
 	if !ok {
-		return nil, fmt.Errorf("%s: %w", name, ErrUnknown)
+		return nil, fmt.Errorf("%w: '%s'", ErrUnknown, name)
 	}
 	return ext(), nil
 }
