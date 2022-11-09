@@ -57,7 +57,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&rootFlags.driver, "driver", "d", "", "override active repo's 'driver' setting")
 	rootCmd.PersistentFlags().StringVarP(&rootFlags.driverPath, "path", "p", "", "override active repo's 'path' setting")
 	rootCmd.PersistentFlags().StringVarP(&rootFlags.driverBucket, "bucket", "b", "", "override active repo's 'bucket' setting")
-	rootCmd.PersistentFlags().BoolVarP(&rootFlags.verbose, "verbose", "v", false, "override active repo's 'bucket' setting")
+	rootCmd.PersistentFlags().BoolVarP(&rootFlags.verbose, "verbose", "v", false, "enable verbose log messages")
 }
 
 func initConfig() {

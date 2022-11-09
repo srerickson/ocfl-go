@@ -19,8 +19,7 @@ const (
 
 type FS struct {
 	ocfl.FS
-	// path is os-specific path to backend
-	// base directory
+	// path is os-specific path to a directory
 	path string
 }
 
@@ -42,30 +41,125 @@ func (fsys *FS) Root() string {
 }
 
 func (fsys *FS) Write(ctx context.Context, name string, src io.Reader) (int64, error) {
-	if !fs.ValidPath(name) {
-		return 0, &fs.PathError{
-			Op:   "write",
-			Path: name,
-			Err:  errors.New("invalid path"),
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return 0, err
-	}
-	fullPath := filepath.Join(fsys.path, filepath.FromSlash(name))
-	parent := filepath.Dir(fullPath)
-	err := os.MkdirAll(parent, dirPerm)
+	fullPath, err := fsys.osPath(name)
 	if err != nil {
 		return 0, &fs.PathError{
 			Op:   "write",
-			Path: fullPath,
+			Path: name,
+			Err:  err,
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, &fs.PathError{
+			Op:   "write",
+			Path: name,
+			Err:  err,
+		}
+	}
+	parent := filepath.Dir(fullPath)
+	if err := os.MkdirAll(parent, dirPerm); err != nil {
+		return 0, &fs.PathError{
+			Op:   "write",
+			Path: name,
 			Err:  err,
 		}
 	}
 	dst, err := os.OpenFile(fullPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, filePerm)
 	if err != nil {
-		return 0, err
+		return 0, &fs.PathError{
+			Op:   "write",
+			Path: name,
+			Err:  err,
+		}
 	}
-	defer dst.Close()
-	return io.Copy(dst, src)
+	n, err := io.Copy(dst, src)
+	if err != nil {
+		dst.Close()
+		return n, &fs.PathError{
+			Op:   "write",
+			Path: name,
+			Err:  err,
+		}
+	}
+	if err := dst.Close(); err != nil {
+		return n, &fs.PathError{
+			Op:   "write",
+			Path: name,
+			Err:  err,
+		}
+	}
+	return n, nil
+}
+
+func (fsys *FS) Remove(ctx context.Context, name string) error {
+	fullPath, err := fsys.osPath(name)
+	if err != nil {
+		return &fs.PathError{
+			Op:   "remove",
+			Path: name,
+			Err:  err,
+		}
+	}
+	if name == "." {
+		return &fs.PathError{
+			Op:   "remove",
+			Path: name,
+			Err:  errors.New("cannot remove top-level directory"),
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return &fs.PathError{
+			Op:   "remove",
+			Path: name,
+			Err:  err,
+		}
+	}
+	if err := os.Remove(fullPath); err != nil {
+		return &fs.PathError{
+			Op:   "remove",
+			Path: name,
+			Err:  err,
+		}
+	}
+	return nil
+}
+
+func (fsys *FS) RemoveAll(ctx context.Context, name string) error {
+	fullPath, err := fsys.osPath(name)
+	if err != nil {
+		return &fs.PathError{
+			Op:   "remove",
+			Path: name,
+			Err:  err,
+		}
+	}
+	if name == "." {
+		return &fs.PathError{
+			Op:   "remove",
+			Path: name,
+			Err:  errors.New("cannot remove top-level directory"),
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return &fs.PathError{
+			Op:   "remove",
+			Path: name,
+			Err:  err,
+		}
+	}
+	if err := os.RemoveAll(fullPath + "/"); err != nil {
+		return &fs.PathError{
+			Op:   "remove",
+			Path: name,
+			Err:  err,
+		}
+	}
+	return nil
+}
+
+func (fsys *FS) osPath(name string) (string, error) {
+	if !fs.ValidPath(name) {
+		return "", fs.ErrInvalid
+	}
+	return filepath.Join(fsys.path, filepath.FromSlash(name)), nil
 }

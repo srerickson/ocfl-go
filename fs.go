@@ -20,10 +20,15 @@ type FS interface {
 	ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error)
 }
 
-// WriteFS is a storage layer abstraction that support write operations.
+// WriteFS is a storage layer abstraction that support write/remove operations.
 type WriteFS interface {
 	FS
 	Write(ctx context.Context, name string, buffer io.Reader) (int64, error)
+	// Remove the file with path name
+	Remove(ctx context.Context, name string) error
+	// Remove the directory with path name and all its contents. If the path
+	// does not exist, return nil.
+	RemoveAll(ctx context.Context, name string) error
 }
 
 // NewFS wraps an io/fs.FS as an ocfl.FS

@@ -82,7 +82,7 @@ func runStat(ctx context.Context, conf *Config) {
 				log.Error(err, "can't read object inventory")
 				return
 			}
-			fmt.Println(inv.ID)
+			fmt.Println(p, ": ", inv.ID)
 		}
 	}
 

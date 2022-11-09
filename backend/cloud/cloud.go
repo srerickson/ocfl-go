@@ -150,14 +150,106 @@ func (fsys *FS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error)
 
 func (fsys *FS) Write(ctx context.Context, name string, r io.Reader) (int64, error) {
 	fsys.log.V(ocfl.LevelDebug).Info("write file", "name", name)
+	if !fs.ValidPath(name) {
+		return 0, &fs.PathError{
+			Op:   "write",
+			Path: name,
+			Err:  fs.ErrInvalid,
+		}
+	}
 	writer, err := fsys.Bucket.NewWriter(ctx, name, fsys.writerOpts)
 	if err != nil {
-		return 0, err
+		return 0, &fs.PathError{
+			Op:   "write",
+			Path: name,
+			Err:  err,
+		}
 	}
 	n, writeErr := writer.ReadFrom(r)
 	closeErr := writer.Close()
 	if writeErr != nil {
-		return n, writeErr
+		return n, &fs.PathError{
+			Op:   "write",
+			Path: name,
+			Err:  writeErr,
+		}
 	}
-	return n, closeErr
+	if closeErr != nil {
+		return n, &fs.PathError{
+			Op:   "write",
+			Path: name,
+			Err:  closeErr,
+		}
+	}
+	return n, nil
+}
+
+func (fsys *FS) Remove(ctx context.Context, name string) error {
+	fsys.log.V(ocfl.LevelDebug).Info("remove file", "name", name)
+	if !fs.ValidPath(name) {
+		return &fs.PathError{
+			Op:   "remove",
+			Path: name,
+			Err:  fs.ErrInvalid,
+		}
+	}
+	if name == "." {
+		return &fs.PathError{
+			Op:   "remove",
+			Path: name,
+			Err:  errors.New("cannot remove top-level directory"),
+		}
+	}
+	if err := fsys.Bucket.Delete(ctx, name); err != nil {
+		return &fs.PathError{
+			Op:   "remove",
+			Path: name,
+			Err:  fs.ErrNotExist,
+		}
+	}
+	return nil
+}
+
+func (fsys *FS) RemoveAll(ctx context.Context, name string) error {
+	fsys.log.V(ocfl.LevelDebug).Info("remove dir", "name", name)
+	if !fs.ValidPath(name) {
+		return &fs.PathError{
+			Op:   "remove",
+			Path: name,
+			Err:  fs.ErrInvalid,
+		}
+	}
+	if name == "." {
+		return &fs.PathError{
+			Op:   "remove",
+			Path: name,
+			Err:  errors.New("cannot remove top-level directory"),
+		}
+	}
+	listOpt := &blob.ListOptions{
+		Prefix: name + "/",
+	}
+	list := fsys.Bucket.List(listOpt)
+	for {
+		next, err := list.Next(ctx)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return &fs.PathError{
+				Op:   "remove",
+				Path: name,
+				Err:  err,
+			}
+		}
+		if next == nil {
+			break
+		}
+		fsys.log.V(ocfl.LevelDebug).Info("remove file", "name", next.Key)
+		if err := fsys.Bucket.Delete(ctx, next.Key); err != nil {
+			return &fs.PathError{
+				Op:   "remove",
+				Path: next.Key,
+				Err:  err,
+			}
+		}
+	}
+	return nil
 }

@@ -122,6 +122,9 @@ func (cfg *Config) Repo(name string, create bool) *RepoConfig {
 	if name == "" {
 		name = defaultCfg
 	}
+	if cfg.Repos == nil {
+		cfg.Repos = make(map[string]*RepoConfig)
+	}
 	repo := cfg.Repos[name]
 	if repo == nil && create {
 		repo = defaultRepo()

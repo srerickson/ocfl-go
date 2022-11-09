@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/srerickson/ocfl"
@@ -207,4 +209,120 @@ func TestReadDir(t *testing.T) {
 			t.Fatalf("expected %d entries; got %d", num, l)
 		}
 	})
+}
+
+func TestWrite(t *testing.T) {
+	ctx := context.Background()
+	buck := memBucket(nil)
+	fsys := cloud.NewFS(buck)
+	type writeTest struct {
+		name      string
+		cont      string
+		expectErr bool
+	}
+	testTable := map[string]writeTest{
+		"single file":        {name: "test.txt", cont: "test data", expectErr: false},
+		"single file in dir": {name: "a/b/c/test.txt", cont: "test data", expectErr: false},
+		"invalid path ..":    {name: "../test.txt", cont: "test data", expectErr: true},
+		"invalid path /":     {name: "/test.txt", cont: "test data", expectErr: true},
+		"invalid path ./":    {name: "./test.txt", cont: "test data", expectErr: true},
+	}
+	for testName, test := range testTable {
+		t.Run(testName, func(t *testing.T) {
+			size, err := fsys.Write(ctx, test.name, strings.NewReader(test.cont))
+			if test.expectErr {
+				if err == nil {
+					t.Fatal("expected an error, but got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if int(size) != len(test.cont) {
+				t.Fatalf("expected write to return %d, got %d", len(test.cont), size)
+			}
+			f, err := fsys.OpenFile(ctx, test.name)
+			if err != nil {
+				t.Fatal("opening file", err)
+			}
+			cont, err := io.ReadAll(f)
+			if err != nil {
+				t.Fatal("reading file", err)
+			}
+			defer f.Close()
+			if string(cont) != test.cont {
+				t.Fatalf("'%s' != '%s'", string(cont), test.cont)
+			}
+		})
+	}
+}
+
+func TestRemove(t *testing.T) {
+	ctx := context.Background()
+	type removeTest struct {
+		name      string
+		expectErr bool
+	}
+	testTable := map[string]removeTest{
+		"single file":     {name: "a/b/c.txt", expectErr: false},
+		"not exist":       {name: "a/b/c2.txt", expectErr: true},
+		"not file":        {name: "a/b", expectErr: true},
+		"invalid path .":  {name: ".", expectErr: true},
+		"invalid path ..": {name: "a/../a/b/c.txt", expectErr: true},
+		"invalid path /":  {name: "a/a/b/c.txt", expectErr: true},
+	}
+	for testName, test := range testTable {
+		t.Run(testName, func(t *testing.T) {
+			buck := memBucket(map[string][]byte{
+				"a/b/c.txt": []byte("sample data"),
+				"a/b.txt":   []byte("more sample data"),
+			})
+			fsys := cloud.NewFS(buck)
+			err := fsys.Remove(ctx, test.name)
+			if test.expectErr {
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRemoveAll(t *testing.T) {
+	ctx := context.Background()
+	type removeTest struct {
+		name      string
+		expectErr bool
+	}
+	testTable := map[string]removeTest{
+		"single dir":      {name: "a/b", expectErr: false},
+		"not exist":       {name: "a2", expectErr: false},
+		"invalid path .":  {name: ".", expectErr: true},
+		"invalid path ..": {name: "a/../a/b/c.txt", expectErr: true},
+		"invalid path /":  {name: "/a/b/c.txt", expectErr: true},
+	}
+	for testName, test := range testTable {
+		t.Run(testName, func(t *testing.T) {
+			buck := memBucket(map[string][]byte{
+				"a/b/c.txt": []byte("sample data"),
+				"a/b.txt":   []byte("more sample data"),
+			})
+			fsys := cloud.NewFS(buck)
+			err := fsys.RemoveAll(ctx, test.name)
+			if test.expectErr {
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }
