@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"path"
 	"strings"
 
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
+	"github.com/srerickson/ocfl/internal/xfer"
 )
 
 func (s *Store) Commit(ctx context.Context, id string, index *ocfl.Index, opts ...ObjectOption) error {
@@ -46,11 +46,11 @@ func (s *Store) commit(ctx context.Context, stage *objectStage) error {
 		return fmt.Errorf("building new version inventory: %w", err)
 	}
 	// file transfer list
-	xfer, err := transferMap(newInv, stage.manifest)
+	xfers, err := transferMap(newInv, stage.manifest)
 	if err != nil {
 		return err
 	}
-	if len(xfer) > 0 && stage.srcFS == nil {
+	if len(xfers) > 0 && stage.srcFS == nil {
 		return fmt.Errorf("stage doesn't provide an FS for reading files to upload")
 	}
 	stage.logger.Info("committing new object version", "id", stage.id, "head", stage.vnum, "alg", stage.alg, "message", stage.message)
@@ -88,25 +88,18 @@ func (s *Store) commit(ctx context.Context, stage *objectStage) error {
 		}
 	}
 	// transfer files
-	for src, dst := range xfer {
-		dst := path.Join(objPath, dst)
-		f, err := stage.srcFS.OpenFile(ctx, src)
-		if err != nil {
-			return err
-		}
-		reader := io.Reader(f)
-		if stage.progress != nil {
-			reader = io.TeeReader(f, stage.progress)
-		}
+	for src, dst := range xfers {
+		dst = path.Join(objPath, dst)
+		xfers[src] = dst
 		if stage.nowrite {
 			stage.logger.Info("skipping file transfer", "src", src, "dst", dst)
-		} else {
-			if _, err := writeFS.Write(ctx, dst, reader); err != nil {
-				f.Close()
-				return err
-			}
 		}
-		f.Close()
+	}
+	if !stage.nowrite {
+		_, err := xfer.DigestXfer(ctx, stage.srcFS, writeFS, xfers, xfer.WithProgress(stage.progress))
+		if err != nil {
+			return fmt.Errorf("while transfering content files: %w", err)
+		}
 	}
 	vPath := path.Join(objPath, stage.vnum.String())
 	if stage.nowrite {

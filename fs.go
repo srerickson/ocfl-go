@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"time"
 
 	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/digest/checksum"
@@ -48,7 +49,7 @@ type ioFS struct {
 func (fsys *ioFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, &fs.PathError{
-			Op:   "readdir",
+			Op:   "openfile",
 			Path: name,
 			Err:  err,
 		}
@@ -66,29 +67,20 @@ func (fsys *ioFS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, erro
 	return fs.ReadDir(fsys.FS, name)
 }
 
-// EachFile is a simple file walker. It's not very good and should be replaced: need better
-// error handling when non-regular files are encountered.
+// EachFile walks the directory tree under root, calling walkFN on each file
+// (not for directories). If a non-regulard file is found, walkFN is called with
+// a non-nil error.
 func EachFile(ctx context.Context, fsys FS, root string, walkFn fs.WalkDirFunc) error {
-	entries, err := fsys.ReadDir(ctx, root)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		next := path.Join(root, e.Name())
-		if e.Type().IsRegular() {
-			err := walkFn(next, e, nil)
-			if err != nil {
-				return err
-			}
+	fn := func(name string, d fs.DirEntry, err error) error {
+		if d.Type().IsDir() {
+			return err
 		}
-		if e.Type().IsDir() {
-			err := EachFile(ctx, fsys, next, walkFn)
-			if err != nil {
-				return err
-			}
+		if !d.Type().IsRegular() && err == nil {
+			err = ErrNotFile
 		}
+		return walkFn(name, d, err)
 	}
-	return nil
+	return walk(ctx, fsys, root, fn)
 }
 
 // IndexDir build an Index from the contents of dir in fsys using algs. All
@@ -96,13 +88,13 @@ func EachFile(ctx context.Context, fsys FS, root string, walkFn fs.WalkDirFunc) 
 func IndexDir(ctx context.Context, fsys FS, dir string, opts ...checksum.Option) (*Index, error) {
 	tree := NewIndex()
 	tree.FS = fsys
-	setup := func(addfn checksum.AddFunc) error {
+	setup := func(addfn func(name string, algs ...digest.Alg) error) error {
 		walkfn := func(name string, e fs.DirEntry, err error) error {
 			if err != nil {
 				return fmt.Errorf("during source directory scan: %w", err)
 			}
-			if !addfn(name, nil) {
-				return fmt.Errorf("source directory scan ended prematurely")
+			if err := addfn(name); err != nil {
+				return fmt.Errorf("source directory scan ended prematurely: %w", err)
 			}
 			return nil
 		}
@@ -127,9 +119,73 @@ func IndexDir(ctx context.Context, fsys FS, dir string, opts ...checksum.Option)
 	}
 
 	opts = append(opts, checksum.WithOpenFunc(open))
-	if err := checksum.Run(setup, cb, opts...); err != nil {
+	if err := checksum.Run(ctx, setup, cb, opts...); err != nil {
 		return nil, err
 	}
 	return tree.Sub(dir)
 	// return tree, nil
 }
+
+// walk is similar to the standard library's io/fs.walk except that it takes
+// a context and walkDirFn is not called for the top-level directory itself.
+func walk(ctx context.Context, fsys FS, name string, walkDirFn fs.WalkDirFunc) error {
+	err := walkDir(ctx, fsys, name, fakeDirEntry{name}, walkDirFn)
+	if err == fs.SkipDir {
+		return nil
+	}
+	return err
+}
+
+func walkDir(ctx context.Context, fsys FS, name string, d fs.DirEntry, walkDirFn fs.WalkDirFunc) error {
+	// this code is adapated from the standard library's io/fs.Walk
+	// Copyright 2020 The Go Authors. All rights reserved.
+	// Use of this source code is governed by a BSD-style
+	// license that can be found in Go's LICENSE file
+	// https: //github.com/golang/go/blob/master/src/io/fs/walk.go
+	if err := walkDirFn(name, d, ctx.Err()); err != nil || !d.IsDir() {
+		if err == fs.SkipDir && d.IsDir() {
+			// Successfully skipped directory.
+			err = nil
+		}
+		return err
+	}
+	dirs, err := fsys.ReadDir(ctx, name)
+	if err != nil {
+		// Second call, to report ReadDir error.
+		err = walkDirFn(name, d, err)
+		if err != nil {
+			if err == fs.SkipDir && d.IsDir() {
+				err = nil
+			}
+			return err
+		}
+	}
+
+	for _, d1 := range dirs {
+		name1 := path.Join(name, d1.Name())
+		if err := walkDir(ctx, fsys, name1, d1, walkDirFn); err != nil {
+			if err == fs.SkipDir {
+				break
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// fakeDirEntry is used to fake dirinfo for the first call to walkDirInfo
+type fakeDirEntry struct {
+	name string
+}
+
+func (fake fakeDirEntry) Name() string               { return fake.name }
+func (fake fakeDirEntry) IsDir() bool                { return true }
+func (fake fakeDirEntry) Type() fs.FileMode          { return fs.ModeDir }
+func (fake fakeDirEntry) Info() (fs.FileInfo, error) { return fake, nil }
+func (fake fakeDirEntry) ModTime() time.Time         { return time.Time{} }
+func (fake fakeDirEntry) Mode() fs.FileMode          { return 0777 | fs.ModeDir }
+func (fake fakeDirEntry) Size() int64                { return 0 }
+func (fake fakeDirEntry) Sys() any                   { return nil }
+
+var _ fs.DirEntry = (*fakeDirEntry)(nil)
+var _ fs.FileInfo = (*fakeDirEntry)(nil)

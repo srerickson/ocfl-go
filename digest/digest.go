@@ -5,7 +5,9 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/hex"
 	"hash"
+	"io"
 
 	"golang.org/x/crypto/blake2b"
 )
@@ -69,4 +71,50 @@ func (alg algBlake2B512) New() hash.Hash {
 		panic("cannot create blake2b hash")
 	}
 	return h
+}
+
+var (
+	_ Alg = (*algSHA512)(nil)
+	_ Alg = (*algSHA256)(nil)
+	_ Alg = (*algSHA224)(nil)
+	_ Alg = (*algSHA1)(nil)
+	_ Alg = (*algMD5)(nil)
+	_ Alg = (*algBlake2B512)(nil)
+)
+
+type Digester struct {
+	algs   []Alg
+	hashes []io.Writer
+}
+
+func NewDigester(algs ...Alg) *Digester {
+	dig := &Digester{
+		algs:   algs,
+		hashes: make([]io.Writer, len(algs)),
+	}
+	return dig
+}
+
+// Reader returns a new reader that digests r as it is read.
+func (dig *Digester) Reader(r io.Reader) io.Reader {
+	for i, alg := range dig.algs {
+		dig.hashes[i] = alg.New()
+	}
+	return io.TeeReader(r, io.MultiWriter(dig.hashes...))
+}
+
+func (dig *Digester) ReadFrom(r io.Reader) (int64, error) {
+	for i, alg := range dig.algs {
+		dig.hashes[i] = alg.New()
+	}
+	return io.Copy(io.MultiWriter(dig.hashes...), r)
+}
+
+func (dig Digester) Sums() Set {
+	set := Set{}
+	for i, alg := range dig.algs {
+		h := dig.hashes[i].(hash.Hash)
+		set[alg.ID()] = hex.EncodeToString(h.Sum(nil))
+	}
+	return set
 }

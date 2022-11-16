@@ -1,8 +1,8 @@
 package checksum_test
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -21,45 +21,45 @@ var testMD5Sums = map[string]string{
 }
 
 func TestChecksum(t *testing.T) {
-	algsMD5 := []digest.Alg{digest.MD5()}
+	ctx := context.Background()
 	algsMD5SHA1 := []digest.Alg{digest.MD5(), digest.SHA1()}
 	t.Run("minimal", func(t *testing.T) {
-		setup := func(add checksum.AddFunc) error {
+		setup := func(add func(name string, algs ...digest.Alg) error) error {
 			return nil
 		}
 		cb := func(name string, results digest.Set, err error) error {
 			return err
 		}
-		if err := checksum.Run(setup, cb); err != nil {
+		if err := checksum.Run(ctx, setup, cb); err != nil {
 			t.Fatal(err)
 		}
 	})
 	t.Run("setup err", func(t *testing.T) {
-		setup := func(add checksum.AddFunc) error {
+		setup := func(add func(name string, algs ...digest.Alg) error) error {
 			return errors.New("catch me")
 		}
 		cb := func(name string, results digest.Set, err error) error {
 			return err
 		}
-		if err := checksum.Run(setup, cb); err == nil {
+		if err := checksum.Run(ctx, setup, cb); err == nil {
 			t.Fatal("expected an error")
 		}
 	})
 	t.Run("callback err", func(t *testing.T) {
-		setup := func(add checksum.AddFunc) error {
-			add(filepath.Join("test", "fixture", "hello.csv"), []digest.Alg{})
+		setup := func(add func(name string, algs ...digest.Alg) error) error {
+			add(filepath.Join("test", "fixture", "hello.csv"))
 			return nil
 		}
 		cb := func(name string, results digest.Set, err error) error {
 			return errors.New("catch me")
 		}
-		if err := checksum.Run(setup, cb); err == nil {
+		if err := checksum.Run(ctx, setup, cb); err == nil {
 			t.Fatal("expected an error")
 		}
 	})
 	t.Run("minimal, one existing file, md5", func(t *testing.T) {
-		setup := func(add checksum.AddFunc) error {
-			add(filepath.Join("test", "fixture", "hello.csv"), algsMD5)
+		setup := func(add func(name string, algs ...digest.Alg) error) error {
+			add(filepath.Join("test", "fixture", "hello.csv"), digest.MD5())
 			return nil
 		}
 		cb := func(name string, results digest.Set, err error) error {
@@ -71,13 +71,13 @@ func TestChecksum(t *testing.T) {
 			}
 			return nil
 		}
-		if err := checksum.Run(setup, cb); err != nil {
+		if err := checksum.Run(ctx, setup, cb); err != nil {
 			t.Fatal(err)
 		}
 	})
 	t.Run("minimal, one existing file, md5,sha1", func(t *testing.T) {
-		setup := func(add checksum.AddFunc) error {
-			add(filepath.Join("test", "fixture", "hello.csv"), algsMD5SHA1)
+		setup := func(add func(name string, algs ...digest.Alg) error) error {
+			add(filepath.Join("test", "fixture", "hello.csv"), algsMD5SHA1...)
 			return nil
 		}
 		cb := func(name string, results digest.Set, err error) error {
@@ -95,13 +95,13 @@ func TestChecksum(t *testing.T) {
 			}
 			return nil
 		}
-		if err := checksum.Run(setup, cb); err != nil {
+		if err := checksum.Run(ctx, setup, cb); err != nil {
 			t.Fatal(err)
 		}
 	})
 	t.Run("minimal, one existing file, no algs", func(t *testing.T) {
-		setup := func(add checksum.AddFunc) error {
-			add(filepath.Join("test", "fixture", "hello.csv"), []digest.Alg{})
+		setup := func(add func(name string, algs ...digest.Alg) error) error {
+			add(filepath.Join("test", "fixture", "hello.csv"))
 			return nil
 		}
 		cb := func(name string, results digest.Set, err error) error {
@@ -113,47 +113,69 @@ func TestChecksum(t *testing.T) {
 			}
 			return nil
 		}
-		if err := checksum.Run(setup, cb); err != nil {
+		if err := checksum.Run(ctx, setup, cb); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("minimal, one existing file, option algs, job algs", func(t *testing.T) {
+		setup := func(add func(name string, algs ...digest.Alg) error) error {
+			add(filepath.Join("test", "fixture", "hello.csv"), digest.MD5())
+			return nil
+		}
+		cb := func(name string, results digest.Set, err error) error {
+			if err != nil {
+				return err
+			}
+			if len(results) != 2 {
+				return errors.New("results should have two entries")
+			}
+			if results[digest.SHA1id] == "" {
+				return errors.New("should have have SHA1")
+			}
+			if results[digest.MD5id] == "" {
+				return errors.New("should have have MD5")
+			}
+			return nil
+		}
+		if err := checksum.Run(ctx, setup, cb, checksum.WithAlgs(digest.SHA1())); err != nil {
 			t.Fatal(err)
 		}
 	})
 	t.Run("minimal, non-existing file, no algs", func(t *testing.T) {
-		setup := func(add checksum.AddFunc) error {
-			add("missingfile.txt", []digest.Alg{})
+		setup := func(add func(name string, algs ...digest.Alg) error) error {
+			add("missingfile.txt")
 			return nil
 		}
 		cb := func(name string, results digest.Set, err error) error {
 			return err
 		}
-		if err := checksum.Run(setup, cb); err == nil {
+		if err := checksum.Run(ctx, setup, cb); err == nil {
 			t.Fatal("expected an error: no file")
 		}
 	})
 	t.Run("minimal, non-existing file, md5", func(t *testing.T) {
-		setup := func(add checksum.AddFunc) error {
-			add("missingfile.txt", algsMD5)
+		setup := func(add func(name string, algs ...digest.Alg) error) error {
+			add("missingfile.txt", digest.MD5())
 			return nil
 		}
 		cb := func(name string, results digest.Set, err error) error {
 			return err
 		}
-		if err := checksum.Run(setup, cb); err == nil {
+		if err := checksum.Run(ctx, setup, cb); err == nil {
 			t.Fatal("expected an error: no file")
 		}
 	})
 	t.Run("walk test dir", func(t *testing.T) {
 		fsys := os.DirFS(`.`)
 		results := map[string]string{}
-		setup := func(add checksum.AddFunc) error {
+		setup := func(add func(name string, algs ...digest.Alg) error) error {
 			// walk fs
 			walkFunc := func(p string, entr fs.DirEntry, err error) error {
 				if err != nil {
 					return err
 				}
 				if entr.Type().IsRegular() {
-					if !add(p, algsMD5) {
-						return fmt.Errorf("%s not added", p)
-					}
+					return add(p, digest.MD5())
 				}
 				return nil
 			}
@@ -167,7 +189,7 @@ func TestChecksum(t *testing.T) {
 			results[name] = sum
 			return nil
 		}
-		err := checksum.Run(setup, cb, checksum.WithFS(fsys), checksum.WithNumGos(4))
+		err := checksum.Run(ctx, setup, cb, checksum.WithFS(fsys), checksum.WithNumGos(4))
 		if err != nil {
 			t.Fatal(err)
 		}

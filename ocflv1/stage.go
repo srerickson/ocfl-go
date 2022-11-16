@@ -67,11 +67,11 @@ func newStage(id string, idx *ocfl.Index, prev *Inventory, opts ...ObjectOption)
 	}
 	manifest, err := idx.ManifestMap(stg.alg.ID())
 	if err != nil {
-		return nil, fmt.Errorf("cannot build manifest from index using %s: %w", stg.alg, err)
+		return nil, fmt.Errorf("cannot build manifest from index using %s: %w", stg.alg.ID(), err)
 	}
 	state, err := idx.StateMap(stg.alg.ID())
 	if err != nil {
-		return nil, fmt.Errorf("cannot build version state from index using %s: %w", stg.alg, err)
+		return nil, fmt.Errorf("cannot build version state from index using %s: %w", stg.alg.ID(), err)
 	}
 	stg.manifest = manifest
 	stg.state = state

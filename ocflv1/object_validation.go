@@ -424,7 +424,7 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 	}
 	// digests
 	registry := digest.RegistryFromContext(ctx)
-	digestSetup := func(add checksum.AddFunc) error {
+	digestSetup := func(add func(name string, algs ...digest.Alg) error) error {
 		for name, pInfo := range vldr.ledger.paths {
 			algs := make([]digest.Alg, 0, len(pInfo.digests))
 			for id := range pInfo.digests {
@@ -439,8 +439,8 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 				err := fmt.Errorf("path not referenecd in manifest as expected: %s", name)
 				return ec(err, codes.E023.Ref(ocflV))
 			}
-			if !add(path.Join(vldr.Root, name), algs) {
-				return fmt.Errorf("checksum interupted near: %s", name)
+			if err := add(path.Join(vldr.Root, name), algs...); err != nil {
+				return fmt.Errorf("checksum interupted near: %s: %w", name, err)
 			}
 		}
 		return nil
@@ -482,7 +482,7 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 	digestOpen := func(name string) (io.Reader, error) {
 		return vldr.FS.OpenFile(ctx, name)
 	}
-	err := checksum.Run(digestSetup, digestCallback, checksum.WithOpenFunc(digestOpen))
+	err := checksum.Run(ctx, digestSetup, digestCallback, checksum.WithOpenFunc(digestOpen))
 	if err != nil {
 		vldr.LogFatal(lgr, err)
 		return err
