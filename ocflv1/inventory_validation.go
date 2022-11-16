@@ -285,8 +285,8 @@ func readDigestInventory(ctx context.Context, reader io.Reader, inv interface{},
 	if err = json.Unmarshal(byt, &tmpInv); err != nil {
 		return "", err
 	}
-	// lookup alg in digest.Registry
-	alg, err = digest.RegistryFromContext(ctx).Get(tmpInv.Digest)
+	// lookup alg in default registry
+	alg, err = digest.Get(tmpInv.Digest)
 	if err != nil {
 		return "", err
 	}

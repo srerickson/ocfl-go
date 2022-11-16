@@ -21,6 +21,16 @@ const (
 	BLAKE2Bid = `blake2b-512`
 )
 
+// built-in algs
+var builtin = []Alg{
+	SHA512(),
+	SHA256(),
+	SHA224(),
+	SHA1(),
+	MD5(),
+	BLAKE2B(),
+}
+
 type Alg interface {
 	ID() string
 	New() hash.Hash

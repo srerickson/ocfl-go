@@ -3,6 +3,7 @@ package ocflv1
 import (
 	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/validation"
 )
 
@@ -24,12 +25,16 @@ type validationOptions struct {
 	// reference this version of the OCFL ocfl.
 	FallbackOCFL ocfl.Spec
 
+	// Algorithm Registry
+	AlgRegistry *digest.Registry
+
 	// Validation should add errors to an existing result set.
 	result *validation.Result
 }
 
 func defaultValidationOptions() *validationOptions {
 	return &validationOptions{
+		AlgRegistry:  ocfl.AlgRegistry(),
 		Logger:       logr.Discard(),
 		FallbackOCFL: ocflv1_0,
 		MaxErrs:      100,
@@ -53,6 +58,14 @@ func ValidationLogger(l logr.Logger) ValidationOption {
 func ValidationMaxErrs(max int) ValidationOption {
 	return func(opts *validationOptions) {
 		opts.MaxErrs = max
+	}
+}
+
+// ValidationAlgRegistry sets the registry of available algorithms
+// that can be used in an inventory fixity
+func ValidationAlgRegistry(r *digest.Registry) ValidationOption {
+	return func(opts *validationOptions) {
+		opts.AlgRegistry = r
 	}
 }
 

@@ -168,7 +168,7 @@ func (vldr *objectValidator) validateRootInventory(ctx context.Context) error {
 	lgr := vldr.opts.Logger
 	name := path.Join(vldr.Root, inventoryFile)
 	algID := vldr.rootInfo.Algorithm
-	alg, err := digest.RegistryFromContext(ctx).Get(algID)
+	alg, err := digest.Get(algID) // use default registry b/c must be sha512/256
 	if err != nil {
 		vldr.LogFatal(lgr, err)
 		return err
@@ -243,7 +243,8 @@ func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum)
 			err := fmt.Errorf("%w: %s", ErrDigestAlg, info.algID)
 			vldr.LogFatal(lgr, ec(err, codes.E025.Ref(ocflV)))
 		}
-		alg, err := digest.RegistryFromContext(ctx).Get(info.algID)
+		// use default registry b/c must be sha512/256
+		alg, err := digest.Get(info.algID)
 		if err != nil {
 			vldr.LogFatal(lgr, err)
 			return err
@@ -423,7 +424,7 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 		return nil
 	}
 	// digests
-	registry := digest.RegistryFromContext(ctx)
+	registry := vldr.opts.AlgRegistry
 	digestSetup := func(add func(name string, algs ...digest.Alg) error) error {
 		for name, pInfo := range vldr.ledger.paths {
 			algs := make([]digest.Alg, 0, len(pInfo.digests))

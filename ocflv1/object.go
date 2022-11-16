@@ -77,7 +77,7 @@ func (obj *Object) Inventory(ctx context.Context) (*Inventory, error) {
 		return nil, err
 	}
 	name := path.Join(obj.rootDir, inventoryFile)
-	alg, err := digest.RegistryFromContext(ctx).Get(info.Algorithm)
+	alg, err := digest.Get(info.Algorithm)
 	if err != nil {
 		return nil, fmt.Errorf("reading inventory: %w", err)
 	}

@@ -1,74 +1,50 @@
 package digest
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"sync"
 )
 
 var ErrUnknownAlg = errors.New("unknown digest algorithm")
 
-// RegistryCtxKey is used to access the digest Registry from a context.Context
-type RegistryCtxKey struct{}
-
-var builtin = map[string]Alg{
-	SHA512id:  SHA512(),
-	SHA256id:  SHA256(),
-	SHA224id:  SHA224(),
-	SHA1id:    SHA1(),
-	MD5id:     MD5(),
-	BLAKE2Bid: BLAKE2B(),
+// Registry stores available digest algorithms by their id.
+type Registry struct {
+	m map[string]Alg
 }
 
-// digest registry
-type Registry struct {
-	algs sync.Map
+var defaultRegistry *Registry
+
+// DefaultRegistry returns the gobal algorithm registry
+func DefaultRegistry() *Registry {
+	if defaultRegistry == nil {
+		defaultRegistry = NewRegistry()
+	}
+	return defaultRegistry
+}
+
+// Get is short for DefaultRegistry().Get(id)
+func Get(id string) (Alg, error) {
+	return DefaultRegistry().Get(id)
 }
 
 // NewRegistry returns a new registry with built-in algorithms
 func NewRegistry() *Registry {
 	reg := &Registry{}
-	reg.Add([]Alg{
-		SHA512(),
-		SHA256(),
-		SHA224(),
-		SHA1(),
-		MD5(),
-		BLAKE2B(),
-	}...)
+	reg.Add(builtin...)
 	return reg
 }
 
 func (r *Registry) Add(algs ...Alg) {
+	if r.m == nil {
+		r.m = map[string]Alg{}
+	}
 	for _, alg := range algs {
-		r.algs.Store(alg.ID(), alg)
+		r.m[alg.ID()] = alg
 	}
 }
 
 func (r Registry) Get(id string) (Alg, error) {
-	alg, ok := r.algs.Load(id)
-	if !ok {
-		return nil, fmt.Errorf("%w: '%s'", ErrUnknownAlg, id)
-	}
-	return alg.(Alg), nil
-}
-
-func RegistryFromContext(ctx context.Context) *Registry {
-	v := ctx.Value(RegistryCtxKey{})
-	if v == nil {
-		return NewRegistry()
-	}
-	return v.(*Registry)
-}
-
-func ContextWithRegistry(ctx context.Context, r *Registry) context.Context {
-	return context.WithValue(ctx, RegistryCtxKey{}, r)
-}
-
-// Get is used to retrieve a built-in Alg
-func Get(id string) (Alg, error) {
-	alg, ok := builtin[id]
+	alg, ok := r.m[id]
 	if !ok {
 		return nil, fmt.Errorf("%w: '%s'", ErrUnknownAlg, id)
 	}

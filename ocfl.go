@@ -5,6 +5,8 @@
 // Command line tools can be found in `cmd`.
 package ocfl
 
+import "github.com/srerickson/ocfl/digest"
+
 const (
 	// package version
 	Version = "0.0.10"
@@ -13,3 +15,8 @@ const (
 	LevelDebug   = 10
 	LevelWarning = 5
 )
+
+// AlgRegistry returns the global digest algorithm registry
+func AlgRegistry() *digest.Registry {
+	return digest.DefaultRegistry()
+}

@@ -120,7 +120,7 @@ func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	alg, err := digest.RegistryFromContext(ctx).Get(inv.DigestAlgorithm)
+	alg, err := digest.Get(inv.DigestAlgorithm)
 	if err != nil {
 		return err
 	}
