@@ -2,6 +2,7 @@ package ocflv1
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/srerickson/ocfl"
@@ -186,13 +187,7 @@ type ChangedDigestErr struct {
 }
 
 func (err ChangedDigestErr) Error() string {
-	// var locations []string
-	// for i := range err.Locations {
-	// 	locations = append(locations, err.Locations[i].String())
-	// }
-	// return fmt.Sprintf("different %s for %s in %s",
-	// 	err.Alg, err.Path, strings.Join(locations, `, `))
-	return "TODO: ChangedDigestErr"
+	return fmt.Sprintf("divergent %s digests found for %s", err.Alg, err.Path)
 }
 
 // ContentDigestErr content digest doesn't match recorded digest
@@ -204,11 +199,7 @@ type ContentDigestErr struct {
 }
 
 func (err ContentDigestErr) Error() string {
-	// var locations []string
-	// for i := range err.Entry.locations {
-	// 	locations = append(locations, err.Entry.locations[i].String())
-	// }
-	// return fmt.Sprintf("%s for %s does not match expected value in %s",
-	// 	err.Alg, err.Path, strings.Join(locations, ", "))
-	return "TODO: ContentDigestErr"
+	exp := err.Entry.digest
+	got := err.Digest
+	return fmt.Sprintf("the %s for %s has changed from '%s' to '%s'", err.Alg, err.Path, exp, got)
 }
