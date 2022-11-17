@@ -69,6 +69,9 @@ func InitStore(ctx context.Context, fsys ocfl.WriteFS, root string, conf *InitSt
 	if err := ocfl.WriteDeclaration(ctx, fsys, root, decl); err != nil {
 		return err
 	}
+	if _, err := ocfl.WriteSpecFile(ctx, fsys, root, conf.Spec); err != nil {
+		return err
+	}
 	layt := newLayout(conf.Description, conf.Layout)
 	if err := writeLayout(ctx, fsys, root, layt); err != nil {
 		return err

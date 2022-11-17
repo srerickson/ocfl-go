@@ -1,10 +1,12 @@
 package ocfl_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/matryer/is"
 	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl/internal/testfs"
 )
 
 type vNumTest struct {
@@ -90,5 +92,33 @@ func TestParseInventoryType(t *testing.T) {
 			is.True(err != nil)
 		}
 		is.Equal(inv.Spec, t.out)
+	}
+}
+
+func TestWriteSpecFile(t *testing.T) {
+	ctx := context.Background()
+	fsys := testfs.NewMemFS()
+	test := func(spec ocfl.Spec) {
+		name, err := ocfl.WriteSpecFile(ctx, fsys, "dir1", spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f, err := fsys.OpenFile(ctx, name)
+		if err != nil {
+			t.Fatalf("file doesn't exist: %s", name)
+		}
+		defer f.Close()
+		// again
+		_, err = ocfl.WriteSpecFile(ctx, fsys, "dir1", spec)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+	}
+	test(ocfl.Spec{1, 0})
+	test(ocfl.Spec{1, 1})
+	// expect an error
+	_, err := ocfl.WriteSpecFile(ctx, fsys, "dir1", ocfl.Spec{3, 0})
+	if err == nil {
+		t.Fatal("expected an error")
 	}
 }

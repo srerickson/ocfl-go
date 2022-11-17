@@ -1,8 +1,12 @@
 package ocfl
 
 import (
+	"context"
+	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
+	"path"
 	"strconv"
 	"strings"
 )
@@ -10,11 +14,14 @@ import (
 const (
 	invTypePrefix = "https://ocfl.io/"
 	invTypeSuffix = "/spec/#inventory"
+	specsDir      = "specs"
 )
 
-var (
-	ErrSpecInvalid = errors.New("invalid OCFL spec version")
-)
+var ErrSpecInvalid = errors.New("invalid OCFL spec version")
+var ErrSpecNotFound = errors.New("OCFL spec file not found")
+
+//go:embed specs/*
+var specFS embed.FS
 
 // Spec represent an OCFL specification number
 type Spec [2]int
@@ -90,7 +97,30 @@ func (n Spec) Empty() bool {
 // AsInvType returns n as an InventoryType
 func (n Spec) AsInvType() InvType {
 	return InvType{Spec: n}
+}
 
+func WriteSpecFile(ctx context.Context, fsys WriteFS, dir string, n Spec) (string, error) {
+	glob := specsDir + "/" + "ocfl_" + n.String() + ".*"
+	files, err := fs.Glob(specFS, glob)
+	if err != nil || len(files) != 1 {
+		return "", ErrSpecNotFound
+	}
+	name := path.Base(files[0])
+	dst := path.Join(dir, name)
+	if f, err := fsys.OpenFile(ctx, dst); err == nil {
+		defer f.Close()
+		return "", fmt.Errorf("already exists: %s", dst)
+	}
+	f, err := specFS.Open(files[0])
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	_, err = fsys.Write(ctx, dst, f)
+	if err != nil {
+		return "", fmt.Errorf("writing OCFL spec file '%s': %w", dst, err)
+	}
+	return dst, nil
 }
 
 // InvType represents an inventory type string
