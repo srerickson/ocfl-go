@@ -89,7 +89,7 @@ type Map struct {
 	// index of all parent directories
 	dirs map[string]interface{}
 	// normalized digest (all lowercase)
-	normDigests map[string]interface{}
+	normDigests map[string]struct{}
 }
 
 func NewMap() *Map {
@@ -133,7 +133,7 @@ func (dm *Map) Add(digest string, p string) error {
 	}
 	dm.files[p] = digest
 	dm.digests[digest] = append(dm.digests[digest], p)
-	dm.normDigests[norm] = nil
+	dm.normDigests[norm] = struct{}{}
 	return nil
 }
 
@@ -206,14 +206,14 @@ func (dm *Map) Valid() error {
 func (dm *Map) init() error {
 	dm.files = map[string]string{}
 	dm.dirs = map[string]interface{}{}
-	dm.normDigests = map[string]interface{}{}
+	dm.normDigests = map[string]struct{}{}
 	for d, paths := range dm.digests {
 		norm := normalizeDigest(d)
 		if _, exists := dm.normDigests[norm]; exists {
 			dm.setDirty()
 			return &DigestConflictErr{d}
 		}
-		dm.normDigests[norm] = true
+		dm.normDigests[norm] = struct{}{}
 		for _, p := range paths {
 			if _, exists := dm.files[p]; exists {
 				dm.setDirty()

@@ -12,7 +12,6 @@ import (
 
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/digest/checksum"
 	"github.com/srerickson/ocfl/extensions"
 	"github.com/srerickson/ocfl/internal/testfs"
 	"github.com/srerickson/ocfl/ocflv1"
@@ -183,15 +182,14 @@ func TestStoreUpdateObject(t *testing.T) {
 	}
 
 	// v1
-	stage, err := ocfl.IndexDir(ctx, stgFS, `src1`, checksum.WithAlgs(digest.SHA256()))
-	if err != nil {
+	stage := ocfl.NewStage(digest.SHA256(), ocfl.StageRoot(stgFS, `src1`))
+	if err := stage.AddAllFromRoot(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := stage.Get("tmp.txt"); err != nil {
+	if _, _, err := stage.GetVal("tmp.txt"); err != nil {
 		t.Fatal(err)
 	}
 	if err = store.Commit(ctx, "object-1", stage,
-		ocflv1.WithAlg(digest.SHA256()),
 		ocflv1.WithContentDir("foo"),
 		ocflv1.WithVersionPadding(2),
 		ocflv1.WithUser("Bill", "mailto:me@no.com"),
@@ -228,20 +226,12 @@ func TestStoreUpdateObject(t *testing.T) {
 	if inv.Versions[inv.Head].Message != "first commit" {
 		t.Fatal("expected 'first commit'")
 	}
-	stage2, err := inv.IndexFull(ocfl.Head, true, false)
+	// stage 2
+	stage2, err := obj.NewStage(ctx, ocfl.Head)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal()
 	}
-	diff, err := stage.Diff(stage2, digest.SHA256id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !diff.Equal() {
-		t.Fatal("expected head state to be the same as the stage state")
-	}
-
-	//v2 - empty
-	if _, err := stage2.Remove("tmp.txt", false); err != nil {
+	if err := stage2.Remove("tmp.txt"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Commit(ctx, "object-1", stage2); err != nil {
@@ -267,7 +257,7 @@ func TestStoreUpdateObject(t *testing.T) {
 	}
 
 	// v3
-	stage3, err := ocfl.IndexDir(ctx, stgFS, "src2", checksum.WithAlgs(digest.SHA256()))
+	stage3, err := obj.NewStage(ctx, ocfl.Head)
 	if err != nil {
 		t.Fatal(err)
 	}

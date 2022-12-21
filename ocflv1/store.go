@@ -135,6 +135,11 @@ func GetStore(ctx context.Context, fsys ocfl.FS, root string) (*Store, error) {
 	return str, nil
 }
 
+// FSRoot returns the Store's ocfl.FS and root directory.
+func (s *Store) FSRoot() (ocfl.FS, string) {
+	return s.fsys, s.rootDir
+}
+
 // Descriptions returns the description set in the storage root's
 // ocfl_layout.json file, or an empty string if the description is undefined
 func (s *Store) Description() string {

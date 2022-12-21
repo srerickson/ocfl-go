@@ -16,6 +16,7 @@ import (
 
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
+	"github.com/srerickson/ocfl/internal/pathtree"
 )
 
 var (
@@ -175,11 +176,6 @@ func readInventorySidecar(ctx context.Context, fsys ocfl.FS, name string) (strin
 // and it does not include manifest and fixity entries. Use IndexFull if
 // necessary.
 func (inv *Inventory) Index(ver ocfl.VNum) (*ocfl.Index, error) {
-	return inv.IndexFull(ver, false, false)
-}
-
-// IndexFull has options to include manifest paths and fixity entries in the Index.
-func (inv *Inventory) IndexFull(ver ocfl.VNum, wManifest, wFixity bool) (*ocfl.Index, error) {
 	if ver.Empty() {
 		ver = inv.Head
 	}
@@ -187,24 +183,22 @@ func (inv *Inventory) IndexFull(ver ocfl.VNum, wManifest, wFixity bool) (*ocfl.I
 	if !ok {
 		return nil, errors.New("no such version")
 	}
-	tree := ocfl.NewIndex()
+	root := pathtree.NewDir[ocfl.IndexItem]()
 	alg := inv.DigestAlgorithm
 	eachFunc := func(name, sum string) error {
 		manifestPaths := inv.Manifest.DigestPaths(sum)
-		info := &ocfl.IndexItem{
-			Digests: digest.Set{alg: sum},
+		info := ocfl.IndexItem{
+			Digests:  digest.Set{alg: sum},
+			SrcPaths: manifestPaths,
 		}
-		if wManifest {
-			info.SrcPaths = manifestPaths
-		}
-		if wFixity && len(manifestPaths) > 0 {
+		if len(manifestPaths) > 0 {
 			for alg, fix := range inv.Fixity {
 				if sum := fix.GetDigest(manifestPaths[0]); sum != "" {
 					info.Digests[alg] = sum
 				}
 			}
 		}
-		if err := tree.Set(name, info); err != nil {
+		if err := root.SetFile(name, info); err != nil {
 			return err
 		}
 		return nil
@@ -212,5 +206,7 @@ func (inv *Inventory) IndexFull(ver ocfl.VNum, wManifest, wFixity bool) (*ocfl.I
 	if err := v.State.EachPath(eachFunc); err != nil {
 		return nil, err
 	}
-	return tree, nil
+	idx := &ocfl.Index{}
+	idx.SetRoot(root)
+	return idx, nil
 }

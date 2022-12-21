@@ -5,13 +5,13 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/srerickson/ocfl/pathtree"
+	"github.com/srerickson/ocfl/internal/pathtree"
 )
 
 func newPathTree(paths map[string]string) (*pathtree.Node[string], error) {
-	tree := pathtree.NewRoot[string]()
+	tree := pathtree.NewDir[string]()
 	for p, v := range paths {
-		if err := pathtree.SetVal(tree, p, v, false); err != nil {
+		if err := tree.Set(p, pathtree.NewFile(v)); err != nil {
 			return nil, err
 		}
 	}
@@ -20,6 +20,13 @@ func newPathTree(paths map[string]string) (*pathtree.Node[string], error) {
 }
 
 func TestSet(t *testing.T) {
+
+	empty := pathtree.Node[string]{}
+	err := empty.Set(".", pathtree.NewFile("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	tree, err := newPathTree(map[string]string{
 		"a/b/c.txt":  "content",
 		"a/b/c2.txt": "content2",
@@ -27,16 +34,8 @@ func TestSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Set existing w/o replace
-	err = tree.Set("a", pathtree.NewRoot[string](), false)
-	if err == nil {
-		t.Fatal("expected an error")
-	}
-	if !errors.Is(err, pathtree.ErrValueExists) {
-		t.Fatalf("expected error to be ErrValueExists, not %v", err)
-	}
-	// Set existing w/ replace
-	err = tree.Set("a", pathtree.NewRoot[string](), true)
+	// Set existing
+	err = tree.Set("a", pathtree.NewDir[string]())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,10 +43,10 @@ func TestSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if l := len(node.ReadDir()); l != 0 {
+	if l := len(node.DirEntries()); l != 0 {
 		t.Fatalf("expected zero entries, not %d", l)
 	}
-	if l := len(tree.ReadDir()); l != 1 {
+	if l := len(tree.DirEntries()); l != 1 {
 		t.Fatalf("expected 1 entry, not %d", l)
 	}
 	// prevent cycle
@@ -62,19 +61,19 @@ func TestSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = tree.Set(`a`, sub, true)
+	err = tree.Set(`a`, sub)
 	if err == nil {
 		t.Fatal("expect an error")
 	}
-	if !errors.Is(err, pathtree.ErrCycle) {
-		t.Fatal("expected ErrCycle")
+	if !errors.Is(err, pathtree.ErrRelation) {
+		t.Fatal("expected ErrRelation")
 	}
-	err = tree.Set(`a/b/c`, sub, true)
+	err = tree.Set(`a/b/c`, sub)
 	if err == nil {
 		t.Fatal("expect an error")
 	}
-	if !errors.Is(err, pathtree.ErrCycle) {
-		t.Fatal("expected ErrCycle")
+	if !errors.Is(err, pathtree.ErrRelation) {
+		t.Fatal("expected ErrRelation")
 	}
 
 }
@@ -119,7 +118,7 @@ func TestGet(t *testing.T) {
 }
 
 func TestMkdirAll(t *testing.T) {
-	tree := pathtree.NewRoot[string]()
+	tree := pathtree.NewDir[string]()
 	n, err := tree.MkdirAll("a/b/c")
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +138,7 @@ func TestMkdirAll(t *testing.T) {
 			t.Fatal("expected empty string")
 		}
 	}
-	if err := pathtree.SetVal(tree, "a/b/c.txt", "a value", false); err != nil {
+	if err := tree.Set("a/b/c.txt", pathtree.NewFile("a value")); err != nil {
 		t.Fatal(err)
 	}
 	_, err = tree.MkdirAll("a/b/c.txt/d")
@@ -156,7 +155,7 @@ func TestRemove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sub, err := tree.Remove("a/b1", true)
+	sub, err := tree.Remove("a/b1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +170,7 @@ func TestRemove(t *testing.T) {
 	}
 }
 
-func TestReadDir(t *testing.T) {
+func TestDirEntries(t *testing.T) {
 	tree, err := newPathTree(map[string]string{
 		"zebra/file1.txt": "content",
 		"file2.txt":       "content2",
@@ -180,7 +179,7 @@ func TestReadDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entries := tree.ReadDir()
+	entries := tree.DirEntries()
 	if len(entries) != 3 {
 		t.Fatal("expected 3 entries")
 	}
@@ -189,39 +188,30 @@ func TestReadDir(t *testing.T) {
 	}
 }
 
-func TestHasCycle(t *testing.T) {
+func TestCopy(t *testing.T) {
 	tree, err := newPathTree(map[string]string{
-		"a/b/c/d.txt": "-",
+		"zebra/file1.txt": "content",
+		"zebra/file2.txt": "content2",
+		"file2.txt":       "content3",
+		"a/file2.txt":     "content3",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := newPathTree(map[string]string{
-		"cycle.txt": "-",
-	})
-	if err != nil {
+	if l := tree.Len(); l != 4 {
+		t.Fatal("expected Len() to be 4")
+	}
+	cp := tree.Copy()
+	if l := cp.Len(); l != 4 {
+		t.Fatal("expected Len() to be 4")
+	}
+	if _, err := cp.Get("zebra/file1.txt"); err != nil {
 		t.Fatal(err)
 	}
-	sub, err := tree.Get("a/b")
-	if err != nil {
-		t.Fatal(err)
+	if l := tree.Len(); l != 4 {
+		t.Fatal("expected Len() to be 4")
 	}
-	// add child tree as "a2"
-	if err := tree.Set("a2", child, false); err != nil {
-		t.Fatal(err)
-	}
-	// add child tree as a/b/c2
-	if err := sub.Set("c2", child, false); err != nil {
-		t.Fatal(err)
-	}
-	if !tree.HasCycle() {
-		t.Fatal("expected true")
-	}
-	// removing to fix
-	if _, err := tree.Remove("a/b/c2", true); err != nil {
-		t.Fatal(err)
-	}
-	if tree.HasCycle() {
-		t.Fatal("expected no cycle")
+	if cp.IsParentOf(tree) || tree.IsParentOf(cp) {
+		t.Fatal("copy is still related to tree")
 	}
 }

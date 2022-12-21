@@ -8,7 +8,6 @@ import (
 	"github.com/muesli/coral"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/digest/checksum"
 	"github.com/srerickson/ocfl/ocflv1"
 )
 
@@ -112,20 +111,18 @@ func runCommit(ctx context.Context, conf *Config) {
 	if err != nil {
 		log.Error(err, "can't commit")
 	}
-	var index *ocfl.Index
+	var stage *ocfl.Stage
 	digestUI := &ProgressWriter{preamble: "computing digests "}
 	digestFn := func(w io.Writer) error {
-		var err error
-		index, err = ocfl.IndexDir(ctx, srcFS, srcRoot, checksum.WithAlgs(alg), checksum.WithProgress(w))
-		return err
+		stage = ocfl.NewStage(alg, ocfl.StageRoot(srcFS, srcRoot))
+		return stage.AddAllFromRoot(ctx)
 	}
 	if err := digestUI.Start(digestFn); err != nil {
 		log.Error(err, "staging failed")
 		return
 	}
 	commitUI := &ProgressWriter{preamble: "committing " + commitFlags.objectID + " "}
-	commitOpts := []ocflv1.ObjectOption{
-		ocflv1.WithAlg(alg),
+	commitOpts := []ocflv1.CommitOption{
 		ocflv1.WithMessage(commitFlags.commitMsg),
 		ocflv1.WithUser(commitFlags.userName, commitFlags.userAddr),
 		ocflv1.WithLogger(log),
@@ -135,7 +132,7 @@ func runCommit(ctx context.Context, conf *Config) {
 	}
 	commitFn := func(w io.Writer) error {
 		commitOpts = append(commitOpts, ocflv1.WithProgressWriter(w))
-		return store.Commit(ctx, commitFlags.objectID, index, commitOpts...)
+		return store.Commit(ctx, commitFlags.objectID, stage, commitOpts...)
 	}
 	if err := commitUI.Start(commitFn); err != nil {
 		log.Error(err, "commit failed")

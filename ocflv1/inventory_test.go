@@ -25,26 +25,29 @@ func TestInventoryIndex(t *testing.T) {
 			if err := result.Err(); err != nil {
 				t.Fatal(err)
 			}
-			tree, err := inv.IndexFull(ocfl.Head, true, true)
+			tree, err := inv.Index(ocfl.Head)
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = tree.Walk(func(name string, isdir bool, inf *ocfl.IndexItem) error {
-				if isdir {
+			err = tree.Walk(func(name string, node *ocfl.Index) error {
+				if node.IsDir() {
 					return nil
 				}
-				if _, exists := inf.Digests[inv.DigestAlgorithm]; !exists {
+				if _, exists := node.Val().Digests[inv.DigestAlgorithm]; !exists {
 					return errors.New("missing inventory's digest alg")
 				}
 				src, err := inv.ContentPath(ocfl.Head, name)
 				if err != nil {
 					return err
 				}
-				if !inf.HasSrc(src) {
-					return fmt.Errorf("%v does not include %s", inf.SrcPaths, src)
+				var exists bool
+				for _, s := range node.Val().SrcPaths {
+					if s == src {
+						exists = true
+					}
 				}
-				if _, exists := inf.Digests[inv.DigestAlgorithm]; !exists {
-					return errors.New("missing inventory's digest alg")
+				if !exists {
+					return fmt.Errorf("%v does not include %s", node.Val().SrcPaths, src)
 				}
 				return nil
 			})
@@ -52,7 +55,5 @@ func TestInventoryIndex(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
-
 	}
-
 }

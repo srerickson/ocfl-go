@@ -6,11 +6,27 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
+	"fmt"
 	"hash"
 	"io"
+	"strings"
 
 	"golang.org/x/crypto/blake2b"
 )
+
+type DigestErr struct {
+	Name     string
+	AlgID    string
+	Got      string
+	Expected string
+}
+
+func (e DigestErr) Error() string {
+	if e.Name == "" {
+		return fmt.Sprintf("unexpected %s: %s, got: %s", e.AlgID, e.Got, e.Expected)
+	}
+	return fmt.Sprintf("unexpected %s for '%s': %s, got: %s", e.AlgID, e.Name, e.Got, e.Expected)
+}
 
 const (
 	SHA512id  = `sha512`
@@ -38,6 +54,42 @@ type Alg interface {
 
 // Set is a set of digest results
 type Set map[string]string
+
+func (s Set) Validate(reader io.Reader) error {
+	algs := make([]Alg, len(s))
+	i := 0
+	for algID := range s {
+		alg, err := Get(algID)
+		if err != nil {
+			return err
+		}
+		algs[i] = alg
+		i++
+	}
+	digester := NewDigester(algs...)
+	if _, err := digester.ReadFrom(reader); err != nil {
+		return err
+	}
+	sums := digester.Sums()
+	conflicts := sums.ConflictWith(s)
+	if len(conflicts) == 0 {
+		return nil
+	}
+	alg := conflicts[0]
+	return DigestErr{AlgID: alg, Expected: s[alg], Got: sums[alg]}
+}
+
+// ConflictWith returns keys in s with values that do not match the corresponding
+// key in other.
+func (s Set) ConflictWith(other Set) []string {
+	var keys []string
+	for alg, sv := range s {
+		if ov, ok := other[alg]; ok && !strings.EqualFold(sv, ov) {
+			keys = append(keys, alg)
+		}
+	}
+	return keys
+}
 
 // builtin algorithms
 func SHA512() Alg  { return algSHA512{} }

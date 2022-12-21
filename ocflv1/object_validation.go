@@ -310,26 +310,26 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver o
 	// confirm version states in the version inventory match root inventory
 	for v, ver := range inv.Versions {
 		rootVer := vldr.rootInv.Versions[v]
-		rootState, _ := vldr.rootInv.IndexFull(v, true, false)
-		verState, _ := inv.IndexFull(v, true, false)
-		changes, err := verState.Diff(rootState, inv.DigestAlgorithm)
+		rootState, _ := vldr.rootInv.Index(v)
+		verState, _ := inv.Index(v)
+		changes, err := verState.Diff(*rootState)
 		if err != nil {
 			err := fmt.Errorf("unexpected err durring inventory diff: %w", err)
 			vldr.LogFatal(lgr, err)
 			return err
 		}
 		if !changes.Equal() {
-			errFmt := "version %s state doesn't match root inventory: %s"
-			if changes.Added.Len() > 0 {
-				err := fmt.Errorf(errFmt, v, "unexpected files")
+			errFmt := "version %s state doesn't match root inventory: %s: %v"
+			if len(changes.Added.Children()) > 0 {
+				err := fmt.Errorf(errFmt, v, "unexpected files", changes.Added)
 				vldr.LogFatal(lgr, ec(err, codes.E066.Ref(inv.Type.Spec)))
 			}
-			if changes.Removed.Len() > 0 {
-				err := fmt.Errorf(errFmt, v, `missing file`)
+			if len(changes.Removed.Children()) > 0 {
+				err := fmt.Errorf(errFmt, v, `missing file`, changes.Removed)
 				vldr.LogFatal(lgr, ec(err, codes.E066.Ref(inv.Type.Spec)))
 			}
-			if changes.Changed.Len() > 0 {
-				err := fmt.Errorf(errFmt, v, `changed file content`)
+			if len(changes.Changed.Children()) > 0 {
+				err := fmt.Errorf(errFmt, v, `changed file content`, changes.Changed)
 				vldr.LogFatal(lgr, ec(err, codes.E066.Ref(inv.Type.Spec)))
 			}
 		}

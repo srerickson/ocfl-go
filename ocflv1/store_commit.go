@@ -13,7 +13,7 @@ import (
 	"github.com/srerickson/ocfl/internal/xfer"
 )
 
-func (s *Store) Commit(ctx context.Context, id string, index *ocfl.Index, opts ...ObjectOption) error {
+func (s *Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts ...CommitOption) error {
 	s.commitLock.Lock()
 	defer s.commitLock.Unlock()
 	var inv *Inventory
@@ -27,15 +27,15 @@ func (s *Store) Commit(ctx context.Context, id string, index *ocfl.Index, opts .
 			return err
 		}
 	}
-	stage, err := newStage(id, index, inv, opts...)
+	comm, err := newCommit(id, stage, inv, opts...)
 	if err != nil {
 		return err
 	}
-	return s.commit(ctx, stage)
+	return s.commit(ctx, comm)
 }
 
 // commit creates or updates an object in the store using stage.
-func (s *Store) commit(ctx context.Context, stage *objectStage) error {
+func (s *Store) commit(ctx context.Context, stage *commit) error {
 	writeFS, objPath, err := s.objectWriteFSPath(stage.id)
 	if err != nil {
 		return err
@@ -50,7 +50,7 @@ func (s *Store) commit(ctx context.Context, stage *objectStage) error {
 	if err != nil {
 		return err
 	}
-	if len(xfers) > 0 && stage.srcFS == nil {
+	if fsys, _ := stage.stage.Root(); len(xfers) > 0 && fsys == nil {
 		return fmt.Errorf("stage doesn't provide an FS for reading files to upload")
 	}
 	stage.logger.Info("committing new object version", "id", stage.id, "head", stage.vnum, "alg", stage.alg, "message", stage.message)
@@ -88,6 +88,7 @@ func (s *Store) commit(ctx context.Context, stage *objectStage) error {
 		}
 	}
 	// transfer files
+	srcFS, stageRoot := stage.stage.Root()
 	for src, dst := range xfers {
 		dst = path.Join(objPath, dst)
 		xfers[src] = dst
@@ -95,8 +96,14 @@ func (s *Store) commit(ctx context.Context, stage *objectStage) error {
 			stage.logger.Info("skipping file transfer", "src", src, "dst", dst)
 		}
 	}
+	// fixme -- xfer keys are paths relative to stage root dir, not stage FS
+	remap := make(map[string]string, len(xfers))
+	for src, dst := range xfers {
+		remap[path.Join(stageRoot, src)] = dst
+	}
+	xfers = remap
 	if !stage.nowrite {
-		_, err := xfer.DigestXfer(ctx, stage.srcFS, writeFS, xfers, xfer.WithProgress(stage.progress))
+		_, err := xfer.DigestXfer(ctx, srcFS, writeFS, xfers, xfer.WithProgress(stage.progress))
 		if err != nil {
 			return fmt.Errorf("while transfering content files: %w", err)
 		}

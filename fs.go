@@ -2,16 +2,15 @@ package ocfl
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
 	"path"
 	"time"
-
-	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/digest/checksum"
 )
+
+var ErrNotFile = errors.New("not a file")
 
 // FS is a minimal, read-only storage layer abstraction. It is similar to the
 // standard library's io/fs.FS, except it uses contexts and OpenFile is not
@@ -81,49 +80,6 @@ func EachFile(ctx context.Context, fsys FS, root string, walkFn fs.WalkDirFunc) 
 		return walkFn(name, d, err)
 	}
 	return walk(ctx, fsys, root, fn)
-}
-
-// IndexDir build an Index from the contents of dir in fsys using algs. All
-// paths in the tree are relative to fsys.
-func IndexDir(ctx context.Context, fsys FS, dir string, opts ...checksum.Option) (*Index, error) {
-	tree := NewIndex()
-	tree.FS = fsys
-	setup := func(addfn func(name string, algs ...digest.Alg) error) error {
-		walkfn := func(name string, e fs.DirEntry, err error) error {
-			if err != nil {
-				return fmt.Errorf("during source directory scan: %w", err)
-			}
-			if err := addfn(name); err != nil {
-				return fmt.Errorf("source directory scan ended prematurely: %w", err)
-			}
-			return nil
-		}
-		return EachFile(ctx, fsys, dir, walkfn)
-	}
-	cb := func(name string, result digest.Set, err error) error {
-		if err != nil {
-			return err
-		}
-		info := &IndexItem{
-			Digests:  result,
-			SrcPaths: []string{name},
-		}
-		return tree.Set(name, info)
-	}
-	open := func(name string) (io.Reader, error) {
-		f, err := fsys.OpenFile(ctx, name)
-		if err != nil {
-			return nil, err
-		}
-		return f, nil
-	}
-
-	opts = append(opts, checksum.WithOpenFunc(open))
-	if err := checksum.Run(ctx, setup, cb, opts...); err != nil {
-		return nil, err
-	}
-	return tree.Sub(dir)
-	// return tree, nil
 }
 
 // walk is similar to the standard library's io/fs.walk except that it takes

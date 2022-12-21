@@ -150,7 +150,7 @@ func (fsys *FS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error)
 
 func (fsys *FS) Write(ctx context.Context, name string, r io.Reader) (int64, error) {
 	fsys.log.V(ocfl.LevelDebug).Info("write file", "name", name)
-	if !fs.ValidPath(name) {
+	if !fs.ValidPath(name) || name == "." {
 		return 0, &fs.PathError{
 			Op:   "write",
 			Path: name,

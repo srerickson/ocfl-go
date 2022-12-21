@@ -1,79 +1,220 @@
 package ocfl
 
 import (
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/pathtree"
+	"github.com/srerickson/ocfl/internal/pathtree"
 )
 
 var (
 	ErrInvalidPath = pathtree.ErrInvalidPath
 	ErrNotFound    = pathtree.ErrNotFound
-	ErrNotDir      = pathtree.ErrNotDir
-	ErrNotFile     = pathtree.ErrNotFile
-	ErrValueExists = pathtree.ErrValueExists
-	ErrNoValue     = errors.New("value not set")
 )
 
-// Index is a data structure used to represent and change a 'logical state' for
-// an OCFL object version. Logical file paths (as found in an inventory's
-// version state) are used to reference IndexItem structs. The structure of the
-// index reflects the directory structure of the object state. Both logical
-// files and logical directories can be managed using Index. Indexes are
-// primarily used to 'stage' content before committing new object versions to a
-// storage root.
-//
-// An Index can be 'backed' by an FS, allowing logical paths to be mapped to
-// files in the FS. To create an Index backed by an FS use IndexDir().
-//
-// Index also provides methods for modifying the logical state (see Remove and
-// SetDir).
+// Index represents the logical state of an OCFL object version.
 type Index struct {
-	// The FS 'backing' entries in SrcPaths. It may be nil. If set, paths in
-	// SrcPaths should be relative to the FS
-	FS FS
-	// root is the root node in index. It must a directory node.
-	root *pathtree.Node[*IndexItem]
+	node pathtree.Node[IndexItem]
 }
 
-func NewIndex() *Index {
-	return &Index{
-		root: pathtree.NewRoot[*IndexItem](),
+func (idx Index) IsDir() bool { return idx.node.IsDir() }
+
+func (idx Index) Val() IndexItem { return idx.node.Val }
+
+func (idx Index) Len() int { return idx.node.Len() }
+
+// Children returns an ordered slice of strings with the names of idx's
+// immediate children. If idx is not a directory node, the return value is nil.
+func (idx Index) Children() []string {
+	if !idx.IsDir() {
+		return nil
 	}
+	entrs := idx.node.DirEntries()
+	chld := make([]string, len(entrs))
+	for i := range entrs {
+		chld[i] = entrs[i].Name()
+	}
+	return chld
 }
 
-// IndexItem represents state of logical files in Index. It can track all
-// digests associated with the path as well any 'source' paths, such as those
-// found in an inventory manifest.
-type IndexItem struct {
-	// Digests stores multiple digests from different algorithms for the logical
-	// path in the Index.
-	Digests digest.Set `json:"sum,omitempty"`
-	// SrcPaths stores slice of content paths (i.e., manifest entries) associated
-	// with the logical path.
-	SrcPaths []string `json:"src,omitempty"`
+// GetVal returns the IndexItem stored in idx for path p along with a
+// boolean indicating if path is a directory. An error is returned if no value
+// is stored for p or if p is not a valid path.
+func (idx Index) GetVal(p string) (IndexItem, bool, error) {
+	sub, err := idx.node.Get(p)
+	if err != nil {
+		return IndexItem{}, false, err
+	}
+	return sub.Val, sub.IsDir(), nil
 }
 
-type DirEntry = pathtree.DirEntry
+// ErrSkipDir can be returned in an IndexWalkFunc to prevent Walk from calling
+// the walk function for descendants of a directory.
+var ErrSkipDir = pathtree.ErrSkipDir
 
-func (inf *IndexItem) AddSrc(name string) {
-	for _, p := range inf.SrcPaths {
-		if p == name {
-			return
+// IndexWalkFunc is a function called by Walk for each path in an Index. The
+// path p is relative to the Index receiver for Walk. sub is an Index
+// representing the sub-Index at path p.
+type IndexWalkFunc func(p string, sub *Index) error
+
+// Walk calls fn for each path in idx, starting with itself.
+func (idx *Index) Walk(fn IndexWalkFunc) error {
+	wrap := func(name string, n *pathtree.Node[IndexItem]) error {
+		return fn(name, &Index{node: *n})
+	}
+	return pathtree.Walk(&idx.node, wrap)
+}
+
+// SetRoot is used internally to set the contents of an Indexß. It shouldn't be
+// usable outside this package or its subpackages.
+func (idx *Index) SetRoot(root *pathtree.Node[IndexItem]) {
+	idx.node = *root
+}
+
+// return an empty directory index
+func newEmptyIndex() *Index {
+	return &Index{node: *pathtree.NewDir[IndexItem]()}
+}
+
+// Diff returns an IndexDiff representing changes from idx to next.
+func (idx Index) Diff(next Index) (IndexDiff, error) {
+	return indexNodeDiff(idx.node, next.node)
+}
+
+func indexNodeDiff(a, b pathtree.Node[IndexItem]) (IndexDiff, error) {
+	diff := IndexDiff{
+		Added:     newEmptyIndex(),
+		Removed:   newEmptyIndex(),
+		Changed:   newEmptyIndex(),
+		Unchanged: newEmptyIndex(),
+	}
+	// loop over direct children of a (if any)
+	for _, aEntr := range a.DirEntries() {
+		nA := aEntr.Name() // name of child in a
+		chA := a.Child(nA) // child node in a
+		chB := b.Child(nA) // child node in b with same name
+		if chB == nil {
+			// nA is in a, not b -- removed
+			diff.addRemoved(nA, chA)
+			continue
+		}
+		// nA exists in both a and b: it may be a directory in both, a file in
+		// both, or a directory in one and a file in the other.
+		if chA.IsDir() && chB.IsDir() {
+			subdiff, err := indexNodeDiff(*chA, *chB)
+			if err != nil {
+				return IndexDiff{}, err
+			}
+			diff.mergeDiff(nA, subdiff)
+			continue
+		}
+		if !chA.IsDir() && !chB.IsDir() {
+			// chA and chaB are files -- are they the same?
+			same, err := chA.Val.SameContentAs(chB.Val)
+			if err != nil {
+				return IndexDiff{}, fmt.Errorf("can't diff index: %w", err)
+			}
+			if same {
+				diff.addUnchanged(nA, chA)
+			} else {
+				diff.addChanged(nA, chA)
+			}
+			continue
+		}
+		if chA.IsDir() != chB.IsDir() {
+			// file in one, directory in the other: chB is new in b and chA
+			// doesn't exist in b.
+			diff.addAdded(nA, chB)
+			diff.addRemoved(nA, chA)
 		}
 	}
-	inf.SrcPaths = append(inf.SrcPaths, name)
-	sort.Strings(inf.SrcPaths)
+	// loop over direct children of b, looking for added names.
+	for _, bEntr := range b.DirEntries() {
+		nB := bEntr.Name()
+		chB := b.Child(nB)
+		if chA := a.Child(nB); chA == nil {
+			// nB is in b, not a -- added
+			diff.addAdded(nB, chB)
+		}
+	}
+	return diff, nil
 }
 
-func (inf *IndexItem) HasSrc(names ...string) bool {
+// IndexDiff represents changes between two indexes.
+type IndexDiff struct {
+	Added     *Index // exist in second, not first
+	Removed   *Index // exist in first, not second
+	Changed   *Index // exist in both, changed
+	Unchanged *Index // exist in both, unchanged
+}
+
+func (diff IndexDiff) Equal() bool {
+	if len(diff.Added.node.DirEntries()) > 0 {
+		return false
+	}
+	if len(diff.Removed.node.DirEntries()) > 0 {
+		return false
+	}
+	if len(diff.Changed.node.DirEntries()) > 0 {
+		return false
+	}
+	return true
+}
+
+func (diff *IndexDiff) addRemoved(name string, node *pathtree.Node[IndexItem]) {
+	if err := diff.Removed.node.Set(name, node); err != nil {
+		panic(err)
+	}
+}
+
+func (diff *IndexDiff) addAdded(name string, node *pathtree.Node[IndexItem]) {
+	if err := diff.Added.node.Set(name, node); err != nil {
+		panic(err)
+	}
+}
+
+func (diff *IndexDiff) addChanged(name string, node *pathtree.Node[IndexItem]) {
+	if err := diff.Changed.node.Set(name, node); err != nil {
+		panic(err)
+	}
+}
+
+func (diff *IndexDiff) addUnchanged(name string, node *pathtree.Node[IndexItem]) {
+	if err := diff.Unchanged.node.Set(name, node); err != nil {
+		panic(err)
+	}
+}
+
+func (diff *IndexDiff) mergeDiff(name string, sub IndexDiff) {
+	if len(sub.Added.node.DirEntries()) > 0 {
+		diff.addAdded(name, &sub.Added.node)
+	}
+	if len(sub.Removed.node.DirEntries()) > 0 {
+		diff.addRemoved(name, &sub.Removed.node)
+	}
+	if len(sub.Changed.node.DirEntries()) > 0 {
+		diff.addChanged(name, &sub.Changed.node)
+	}
+	if len(sub.Unchanged.node.DirEntries()) > 0 {
+		diff.addUnchanged(name, &sub.Unchanged.node)
+	}
+}
+
+// IndexItem is a value stored for each path in an Index. In OCFL terms, an
+// IndexItems includes information relating to a logical path.
+type IndexItem struct {
+	// Digests include all digests associated with the path
+	Digests digest.Set
+	// SrcPaths include all "content paths" (i.e., manifest) entries associated
+	// the path
+	SrcPaths []string
+}
+
+// HasSrc returns true if items includes any names in its SrcPaths
+func (item IndexItem) HasSrc(names ...string) bool {
 	for _, n := range names {
-		for _, p := range inf.SrcPaths {
+		for _, p := range item.SrcPaths {
 			if p == n {
 				return true
 			}
@@ -82,7 +223,10 @@ func (inf *IndexItem) HasSrc(names ...string) bool {
 	return false
 }
 
-func (item *IndexItem) SameContentAs(other *IndexItem) (bool, error) {
+// SameContentAs returns true if item and other have in-common digest values or
+// SrcPaths. An error is returned if some digests match while others don't --
+// this would indicate some inconsistency in the underlying content.
+func (item IndexItem) SameContentAs(other IndexItem) (bool, error) {
 	var match, mismatch int
 	for alg, sum := range item.Digests {
 		otherSum, ok := other.Digests[alg]
@@ -96,7 +240,8 @@ func (item *IndexItem) SameContentAs(other *IndexItem) (bool, error) {
 		}
 	}
 	if match > 0 && mismatch > 0 {
-		return false, errors.New("digests matching gave inconsistent results")
+		// some digests matches while others mismatch
+		return false, errors.New("inconsistent ")
 	}
 	if mismatch > 0 {
 		return false, nil
@@ -108,294 +253,4 @@ func (item *IndexItem) SameContentAs(other *IndexItem) (bool, error) {
 		return false, errors.New("can't determine equivalence")
 	}
 	return item.HasSrc(other.SrcPaths...), nil
-}
-
-// Get returns the *IndexItem associated with path logical and a boolean
-// indicating if path is a directory. The *IndexItem may be nil. An error
-// is returned if the path is invalid or does exist in the tree.
-func (idx Index) Get(logical string) (*IndexItem, bool, error) {
-	n, err := idx.root.Get(logical)
-	if err != nil {
-		return nil, false, err
-	}
-	return n.Val, n.IsDir(), nil
-}
-
-// Set sets the *IndexItem for the file at path logical. If the entry does not
-// exist, it is created. If the entry exists, the existing *IndexItem is
-// replaced.
-func (idx *Index) Set(logical string, info *IndexItem) error {
-	if err := pathtree.SetVal(idx.root, logical, info, true); err != nil {
-		return err
-	}
-	return nil
-}
-
-// Sub returns the subtree rooted at p, which must be a directory path
-func (idx *Index) Sub(p string) (*Index, error) {
-	n, err := idx.root.Get(p)
-	if err != nil {
-		return nil, err
-	}
-	if !n.IsDir() {
-		return nil, ErrNotDir
-	}
-	return &Index{root: n, FS: idx.FS}, nil
-}
-
-// SetDir attaches the tree sub to t at path p. If replace is false, an error is
-// returned if path p already exists. If path p exists as a file node and
-// replace is true, the file node will be converted to a directory node. If sub
-// is is part of the tree, an error is returned.
-func (idx *Index) SetDir(logical string, sub *Index, replace bool) error {
-	if idx.FS != nil && sub.FS != nil && idx.FS != sub.FS {
-		return errors.New("cannot attach index from a different fs")
-	}
-	if logical == "." {
-		idx.root = sub.root
-		if idx.FS == nil && sub.FS != nil {
-			idx.FS = sub.FS
-		}
-		return nil
-	}
-	if err := idx.root.Set(logical, sub.root, replace); err != nil {
-		return err
-	}
-	if idx.FS == nil && sub.FS != nil {
-		idx.FS = sub.FS
-	}
-	return nil
-}
-
-// ReadDir returns ordered slice of DirEntry for contents of p
-func (idx *Index) ReadDir(p string) ([]DirEntry, error) {
-	n, err := idx.root.Get(p)
-	if err != nil {
-		return nil, err
-	}
-	return n.ReadDir(), nil
-}
-
-// Remove removes the node at path p from the index. If p is a directory
-// node recursive must be set to true to
-func (idx *Index) Remove(p string, recursive bool) (*Index, error) {
-	n, err := idx.root.Remove(p, recursive)
-	idx.root.RemoveEmptyDirs()
-	return &Index{root: n}, err
-}
-
-type IndexWalkFunc func(name string, isdir bool, val *IndexItem) error
-
-func (idx *Index) Walk(fn IndexWalkFunc) error {
-	return pathtree.Walk(idx.root, (pathtree.WalkFunc[*IndexItem])(fn))
-}
-
-// Let returns number of files in the Tree
-func (idx *Index) Len() int {
-	return idx.root.Len()
-}
-
-func (idx *Index) StateMap(alg string) (*digest.Map, error) {
-	m := digest.NewMap()
-	walkFn := func(p string, isdir bool, inf *IndexItem) error {
-		if isdir {
-			return nil
-		}
-		dig, exists := inf.Digests[alg]
-		if !exists {
-			return fmt.Errorf("%w: '%s'", ErrNoValue, alg)
-		}
-		if err := m.Add(dig, p); err != nil {
-			return err
-		}
-		return nil
-	}
-	if err := idx.Walk(walkFn); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func (idx *Index) ManifestMap(alg string) (*digest.Map, error) {
-	m := digest.NewMap()
-	walkFn := func(p string, isdir bool, inf *IndexItem) error {
-		if isdir {
-			return nil
-		}
-		dig, exists := inf.Digests[alg]
-		if !exists {
-			return fmt.Errorf("%w: '%s'", ErrNoValue, alg)
-		}
-		for _, src := range inf.SrcPaths {
-			if err := m.Add(dig, src); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if err := idx.Walk(walkFn); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func (tree Index) MarshalJSON() ([]byte, error) {
-	return json.Marshal(tree.root)
-}
-
-// Diff returns an IndexDiff representing changes from idx to next.
-func (idx *Index) Diff(next *Index, alg string) (IndexDiff, error) {
-	return indexNodeDiff(idx.root, next.root)
-}
-
-func indexNodeDiff(a, b *pathtree.Node[*IndexItem]) (IndexDiff, error) {
-	diff := IndexDiff{
-		Added:     NewIndex(),
-		Removed:   NewIndex(),
-		Changed:   NewIndex(),
-		Unchanged: NewIndex(),
-	}
-	if a == nil {
-		diff.Added = &Index{root: b}
-		return diff, nil
-	}
-	if b == nil {
-		diff.Removed = &Index{root: a}
-		return diff, nil
-	}
-	for nA, chA := range a.Children {
-		chB, exists := b.Children[nA]
-		if !exists {
-			// nA is in a, not b -- removed
-			diff.addRemoved(nA, chA)
-			continue
-		}
-		// nA exists in both a and b: it may be a directory in both, a file in
-		// both, or a directory in one and a file in the other.
-		if chA.IsDir() && chB.IsDir() {
-			subdiff, err := indexNodeDiff(chA, chB)
-			if err != nil {
-				return IndexDiff{}, err
-			}
-			diff.mergeDiff(nA, subdiff)
-			continue
-		}
-		if !chA.IsDir() && !chB.IsDir() {
-			same, err := chA.Val.SameContentAs(chB.Val)
-			if err != nil {
-				return IndexDiff{}, fmt.Errorf("can't diff index: %w", err)
-			}
-			if same {
-				diff.addUnchanged(nA, chA)
-			} else {
-				diff.addChanged(nA, chA)
-			}
-			continue
-		}
-		if (chA.Children == nil) != (chB.Children == nil) {
-			// file on one, directory in the other
-			diff.addAdded(nA, chB)
-			diff.addRemoved(nA, chA)
-		}
-	}
-	for nB, chB := range b.Children {
-		_, exists := a.Children[nB]
-		if !exists {
-			// nB is in b, not a -- added
-			diff.addAdded(nB, chB)
-		}
-	}
-	return diff, nil
-}
-
-type IndexDiff struct {
-	Added     *Index // exist in second, not first
-	Removed   *Index // exist in first, not second
-	Changed   *Index // exist in both, changed
-	Unchanged *Index // exist in both, unchanged
-}
-
-func (diff IndexDiff) Equal() bool {
-	if diff.Added.Len() > 0 {
-		return false
-	}
-	if diff.Removed.Len() > 0 {
-		return false
-	}
-	if diff.Changed.Len() > 0 {
-		return false
-	}
-	return true
-}
-
-func (diff *IndexDiff) addRemoved(name string, node *pathtree.Node[*IndexItem]) error {
-	return diff.Removed.root.Set(name, node, true)
-}
-
-func (diff *IndexDiff) addAdded(name string, node *pathtree.Node[*IndexItem]) error {
-	return diff.Added.root.Set(name, node, true)
-}
-
-func (diff *IndexDiff) addChanged(name string, node *pathtree.Node[*IndexItem]) error {
-	return diff.Changed.root.Set(name, node, true)
-}
-
-func (diff *IndexDiff) addUnchanged(name string, node *pathtree.Node[*IndexItem]) error {
-	return diff.Unchanged.root.Set(name, node, true)
-}
-
-func (diff *IndexDiff) mergeDiff(name string, sub IndexDiff) error {
-	if err := diff.addAdded(name, sub.Added.root); err != nil {
-		return err
-	}
-	if err := diff.addRemoved(name, sub.Removed.root); err != nil {
-		return err
-	}
-	if err := diff.addChanged(name, sub.Changed.root); err != nil {
-		return err
-	}
-	if err := diff.addUnchanged(name, sub.Changed.root); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (idx *Index) SetDirDigests(alg digest.Alg) error {
-	return digestDirNode(idx.root, alg)
-}
-
-func digestDirNode(node *pathtree.Node[*IndexItem], alg digest.Alg) error {
-	if !node.IsDir() {
-		return nil
-	}
-	for _, ch := range node.Children {
-		if err := digestDirNode(ch, alg); err != nil {
-			return err
-		}
-	}
-	h := alg.New()
-	for _, d := range node.ReadDir() {
-		ch := node.Children[d.Name()]
-		sum, exists := ch.Val.Digests[alg.ID()]
-		if !exists {
-			return fmt.Errorf("missing %s digest value: %w", alg, ErrNoValue)
-		}
-		if _, err := fmt.Fprintf(h, "%x %s\n", sum, d.Name()); err != nil {
-			return err
-		}
-	}
-	if node.Val == nil {
-		node.Val = &IndexItem{}
-	}
-	if node.Val.Digests == nil {
-		node.Val.Digests = make(digest.Set)
-	}
-	node.Val.Digests[alg.ID()] = hex.EncodeToString(h.Sum(nil))
-	return nil
-}
-
-// MapIndex returns a pathtree.Node[T] with the same structure as the index and values
-// derrived using the map function fn.
-func MapIndex[T any](idx *Index, fn func(*IndexItem) (T, error)) (*pathtree.Node[T], error) {
-	return pathtree.Map(idx.root, fn)
 }

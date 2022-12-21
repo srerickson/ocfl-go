@@ -103,3 +103,20 @@ func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) *vali
 	_, r := ValidateObject(ctx, obj.fsys, obj.rootDir, opts...)
 	return r
 }
+
+func (obj *Object) NewStage(ctx context.Context, ver ocfl.VNum, opts ...ocfl.StageOption) (*ocfl.Stage, error) {
+	inv, err := obj.Inventory(ctx)
+	if err != nil {
+		return nil, err
+	}
+	idx, err := inv.Index(ver)
+	if err != nil {
+		return nil, err
+	}
+	alg, err := digest.Get(inv.DigestAlgorithm)
+	if err != nil {
+		return nil, err
+	}
+	opts = append(opts, ocfl.StageIndex(idx))
+	return ocfl.NewStage(alg, opts...), nil
+}
