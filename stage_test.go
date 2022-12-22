@@ -353,6 +353,9 @@ func TestStageWrite(t *testing.T) {
 			}
 			wg.Wait()
 		}
+		if l := len(stg.VersionState().AllPaths()); l != 100 {
+			t.Fatalf("expected 100 entries in the version state, got %d", l)
+		}
 		if err := validateStageDigests(ctx, stg); err != nil {
 			t.Fatal(fmt.Errorf("stage is invalid: %w", err))
 		}
