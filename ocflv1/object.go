@@ -57,6 +57,11 @@ func GetObject(ctx context.Context, fsys ocfl.FS, root string) (*Object, error) 
 	return obj, nil
 }
 
+// Root returns the object's FS and root directory
+func (obj *Object) Root() (ocfl.FS, string) {
+	return obj.fsys, obj.rootDir
+}
+
 func (obj *Object) Info(ctx context.Context) (*ocfl.ObjInfo, error) {
 	if obj.info == nil {
 		var err error

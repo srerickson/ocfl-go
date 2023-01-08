@@ -65,25 +65,24 @@ func runStat(ctx context.Context, conf *Config) {
 		opts := &ocflv1.ScanObjectsOpts{
 			Concurrency: 16,
 		}
-		scan, err := str.ScanObjects(ctx, opts)
-		if err != nil {
-			log.Error(err, "storage root scan quit with errors")
-			return
-		}
-		log.Info("scan complete", "object_count", len(scan))
-		for p := range scan {
-			obj, err := str.GetObjectPath(ctx, p)
-			if err != nil {
-				log.Error(err, "can't read object")
-				return
-			}
+
+		numObjs := 0
+		scanFn := func(obj *ocflv1.Object) error {
+			_, p := obj.Root()
 			inv, err := obj.Inventory(ctx)
 			if err != nil {
 				log.Error(err, "can't read object inventory")
-				return
+				return nil
 			}
 			fmt.Println(p, ": ", inv.ID)
+			numObjs++
+			return nil
 		}
+		if err := str.ScanObjects(ctx, scanFn, opts); err != nil {
+			log.Error(err, "storage root scan quit with errors")
+			return
+		}
+		log.Info("scan complete", "object_count", numObjs)
 	}
 
 }
