@@ -135,8 +135,8 @@ func GetStore(ctx context.Context, fsys ocfl.FS, root string) (*Store, error) {
 	return str, nil
 }
 
-// FSRoot returns the Store's ocfl.FS and root directory.
-func (s *Store) FSRoot() (ocfl.FS, string) {
+// Root returns the Store's ocfl.FS and root directory.
+func (s *Store) Root() (ocfl.FS, string) {
 	return s.fsys, s.rootDir
 }
 
