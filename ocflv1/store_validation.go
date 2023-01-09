@@ -133,17 +133,18 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 	//sub-directories other than as a directory hierarchy used to store OCFL
 	//Objects or for storage root extensions.
 	scanFn := func(obj *Object) error {
-		p := obj.rootDir
-		v := obj.info.Declaration.Version
-		objLgr := lgr.WithName(p)
-		if ocflV.Cmp(v) < 0 {
+		objRoot := obj.rootDir
+		objSpec := obj.info.Declaration.Version
+		objLgr := lgr.WithName(objRoot)
+		if ocflV.Cmp(objSpec) < 0 {
+			// object ocfl spec is higher than storage root's
 			result.LogFatal(objLgr, ErrObjectVersion)
 		}
 		if opts.SkipObjects {
 			return nil
 		}
 		errMsg := "invalid object"
-		objPath := path.Join(root, p)
+		//objPath := path.Join(root, objRoot)
 		objValidOpts := []ValidationOption{
 			copyValidationOptions(opts),
 			ValidationLogger(objLgr),
@@ -152,9 +153,6 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 		if err := obj.Validate(ctx, objValidOpts...).Err(); err != nil {
 			return nil // return nil to continue validating objects in the Scan
 		}
-		// FIXME: the object inventory is read twice, for Validation and then
-		// again here. The is a case where caching the inventory in the object
-		// would be nice
 		inv, err := obj.Inventory(ctx) // I just need the ID
 		if err != nil {
 			result.LogFatal(objLgr, fmt.Errorf("%s: %w", errMsg, err))
@@ -167,15 +165,14 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 				result.LogWarn(objLgr, err)
 				return nil
 			}
-			if p != objPath {
-				err := fmt.Errorf("object path '%s' does not conform with storage root layout. expected '%s'", objPath, p)
+			if expRoot := path.Join(root, p); expRoot != objRoot {
+				err := fmt.Errorf("object path '%s' does not conform with storage root layout. expected '%s'", objRoot, expRoot)
 				result.LogWarn(objLgr, err)
 				return nil
 			}
 		}
 		return nil
 	}
-
 	if err := ScanObjects(ctx, fsys, root, scanFn, &ScanObjectsOpts{Strict: true}); err != nil {
 		if errors.Is(err, ErrEmptyDirs) {
 			result.LogFatal(lgr, ec(err, codes.E073.Ref(ocflV)))
