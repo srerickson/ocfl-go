@@ -64,6 +64,11 @@ func (inv *Inventory) VNums() []ocfl.VNum {
 	return vnums
 }
 
+// Inventory digest from inventory read
+func (inv Inventory) Digest() string {
+	return inv.digest
+}
+
 // ContentPath returns the content path for the logical path present in the
 // state for version vnum. The content path is relative to the object's root
 // directory (i.e, as it appears in the inventory manifest). If vnum is empty,

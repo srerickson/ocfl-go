@@ -69,24 +69,22 @@ func TestGetStore(t *testing.T) {
 			if !store.LayoutOK() {
 				t.Fatal("store should have set layout")
 			}
-			scan, err := store.ScanObjects(ctx, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for p := range scan {
-				obj, err := store.GetObjectPath(ctx, p)
-				if err != nil {
-					t.Fatal(err)
-				}
+
+			scanFn := func(obj *ocflv1.Object) error {
 				inv, err := obj.Inventory(ctx)
 				if err != nil {
-					t.Fatal(err)
+					return err
 				}
 				// test layout works
 				_, err = store.GetObject(ctx, inv.ID)
 				if err != nil {
-					t.Fatal(err)
+					return err
 				}
+				return nil
+			}
+
+			if err := store.ScanObjects(ctx, scanFn, nil); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
@@ -142,7 +140,15 @@ func TestScanObjects(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					obj, scanErr := store.ScanObjects(ctx, opt)
+					numObjs := 0
+					scanFn := func(obj *ocflv1.Object) error {
+						if _, err := obj.Inventory(ctx); err != nil {
+							t.Fatal(err)
+						}
+						numObjs++
+						return nil
+					}
+					scanErr := store.ScanObjects(ctx, scanFn, opt)
 					if expectErr {
 						if scanErr == nil {
 							t.Fatal("expected an error")
@@ -152,14 +158,8 @@ func TestScanObjects(t *testing.T) {
 					if scanErr != nil {
 						t.Fatal(scanErr)
 					}
-					if l := len(obj); l != sttest.size {
-						t.Fatalf("expected %d objects, got %d", sttest.size, l)
-					}
-					for p := range obj {
-						_, err := store.GetObjectPath(ctx, p)
-						if err != nil {
-							t.Fatal(err)
-						}
+					if numObjs != sttest.size {
+						t.Fatalf("expected %d objects, got %d", sttest.size, numObjs)
 					}
 				})
 			}

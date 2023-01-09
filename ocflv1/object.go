@@ -30,6 +30,10 @@ type Object struct {
 	rootDir string
 	// cache of object info
 	info *ocfl.ObjInfo
+	// cache of inventory
+	inv *Inventory
+	// cache of inventory sidecar
+	sidecarDigest string
 }
 
 // GetObject returns a new Object with loaded inventory.
@@ -57,23 +61,36 @@ func GetObject(ctx context.Context, fsys ocfl.FS, root string) (*Object, error) 
 	return obj, nil
 }
 
-func (obj *Object) Info(ctx context.Context) (*ocfl.ObjInfo, error) {
-	if obj.info == nil {
-		var err error
-		obj.info, err = ocfl.ReadObjInfo(ctx, obj.fsys, obj.rootDir)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return obj.info, nil
+// Root returns the object's FS and root directory. The root directory is a path
+// relative to the object's ocfl.FS.
+func (obj *Object) Root() (ocfl.FS, string) {
+	return obj.fsys, obj.rootDir
 }
 
-func (obj *Object) Inventory(ctx context.Context) (*Inventory, error) {
-	info, err := obj.Info(ctx)
+// Info returns a description of the object's top-level directory contents. The
+// value is cached: subsequent calls return the same value.
+func (obj *Object) Info(ctx context.Context) (*ocfl.ObjInfo, error) {
+	if obj.info != nil {
+		return obj.info, nil
+	}
+	inf, err := ocfl.ReadObjInfo(ctx, obj.fsys, obj.rootDir)
 	if err != nil {
 		return nil, err
 	}
-	if err := ctx.Err(); err != nil {
+	obj.info = inf
+	return obj.info, nil
+}
+
+// Inventory returns the root inventory for the object. The first time
+// Inventory() is called, the inventory is downloaded, validated, and returned.
+// An error is returned if the inventory cannot be read or it is invalid.  The
+// value is cached: subsequent calls return the same value.
+func (obj *Object) Inventory(ctx context.Context) (*Inventory, error) {
+	if obj.inv != nil {
+		return obj.inv, nil
+	}
+	info, err := obj.Info(ctx)
+	if err != nil {
 		return nil, err
 	}
 	name := path.Join(obj.rootDir, inventoryFile)
@@ -85,25 +102,37 @@ func (obj *Object) Inventory(ctx context.Context) (*Inventory, error) {
 	if err := results.Err(); err != nil {
 		return nil, fmt.Errorf("reading inventory: %w", err)
 	}
-	return inv, err
+	obj.inv = inv
+	return obj.inv, nil
 }
 
 // InventorySidecar returns the digest stored in the root inventory sidecar
-// file.
+// file.  The value is cached: subsequent calls return the same value.
 func (obj *Object) InventorySidecar(ctx context.Context) (string, error) {
+	if obj.sidecarDigest != "" {
+		return obj.sidecarDigest, nil
+	}
 	inf, err := obj.Info(ctx)
 	if err != nil {
 		return "", err
 	}
-	sidecar := path.Join(obj.rootDir, inventoryFile+"."+inf.Algorithm)
-	return readInventorySidecar(ctx, obj.fsys, sidecar)
+	sidecarFile := path.Join(obj.rootDir, inventoryFile+"."+inf.Algorithm)
+	sidecar, err := readInventorySidecar(ctx, obj.fsys, sidecarFile)
+	if err != nil {
+		return "", err
+	}
+	obj.sidecarDigest = sidecar
+	return obj.sidecarDigest, nil
 }
 
+// Validate validations the object using the given validation Options
 func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) *validation.Result {
 	_, r := ValidateObject(ctx, obj.fsys, obj.rootDir, opts...)
 	return r
 }
 
+// NewStage returns a Stage based on the specified version of the object. If ver
+// is the empty value, the head version is used.
 func (obj *Object) NewStage(ctx context.Context, ver ocfl.VNum, opts ...ocfl.StageOption) (*ocfl.Stage, error) {
 	inv, err := obj.Inventory(ctx)
 	if err != nil {

@@ -165,8 +165,8 @@ func (s *Store) Spec() ocfl.Spec {
 
 // ScanObjects scans the storage root for objects, returning a map of path/ocfl
 // version pairs. No validation checks are performed.
-func (s *Store) ScanObjects(ctx context.Context, opts *ScanObjectsOpts) (map[string]ocfl.Spec, error) {
-	return ScanObjects(ctx, s.fsys, s.rootDir, opts)
+func (s *Store) ScanObjects(ctx context.Context, fn func(*Object) error, opts *ScanObjectsOpts) error {
+	return ScanObjects(ctx, s.fsys, s.rootDir, fn, opts)
 }
 
 // Validate performs complete validation on the store

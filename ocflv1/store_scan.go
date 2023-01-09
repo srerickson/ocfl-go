@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"strings"
 	"sync"
 	"time"
 
@@ -25,7 +24,7 @@ type ScanObjectsOpts struct {
 }
 
 // ScanObjects walks fsys from root returning a map of object root paths.
-func ScanObjects(ctx context.Context, fsys ocfl.FS, root string, conf *ScanObjectsOpts) (map[string]ocfl.Spec, error) {
+func ScanObjects(ctx context.Context, fsys ocfl.FS, root string, fn func(*Object) error, conf *ScanObjectsOpts) error {
 	strict := false             // default: don't validate
 	maxBatchLen := 4            // default: process up to 4 paths at a time
 	timeout := time.Duration(0) // default: no timeout
@@ -37,7 +36,6 @@ func ScanObjects(ctx context.Context, fsys ocfl.FS, root string, conf *ScanObjec
 	if maxBatchLen < 1 {
 		maxBatchLen = 1
 	}
-	objPaths := map[string]ocfl.Spec{}       // results
 	pathQ := []string{root}                  // queue of paths to scan
 	extDir := path.Join(root, extensionsDir) // extensions path
 	for {
@@ -75,29 +73,31 @@ func ScanObjects(ctx context.Context, fsys ocfl.FS, root string, conf *ScanObjec
 		batchWait.Wait()
 		for _, result := range batch {
 			if result.Err != nil {
-				return nil, result.Err
+				return result.Err
 			}
-			if result.Type == ocfl.DeclObject {
-				objPath := strings.TrimPrefix(result.Path, root+"/")
-				objPaths[objPath] = result.Version
+			if result.Info.Declaration.Type == ocfl.DeclObject {
+				obj := &Object{fsys: fsys, rootDir: result.Path, info: result.Info}
+				if err := fn(obj); err != nil {
+					return err
+				}
 				continue
 			}
 			if strict {
-				switch result.Type {
+				switch result.Info.Declaration.Type {
 				case ocfl.DeclStore:
 					// store within a store is an error
 					if result.Path != root {
-						return nil, fmt.Errorf("%w: %s", ErrNonObject, result.Path)
+						return fmt.Errorf("%w: %s", ErrNonObject, result.Path)
 					}
 				default:
 					// directories without a declaration must include sub-directories
 					// and only sub-directories -- however, the extensions directory
 					// may be empty.
 					if result.Empty() && result.Path != extDir {
-						return nil, fmt.Errorf("%w: %s", ErrEmptyDirs, result.Path)
+						return fmt.Errorf("%w: %s", ErrEmptyDirs, result.Path)
 					}
 					if result.NumFiles > 0 {
-						return nil, fmt.Errorf("%w: %s", ErrNonObject, result.Path)
+						return fmt.Errorf("%w: %s", ErrNonObject, result.Path)
 					}
 				}
 			}
@@ -109,16 +109,16 @@ func ScanObjects(ctx context.Context, fsys ocfl.FS, root string, conf *ScanObjec
 			pathQ = append(pathQ, result.Dirs...)
 		}
 	}
-	return objPaths, nil
+	return nil
 }
 
 // storeScanJob represents a readdir operation for store scanning
 type storeScanJob struct {
-	Path             string   // Path in the store to scan
-	Err              error    // Errors from job
-	Dirs             []string // sub directories
-	ocfl.Declaration          // NAMASTE from path, if any
-	NumFiles         int      // number of regular files
+	Path     string   // Path in the store to scan
+	Err      error    // Errors from job
+	Dirs     []string // sub directories
+	Info     *ocfl.ObjInfo
+	NumFiles int // number of regular files
 }
 
 func (j storeScanJob) Empty() bool {
@@ -138,5 +138,5 @@ func (j *storeScanJob) Do(ctx context.Context, fsys ocfl.FS) {
 			j.NumFiles++
 		}
 	}
-	j.Declaration, _ = ocfl.FindDeclaration(entries)
+	j.Info = ocfl.ObjInfoFromFS(entries)
 }
