@@ -105,10 +105,10 @@ func (inv Inventory) Copy() *Inventory {
 			Message: ver.Message,
 			State:   ver.State.Copy(),
 		}
-		if newInv.Versions[v].User != nil {
+		if ver.User != nil {
 			newInv.Versions[v].User = &User{
-				Name:    newInv.Versions[v].User.Name,
-				Address: newInv.Versions[v].User.Address,
+				Name:    ver.User.Name,
+				Address: ver.User.Address,
 			}
 		}
 	}
