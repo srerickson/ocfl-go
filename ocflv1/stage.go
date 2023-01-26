@@ -145,11 +145,15 @@ func DefaultContentPathFunc(logical string, digest string) string {
 // nextManifest builds the next version of the manifest using stage stage
 // and any previous manifest, which may be nil
 func (comm *commit) nextManifest(prev *digest.Map) (*digest.Map, error) {
-	var man *digest.Map
+	var maker *digest.MapMaker
 	if prev != nil {
-		man = prev.Copy()
+		var err error
+		maker, err = digest.MapMakerFrom(prev)
+		if err != nil {
+			return nil, err
+		}
 	} else {
-		man = digest.NewMap()
+		maker = &digest.MapMaker{}
 	}
 	if comm.contentPathFunc == nil {
 		comm.contentPathFunc = DefaultContentPathFunc
@@ -165,21 +169,23 @@ func (comm *commit) nextManifest(prev *digest.Map) (*digest.Map, error) {
 		if !ok {
 			return fmt.Errorf("missing digest for '%s'", comm.alg)
 		}
-		if man.DigestExists(sum) {
+		if maker.HasDigest(sum) {
 			return nil
 		}
 		// content path in manifest
 		cont := comm.contentPathFunc(p, sum)
 		cont = path.Join(comm.vnum.String(), comm.contentDir, cont)
-		if err := man.Add(sum, cont); err != nil {
-			return err
-		}
+		maker.Add(sum, cont)
 		return nil
 	}
 	if err := comm.stage.Walk(walkfn); err != nil {
 		return nil, err
 	}
-	return man, nil
+	dmap := maker.Map()
+	if err := dmap.Valid(); err != nil {
+		return nil, err
+	}
+	return dmap, nil
 }
 
 // nextInventory generates the next inventory based the previous inventory (if it exists)
@@ -261,11 +267,11 @@ func (comm *commit) validate(inv *Inventory) error {
 	// all digests in stage index should be accounted for in either the
 	// the stage's "add" manifest or the inventory manifest
 	stateMap := comm.stage.VersionState()
-	for digest := range stateMap.AllDigests() {
-		if inv.Manifest.DigestExists(digest) {
+	for _, digest := range stateMap.AllDigests() {
+		if inv.Manifest.HasDigest(digest) {
 			continue
 		}
-		if comm.manifest.DigestExists(digest) {
+		if comm.manifest.HasDigest(digest) {
 			continue
 		}
 		return fmt.Errorf("stage includes a digest with no known source: %s", digest)

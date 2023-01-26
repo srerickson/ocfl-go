@@ -6,27 +6,12 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
-	"fmt"
 	"hash"
 	"io"
 	"strings"
 
 	"golang.org/x/crypto/blake2b"
 )
-
-type DigestErr struct {
-	Name     string
-	AlgID    string
-	Got      string
-	Expected string
-}
-
-func (e DigestErr) Error() string {
-	if e.Name == "" {
-		return fmt.Sprintf("unexpected %s: %s, got: %s", e.AlgID, e.Got, e.Expected)
-	}
-	return fmt.Sprintf("unexpected %s for '%s': %s, got: %s", e.AlgID, e.Name, e.Got, e.Expected)
-}
 
 const (
 	SHA512id  = `sha512`

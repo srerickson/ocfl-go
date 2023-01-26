@@ -258,9 +258,9 @@ func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum)
 	return vldr.Err()
 }
 
-func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver ocfl.VNum, sidecarAlg digest.Alg) error {
-	lgr := vldr.opts.Logger.WithName(ver.String()).WithName(inventoryFile)
-	vDir := path.Join(vldr.Root, ver.String())
+func (vldr *objectValidator) validateVersionInventory(ctx context.Context, vn ocfl.VNum, sidecarAlg digest.Alg) error {
+	lgr := vldr.opts.Logger.WithName(vn.String()).WithName(inventoryFile)
+	vDir := path.Join(vldr.Root, vn.String())
 	name := path.Join(vDir, inventoryFile)
 	alg := sidecarAlg
 	opts := []ValidationOption{
@@ -275,7 +275,7 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver o
 	}
 
 	// add the version inventory's OCFL version to validations state (E103)
-	vldr.verSpecs[ver] = inv.Type.Spec
+	vldr.verSpecs[vn] = inv.Type.Spec
 	if err := vldr.ledger.addInventory(inv, false); err != nil {
 		// err indicates inventory reports different digest from a previous inventory
 		vldr.LogFatal(lgr, ec(err, codes.E066.Ref(inv.Type.Spec)))
@@ -283,11 +283,11 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver o
 	//
 	// head version inventory?
 	//
-	if ver == vldr.rootInv.Head {
+	if vn == vldr.rootInv.Head {
 		if inv.digest == vldr.rootInv.digest {
 			return nil // don't need to validate any further
 		}
-		err := fmt.Errorf("inventory in last version (%s) is not same as root inventory", ver)
+		err := fmt.Errorf("inventory in last version (%s) is not same as root inventory", vn)
 		vldr.LogFatal(lgr, ec(err, codes.E064.Ref(inv.Type.Spec)))
 	}
 	//
@@ -303,8 +303,8 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver o
 		err := fmt.Errorf("contentDirectory is '%s', but expected '%s'", inv.ContentDirectory, vldr.rootInv.ContentDirectory)
 		vldr.LogFatal(lgr, ec(err, codes.E019.Ref(inv.Type.Spec)))
 	}
-	if ver != inv.Head {
-		err := fmt.Errorf("inventory head is %s, expected %s", inv.Head, ver)
+	if vn != inv.Head {
+		err := fmt.Errorf("inventory head is %s, expected %s", inv.Head, vn)
 		vldr.LogFatal(lgr, ec(err, codes.E040.Ref(inv.Type.Spec)))
 	}
 	// confirm version states in the version inventory match root inventory
@@ -312,24 +312,24 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, ver o
 		rootVer := vldr.rootInv.Versions[v]
 		rootState, _ := vldr.rootInv.Index(v)
 		verState, _ := inv.Index(v)
-		changes, err := verState.Diff(*rootState)
+		changes, err := rootState.Diff(*verState)
 		if err != nil {
 			err := fmt.Errorf("unexpected err durring inventory diff: %w", err)
 			vldr.LogFatal(lgr, err)
 			return err
 		}
 		if !changes.Equal() {
-			errFmt := "version %s state doesn't match root inventory: %s: %v"
+			errFmt := "in version %s inventory, %s state doesn't match root inventory: %s: %v"
 			if len(changes.Added.Children()) > 0 {
-				err := fmt.Errorf(errFmt, v, "unexpected files", changes.Added)
+				err := fmt.Errorf(errFmt, vn, v, "unexpected files", changes.Added)
 				vldr.LogFatal(lgr, ec(err, codes.E066.Ref(inv.Type.Spec)))
 			}
 			if len(changes.Removed.Children()) > 0 {
-				err := fmt.Errorf(errFmt, v, `missing file`, changes.Removed)
+				err := fmt.Errorf(errFmt, vn, v, `missing file(s)`, changes.Removed)
 				vldr.LogFatal(lgr, ec(err, codes.E066.Ref(inv.Type.Spec)))
 			}
 			if len(changes.Changed.Children()) > 0 {
-				err := fmt.Errorf(errFmt, v, `changed file content`, changes.Changed)
+				err := fmt.Errorf(errFmt, vn, v, `changed file content`, changes.Changed)
 				vldr.LogFatal(lgr, ec(err, codes.E066.Ref(inv.Type.Spec)))
 			}
 		}

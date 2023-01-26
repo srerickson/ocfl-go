@@ -209,7 +209,7 @@ func (stage *Stage) Walk(fn IndexWalkFunc) error {
 // Fixity returns a map of digest.Maps with entries for each digest algorithm
 // used in the Stage.
 func (stage *Stage) Fixity() (map[string]*digest.Map, error) {
-	fixity := map[string]*digest.Map{}
+	fixityMakers := map[string]*digest.MapMaker{}
 	walkFn := func(p string, n *Index) error {
 		if n.node.IsDir() {
 			return nil
@@ -219,19 +219,11 @@ func (stage *Stage) Fixity() (map[string]*digest.Map, error) {
 			if algID == stage.alg.ID() {
 				continue
 			}
-			if fixity[algID] == nil {
-				fixity[algID] = digest.NewMap()
+			if fixityMakers[algID] == nil {
+				fixityMakers[algID] = &digest.MapMaker{}
 			}
 			for _, src := range n.node.Val.SrcPaths {
-				existing := fixity[algID].GetDigest(src)
-				if existing != "" {
-					if existing != dig[algID] {
-						err := &digest.PathConflictErr{Path: src}
-						return fmt.Errorf("stage is corrupt: %w", err)
-					}
-					continue
-				}
-				if err := fixity[algID].Add(dig[algID], src); err != nil {
+				if err := fixityMakers[algID].Add(dig[algID], src); err != nil {
 					return err
 				}
 			}
@@ -241,35 +233,31 @@ func (stage *Stage) Fixity() (map[string]*digest.Map, error) {
 	if err := stage.idx.Walk(walkFn); err != nil {
 		return nil, err
 	}
+	fixity := map[string]*digest.Map{}
+	for alg, maker := range fixityMakers {
+		fixity[alg] = maker.Map()
+	}
 	return fixity, nil
 }
 
 // Manifest returns a digest.Map for the source paths in in the stage using the
 // stage's primary digest algorithm.
 func (stage *Stage) Manifest() (*digest.Map, error) {
-	return stage.manifest(stage.alg)
-}
-
-func (stage *Stage) manifest(alg digest.Alg) (*digest.Map, error) {
-	m := digest.NewMap()
+	algID := stage.alg.ID()
+	maker := &digest.MapMaker{}
 	walkFn := func(p string, n *Index) error {
 		if n.node.IsDir() {
 			return nil
 		}
-		dig, exists := n.node.Val.Digests[alg.ID()]
+		dig, exists := n.node.Val.Digests[algID]
 		if !exists {
-			return fmt.Errorf("stage is missing required %s", alg.ID())
+			return fmt.Errorf("stage is missing required %s for '%s'", algID, p)
+		}
+		if len(n.node.Val.SrcPaths) == 0 {
+			return fmt.Errorf("stage is missing source path for '%s'", p)
 		}
 		for _, src := range n.node.Val.SrcPaths {
-			existing := m.GetDigest(src)
-			if existing != "" {
-				if existing != dig {
-					err := &digest.PathConflictErr{Path: src}
-					return fmt.Errorf("stage is corrupt: %w", err)
-				}
-				continue
-			}
-			if err := m.Add(dig, src); err != nil {
+			if err := maker.Add(dig, src); err != nil {
 				return err
 			}
 		}
@@ -278,16 +266,16 @@ func (stage *Stage) manifest(alg digest.Alg) (*digest.Map, error) {
 	if err := stage.idx.Walk(walkFn); err != nil {
 		// an error here represents a bug and
 		// it should be addressed in testing.
-		return nil, err
+		panic(err)
 	}
-	return m, nil
+	return maker.Map(), nil
 }
 
 // VersionState returns a digest map for the logical paths in the stage using
 // the stage's primary digest algorithm.
 func (stage *Stage) VersionState() *digest.Map {
 	alg := stage.DigestAlg()
-	m := digest.NewMap()
+	maker := &digest.MapMaker{}
 	walkFn := func(p string, n *Index) error {
 		if n.node.IsDir() {
 			return nil
@@ -296,7 +284,7 @@ func (stage *Stage) VersionState() *digest.Map {
 		if !exists {
 			return fmt.Errorf("stage is missing required %s", alg.ID())
 		}
-		if err := m.Add(dig, p); err != nil {
+		if err := maker.Add(dig, p); err != nil {
 			return err
 		}
 		return nil
@@ -306,7 +294,7 @@ func (stage *Stage) VersionState() *digest.Map {
 		// it should be addressed in testing.
 		panic(err)
 	}
-	return m
+	return maker.Map()
 }
 
 // UnsafeAdd is a low-level method for adding entries to the Stage. Because it
