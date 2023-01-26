@@ -3,6 +3,7 @@ package ocfl
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/internal/pathtree"
@@ -23,6 +24,8 @@ func (idx Index) IsDir() bool { return idx.node.IsDir() }
 func (idx Index) Val() IndexItem { return idx.node.Val }
 
 func (idx Index) Len() int { return idx.node.Len() }
+
+func (idx Index) String() string { return strings.Join(idx.node.AllPaths(), ", ") }
 
 // Children returns an ordered slice of strings with the names of idx's
 // immediate children. If idx is not a directory node, the return value is nil.

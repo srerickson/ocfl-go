@@ -70,14 +70,11 @@ func (inv *Inventory) Validate() *validation.Result {
 		result.AddFatal(ec(err, codes.E017.Ref(inv.Type.Spec)))
 	}
 	if err := inv.Manifest.Valid(); err != nil {
-		var dcErr *digest.DigestConflictErr
-		var bpErr *digest.BasePathErr
-		var pcErr *digest.PathConflictErr
-		var piErr *digest.PathInvalidErr
+		var dcErr *digest.MapDigestConflictErr
+		var pcErr *digest.MapPathConflictErr
+		var piErr *digest.MapPathInvalidErr
 		if errors.As(err, &dcErr) {
 			err = ec(err, codes.E096.Ref(inv.Type.Spec))
-		} else if errors.As(err, &bpErr) {
-			err = ec(err, codes.E095.Ref(inv.Type.Spec))
 		} else if errors.As(err, &pcErr) {
 			err = ec(err, codes.E101.Ref(inv.Type.Spec))
 		} else if errors.As(err, &piErr) {
@@ -108,14 +105,11 @@ func (inv *Inventory) Validate() *validation.Result {
 	for vname, ver := range inv.Versions {
 		err := ver.State.Valid()
 		if err != nil {
-			var dcErr *digest.DigestConflictErr
-			var bpErr *digest.BasePathErr
-			var pcErr *digest.PathConflictErr
-			var piErr *digest.PathInvalidErr
+			var dcErr *digest.MapDigestConflictErr
+			var pcErr *digest.MapPathConflictErr
+			var piErr *digest.MapPathInvalidErr
 			if errors.As(err, &dcErr) {
 				err = ec(err, codes.E050.Ref(inv.Type.Spec))
-			} else if errors.As(err, &bpErr) {
-				err = ec(err, codes.E095.Ref(inv.Type.Spec))
 			} else if errors.As(err, &pcErr) {
 				err = ec(err, codes.E095.Ref(inv.Type.Spec))
 			} else if errors.As(err, &piErr) {
@@ -124,8 +118,8 @@ func (inv *Inventory) Validate() *validation.Result {
 			result.AddFatal(err)
 		}
 		// check that each state digest appears in manifest
-		for digest := range ver.State.AllDigests() {
-			if !inv.Manifest.DigestExists(digest) {
+		for _, digest := range ver.State.AllDigests() {
+			if !inv.Manifest.HasDigest(digest) {
 				err := fmt.Errorf("digest in %s state not in manifest: %s", vname, digest)
 				result.AddFatal(ec(err, codes.E050.Ref(inv.Type.Spec)))
 			}
@@ -151,13 +145,13 @@ func (inv *Inventory) Validate() *validation.Result {
 		}
 	}
 	// check that each manifest entry is used in at least one state
-	for digest := range inv.Manifest.AllDigests() {
+	for _, digest := range inv.Manifest.AllDigests() {
 		var found bool
 		for _, version := range inv.Versions {
 			if version.State == nil {
 				continue
 			}
-			if version.State.DigestExists(digest) {
+			if version.State.HasDigest(digest) {
 				found = true
 				break
 			}
@@ -171,9 +165,9 @@ func (inv *Inventory) Validate() *validation.Result {
 	for _, fixity := range inv.Fixity {
 		err := fixity.Valid()
 		if err != nil {
-			var dcErr *digest.DigestConflictErr
-			var piErr *digest.PathInvalidErr
-			var pcErr *digest.PathConflictErr
+			var dcErr *digest.MapDigestConflictErr
+			var piErr *digest.MapPathInvalidErr
+			var pcErr *digest.MapPathConflictErr
 			if errors.As(err, &dcErr) {
 				err = ec(err, codes.E097.Ref(inv.Type.Spec))
 			} else if errors.As(err, &piErr) {

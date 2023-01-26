@@ -1,160 +1,110 @@
 package digest
 
-// Copyright 2019 Seth R. Erickson
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"path"
+	"sort"
 	"strings"
+
+	"github.com/srerickson/ocfl/internal/pathtree"
 )
 
-// DigestConflictErr indicates same digest found multiple times in the digest map
-// (i.e., with different cases)
-type DigestConflictErr struct {
-	Digest string
-}
-
-func (d *DigestConflictErr) Error() string {
-	return "digest conflict: " + string(d.Digest)
-}
-
-// DigestInvalidErr indicates the string is not a valid representation of a
-// digest
-type DigestInvalidErr struct {
-	Digest string
-}
-
-func (d *DigestInvalidErr) Error() string {
-	return "invalid digest: " + string(d.Digest)
-}
-
-// PathConflictErr indicates same path appears twice in the DigestMap, or the
-// path could not be added because it is already present.
-type PathConflictErr struct {
-	Path string
-}
-
-func (p *PathConflictErr) Error() string {
-	return "path conflict: " + string(p.Path)
-}
-
-// PathInvalidErr indicates an invalid path
-type PathInvalidErr struct {
-	Path string
-}
-
-func (p *PathInvalidErr) Error() string {
-	return "invalid path: " + string(p.Path)
-}
-
-// BasePathErr indicates that the path is either the base directory of another
-// or the other is the base directory of this path.
-type BasePathErr struct {
-	Path string
-}
-
-func (p *BasePathErr) Error() string {
-	return "base path error: " + string(p.Path)
-}
-
-// Map is a data structure for Content-Addressable-Storage. It abstracs the
-// functionality of the Manifest, Version State, and Fixity fields in the OCFL
-// object Inventory
-//
-// A note on digest format: The OCFL spec requires the case of digest strings to
-// be preserved. We can't convert all digests to lowercase because digest
-// strings must match excactly between the manifest and version state; it's an
-// error when they don't match. Automatically converting digests would cause
-// invalid inventories to pass validation.
+// Map represents the digest/path mapping used in OCFL inventory manifests and
+// version states. Map supports read-only access and validation. To create or
+// modify a Map, use [MapMaker].
 type Map struct {
-	// digest -> file paths
-	// mixed case digests are possible!
-	digests map[string][]string
-	// inverses of d: file path-> digest
-	files map[string]string
-	// index of all parent directories
-	dirs map[string]interface{}
-	// normalized digest (all lowercase)
-	normDigests map[string]struct{}
+	// digests is a map of digest strings to path names, as found in an
+	// inventory's inventory manifest of version state. The OCFL spec requires
+	// the case of digest strings to be preserved-- it's an error when digest
+	// strings don't match exactly. Normalizing digests in map keys here would
+	// cause invalid inventories to pass validation. Normalization needs to be
+	// checked separately during validation.
+	digests   map[string][]string
+	files     map[string]string // inverse of digests for quick access
+	validated bool
+	err       error // validation error
 }
 
-func NewMap() *Map {
-	return &Map{
-		digests: make(map[string][]string),
+// AllDigests returns a slice of all digest keys in the Map. Digest strings are
+// not normalized; they may be uppercase, lowercase, or mixed.
+func (m Map) AllDigests() []string {
+	ret := make([]string, len(m.digests))
+	i := 0
+	for d := range m.digests {
+		ret[i] = d
+		i++
 	}
+	return ret
 }
 
-// Add adds a digest->path to the Map.
-// An error is returned if:
-//   - digest map is invalid
-//   - path string is not valid
-//   - path alread exists
-//   - path is a basedir for existing path, or
-//     existing path is basedir for path
-//   - digest is empty string
-//   - digest doesn't exist but normalized version does
-func (dm *Map) Add(digest string, p string) error {
-	if !validPath(p) {
-		return &PathInvalidErr{p}
+// AllPaths returns a mapping between all files and their digests from Map.
+// AllPaths will panic if the same path appears twice in the Map or if there is
+// an invalid path name in the Map.
+func (m *Map) AllPaths() map[string]string {
+	if m.files == nil {
+		files, err := m.allPathDigests()
+		if err != nil {
+			panic(err)
+		}
+		m.files = files
 	}
-	if dm.isDirty() {
-		if err := dm.init(); err != nil {
-			return fmt.Errorf("digest map has error: %w", err)
+	return m.files
+}
+
+// allPathDigests returns a lookup table of all paths. It checks that all paths are valid
+// paths and that they appear only once. It doesn't check collisions with
+// directory and path names.
+func (m Map) allPathDigests() (map[string]string, error) {
+	var leng int
+	for _, paths := range m.digests {
+		leng += len(paths)
+	}
+	files := make(map[string]string, leng)
+	for d, paths := range m.digests {
+		for _, p := range paths {
+			if !validPath(p) {
+				return nil, &MapPathInvalidErr{p}
+			}
+			if _, exists := m.files[p]; exists {
+				return nil, &MapPathConflictErr{Path: p}
+			}
+			files[p] = d
 		}
 	}
-	norm := normalizeDigest(digest)
-	_, digestExists := dm.digests[digest]
-	_, normExists := dm.normDigests[norm]
-	if !digestExists && normExists {
-		// digest doesn't exist but another form does
-		err := &DigestConflictErr{digest}
-		return fmt.Errorf("add: %w", err)
-	}
-	if _, exists := dm.files[p]; exists {
-		err := &PathConflictErr{p}
-		return fmt.Errorf("add: %w", err)
-	}
-	if err := dm.addParents(p); err != nil {
-		return fmt.Errorf("add: %w", err)
-	}
-	dm.files[p] = digest
-	dm.digests[digest] = append(dm.digests[digest], p)
-	dm.normDigests[norm] = struct{}{}
-	return nil
+	return files, nil
 }
 
-func (dm Map) Copy() *Map {
-	m := NewMap()
-	for digest, paths := range dm.digests {
-		m.digests[digest] = make([]string, 0, len(paths))
-		m.digests[digest] = append(m.digests[digest], dm.digests[digest]...)
+// Copy returns a distinct copy of the Map.
+func (m Map) Copy() *Map {
+	cp := &Map{
+		digests: make(map[string][]string, len(m.digests)),
 	}
-	return m
+	for digest, paths := range m.digests {
+		cp.digests[digest] = make([]string, 0, len(paths))
+		cp.digests[digest] = append(cp.digests[digest], m.digests[digest]...)
+	}
+	return cp
 }
 
-func (dm Map) GetDigest(p string) string {
-	if dm.isDirty() && dm.init() != nil {
-		return ""
-	}
-	return dm.files[p]
+// HasDigest returns true if d is present in the Map. The digest
+// is not normalized, so uppercase and lowercase versions of the
+// same digest will not count as equivalent.
+func (m Map) HasDigest(d string) bool {
+	_, exists := m.digests[d]
+	return exists
 }
 
-func (dm Map) EachPath(fn func(name, digest string) error) error {
-	for d, paths := range dm.digests {
+// DigestPaths returns slice of paths associated with digest dig
+func (m Map) DigestPaths(dig string) []string {
+	return append(make([]string, 0, len(m.digests[dig])), m.digests[dig]...)
+}
+
+// EachPath calls fn for each path in the Map. If fn returns a non-nil error,
+// EachPath returns the error and fn is not called again.
+func (m Map) EachPath(fn func(name, digest string) error) error {
+	for d, paths := range m.digests {
 		for _, p := range paths {
 			if err := fn(p, d); err != nil {
 				return err
@@ -164,129 +114,193 @@ func (dm Map) EachPath(fn func(name, digest string) error) error {
 	return nil
 }
 
-func (dm Map) AllDigests() map[string]interface{} {
-	// return a copy of dm.digests
-	ret := map[string]interface{}{}
-	for d := range dm.digests {
-		ret[d] = nil
+// GetDigest returns the digest for path p
+func (m Map) GetDigest(p string) string {
+	if m.files == nil {
+		m.files = m.AllPaths()
 	}
-	return ret
+	return m.files[p]
 }
 
-func (dm Map) DigestExists(d string) bool {
-	_, exists := dm.digests[d]
-	return exists
-}
-
-// AllPaths returns a mapping between all files and their digests
-func (dm *Map) AllPaths() map[string]string {
-	// return a copy of dm.files
-	if dm == nil || (dm.isDirty() && dm.init() != nil) {
-		return nil
+func (m Map) MarshalJSON() ([]byte, error) {
+	if err := m.Valid(); err != nil {
+		return nil, err
 	}
-	ret := map[string]string{}
-	for f, d := range dm.files {
-		ret[f] = d
+	if m.digests == nil {
+		return json.Marshal(map[string][]string{})
 	}
-	return ret
+	return json.Marshal(m.digests)
 }
 
-// DigestPaths returns slice of paths associated with digest dig
-func (dm Map) DigestPaths(dig string) []string {
-	return append(make([]string, 0, len(dm.digests[dig])), dm.digests[dig]...)
-}
-
-func (dm *Map) Valid() error {
-	dm.setDirty()
-	return dm.init()
-}
-
-// init regenerates files, dirs, and normDigests from current digests and
-// returns any errors
-func (dm *Map) init() error {
-	dm.files = map[string]string{}
-	dm.dirs = map[string]interface{}{}
-	dm.normDigests = map[string]struct{}{}
-	for d, paths := range dm.digests {
-		norm := normalizeDigest(d)
-		if _, exists := dm.normDigests[norm]; exists {
-			dm.setDirty()
-			return &DigestConflictErr{d}
-		}
-		dm.normDigests[norm] = struct{}{}
-		for _, p := range paths {
-			if _, exists := dm.files[p]; exists {
-				dm.setDirty()
-				return &PathConflictErr{p}
-			}
-			dm.files[p] = d
-			if err := dm.addParents(p); err != nil {
-				dm.setDirty()
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (dm *Map) setDirty() {
-	dm.files = nil
-	dm.dirs = nil
-	dm.normDigests = nil
-}
-
-func (dm *Map) isDirty() bool {
-	return dm.files == nil || dm.dirs == nil || dm.normDigests == nil
-}
-
-func (dm *Map) addParents(file string) error {
-	parents, err := parentDirs(file)
+func (m *Map) UnmarshalJSON(b []byte) error {
+	err := json.Unmarshal(b, &m.digests)
 	if err != nil {
 		return err
 	}
-	if dm.isDirty() {
-		if err := dm.init(); err != nil {
-			return err
+	return nil
+}
+
+// NewMapUnsafe is mostly for testing - don't use it. The recommended way to
+// create a Map is with MapMaker.
+func NewMapUnsafe(d map[string][]string) *Map {
+	return &Map{digests: d}
+}
+
+// Valid returns a non-nil error if m is invalid.
+func (m *Map) Valid() error {
+	if !m.validated {
+		m.err = m.validation()
+		m.validated = true
+	}
+	return m.err
+}
+
+func (m *Map) validation() error {
+	m.files = map[string]string{}
+	dirs := map[string]struct{}{}
+	norms := map[string]struct{}{}
+	for d, paths := range m.digests {
+		if len(paths) == 0 {
+			return fmt.Errorf("missing path entries for '%s'", d)
 		}
-	}
-	// check that file path does exist as a directory
-	if _, exists := dm.dirs[file]; exists {
-		return &BasePathErr{file}
-	}
-	// check that parents don't exist as files
-	for _, p := range parents {
-		if _, exists := dm.files[p]; exists {
-			return &BasePathErr{file}
+		norm := normalizeDigest(d)
+		if _, exists := norms[norm]; exists {
+			return &MapDigestConflictErr{Digest: norm}
 		}
-	}
-	for _, p := range parents {
-		if _, exists := dm.dirs[p]; !exists {
-			dm.dirs[p] = nil
+		norms[norm] = struct{}{}
+		for _, p := range paths {
+			if !validPath(p) {
+				return &MapPathInvalidErr{p}
+			}
+			if _, exists := m.files[p]; exists {
+				// path appears more than once
+				return &MapPathConflictErr{Path: p}
+			}
+			m.files[p] = d
+			if _, exist := dirs[p]; exist {
+				// path previously treated as directory
+				return &MapPathConflictErr{p}
+			}
+			for _, parent := range parentDirs(p) {
+				// parent previously treated as file
+				if _, exists := m.files[parent]; exists {
+					return &MapPathConflictErr{parent}
+				}
+				dirs[parent] = struct{}{}
+			}
 		}
 	}
 	return nil
 }
 
-// func (dm *Map) Merge(dm2 *Map) error {
-// 	if err := dm.Valid(); err != nil {
-// 		return fmt.Errorf("merge: %w", err)
-// 	}
-// 	if err := dm2.Valid(); err != nil {
-// 		return err
-// 	}
-// 	for p, d := range dm2.files {
-// 		err := dm.Add(d, p)
-// 		if err != nil {
-// 			var existsErr *PathConflictErr
-// 			if errors.As(err, &existsErr) && dm.GetDigest(p) == d {
-// 				// not a problem if p exists with same digest
-// 				continue
-// 			}
-// 			return err
-// 		}
-// 	}
-// 	return nil
-// }
+// A MapMaker is used to construct Maps or add new paths to existing digest.
+type MapMaker struct {
+	tree  *pathtree.Node[string]
+	norms map[string]string // normalized digest map
+}
+
+// inititalize MapMaker members if necessary
+func (mm *MapMaker) init() {
+	if mm.norms == nil {
+		mm.norms = map[string]string{}
+	}
+	if mm.tree == nil {
+		mm.tree = pathtree.NewDir[string]()
+	}
+}
+
+// MapMakerFrom returns a new [MapMaker] that can be used to construct
+// and modify a new Map based on an existing Map, m. The existing
+// Map is not modified.
+func MapMakerFrom(m *Map) (*MapMaker, error) {
+	mm := &MapMaker{
+		tree:  pathtree.NewDir[string](),
+		norms: map[string]string{}}
+
+	if err := m.EachPath(func(p, d string) error {
+		if !validPath(p) {
+			return &MapPathInvalidErr{p}
+		}
+		norm := normalizeDigest(d)
+		prevDigest, exists := mm.norms[norm]
+		if exists && d != prevDigest {
+			return &MapDigestConflictErr{Digest: norm}
+		}
+		if _, err := mm.tree.Get(p); err == nil {
+			return &MapPathConflictErr{Path: p}
+		}
+		if err := mm.tree.SetFile(p, d); err != nil {
+			return &MapPathConflictErr{Path: p}
+		}
+		mm.norms[norm] = d
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("digest map has errors: %w", err)
+	}
+	return mm, nil
+}
+
+// Add adds digest d and path p to the Map.  The digest d may be added using a
+// modified form. For example, if the lowercase version of the digest exists and
+// the uppercase form is used in Add, the resulting digest map will associate
+// path p with the lowercase form. An error is returned if p is already present
+// in the MapMaker, or if adding the digest and path would otherwise result in
+// an invalid Map. Note, you cannot use Add() to change the digest for a path in
+// the MapMaker.
+func (mm *MapMaker) Add(d, p string) error {
+	mm.init()
+	if !validPath(p) {
+		return &MapPathInvalidErr{p}
+	}
+	norm := normalizeDigest(d)
+	prevDigest, digestExists := mm.norms[norm]
+	if digestExists {
+		// set d to previously added form
+		d = prevDigest
+	}
+	if _, err := mm.tree.Get(p); err == nil {
+		// path already exists
+		return &MapPathConflictErr{Path: p}
+	}
+	if err := mm.tree.SetFile(p, d); err != nil {
+		// an error here indicates that a prefix of p already exists as a file.
+		// Ideally we would return the prefix, since that is the source of the
+		// conflict.
+		return &MapPathConflictErr{Path: p}
+	}
+	if !digestExists {
+		mm.norms[norm] = d
+	}
+	return nil
+}
+
+// Map returns a point to a new [Map] as constructed or modified by the MapMaker
+func (mm *MapMaker) Map() *Map {
+	m := &Map{digests: map[string][]string{}}
+	if mm.tree == nil {
+		return m
+	}
+	pathtree.Walk(mm.tree, func(pth string, node *pathtree.Node[string]) error {
+		if node.IsDir() {
+			return nil
+		}
+		d := node.Val
+		m.digests[d] = append(m.digests[d], pth)
+		return nil
+	})
+	for _, paths := range m.digests {
+		sort.Strings(paths)
+	}
+	return m
+}
+
+// HasDigest returns true if the digest d (or its normalized form)
+// exists in the MapMaker. Note this is slightly different than [Map]'s
+// method with the same name.
+func (mm MapMaker) HasDigest(d string) bool {
+	_, exists := mm.norms[normalizeDigest(d)]
+	return exists
+}
 
 // validPath returns
 func validPath(p string) bool {
@@ -299,31 +313,16 @@ func validPath(p string) bool {
 
 // parentDirs returns a slice of paths for each parent of p.
 // "a/b/c/d" -> ["a","a/b","a/b/c"]
-func parentDirs(p string) ([]string, error) {
-	if !validPath(p) {
-		return nil, &PathInvalidErr{p}
-	}
+func parentDirs(p string) []string {
 	p = path.Clean(p)
 	names := strings.Split(path.Dir(p), "/")
-	ret := make([]string, len(names))
+	parents := make([]string, len(names))
 	for i := range names {
-		ret[i] = strings.Join(names[0:i+1], "/")
+		parents[i] = strings.Join(names[0:i+1], "/")
 	}
-	return ret, nil
+	return parents
 }
 
 func normalizeDigest(d string) string {
 	return strings.ToLower(d)
-}
-
-func (dm *Map) UnmarshalJSON(b []byte) error {
-	err := json.Unmarshal(b, &dm.digests)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (m Map) MarshalJSON() ([]byte, error) {
-	return json.Marshal(m.digests)
 }
