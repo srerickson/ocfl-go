@@ -105,47 +105,38 @@ func (ledg *pathLedger) addPathExists(p string, ver ocfl.VNum) {
 	if ledg.paths == nil {
 		ledg.paths = make(map[string]*pathInfo)
 	}
-	if _, exists := ledg.paths[p]; !exists {
-		ledg.paths[p] = &pathInfo{
-			existsIn: ver,
-		}
+	if ledg.paths[p] == nil {
+		ledg.paths[p] = &pathInfo{}
 	}
 	ledg.paths[p].existsIn = ver
 }
 
 func (ledg *pathLedger) addPathDigest(path string, alg string, dig string, ver ocfl.VNum, flags locFlag) error {
 	if ledg.paths == nil {
-		ledg.paths = make(map[string]*pathInfo)
+		ledg.paths = map[string]*pathInfo{}
 	}
-	info, exists := ledg.paths[path]
-	if !exists {
-		// create path->alg->loc
-		ledg.paths[path] = &pathInfo{
-			digests: map[string]*digestInfo{
-				alg: {
-					digest: dig,
-					locs:   map[ocfl.VNum]locFlag{ver: flags},
-				},
-			},
-		}
-		return nil
+	if ledg.paths[path] == nil {
+		ledg.paths[path] = &pathInfo{}
 	}
-	e, exists := info.digests[alg]
-	if !exists {
-		// add alg->loc to path entry
+	if ledg.paths[path].digests == nil {
+		ledg.paths[path].digests = map[string]*digestInfo{}
+	}
+	dinf := ledg.paths[path].digests[alg]
+	if dinf == nil {
 		ledg.paths[path].digests[alg] = &digestInfo{
 			digest: dig,
 			locs:   map[ocfl.VNum]locFlag{ver: flags},
 		}
 		return nil
 	}
-	if !strings.EqualFold(e.digest, dig) {
+	if !strings.EqualFold(dinf.digest, dig) {
 		return &ChangedDigestErr{
 			Path: path,
 			Alg:  alg,
 		}
 	}
-	e.locs[ver] = e.locs[ver] | flags
+	// update location for existing digest infp
+	dinf.locs[ver] = dinf.locs[ver] | flags
 	return nil
 }
 
