@@ -69,7 +69,7 @@ func (idx *Index) Walk(fn IndexWalkFunc) error {
 	return pathtree.Walk(&idx.node, wrap)
 }
 
-// SetRoot is used internally to set the contents of an Indexß. It shouldn't be
+// SetRoot is used internally to set the contents of an Index. It shouldn't be
 // usable outside this package or its subpackages.
 func (idx *Index) SetRoot(root *pathtree.Node[IndexItem]) {
 	idx.node = *root

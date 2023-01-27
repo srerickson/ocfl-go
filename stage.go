@@ -253,9 +253,8 @@ func (stage *Stage) Manifest() (*digest.Map, error) {
 		if !exists {
 			return fmt.Errorf("stage is missing required %s for '%s'", algID, p)
 		}
-		if len(n.node.Val.SrcPaths) == 0 {
-			return fmt.Errorf("stage is missing source path for '%s'", p)
-		}
+		// SrcPaths may be empty: this is expected if the stage has imported
+		// items from an index of a previous object version.
 		for _, src := range n.node.Val.SrcPaths {
 			if err := maker.Add(dig, src); err != nil {
 				return err
