@@ -60,7 +60,7 @@ func (inv *Inventory) VNums() []ocfl.VNum {
 		vnums[i] = v
 		i++
 	}
-	sort.Sort(ocfl.VNumSeq(vnums))
+	sort.Sort(ocfl.VNums(vnums))
 	return vnums
 }
 
@@ -74,7 +74,7 @@ func (inv Inventory) Digest() string {
 // directory (i.e, as it appears in the inventory manifest). If vnum is empty,
 // the inventories head version is used.
 func (inv *Inventory) ContentPath(vnum ocfl.VNum, logical string) (string, error) {
-	if vnum.Empty() {
+	if vnum.IsZero() {
 		vnum = inv.Head
 	}
 	ver, exists := inv.Versions[vnum]
@@ -181,7 +181,7 @@ func readInventorySidecar(ctx context.Context, fsys ocfl.FS, name string) (strin
 // and it does not include manifest and fixity entries. Use IndexFull if
 // necessary.
 func (inv *Inventory) Index(ver ocfl.VNum) (*ocfl.Index, error) {
-	if ver.Empty() {
+	if ver.IsZero() {
 		ver = inv.Head
 	}
 	v, ok := inv.Versions[ver]

@@ -32,7 +32,7 @@ func (inv *Inventory) Validate() *validation.Result {
 		err := errors.New("missing required field: 'id'")
 		result.AddFatal(ec(err, codes.E036.Ref(inv.Type.Spec)))
 	}
-	if inv.Head.Empty() {
+	if inv.Head.IsZero() {
 		err := errors.New("missing required field: 'head'")
 		result.AddFatal(ec(err, codes.E036.Ref(inv.Type.Spec)))
 	}
@@ -83,7 +83,7 @@ func (inv *Inventory) Validate() *validation.Result {
 		result.AddFatal(err)
 	}
 	// version names
-	var versionNums ocfl.VNumSeq = make([]ocfl.VNum, 0, len(inv.Versions))
+	var versionNums ocfl.VNums = make([]ocfl.VNum, 0, len(inv.Versions))
 	for n := range inv.Versions {
 		versionNums = append(versionNums, n)
 	}

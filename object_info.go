@@ -15,7 +15,7 @@ const (
 // based on file and directories in the object root.
 type ObjInfo struct {
 	Declaration      Declaration
-	VersionDirs      VNumSeq
+	VersionDirs      VNums
 	Algorithm        string
 	HasInventoryFile bool
 	HasExtensionsDir bool
