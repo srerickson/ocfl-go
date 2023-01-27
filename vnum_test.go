@@ -36,7 +36,7 @@ func TestVersionHelpers(t *testing.T) {
 func TestValidVersionSeq(t *testing.T) {
 	p := MustParseVNum
 	// valid sequences
-	valid := []VNumSeq{
+	valid := []VNums{
 		{p("v1")},
 		{p("v1"), p("v2"), p("v3"), p("v4"), p("v5")},
 		{p("v001"), p("v002"), p("v003")},
@@ -48,7 +48,7 @@ func TestValidVersionSeq(t *testing.T) {
 		}
 	}
 	// invalid sequenecs
-	invalid := []VNumSeq{
+	invalid := []VNums{
 		{p("v2")},
 		{p("v1"), p("v3"), p("v4"), p("v5")},
 		{p("v01"), p("v02"), p("v03"), p("v04"), p("v05"), p("v06"), p("v07"), p("v08"), p("v09"), p("v10")},

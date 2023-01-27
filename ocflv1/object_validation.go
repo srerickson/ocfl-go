@@ -390,7 +390,7 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 	// check paths exist are in included in manifsts as necessary
 	for p, pInfo := range vldr.ledger.paths {
 		pVer := pInfo.existsIn // version wheren content file is stored (or empty ocfl.Num)
-		if pVer.Empty() {
+		if pVer.IsZero() {
 			for v, f := range pInfo.locations() {
 				locStr := "root"
 				if !f.InRoot() {

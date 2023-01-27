@@ -14,29 +14,35 @@ var (
 	ErrVNumPadding = errors.New(`inconsistent version padding in version sequence`)
 	ErrVNumMissing = errors.New(`missing version in version sequence`)
 	ErrVerEmpty    = errors.New("no versions found")
-	Head           = VNum{}
+
+	// Some functions in this package use the zero value VNum to indicate the
+	// most recent, "head" version.
+	Head = VNum{}
 )
 
-// VNum represents an OCFL object version name ("v1","v02")
+// VNum represents an OCFL object version number (e.g., "v1", "v02"). A VNum has
+// a sequence number (1,2,3...) and a padding number, which defaults to zero.
+// The padding value constraints the maximum valid sequence number.
 type VNum struct {
 	num     int // positive integers 1,2,3..
 	padding int // should be zero, but can be 2,3,4
 }
 
-// V returns a VNum for num with zero padding.
+// V returns a new Vnum. The first argument is a sequence number. An optional
+// second argument can be used to set the padding. Additional arguments are
+// ignored. Without any arguments, V() returns a zero value VNum.
 func V(ns ...int) VNum {
 	switch len(ns) {
+	case 0:
+		return VNum{}
 	case 1:
 		return VNum{num: ns[0]}
-	case 2:
-		return VNum{num: ns[0], padding: ns[1]}
 	default:
-		return Head
+		return VNum{num: ns[0], padding: ns[1]}
 	}
 }
 
-// ParseVNum parses strinv as a ocfl.Numer and sets the value pointed to be
-// vn
+// ParseVNum parses string as an a VNum and sets the value referenced by vn.
 func ParseVNum(v string, vn *VNum) error {
 	var n, p int
 	var nonzero bool
@@ -69,8 +75,8 @@ func ParseVNum(v string, vn *VNum) error {
 	return nil
 }
 
-// MustParseVNum is the same as ParseVnum except it panics instead of returning
-// an error.
+// MustParseVNum parses str as a VNUm and returns a new VNum. It panics if str
+// cannot be parsed as a VNum.
 func MustParseVNum(str string) VNum {
 	v := VNum{}
 	err := ParseVNum(str, &v)
@@ -80,24 +86,28 @@ func MustParseVNum(str string) VNum {
 	return v
 }
 
+// Num returns v's number as an int
 func (v VNum) Num() int {
 	return v.num
 }
 
+// Padding returns v's padding number.
 func (v VNum) Padding() int {
 	return v.padding
 }
 
-func (v VNum) Empty() bool {
+// IsZero returns if v is the zero value
+func (v VNum) IsZero() bool {
 	return v == Head
 }
 
+// First returns true if v is a version 1.
 func (v VNum) First() bool {
 	return v.num == 1
 }
 
-// Next returns the next ocfl.Number after v, with the same padding.
-// An error is only returned if padding > 0 and next would overflow the padding
+// Next returns the next ocfl.VNum after v with the same padding. A non-nil
+// error is returned if padding > 0 and next would overflow the padding
 func (v VNum) Next() (VNum, error) {
 	next := VNum{
 		num:     v.num + 1,
@@ -142,12 +152,12 @@ func (v VNum) paddingOverflow() bool {
 	return v.padding > 0 && v.num >= int(math.Pow10(v.padding-1))
 }
 
-// VNumSeq returns a VNumSeq with v as last version
-func (v VNum) VNumSeq() VNumSeq {
+// AsHead returns a VNums with v as the head.
+func (v VNum) AsHead() VNums {
 	if v.num == 0 {
-		return VNumSeq{}
+		return VNums{}
 	}
-	var nums VNumSeq = make([]VNum, v.num)
+	var nums VNums = make([]VNum, v.num)
 	for i := 0; i < v.num; i++ {
 		nums[i] = VNum{i + 1, v.padding}
 	}
@@ -173,29 +183,12 @@ func (v VNum) MarshalText() ([]byte, error) {
 	return []byte(v.String()), nil
 }
 
-// VNumSeq is a slice of VNums
-type VNumSeq []VNum
+// VNums is a slice of VNum elements
+type VNums []VNum
 
-// VNum implements the sort.Interface interface
-var _ sort.Interface = (*VNumSeq)(nil)
-
-// Len implements sort.Interface on VNumSeq
-func (vs VNumSeq) Len() int {
-	return len(([]VNum)(vs))
-}
-
-// Less implements sort.Interface on VNumSeq
-func (vs VNumSeq) Less(i, j int) bool {
-	return (vs[i].num < vs[j].num)
-}
-
-// Swap implements sort.Interface on VNumSeq
-func (vs VNumSeq) Swap(i, j int) {
-	vs[i], vs[j] = vs[j], vs[i]
-}
-
-// Valid returns an error if vs if invalid
-func (vs VNumSeq) Valid() error {
+// Valid returns a non-nill error if VNums is empty, is not a continuous
+// sequence (1,2,3...), has inconsistent padding or padding overflow.
+func (vs VNums) Valid() error {
 	if len(vs) == 0 {
 		return ErrVerEmpty
 	}
@@ -215,8 +208,8 @@ func (vs VNumSeq) Valid() error {
 	return vs.Head().Valid()
 }
 
-// Head returns the last VNum in vs
-func (vs VNumSeq) Head() VNum {
+// Head returns the last VNum in vs.
+func (vs VNums) Head() VNum {
 	if len(vs) > 0 {
 		return vs[len(vs)-1]
 	}
@@ -224,9 +217,27 @@ func (vs VNumSeq) Head() VNum {
 }
 
 // Padding returns the padding for the VNums in vs
-func (vs VNumSeq) Padding() int {
+func (vs VNums) Padding() int {
 	if len(vs) > 0 {
 		return vs[0].Padding()
 	}
 	return 0
+}
+
+// VNums implements the sort.Interface interface
+var _ sort.Interface = (*VNums)(nil)
+
+// Len implements sort.Interface on VNums
+func (vs VNums) Len() int {
+	return len(([]VNum)(vs))
+}
+
+// Less implements sort.Interface on VNums
+func (vs VNums) Less(i, j int) bool {
+	return (vs[i].num < vs[j].num)
+}
+
+// Swap implements sort.Interface on VNums
+func (vs VNums) Swap(i, j int) {
+	vs[i], vs[j] = vs[j], vs[i]
 }
