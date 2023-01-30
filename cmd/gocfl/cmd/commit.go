@@ -131,7 +131,6 @@ func runCommit(ctx context.Context, conf *Config) {
 		commitOpts = append(commitOpts, ocflv1.WithNoWrite())
 	}
 	commitFn := func(w io.Writer) error {
-		commitOpts = append(commitOpts, ocflv1.WithProgressWriter(w))
 		return store.Commit(ctx, commitFlags.objectID, stage, commitOpts...)
 	}
 	if err := commitUI.Start(commitFn); err != nil {

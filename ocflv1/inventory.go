@@ -216,6 +216,80 @@ func (inv *Inventory) Index(ver ocfl.VNum) (*ocfl.Index, error) {
 	return idx, nil
 }
 
+// NextVersionInventory builds a new inventory as the successor of a previous inventory. The new inventory will
+// have an incremented Head and a new version entry based on the contents of the stage.
+func (prevInv Inventory) NextVersionInventory(stage *ocfl.Stage, spec ocfl.Spec, created time.Time, msg string, user *User) (*Inventory, error) {
+	next, err := prevInv.Head.Next()
+	if err != nil {
+		return nil, fmt.Errorf("the inventory's version numbering scheme does support versions beyond %s: %w", prevInv.Head, err)
+	}
+	if prevInv.Type.Spec.Cmp(spec) > 0 {
+		return nil, errors.New("the new inventory cannot user a OCFL specification than the previous")
+	}
+	algid := stage.DigestAlg().ID()
+	if prevInv.DigestAlgorithm != algid {
+		return nil, fmt.Errorf("stage and inventory use different digest algorithms: '%s' != '%s'", algid, prevInv.DigestAlgorithm)
+	}
+	inv := prevInv.Copy()
+	inv.Head = next
+	inv.Versions[inv.Head] = &Version{
+		Created: created.UTC().Truncate(time.Second),
+		User:    user,
+		Message: msg,
+		State:   stage.VersionState(),
+	}
+	prevManFixity := make(map[string]*digest.Map, 1+len(prevInv.Fixity))
+	prevManFixity[algid] = prevInv.Manifest
+	for alg, fix := range prevInv.Fixity {
+		prevManFixity[alg] = fix
+	}
+	// func to rename stage source path to manifest path.
+	// Stage source paths are relative to the stage root;
+	// need to prefix version directory and content.
+	rename := func(src string) string {
+		return path.Join(inv.Head.String(), inv.ContentDirectory, src)
+	}
+	newManifests, err := mergeStageManifests(stage, prevManFixity, rename)
+	if err != nil {
+		return nil, err
+	}
+	inv.Manifest = newManifests[inv.DigestAlgorithm]
+	delete(newManifests, inv.DigestAlgorithm)
+	inv.Fixity = newManifests
+	return inv, nil
+}
+
+// mergeStageManifests merges manifests from stag with manifests in mans
+func mergeStageManifests(stage *ocfl.Stage, manifests map[string]*digest.Map, renameFunc func(string) string) (map[string]*digest.Map, error) {
+	makers := map[string]*digest.MapMaker{}
+	for alg := range manifests {
+		var err error
+		makers[alg], err = digest.MapMakerFrom(manifests[alg])
+		if err != nil {
+			return nil, fmt.Errorf("in previous manifest: %w", err)
+		}
+	}
+	stagemans, err := stage.AllManifests(renameFunc)
+	if err != nil {
+		return nil, fmt.Errorf("building manifest from stage: %w", err)
+	}
+	for alg, man := range stagemans {
+		if makers[alg] == nil {
+			makers[alg] = &digest.MapMaker{}
+		}
+		if err := man.EachPath(func(name, dig string) error {
+			return makers[alg].Add(dig, name)
+		}); err != nil {
+			return nil, fmt.Errorf("merging previous manifest with stage manifest: %w", err)
+		}
+	}
+	maps := make(map[string]*digest.Map, len(makers))
+	for alg, maker := range makers {
+		maps[alg] = maker.Map()
+	}
+	return maps, nil
+}
+
 func NewInventory(stage *ocfl.Stage, id string, spec ocfl.Spec, contDir string, padding int, created time.Time, msg string, user *User) (*Inventory, error) {
 	if contDir == "" {
 		contDir = contentDir
@@ -247,78 +321,4 @@ func NewInventory(stage *ocfl.Stage, id string, spec ocfl.Spec, contDir string, 
 	delete(manifests, inv.DigestAlgorithm)
 	inv.Fixity = manifests
 	return inv, nil
-}
-
-// NewVersionInventory creates a new inventory with a version based on the contents of stage. If prevInv
-// is nil, the new inventory includes its versions.
-func (prevInv *Inventory) NextVersionInventory(stage *ocfl.Stage, created time.Time, msg string, user *User) (*Inventory, error) {
-	next, err := prevInv.Head.Next()
-	if err != nil {
-		return nil, err
-	}
-	algid := stage.DigestAlg().ID()
-	if prevInv.DigestAlgorithm != algid {
-		return nil, fmt.Errorf("stage and inventory use different digest algorithms: '%s' != '%s'", algid, prevInv.DigestAlgorithm)
-	}
-	inv := prevInv.Copy()
-	inv.Head = next
-	inv.Versions[inv.Head] = &Version{
-		Created: created.UTC().Truncate(time.Second),
-		User:    user,
-		Message: msg,
-		State:   stage.VersionState(),
-	}
-
-	prevManFixity := make(map[string]*digest.Map, 1+len(prevInv.Fixity))
-	prevManFixity[algid] = prevInv.Manifest
-	for alg, fix := range prevInv.Fixity {
-		prevManFixity[alg] = fix
-	}
-	// func to rename stage source path to manifest path.
-	// Stage source paths are relative to the stage root;
-	// need to prefix version directory and content.
-	rename := func(src string) string {
-		return path.Join(inv.Head.String(), inv.ContentDirectory, src)
-	}
-	newManifests, err := nextManifests(stage, prevManFixity, rename)
-	if err != nil {
-		return nil, err
-	}
-	inv.Manifest = newManifests[inv.DigestAlgorithm]
-	delete(newManifests, inv.DigestAlgorithm)
-	inv.Fixity = newManifests
-	// if err := inv.Validate().Err(); err != nil {
-	// 	return nil, fmt.Errorf("new inventory has unexpected errors: %w", err)
-	// }
-	return inv, nil
-}
-
-func nextManifests(stage *ocfl.Stage, prev map[string]*digest.Map, renameFunc func(string) string) (map[string]*digest.Map, error) {
-	makers := map[string]*digest.MapMaker{}
-	for alg := range prev {
-		var err error
-		makers[alg], err = digest.MapMakerFrom(prev[alg])
-		if err != nil {
-			return nil, fmt.Errorf("in previous manifest: %w", err)
-		}
-	}
-	stagemans, err := stage.AllManifests(renameFunc)
-	if err != nil {
-		return nil, fmt.Errorf("building manifest from stage: %w", err)
-	}
-	for alg, man := range stagemans {
-		if makers[alg] == nil {
-			makers[alg] = &digest.MapMaker{}
-		}
-		if err := man.EachPath(func(name, dig string) error {
-			return makers[alg].Add(dig, name)
-		}); err != nil {
-			return nil, fmt.Errorf("merging previous manifest with stage manifest: %w", err)
-		}
-	}
-	maps := make(map[string]*digest.Map, len(makers))
-	for alg, maker := range makers {
-		maps[alg] = maker.Map()
-	}
-	return maps, nil
 }
