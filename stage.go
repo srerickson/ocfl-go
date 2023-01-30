@@ -206,24 +206,58 @@ func (stage *Stage) Walk(fn IndexWalkFunc) error {
 	return stage.idx.Walk(fn)
 }
 
-// Fixity returns a map of digest.Maps with entries for each digest algorithm
-// used in the Stage.
-func (stage *Stage) Fixity() (map[string]*digest.Map, error) {
-	fixityMakers := map[string]*digest.MapMaker{}
+func (stage *Stage) Manifest(renameFunc func(string) string) (*digest.Map, error) {
+	alg := stage.alg.ID()
+	maker := &digest.MapMaker{}
 	walkFn := func(p string, n *Index) error {
 		if n.node.IsDir() {
 			return nil
 		}
-		dig := n.node.Val.Digests
-		for algID := range dig {
-			if algID == stage.alg.ID() {
-				continue
+		dig := n.node.Val.Digests[alg]
+		if dig == "" {
+			return fmt.Errorf("missing %s for '%s'", alg, p)
+		}
+		for _, src := range n.node.Val.SrcPaths {
+			if renameFunc != nil {
+				src = renameFunc(src)
 			}
-			if fixityMakers[algID] == nil {
-				fixityMakers[algID] = &digest.MapMaker{}
+			if err := maker.Add(dig, src); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := stage.idx.Walk(walkFn); err != nil {
+		return nil, err
+	}
+	return maker.Map(), nil
+}
+
+// AllManifests returns a map of digest.Maps with digest -> source path mappings for
+// files in the stage. If the returned error is nil, the map will have at least
+// one entry for the stage's digest algorithm. If any file is found in the stage
+// without a value for the stage's digest algorithm, a non-nill error is
+// returne.
+func (stage *Stage) AllManifests(renameFunc func(string) string) (map[string]*digest.Map, error) {
+	alg := stage.alg.ID()
+	mapMakers := map[string]*digest.MapMaker{}
+	walkFn := func(p string, n *Index) error {
+		if n.node.IsDir() {
+			return nil
+		}
+		digs := n.node.Val.Digests
+		if digs[alg] == "" {
+			return fmt.Errorf("missing %s for '%s'", alg, p)
+		}
+		for algID := range digs {
+			if mapMakers[algID] == nil {
+				mapMakers[algID] = &digest.MapMaker{}
 			}
 			for _, src := range n.node.Val.SrcPaths {
-				if err := fixityMakers[algID].Add(dig[algID], src); err != nil {
+				if renameFunc != nil {
+					src = renameFunc(src)
+				}
+				if err := mapMakers[algID].Add(digs[algID], src); err != nil {
 					return err
 				}
 			}
@@ -233,41 +267,11 @@ func (stage *Stage) Fixity() (map[string]*digest.Map, error) {
 	if err := stage.idx.Walk(walkFn); err != nil {
 		return nil, err
 	}
-	fixity := map[string]*digest.Map{}
-	for alg, maker := range fixityMakers {
-		fixity[alg] = maker.Map()
+	maps := map[string]*digest.Map{}
+	for alg, maker := range mapMakers {
+		maps[alg] = maker.Map()
 	}
-	return fixity, nil
-}
-
-// Manifest returns a digest.Map for the source paths in in the stage using the
-// stage's primary digest algorithm.
-func (stage *Stage) Manifest() (*digest.Map, error) {
-	algID := stage.alg.ID()
-	maker := &digest.MapMaker{}
-	walkFn := func(p string, n *Index) error {
-		if n.node.IsDir() {
-			return nil
-		}
-		dig, exists := n.node.Val.Digests[algID]
-		if !exists {
-			return fmt.Errorf("stage is missing required %s for '%s'", algID, p)
-		}
-		// SrcPaths may be empty: this is expected if the stage has imported
-		// items from an index of a previous object version.
-		for _, src := range n.node.Val.SrcPaths {
-			if err := maker.Add(dig, src); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if err := stage.idx.Walk(walkFn); err != nil {
-		// an error here represents a bug and
-		// it should be addressed in testing.
-		panic(err)
-	}
-	return maker.Map(), nil
+	return maps, nil
 }
 
 // VersionState returns a digest map for the logical paths in the stage using

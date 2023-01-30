@@ -215,3 +215,86 @@ func (inv *Inventory) Index(ver ocfl.VNum) (*ocfl.Index, error) {
 	idx.SetRoot(root)
 	return idx, nil
 }
+
+// NewVersionInventory creates a new inventory with a version based on the contents of stage. If prevInv
+// is nil, the new inventory includes its versions.
+func NewVersionInventory(stage *ocfl.Stage, prevInv *Inventory, created time.Time, msg string, user *User) (*Inventory, error) {
+	var inv *Inventory
+	var prevMans map[string]*digest.Map // previous manifest + fixity
+	if prevInv != nil {
+		inv = prevInv.Copy()
+		next, err := prevInv.Head.Next()
+		if err != nil {
+			return nil, err
+		}
+		inv.Head = next
+		prevMans = make(map[string]*digest.Map, 1+len(prevInv.Fixity))
+		prevMans[prevInv.DigestAlgorithm] = prevInv.Manifest
+		for alg, fix := range prevInv.Fixity {
+			prevMans[alg] = fix
+		}
+	} else {
+		inv = &Inventory{
+			ID:               "",
+			Head:             ocfl.V(1),
+			Type:             ocflv1_1.AsInvType(),
+			DigestAlgorithm:  stage.DigestAlg().ID(),
+			ContentDirectory: contentDir,
+			Versions:         map[ocfl.VNum]*Version{},
+		}
+	}
+	// add the new version directory to the Inventory object
+	inv.Versions[inv.Head] = &Version{
+		Created: created.UTC().Truncate(time.Second),
+		User:    user,
+		Message: msg,
+		State:   stage.VersionState(),
+	}
+	// func to rename stage source path to manifest path.
+	// Stage source paths are relative to the stage root;
+	// need to prefix version directory and content.
+	rename := func(src string) string {
+		return path.Join(inv.Head.String(), inv.ContentDirectory, src)
+	}
+	newManifests, err := nextManifests(stage, prevMans, rename)
+	if err != nil {
+		return nil, err
+	}
+	inv.Manifest = newManifests[inv.DigestAlgorithm]
+	delete(newManifests, inv.DigestAlgorithm)
+	inv.Fixity = newManifests
+	// if err := inv.Validate().Err(); err != nil {
+	// 	return nil, fmt.Errorf("new inventory has unexpected errors: %w", err)
+	// }
+	return inv, nil
+}
+
+func nextManifests(stage *ocfl.Stage, prev map[string]*digest.Map, renameFunc func(string) string) (map[string]*digest.Map, error) {
+	makers := map[string]*digest.MapMaker{}
+	for alg := range prev {
+		var err error
+		makers[alg], err = digest.MapMakerFrom(prev[alg])
+		if err != nil {
+			return nil, fmt.Errorf("in previous manifest: %w", err)
+		}
+	}
+	stagemans, err := stage.AllManifests(renameFunc)
+	if err != nil {
+		return nil, fmt.Errorf("building manifest from stage: %w", err)
+	}
+	for alg, man := range stagemans {
+		if makers[alg] == nil {
+			makers[alg] = &digest.MapMaker{}
+		}
+		if err := man.EachPath(func(name, dig string) error {
+			return makers[alg].Add(dig, name)
+		}); err != nil {
+			return nil, fmt.Errorf("merging previous manifest with stage manifest: %w", err)
+		}
+	}
+	maps := make(map[string]*digest.Map, len(makers))
+	for alg, maker := range makers {
+		maps[alg] = maker.Map()
+	}
+	return maps, nil
+}

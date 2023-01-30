@@ -44,13 +44,8 @@ func (s *Store) commit(ctx context.Context, comm *commit) error {
 	if err != nil {
 		return err
 	}
-	// build new inventory from previous
-	newInv, err := comm.nextInventory(comm.prevInv)
-	if err != nil {
-		return fmt.Errorf("building new version inventory: %w", err)
-	}
 	// file transfer list
-	xfers, err := transferMap(newInv, comm.manifest)
+	xfers, err := transferMap(comm.newInv, comm.manifest)
 	if err != nil {
 		return err
 	}
@@ -116,7 +111,7 @@ func (s *Store) commit(ctx context.Context, comm *commit) error {
 	if comm.nowrite {
 		comm.logger.Info("skipping inventory write", "object_path", objPath, "version_path", vPath)
 	} else {
-		if err := WriteInventory(ctx, writeFS, newInv, objPath, vPath); err != nil {
+		if err := WriteInventory(ctx, writeFS, comm.newInv, objPath, vPath); err != nil {
 			return err
 		}
 	}
@@ -176,7 +171,7 @@ type commit struct {
 	progress io.Writer
 	// generated from stage
 	alg      digest.Alg
-	state    *digest.Map // new version state
+	newInv   *Inventory
 	manifest *digest.Map // stage manifest (i.e., paths relative to stage's FS)
 }
 
@@ -202,12 +197,17 @@ func newCommit(id string, stage *ocfl.Stage, prev *Inventory, opts ...CommitOpti
 		comm.vnum = nextv                       // ignoring any version number/padding options
 		comm.contentDir = prev.ContentDirectory // ignoring content directory options
 	}
-	man, err := stage.Manifest()
+	newInv, err := NewVersionInventory(stage, comm.prevInv, time.Now(), comm.message, &comm.user)
 	if err != nil {
-		return nil, fmt.Errorf("stage is inconsistent: can't create manifest: %w", err)
+		return nil, err
 	}
-	comm.manifest = man
-	comm.state = stage.VersionState()
+
+	newInv.ID = id
+	comm.newInv = newInv
+	comm.manifest, err = stage.Manifest(nil)
+	if err != nil {
+		return nil, err
+	}
 	if prev != nil {
 		if err := comm.validate(prev); err != nil {
 			return nil, fmt.Errorf("stage options are not valid for this object: %w", err)
@@ -283,100 +283,6 @@ type ContentPathFunc func(logical string, digest string) string
 // logical
 func DefaultContentPathFunc(logical string, digest string) string {
 	return logical
-}
-
-// nextManifest builds a manifest from the commit using a previous manifest,
-// which may be nil
-func (comm *commit) nextManifest(prev *digest.Map) (*digest.Map, error) {
-	var maker *digest.MapMaker
-	if prev != nil {
-		var err error
-		maker, err = digest.MapMakerFrom(prev)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		maker = &digest.MapMaker{}
-	}
-	if comm.contentPathFunc == nil {
-		comm.contentPathFunc = DefaultContentPathFunc
-	}
-	if comm.contentDir == "" {
-		comm.contentDir = contentDir
-	}
-	walkfn := func(p string, node *ocfl.Index) error {
-		if node.IsDir() {
-			return nil
-		}
-		sum, ok := node.Val().Digests[comm.alg.ID()]
-		if !ok {
-			return fmt.Errorf("missing digest for '%s'", comm.alg)
-		}
-		if maker.HasDigest(sum) {
-			return nil
-		}
-		// content path in manifest
-		cont := comm.contentPathFunc(p, sum)
-		cont = path.Join(comm.vnum.String(), comm.contentDir, cont)
-		maker.Add(sum, cont)
-		return nil
-	}
-	if err := comm.stage.Walk(walkfn); err != nil {
-		return nil, err
-	}
-	dmap := maker.Map()
-	if err := dmap.Valid(); err != nil {
-		return nil, err
-	}
-	return dmap, nil
-}
-
-// nextInventory generates the next inventory based the previous inventory (if it exists)
-func (comm *commit) nextInventory(prevInv *Inventory) (*Inventory, error) {
-	var inv *Inventory
-	var prevMan *digest.Map
-	if prevInv != nil {
-		if err := comm.validate(prevInv); err != nil {
-			return nil, fmt.Errorf("the object settings are not compatible with the existing object: %w", err)
-		}
-		prevMan = prevInv.Manifest
-	}
-	newMan, err := comm.nextManifest(prevMan)
-	if err != nil {
-		return nil, fmt.Errorf("error while building manifest: %w", err)
-	}
-	if prevInv == nil {
-		inv = &Inventory{
-			ID:               comm.id,
-			Head:             comm.vnum,
-			Type:             comm.spec.AsInvType(),
-			DigestAlgorithm:  comm.alg.ID(),
-			ContentDirectory: comm.contentDir,
-			Manifest:         newMan,
-			Versions:         map[ocfl.VNum]*Version{},
-		}
-	} else {
-		inv = prevInv.Copy()
-		inv.Head = comm.vnum
-		inv.Manifest = newMan
-	}
-	// add the new version directory to the Inventory object
-	inv.Versions[inv.Head] = &Version{
-		Created: time.Now().Truncate(time.Second),
-		State:   comm.state,
-		Message: comm.message,
-	}
-	// only add user if name from stage is not empty
-	if comm.user.Name != "" {
-		inv.Versions[inv.Head].User = &User{
-			Name:    comm.user.Name,
-			Address: comm.user.Address,
-		}
-	}
-	if err := inv.Validate().Err(); err != nil {
-		return nil, err
-	}
-	return inv, nil
 }
 
 // stageErrs checks that stage represent a valid next version for the inventory
