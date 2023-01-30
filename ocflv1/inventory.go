@@ -216,39 +216,63 @@ func (inv *Inventory) Index(ver ocfl.VNum) (*ocfl.Index, error) {
 	return idx, nil
 }
 
+func NewInventory(stage *ocfl.Stage, id string, spec ocfl.Spec, contDir string, padding int, created time.Time, msg string, user *User) (*Inventory, error) {
+	if contDir == "" {
+		contDir = contentDir
+	}
+	head := ocfl.V(1, padding)
+	inv := &Inventory{
+		ID:               id,
+		Head:             head,
+		Type:             spec.AsInvType(),
+		DigestAlgorithm:  stage.DigestAlg().ID(),
+		ContentDirectory: contDir,
+		Versions: map[ocfl.VNum]*Version{
+			head: {
+				Created: created.UTC().Truncate(time.Second),
+				User:    user,
+				Message: msg,
+				State:   stage.VersionState(),
+			},
+		},
+	}
+	rename := func(src string) string {
+		return path.Join(inv.Head.String(), inv.ContentDirectory, src)
+	}
+	manifests, err := stage.AllManifests(rename)
+	if err != nil {
+		return nil, fmt.Errorf("building inventory manifest/fixity from stage: %w", err)
+	}
+	inv.Manifest = manifests[inv.DigestAlgorithm]
+	delete(manifests, inv.DigestAlgorithm)
+	inv.Fixity = manifests
+	return inv, nil
+}
+
 // NewVersionInventory creates a new inventory with a version based on the contents of stage. If prevInv
 // is nil, the new inventory includes its versions.
-func NewVersionInventory(stage *ocfl.Stage, prevInv *Inventory, created time.Time, msg string, user *User) (*Inventory, error) {
-	var inv *Inventory
-	var prevMans map[string]*digest.Map // previous manifest + fixity
-	if prevInv != nil {
-		inv = prevInv.Copy()
-		next, err := prevInv.Head.Next()
-		if err != nil {
-			return nil, err
-		}
-		inv.Head = next
-		prevMans = make(map[string]*digest.Map, 1+len(prevInv.Fixity))
-		prevMans[prevInv.DigestAlgorithm] = prevInv.Manifest
-		for alg, fix := range prevInv.Fixity {
-			prevMans[alg] = fix
-		}
-	} else {
-		inv = &Inventory{
-			ID:               "",
-			Head:             ocfl.V(1),
-			Type:             ocflv1_1.AsInvType(),
-			DigestAlgorithm:  stage.DigestAlg().ID(),
-			ContentDirectory: contentDir,
-			Versions:         map[ocfl.VNum]*Version{},
-		}
+func (prevInv *Inventory) NextVersionInventory(stage *ocfl.Stage, created time.Time, msg string, user *User) (*Inventory, error) {
+	next, err := prevInv.Head.Next()
+	if err != nil {
+		return nil, err
 	}
-	// add the new version directory to the Inventory object
+	algid := stage.DigestAlg().ID()
+	if prevInv.DigestAlgorithm != algid {
+		return nil, fmt.Errorf("stage and inventory use different digest algorithms: '%s' != '%s'", algid, prevInv.DigestAlgorithm)
+	}
+	inv := prevInv.Copy()
+	inv.Head = next
 	inv.Versions[inv.Head] = &Version{
 		Created: created.UTC().Truncate(time.Second),
 		User:    user,
 		Message: msg,
 		State:   stage.VersionState(),
+	}
+
+	prevManFixity := make(map[string]*digest.Map, 1+len(prevInv.Fixity))
+	prevManFixity[algid] = prevInv.Manifest
+	for alg, fix := range prevInv.Fixity {
+		prevManFixity[alg] = fix
 	}
 	// func to rename stage source path to manifest path.
 	// Stage source paths are relative to the stage root;
@@ -256,7 +280,7 @@ func NewVersionInventory(stage *ocfl.Stage, prevInv *Inventory, created time.Tim
 	rename := func(src string) string {
 		return path.Join(inv.Head.String(), inv.ContentDirectory, src)
 	}
-	newManifests, err := nextManifests(stage, prevMans, rename)
+	newManifests, err := nextManifests(stage, prevManFixity, rename)
 	if err != nil {
 		return nil, err
 	}

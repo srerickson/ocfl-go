@@ -54,7 +54,7 @@ func (s *Store) commit(ctx context.Context, comm *commit) error {
 	}
 	comm.logger.Info("committing new object version", "id", comm.id, "head", comm.vnum, "alg", comm.alg, "message", comm.message)
 	// expect version directory to ErrNotExist or be empty
-	if comm.vnum.First() {
+	if comm.newInv.Head.First() {
 		entries, err := s.fsys.ReadDir(ctx, objPath)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
@@ -73,7 +73,7 @@ func (s *Store) commit(ctx context.Context, comm *commit) error {
 	}
 
 	// write declaration for first version
-	if comm.vnum.First() {
+	if comm.newInv.Head.First() {
 		if comm.nowrite {
 			comm.logger.Info("skipping object declaration", "object_path", objPath)
 		} else {
@@ -189,30 +189,29 @@ func newCommit(id string, stage *ocfl.Stage, prev *Inventory, opts ...CommitOpti
 	for _, opt := range opts {
 		opt(comm)
 	}
+	var newInv *Inventory
+	var err error
 	if prev != nil {
-		nextv, err := prev.Head.Next()
+		newInv, err = prev.NextVersionInventory(stage, time.Now(), comm.message, &comm.user)
 		if err != nil {
-			return nil, fmt.Errorf("version scheme doesn't support versions after %s: %w", prev.Head, err)
+			return nil, fmt.Errorf("while building next inventory")
 		}
-		comm.vnum = nextv                       // ignoring any version number/padding options
-		comm.contentDir = prev.ContentDirectory // ignoring content directory options
+	} else {
+		newInv, err = NewInventory(stage, comm.id, comm.spec, comm.contentDir, comm.vnum.Padding(), time.Now(), comm.message, &comm.user)
+		if err != nil {
+			return nil, err
+		}
 	}
-	newInv, err := NewVersionInventory(stage, comm.prevInv, time.Now(), comm.message, &comm.user)
-	if err != nil {
-		return nil, err
-	}
-
-	newInv.ID = id
 	comm.newInv = newInv
 	comm.manifest, err = stage.Manifest(nil)
 	if err != nil {
 		return nil, err
 	}
-	if prev != nil {
-		if err := comm.validate(prev); err != nil {
-			return nil, fmt.Errorf("stage options are not valid for this object: %w", err)
-		}
-	}
+	// if prev != nil {
+	// 	if err := comm.validate(prev); err != nil {
+	// 		return nil, fmt.Errorf("stage options are not valid for this object: %w", err)
+	// 	}
+	// }
 	return comm, nil
 }
 

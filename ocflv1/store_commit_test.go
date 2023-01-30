@@ -7,7 +7,6 @@ import (
 	"testing/fstest"
 
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/backend/local"
 	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/internal/testfs"
 	"github.com/srerickson/ocfl/ocflv1"
@@ -16,8 +15,7 @@ import (
 func TestStoreCommit(t *testing.T) {
 	storePath := "test-stage"
 	ctx := context.Background()
-	//storeFS := testfs.NewMemFS() // store
-	storeFS, _ := local.NewFS("tmp")
+	storeFS := testfs.NewMemFS() // store
 	stgFS := ocfl.NewFS(fstest.MapFS{
 		`stage1/tmp.txt`:       &fstest.MapFile{Data: []byte(`content1`)},
 		`stage3/a/tmp.txt`:     &fstest.MapFile{Data: []byte(`content2`)},
