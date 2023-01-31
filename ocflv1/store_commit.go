@@ -19,22 +19,67 @@ import (
 func (s *Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts ...CommitOption) error {
 	s.commitLock.Lock()
 	defer s.commitLock.Unlock()
-	var inv *Inventory
+	var prevInv *Inventory
 	obj, err := s.GetObject(ctx, id)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("getting object info from storage root: %w", err)
 	}
 	if obj != nil {
-		inv, err = obj.Inventory(ctx)
+		prevInv, err = obj.Inventory(ctx)
 		if err != nil {
 			return err
 		}
 	}
-	comm, err := newCommit(id, stage, inv, opts...)
+	// defaults
+	comm := &commit{
+		spec:            defaultSpec,
+		contentPathFunc: DefaultContentPathFunc,
+		stage:           stage,
+		logger:          logr.Discard(),
+	}
+	// some defaults are based on the previous inventory
+	if prevInv != nil {
+		comm.spec = prevInv.Type.Spec
+	}
+	for _, opt := range opts {
+		opt(comm)
+	}
+	var newInv *Inventory
+	if prevInv != nil {
+		newInv, err = prevInv.NextVersionInventory(stage, comm.spec, time.Now(), comm.message, &comm.user)
+		if err != nil {
+			return fmt.Errorf("while building next inventory")
+		}
+	} else {
+		newInv, err = NewInventory(stage, id, comm.spec, comm.contentDir, comm.padding, time.Now(), comm.message, &comm.user)
+		if err != nil {
+			return fmt.Errorf("while building new inventory: %w", err)
+		}
+	}
+	comm.newInv = newInv
+	comm.manifest, err = stage.Manifest(nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("stage has errors: %w", err)
 	}
 	return s.commit(ctx, comm)
+}
+
+// commit represents an OCFL object transformation
+type commit struct {
+	stage    *ocfl.Stage // content to commit
+	manifest *digest.Map // stage's manifest
+	newInv   *Inventory  // inventory to commit
+
+	// options
+	requireV        int             // new inventory must have this version number (if non-zero)
+	spec            ocfl.Spec       // OCFL spec for new version
+	padding         int             // padding (new objects only)
+	contentDir      string          // content directory setting (new objects only)
+	contentPathFunc ContentPathFunc // function used to configure content paths
+	user            User
+	message         string
+	nowrite         bool // used for "dry run" commit
+	logger          logr.Logger
 }
 
 // commit creates or updates an object in the store using stage.
@@ -42,10 +87,18 @@ func (s *Store) commit(ctx context.Context, comm *commit) error {
 	id := comm.newInv.ID
 	vnum := comm.newInv.Head
 	alg := comm.newInv.DigestAlgorithm
-	writeFS, objPath, err := s.objectWriteFSPath(id)
-	if err != nil {
-		return err
+	writeFS, ok := s.fsys.(ocfl.WriteFS)
+	if !ok {
+		return fmt.Errorf("storage root backend is read-only")
 	}
+	if s.layoutFunc == nil {
+		return fmt.Errorf("storage root layout must be set to commit: %w", ErrLayoutUndefined)
+	}
+	objPath, err := s.layoutFunc(id)
+	if err != nil {
+		return fmt.Errorf("object ID must be valid to commit: %w", err)
+	}
+	objPath = path.Join(s.rootDir, objPath)
 	// file transfer list
 	xfers, err := transferMap(comm.newInv, comm.manifest)
 	if err != nil {
@@ -119,22 +172,6 @@ func (s *Store) commit(ctx context.Context, comm *commit) error {
 	return nil
 }
 
-// get the writeFS and object path for an object
-func (s *Store) objectWriteFSPath(objID string) (ocfl.WriteFS, string, error) {
-	writeFS, ok := s.fsys.(ocfl.WriteFS)
-	if !ok {
-		return nil, "", fmt.Errorf("storage root backend is read-only")
-	}
-	if s.layoutFunc == nil {
-		return nil, "", fmt.Errorf("storage root layout must be set to commit: %w", ErrLayoutUndefined)
-	}
-	objPath, err := s.layoutFunc(objID)
-	if err != nil {
-		return nil, "", fmt.Errorf("object ID must be valid to commit: %w", err)
-	}
-	return writeFS, path.Join(s.rootDir, objPath), nil
-}
-
 func transferMap(newInv *Inventory, stageMan *digest.Map) (map[string]string, error) {
 	xfer := map[string]string{}
 	if newInv == nil || newInv.Manifest == nil {
@@ -151,62 +188,6 @@ func transferMap(newInv *Inventory, stageMan *digest.Map) (map[string]string, er
 		xfer[sources[0]] = p
 	}
 	return xfer, nil
-}
-
-// commit represents an OCFL object transformation
-type commit struct {
-	stage    *ocfl.Stage
-	manifest *digest.Map // stage manifest (i.e., paths relative to stage's FS)
-	prevInv  *Inventory
-	newInv   *Inventory
-
-	// options
-	requireV        int             // new inventory must have this version number (if non-zero)
-	padding         int             // padding for v1
-	spec            ocfl.Spec       // OCFL spec for new version
-	contentDir      string          // content directory setting
-	contentPathFunc ContentPathFunc // function used to configure content paths
-	user            User
-	message         string
-	nowrite         bool // used for "dry run" commit
-	logger          logr.Logger
-}
-
-func newCommit(id string, stage *ocfl.Stage, prev *Inventory, opts ...CommitOption) (*commit, error) {
-	// defaults
-	comm := &commit{
-		spec:            defaultSpec,
-		contentPathFunc: DefaultContentPathFunc,
-		stage:           stage,
-		prevInv:         prev,
-		logger:          logr.Discard(),
-	}
-	// some defaults are based on the previous inventory
-	if prev != nil {
-		comm.spec = prev.Type.Spec
-	}
-	for _, opt := range opts {
-		opt(comm)
-	}
-	var newInv *Inventory
-	var err error
-	if prev != nil {
-		newInv, err = prev.NextVersionInventory(stage, comm.spec, time.Now(), comm.message, &comm.user)
-		if err != nil {
-			return nil, fmt.Errorf("while building next inventory")
-		}
-	} else {
-		newInv, err = NewInventory(stage, id, comm.spec, comm.contentDir, comm.padding, time.Now(), comm.message, &comm.user)
-		if err != nil {
-			return nil, err
-		}
-	}
-	comm.newInv = newInv
-	comm.manifest, err = stage.Manifest(nil)
-	if err != nil {
-		return nil, err
-	}
-	return comm, nil
 }
 
 // CommitOption is used configure Commit
