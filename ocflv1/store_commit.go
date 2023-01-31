@@ -17,8 +17,20 @@ import (
 
 // Commit creates or updates the object with the given id using the contents of stage.
 func (s *Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts ...CommitOption) error {
-	s.commitLock.Lock()
+	s.commitLock.Lock() // only one commit at a time
 	defer s.commitLock.Unlock()
+	writeFS, ok := s.fsys.(ocfl.WriteFS)
+	if !ok {
+		return fmt.Errorf("storage root backend is read-only")
+	}
+	if s.layoutFunc == nil {
+		return fmt.Errorf("commit requires a storage root layout: %w", ErrLayoutUndefined)
+	}
+	objPath, err := s.layoutFunc(id)
+	if err != nil {
+		return fmt.Errorf("cannot commit '%s': %w", id, err)
+	}
+	objPath = path.Join(s.rootDir, objPath)
 	var prevInv *Inventory
 	obj, err := s.GetObject(ctx, id)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -32,6 +44,8 @@ func (s *Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts .
 	}
 	// defaults
 	comm := &commit{
+		storeFS:         writeFS,
+		objRoot:         objPath,
 		spec:            defaultSpec,
 		contentPathFunc: DefaultContentPathFunc,
 		stage:           stage,
@@ -41,9 +55,11 @@ func (s *Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts .
 	if prevInv != nil {
 		comm.spec = prevInv.Type.Spec
 	}
+	// load options
 	for _, opt := range opts {
 		opt(comm)
 	}
+	// build new inventory
 	var newInv *Inventory
 	if prevInv != nil {
 		newInv, err = prevInv.NextVersionInventory(stage, comm.spec, time.Now(), comm.message, &comm.user)
@@ -61,133 +77,7 @@ func (s *Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts .
 	if err != nil {
 		return fmt.Errorf("stage has errors: %w", err)
 	}
-	return s.commit(ctx, comm)
-}
-
-// commit represents an OCFL object transformation
-type commit struct {
-	stage    *ocfl.Stage // content to commit
-	manifest *digest.Map // stage's manifest
-	newInv   *Inventory  // inventory to commit
-
-	// options
-	requireV        int             // new inventory must have this version number (if non-zero)
-	spec            ocfl.Spec       // OCFL spec for new version
-	padding         int             // padding (new objects only)
-	contentDir      string          // content directory setting (new objects only)
-	contentPathFunc ContentPathFunc // function used to configure content paths
-	user            User
-	message         string
-	nowrite         bool // used for "dry run" commit
-	logger          logr.Logger
-}
-
-// commit creates or updates an object in the store using stage.
-func (s *Store) commit(ctx context.Context, comm *commit) error {
-	id := comm.newInv.ID
-	vnum := comm.newInv.Head
-	alg := comm.newInv.DigestAlgorithm
-	writeFS, ok := s.fsys.(ocfl.WriteFS)
-	if !ok {
-		return fmt.Errorf("storage root backend is read-only")
-	}
-	if s.layoutFunc == nil {
-		return fmt.Errorf("storage root layout must be set to commit: %w", ErrLayoutUndefined)
-	}
-	objPath, err := s.layoutFunc(id)
-	if err != nil {
-		return fmt.Errorf("object ID must be valid to commit: %w", err)
-	}
-	objPath = path.Join(s.rootDir, objPath)
-	// file transfer list
-	xfers, err := transferMap(comm.newInv, comm.manifest)
-	if err != nil {
-		return err
-	}
-	if fsys, _ := comm.stage.Root(); len(xfers) > 0 && fsys == nil {
-		return fmt.Errorf("stage doesn't provide an FS for reading files to upload")
-	}
-	comm.logger.Info("committing new object version", "id", id, "head", vnum, "alg", alg, "message", comm.message)
-	// expect version directory to ErrNotExist or be empty
-	if vnum.First() {
-		entries, err := s.fsys.ReadDir(ctx, objPath)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		if len(entries) != 0 {
-			return errors.New("object directory must be empty to commit")
-		}
-	} else {
-		entries, err := s.fsys.ReadDir(ctx, path.Join(objPath, vnum.String()))
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		if len(entries) != 0 {
-			return fmt.Errorf("version directory '%s' must be empty to commit", vnum.String())
-		}
-	}
-	// write declaration for first version
-	if vnum.First() {
-		if comm.nowrite {
-			comm.logger.Info("skipping object declaration", "object_path", objPath)
-		} else {
-			decl := ocfl.Declaration{
-				Type:    ocfl.DeclObject,
-				Version: comm.newInv.Type.Spec,
-			}
-			if err := ocfl.WriteDeclaration(ctx, writeFS, objPath, decl); err != nil {
-				return err
-			}
-		}
-	}
-	// transfer files
-	srcFS, stageRoot := comm.stage.Root()
-	for src, dst := range xfers {
-		dst = path.Join(objPath, dst)
-		xfers[src] = dst
-		if comm.nowrite {
-			comm.logger.Info("skipping file transfer", "src", src, "dst", dst)
-		}
-	}
-	// fixme -- xfer keys are paths relative to stage root dir, not stage FS
-	remap := make(map[string]string, len(xfers))
-	for src, dst := range xfers {
-		remap[path.Join(stageRoot, src)] = dst
-	}
-	xfers = remap
-	if !comm.nowrite {
-		_, err := xfer.DigestXfer(ctx, srcFS, writeFS, xfers)
-		if err != nil {
-			return fmt.Errorf("while transfering content files: %w", err)
-		}
-	}
-	vPath := path.Join(objPath, vnum.String())
-	if comm.nowrite {
-		comm.logger.Info("skipping inventory write", "object_path", objPath, "version_path", vPath)
-	} else {
-		if err := WriteInventory(ctx, writeFS, comm.newInv, objPath, vPath); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func transferMap(newInv *Inventory, stageMan *digest.Map) (map[string]string, error) {
-	xfer := map[string]string{}
-	if newInv == nil || newInv.Manifest == nil {
-		return nil, errors.New("stage is not complete")
-	}
-	for p, d := range newInv.Manifest.AllPaths() {
-		if !strings.HasPrefix(p, newInv.Head.String()+"/") {
-			continue
-		}
-		sources := stageMan.DigestPaths(d)
-		if len(sources) == 0 {
-			return nil, fmt.Errorf("no source file provided for digest: %s", d)
-		}
-		xfer[sources[0]] = p
-	}
-	return xfer, nil
+	return comm.commit(ctx)
 }
 
 // CommitOption is used configure Commit
@@ -248,14 +138,6 @@ func WithUser(name, addr string) CommitOption {
 	}
 }
 
-// WithNoWrite configures the commit to prevent any writes to the storage root.
-// This enables "dry run" commits.
-func WithNoWrite() CommitOption {
-	return func(comm *commit) {
-		comm.nowrite = true
-	}
-}
-
 func WithLogger(logger logr.Logger) CommitOption {
 	return func(comm *commit) {
 		comm.logger = logger
@@ -270,4 +152,108 @@ type ContentPathFunc func(logical string, digest string) string
 // logical
 func DefaultContentPathFunc(logical string, digest string) string {
 	return logical
+}
+
+// commit represents an OCFL object transformation
+type commit struct {
+	storeFS  ocfl.WriteFS
+	objRoot  string      // object root
+	stage    *ocfl.Stage // content to commit
+	manifest *digest.Map // stage's manifest
+	newInv   *Inventory  // inventory to commit
+
+	// options
+	requireV        int             // new inventory must have this version number (if non-zero)
+	spec            ocfl.Spec       // OCFL spec for new version
+	padding         int             // padding (new objects only)
+	contentDir      string          // content directory setting (new objects only)
+	contentPathFunc ContentPathFunc // function used to configure content paths
+	user            User
+	message         string
+
+	logger logr.Logger
+}
+
+// commit performs the commit
+func (comm *commit) commit(ctx context.Context) error {
+	id := comm.newInv.ID
+	vnum := comm.newInv.Head
+	xfers, err := comm.transferMap()
+	if err != nil {
+		return fmt.Errorf("commit canceled: %w", err)
+	}
+	stageFS, _ := comm.stage.Root()
+	if len(xfers) > 0 && stageFS == nil {
+		return fmt.Errorf("commit canceled: stage is missing an FS")
+	}
+	comm.logger.Info("starting commit", "object_id", id, "head", vnum)
+	defer comm.logger.Info("commit complete", "object_id", id, "head", vnum)
+	if vnum.First() {
+		// for v1, expect version directory to ErrNotExist or be empty
+		entries, err := comm.storeFS.ReadDir(ctx, comm.objRoot)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("commit canceled: %w", err)
+		}
+		if len(entries) > 0 {
+			return errors.New("commit canceled: object directory is not empty")
+		}
+	} else {
+		// for v > 1, the version directory must not exist or be empty
+		entries, err := comm.storeFS.ReadDir(ctx, path.Join(comm.objRoot, vnum.String()))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("commit canceled: %w", err)
+		}
+		if len(entries) > 0 {
+			return fmt.Errorf("commit canceled: version directory '%s' not empty", vnum.String())
+		}
+	}
+	// write declaration for first version
+	if vnum.First() {
+		decl := ocfl.Declaration{
+			Type:    ocfl.DeclObject,
+			Version: comm.newInv.Type.Spec,
+		}
+		if err := ocfl.WriteDeclaration(ctx, comm.storeFS, comm.objRoot, decl); err != nil {
+			return fmt.Errorf("writing object declaration: %w", err)
+		}
+	}
+	if _, err := xfer.DigestXfer(ctx, stageFS, comm.storeFS, xfers); err != nil {
+		return fmt.Errorf("transfering object content: %w", err)
+	}
+	vDir := path.Join(comm.objRoot, vnum.String())
+	// write inventory to both object root and version directory
+	if err := WriteInventory(ctx, comm.storeFS, comm.newInv, comm.objRoot, vDir); err != nil {
+		return fmt.Errorf("writing new inventories: %w", err)
+	}
+	return nil
+}
+
+// transferMap builds a map of source/destination paths representing
+// file to copy from the stage to the object root. Source paths
+// are relative to the stage's FS. Destination paths are relative to
+// storage root's FS
+func (comm *commit) transferMap() (map[string]string, error) {
+	inv := comm.newInv
+	stageMan := comm.manifest
+	_, stageRoot := comm.stage.Root()
+	if inv == nil || inv.Manifest == nil {
+		return nil, errors.New("stage is not complete: missing inventory manifest")
+	}
+	xfer := map[string]string{}
+	for dst, dig := range inv.Manifest.AllPaths() {
+		// ignore manifest entries from previous versions
+		if !strings.HasPrefix(dst, inv.Head.String()+"/") {
+			continue
+		}
+		sources := stageMan.DigestPaths(dig)
+		if len(sources) == 0 {
+			return nil, fmt.Errorf("no source file provided for digest: %s", dig)
+		}
+		// prefix src with stage's root directory
+		src := path.Join(stageRoot, sources[0])
+		// prefix dst with object's root directory
+		dst = path.Join(comm.objRoot, dst)
+		xfer[src] = dst
+	}
+	return xfer, nil
 }
