@@ -2,6 +2,7 @@ package digest
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -240,7 +241,7 @@ func MapMakerFrom(m *Map) (*MapMaker, error) {
 	return mm, nil
 }
 
-// Add adds digest d and path p to the Map.  The digest d may be added using a
+// Add adds digest d and path p to the Map. The digest d may be added using a
 // modified form. For example, if the lowercase version of the digest exists and
 // the uppercase form is used in Add, the resulting digest map will associate
 // path p with the lowercase form. An error is returned if p is already present
@@ -251,6 +252,9 @@ func (mm *MapMaker) Add(d, p string) error {
 	mm.init()
 	if !validPath(p) {
 		return &MapPathInvalidErr{p}
+	}
+	if d == "" {
+		return errors.New("cannot add empty digest")
 	}
 	norm := normalizeDigest(d)
 	prevDigest, digestExists := mm.norms[norm]
@@ -273,6 +277,17 @@ func (mm *MapMaker) Add(d, p string) error {
 	}
 	return nil
 }
+
+// func (mm *MapMaker) GetDigest(p string) string {
+// 	if mm.tree == nil || mm.norms == nil {
+// 		return ""
+// 	}
+// 	n, err := mm.tree.Get(p)
+// 	if err != nil {
+// 		return ""
+// 	}
+// 	return mm.norms[n.Val]
+// }
 
 // Map returns a point to a new [Map] as constructed or modified by the MapMaker
 func (mm *MapMaker) Map() *Map {

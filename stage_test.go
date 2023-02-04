@@ -99,11 +99,10 @@ func TestNewStage(t *testing.T) {
 		t.Fatalf("expected a %s value", algID)
 	}
 	// manifest should include two entries
-	mans, err := stg.AllManifests(nil)
+	man, err := stg.Manifest()
 	if err != nil {
 		t.Fatal(err)
 	}
-	man := mans[stg.DigestAlg().ID()]
 	if l := len(man.AllPaths()); l != 2 {
 		t.Fatalf("expected 2 entries in the manifest, got %d: %v", l, man.AllPaths())
 	}
@@ -111,14 +110,6 @@ func TestNewStage(t *testing.T) {
 	st := stg.VersionState()
 	if l := len(st.AllPaths()); l != 2 {
 		t.Fatalf("expected 2 entries in the state, got %v", st.AllPaths())
-	}
-	// manifests for md5 and stage algo
-	mans, err = stg.AllManifests(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if l := len(mans); l != 2 {
-		t.Fatalf("expected 1 entries in fixity, got %d", l)
 	}
 	// validate stage digests
 	if err := validateStageDigests(context.Background(), stg); err != nil {
@@ -318,11 +309,7 @@ func TestStageWrite(t *testing.T) {
 			t.Fatal(err)
 		}
 		// check that added files are in manifest
-		mans, err := stg.AllManifests(nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		man := mans[stg.DigestAlg().ID()]
+		man, err := stg.Manifest()
 		if err != nil {
 			t.Fatal(err)
 		}

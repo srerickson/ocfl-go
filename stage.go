@@ -206,7 +206,7 @@ func (stage *Stage) Walk(fn IndexWalkFunc) error {
 	return stage.idx.Walk(fn)
 }
 
-func (stage *Stage) Manifest(renameFunc func(string) string) (*digest.Map, error) {
+func (stage *Stage) Manifest() (*digest.Map, error) {
 	alg := stage.alg.ID()
 	maker := &digest.MapMaker{}
 	walkFn := func(p string, n *Index) error {
@@ -218,9 +218,6 @@ func (stage *Stage) Manifest(renameFunc func(string) string) (*digest.Map, error
 			return fmt.Errorf("missing %s for '%s'", alg, p)
 		}
 		for _, src := range n.node.Val.SrcPaths {
-			if renameFunc != nil {
-				src = renameFunc(src)
-			}
 			if err := maker.Add(dig, src); err != nil {
 				return err
 			}
@@ -231,47 +228,6 @@ func (stage *Stage) Manifest(renameFunc func(string) string) (*digest.Map, error
 		return nil, err
 	}
 	return maker.Map(), nil
-}
-
-// AllManifests returns a map of digest.Maps with digest -> source path mappings for
-// files in the stage. If the returned error is nil, the map will have at least
-// one entry for the stage's digest algorithm. If any file is found in the stage
-// without a value for the stage's digest algorithm, a non-nill error is
-// returne.
-func (stage *Stage) AllManifests(renameFunc func(string) string) (map[string]*digest.Map, error) {
-	alg := stage.alg.ID()
-	mapMakers := map[string]*digest.MapMaker{}
-	walkFn := func(p string, n *Index) error {
-		if n.node.IsDir() {
-			return nil
-		}
-		digs := n.node.Val.Digests
-		if digs[alg] == "" {
-			return fmt.Errorf("missing %s for '%s'", alg, p)
-		}
-		for algID := range digs {
-			if mapMakers[algID] == nil {
-				mapMakers[algID] = &digest.MapMaker{}
-			}
-			for _, src := range n.node.Val.SrcPaths {
-				if renameFunc != nil {
-					src = renameFunc(src)
-				}
-				if err := mapMakers[algID].Add(digs[algID], src); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-	if err := stage.idx.Walk(walkFn); err != nil {
-		return nil, err
-	}
-	maps := map[string]*digest.Map{}
-	for alg, maker := range mapMakers {
-		maps[alg] = maker.Map()
-	}
-	return maps, nil
 }
 
 // VersionState returns a digest map for the logical paths in the stage using
