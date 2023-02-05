@@ -108,7 +108,7 @@ func (inv *Inventory) ContentPath(vnum ocfl.VNum, logical string) (string, error
 
 // Copy creates an identical Inventory without any references to values in the
 // original inventory
-func (inv Inventory) Copy() *Inventory {
+func (inv Inventory) Copy() (*Inventory, error) {
 	newInv := inv
 	newInv.digest = "" // don't copy digest value (read from sidecar)
 	newInv.Manifest = newInv.Manifest.Copy()
@@ -117,8 +117,12 @@ func (inv Inventory) Copy() *Inventory {
 		newInv.Versions[v] = &Version{
 			Created: ver.Created,
 			Message: ver.Message,
-			State:   ver.State.Copy(),
 		}
+		state, err := ver.State.Normalized()
+		if err != nil {
+			return nil, fmt.Errorf("version %s state has errors: %w", v, err)
+		}
+		newInv.Versions[v].State = state
 		if ver.User != nil {
 			newInv.Versions[v].User = &User{
 				Name:    ver.User.Name,
@@ -128,9 +132,13 @@ func (inv Inventory) Copy() *Inventory {
 	}
 	newInv.Fixity = make(map[string]*digest.Map, len(inv.Fixity))
 	for alg, m := range inv.Fixity {
-		newInv.Fixity[alg] = m.Copy()
+		fix, err := m.Normalized()
+		if err != nil {
+			return nil, fmt.Errorf("%s fixity has errors: %w", alg, err)
+		}
+		newInv.Fixity[alg] = fix
 	}
-	return &newInv
+	return &newInv, nil
 }
 
 // WriteInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
@@ -246,7 +254,10 @@ func (inv Inventory) NextVersionInventory(stage *ocfl.Stage, created time.Time, 
 	if inv.DigestAlgorithm != algid {
 		return nil, fmt.Errorf("stage and inventory use different digest algorithms: '%s' != '%s'", algid, inv.DigestAlgorithm)
 	}
-	newInv := inv.Copy()
+	newInv, err := inv.Copy()
+	if err != nil {
+		return nil, fmt.Errorf("source inventory has errors: %w", err)
+	}
 	newInv.Head = next
 	newInv.Versions[newInv.Head] = &Version{
 		Created: created.Truncate(time.Second),

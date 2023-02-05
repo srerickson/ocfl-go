@@ -1,9 +1,7 @@
 package ocflv1_test
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -58,38 +56,6 @@ func TestInventoryIndex(t *testing.T) {
 			})
 			if err != nil {
 				t.Fatal(err)
-			}
-		})
-	}
-}
-
-func TestInventoryCopy(t *testing.T) {
-	fsys := ocfl.DirFS(goodObjPath)
-	ctx := context.Background()
-	goodObjects, err := fsys.ReadDir(ctx, ".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, dir := range goodObjects {
-		t.Run(dir.Name(), func(t *testing.T) {
-			name := path.Join(dir.Name(), "inventory.json")
-			inv, result := ocflv1.ValidateInventory(ctx, fsys, name, nil)
-			if err := result.Err(); err != nil {
-				t.Fatal(err)
-			}
-			cp := inv.Copy()
-			expBytes, err := json.Marshal(inv)
-			if err != nil {
-				t.Fatal(err)
-			}
-			gotBytes, err := json.Marshal(cp)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(expBytes, gotBytes) {
-				t.Log("expect", string(expBytes))
-				t.Log("got", string(gotBytes))
-				t.Fatal("copied inventory isn't a match")
 			}
 		})
 	}

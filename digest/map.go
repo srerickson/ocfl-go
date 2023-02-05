@@ -89,6 +89,23 @@ func (m Map) Copy() *Map {
 	return cp
 }
 
+// Normalized returns a copy of the map with normalized (lowercase) digests. An
+// error is returned if the same digest appears more than once.
+func (m Map) Normalized() (*Map, error) {
+	cp := &Map{
+		digests: make(map[string][]string, len(m.digests)),
+	}
+	for digest, paths := range m.digests {
+		norm := normalizeDigest(digest)
+		if _, exists := cp.digests[norm]; exists {
+			return nil, &MapDigestConflictErr{Digest: norm}
+		}
+		cp.digests[norm] = make([]string, 0, len(paths))
+		cp.digests[norm] = append(cp.digests[digest], m.digests[digest]...)
+	}
+	return cp, nil
+}
+
 // HasDigest returns true if d is present in the Map. The digest
 // is not normalized, so uppercase and lowercase versions of the
 // same digest will not count as equivalent.
@@ -289,7 +306,7 @@ func (mm *MapMaker) Add(d, p string) error {
 // 	return mm.norms[n.Val]
 // }
 
-// Map returns a point to a new [Map] as constructed or modified by the MapMaker
+// Map returns a point to a new [Map] as constructed or modified by the MapMaker.
 func (mm *MapMaker) Map() *Map {
 	m := &Map{digests: map[string][]string{}}
 	if mm.tree == nil {
@@ -299,7 +316,7 @@ func (mm *MapMaker) Map() *Map {
 		if node.IsDir() {
 			return nil
 		}
-		d := node.Val
+		d := normalizeDigest(node.Val)
 		m.digests[d] = append(m.digests[d], pth)
 		return nil
 	})
