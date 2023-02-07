@@ -358,6 +358,9 @@ func NewInventory(stage *ocfl.Stage, id string, spec ocfl.Spec, contDir string, 
 		contDir = contentDir
 	}
 	head := ocfl.V(1, padding)
+	if err := head.Valid(); err != nil {
+		return nil, fmt.Errorf("invalid padding: %d", padding)
+	}
 	inv := &Inventory{
 		ID:               id,
 		Head:             head,
@@ -405,7 +408,7 @@ func NewInventory(stage *ocfl.Stage, id string, spec ocfl.Spec, contDir string, 
 		return nil
 	}
 	if err := stage.Walk(walkFn); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("in new inventory stage: %w", err)
 	}
 	maps := map[string]*digest.Map{}
 	for alg, maker := range makers {

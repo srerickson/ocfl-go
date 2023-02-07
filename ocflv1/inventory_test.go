@@ -80,12 +80,17 @@ func TestInventorNextVersionInventory(t *testing.T) {
 				stage := ocfl.NewStage(inv.Alg())
 				nextVersionInventoryTest(t, inv, stage, "new version", time.Now(), &ocflv1.User{Name: "Me", Address: "email:me@me.com"})
 			})
-			t.Run("newfile", func(t *testing.T) {
+			t.Run("stage newfile", func(t *testing.T) {
 				stage := ocfl.NewStage(inv.Alg())
 				stage.UnsafeAdd("newfile.txt", "content.txt", digest.Set{inv.DigestAlgorithm: "abcd"})
 				nextVersionInventoryTest(t, inv, stage, "new version", time.Now(), &ocflv1.User{Name: "Me", Address: "email:me@me.com"})
 			})
-			t.Run("re-add-digest", func(t *testing.T) {
+			t.Run("stage newfile, fixity", func(t *testing.T) {
+				stage := ocfl.NewStage(inv.Alg())
+				stage.UnsafeAdd("newfile.txt", "content.txt", digest.Set{inv.DigestAlgorithm: "abcd", digest.MD5().ID(): "1234"})
+				nextVersionInventoryTest(t, inv, stage, "new version", time.Now(), &ocflv1.User{Name: "Me", Address: "email:me@me.com"})
+			})
+			t.Run("stage re-add-digest", func(t *testing.T) {
 				// add file with lowercase digest, then remove it, then add it back as uppercase.
 				// this is meant to test merging a stage with a source path and a digest that already exists in the inventory.
 				// stage 1 -- new file, whacky digest format
@@ -144,24 +149,61 @@ func nextVersionInventoryTest(t *testing.T, inv *ocflv1.Inventory, stage *ocfl.S
 			})
 		})
 	}
-	// check the new version
+	// fixity values in old inventory should be in new inventory. A section for
+	// the inventory's digest algorithm will never be included in the fixity
+	// section of the new inventory even if it exists in the previous inventory.
+	for fixalg, fixmap := range inv.Fixity {
+		if fixalg == newInv.DigestAlgorithm {
+			continue
+		}
+		t.Run("fixity-"+fixalg, func(t *testing.T) {
+			gotfix := newInv.Fixity[fixalg]
+			if gotfix == nil {
+				t.Fatal("missing in new inventory")
+			}
+			fixmap.EachPath(func(name string, digest string) error {
+				isEq(t, gotfix.GetDigest(name), strings.ToLower(digest), "fixity entry for", name)
+				return nil
+			})
+		})
+	}
+	// check new version: values from NextVersionInventory found in stage
 	headVer := newInv.Versions[newInv.Head]
 	isEq(t, headVer.Created.Unix(), created.Unix(), "new version timestamp (unix)")
 	isEq(t, headVer.Message, msg, "new version message")
 	isEq(t, headVer.User, user, "new version user")
-	stage.Walk(func(name string, node *ocfl.Index) error {
+	stage.Walk(func(lgcPath string, node *ocfl.Index) error {
 		if node.IsDir() {
 			return nil
 		}
-		gotdigest := headVer.State.GetDigest(name)
-		expDigest := strings.ToLower(node.Val().Digests[inv.DigestAlgorithm])
-		isNot(t, gotdigest, "", fmt.Sprintf("new version state is missing '%s'", name))
-		isEq(t, gotdigest, expDigest, fmt.Sprintf("new version state is missing '%s'", name))
-		// every source path in the stage should be added to the manifest
-		// with the version content directory as a prefix
+		stageDigests := node.Val().Digests
+		stageDigest := stageDigests[newInv.DigestAlgorithm]
+		stateDigest := headVer.State.GetDigest(lgcPath)
+		isNot(t, stateDigest, "", fmt.Sprintf("new version state is missing '%s'", lgcPath))
+		isEq(t, stateDigest, stageDigest, fmt.Sprintf("wrong digest in version state for '%s'", lgcPath))
+		// the stage digest should be associacate with all source paths in the
+		// manifest. Every source path in the stage should be added to the
+		// manifest with the version content directory as a prefix
 		for _, src := range node.Val().SrcPaths {
 			expPath := path.Join(newInv.Head.String(), newInv.ContentDirectory, src)
-			isNot(t, newInv.Manifest.GetDigest(expPath), "missing manifest entry for", src)
+			manifestDigest := newInv.Manifest.GetDigest(expPath)
+			isEq(t, manifestDigest, stageDigest, "manifest digest for", expPath)
+		}
+		// additional digests in the stage should be present in the
+		// appropriate fixity block for the new inventory.
+		for alg, stageDigest := range node.Val().Digests {
+			if alg == newInv.DigestAlgorithm {
+				continue
+			}
+			fixity := newInv.Fixity[alg]
+			if fixity == nil {
+				t.Fatal("missing fixity for ", alg)
+			}
+			for _, src := range node.Val().SrcPaths {
+				expPath := path.Join(newInv.Head.String(), newInv.ContentDirectory, src)
+				fixityDigest := fixity.GetDigest(expPath)
+				isEq(t, fixityDigest, strings.ToLower(stageDigest), "fixity digest for", expPath)
+			}
 		}
 		return nil
 	})
@@ -174,9 +216,9 @@ func isEq(t *testing.T, got any, exp any, desc ...string) {
 	}
 }
 
-func isNot(t *testing.T, got any, exp any, desc ...string) {
-	if reflect.DeepEqual(got, exp) {
-		t.Fatalf("%s: val='%v'", fmt.Sprint(desc), got)
+func isNot(t *testing.T, got any, not any, desc ...string) {
+	if reflect.DeepEqual(got, not) {
+		t.Fatalf("%s: val='%v'", fmt.Sprint(desc), not)
 	}
 }
 
