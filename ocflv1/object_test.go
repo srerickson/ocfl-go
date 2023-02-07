@@ -11,9 +11,10 @@ import (
 	"github.com/srerickson/ocfl/ocflv1"
 )
 
-var fixturePath = filepath.Join(`..`, `testdata`, `object-fixtures`, `1.0`)
+var fixturePath = filepath.Join(`..`, `testdata`, `object-fixtures`, `1.1`)
 var goodObjPath = filepath.Join(fixturePath, `good-objects`)
 
+//var warnObjPath = filepath.Join(fixturePath, `warn-objects`)
 //var badObjPath = filepath.Join(fixturePath, `bad-objects`)
 
 func TestReadObject(t *testing.T) {

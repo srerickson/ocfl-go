@@ -216,7 +216,7 @@ func (inv *Inventory) Index(ver ocfl.VNum) (*ocfl.Index, error) {
 func (inv Inventory) NextVersionInventory(stage *ocfl.Stage, created time.Time, msg string, user *User) (*Inventory, error) {
 	next, err := inv.Head.Next()
 	if err != nil {
-		return nil, fmt.Errorf("the inventory's version numbering scheme does support versions beyond %s: %w", inv.Head, err)
+		return nil, fmt.Errorf("the inventory's version numbering scheme does not support versions beyond %s: %w", inv.Head, err)
 	}
 	algid := stage.DigestAlg().ID()
 	if inv.DigestAlgorithm != algid {
