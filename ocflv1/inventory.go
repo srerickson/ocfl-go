@@ -34,8 +34,8 @@ type Inventory struct {
 	Versions         map[ocfl.VNum]*Version `json:"versions"`
 	Fixity           map[string]*digest.Map `json:"fixity,omitempty"`
 
-	digest string // inventory digest using alg
-	alg    digest.Alg
+	digest string     // inventory digest using alg
+	alg    digest.Alg // resolved digest algorithm
 }
 
 // Version represents object version state and metadata
@@ -104,41 +104,6 @@ func (inv *Inventory) ContentPath(vnum ocfl.VNum, logical string) (string, error
 		return "", fmt.Errorf("missing manifest entry for: %s", sum)
 	}
 	return paths[0], nil
-}
-
-// Copy creates an identical Inventory without any references to values in the
-// original inventory
-func (inv Inventory) Copy() (*Inventory, error) {
-	newInv := inv
-	newInv.digest = "" // don't copy digest value (read from sidecar)
-	newInv.Manifest = newInv.Manifest.Copy()
-	newInv.Versions = make(map[ocfl.VNum]*Version, len(inv.Versions))
-	for v, ver := range inv.Versions {
-		newInv.Versions[v] = &Version{
-			Created: ver.Created,
-			Message: ver.Message,
-		}
-		state, err := ver.State.Normalized()
-		if err != nil {
-			return nil, fmt.Errorf("version %s state has errors: %w", v, err)
-		}
-		newInv.Versions[v].State = state
-		if ver.User != nil {
-			newInv.Versions[v].User = &User{
-				Name:    ver.User.Name,
-				Address: ver.User.Address,
-			}
-		}
-	}
-	newInv.Fixity = make(map[string]*digest.Map, len(inv.Fixity))
-	for alg, m := range inv.Fixity {
-		fix, err := m.Normalized()
-		if err != nil {
-			return nil, fmt.Errorf("%s fixity has errors: %w", alg, err)
-		}
-		newInv.Fixity[alg] = fix
-	}
-	return &newInv, nil
 }
 
 // WriteInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
@@ -239,12 +204,15 @@ func (inv *Inventory) Index(ver ocfl.VNum) (*ocfl.Index, error) {
 // NextVersionInventory returns a new inventory that is a valid successor for
 // the calling inventory. The new inventory will have an incremented version
 // number and a new version state based on the contents of the stage. Additional
-// arguments are used to set the versions created timestamp, message string, and
-// user information. If the inventory's version numbering scheme doesn't allow
-// additional versions, an error is returned. An error is also returned if
-// stage's digest algorithm doesn't match the inventory's or if the stage is
-// incomplete (i.e., the new version state references digests without source
-// paths in the stage).
+// arguments are used to set the new version's created timestamp, message
+// string, and user information. The new inventory will use lowercase digest
+// strings for manifest, version state, and fixity entries. Manifest paths for
+// new content files are formed by joining the new version's content directory
+// to the content path found in the stage. All staged files with digests not
+// found in the calling inventory's manifest must include content paths;
+// otherwise, the stage is considered incomplete and an error is returned. If
+// the stage uses a digest algorithm that is different from the calling
+// inventory's, an error is returned.
 func (inv Inventory) NextVersionInventory(stage *ocfl.Stage, created time.Time, msg string, user *User) (*Inventory, error) {
 	next, err := inv.Head.Next()
 	if err != nil {
@@ -254,9 +222,9 @@ func (inv Inventory) NextVersionInventory(stage *ocfl.Stage, created time.Time, 
 	if inv.DigestAlgorithm != algid {
 		return nil, fmt.Errorf("stage and inventory use different digest algorithms: '%s' != '%s'", algid, inv.DigestAlgorithm)
 	}
-	newInv, err := inv.Copy()
+	newInv, err := inv.normalizedCopy()
 	if err != nil {
-		return nil, fmt.Errorf("source inventory has errors: %w", err)
+		return nil, fmt.Errorf("in source inventory: %w", err)
 	}
 	newInv.Head = next
 	newInv.Versions[newInv.Head] = &Version{
@@ -286,6 +254,44 @@ func (inv Inventory) NextVersionInventory(stage *ocfl.Stage, created time.Time, 
 	return newInv, nil
 }
 
+// returns a copy of the inventory with normalized paths
+func (inv Inventory) normalizedCopy() (*Inventory, error) {
+	man, err := inv.Manifest.Normalized()
+	if err != nil {
+		return nil, fmt.Errorf("in manifest: %w", err)
+	}
+	newInv := inv
+	newInv.digest = "" // don't copy digest value (read from sidecar)
+	newInv.Manifest = man
+	newInv.Versions = make(map[ocfl.VNum]*Version, len(inv.Versions))
+	for v, ver := range inv.Versions {
+		newInv.Versions[v] = &Version{
+			Created: ver.Created,
+			Message: ver.Message,
+		}
+		state, err := ver.State.Normalized()
+		if err != nil {
+			return nil, fmt.Errorf("in version %s state: %w", v, err)
+		}
+		newInv.Versions[v].State = state
+		if ver.User != nil {
+			newInv.Versions[v].User = &User{
+				Name:    ver.User.Name,
+				Address: ver.User.Address,
+			}
+		}
+	}
+	newInv.Fixity = make(map[string]*digest.Map, len(inv.Fixity))
+	for alg, m := range inv.Fixity {
+		fix, err := m.Normalized()
+		if err != nil {
+			return nil, fmt.Errorf("in %s fixity: %w", alg, err)
+		}
+		newInv.Fixity[alg] = fix
+	}
+	return &newInv, nil
+}
+
 // mergeStageManifests merges the source paths and digests from the stage into
 // the set of manifests, applying the rename function to the source path.
 func mergeStageManifests(stage *ocfl.Stage, manifests map[string]*digest.Map, renameFunc func(string) string) (map[string]*digest.Map, error) {
@@ -293,7 +299,7 @@ func mergeStageManifests(stage *ocfl.Stage, manifests map[string]*digest.Map, re
 	for algid := range manifests {
 		m, err := digest.MapMakerFrom(manifests[algid])
 		if err != nil {
-			return nil, fmt.Errorf("previous manifest has errors: %w", err)
+			return nil, fmt.Errorf("in previous manifest: %w", err)
 		}
 		makers[algid] = m
 	}
@@ -319,7 +325,8 @@ func mergeStageManifests(stage *ocfl.Stage, manifests map[string]*digest.Map, re
 				// since another logical path in the stage might use the same
 				// source path. The error we are concerned with is whether the
 				// source path was previously added with a different digest.
-				if err := makers[algID].Add(digs[algID], src); err != nil {
+				err := makers[algID].Add(digs[algID], src)
+				if err != nil && !errors.Is(err, digest.ErrMapMakerExists) {
 					return err
 				}
 			}
@@ -340,7 +347,12 @@ func mergeStageManifests(stage *ocfl.Stage, manifests map[string]*digest.Map, re
 }
 
 // NewInventory creates an initial inventory for the first version of an object
-// based on the contets of the stage.
+// based on the contets of the stage. The new inventory will use lowercase
+// digest strings for manifest, version state, and fixity entries. Manifest
+// paths for new content files are formed by joining the new version's content
+// directory to the content path found in the stage. All staged files must have
+// content paths or else the stage is considered incomplete and an error is
+// returne.
 func NewInventory(stage *ocfl.Stage, id string, spec ocfl.Spec, contDir string, padding int, created time.Time, msg string, user *User) (*Inventory, error) {
 	if contDir == "" {
 		contDir = contentDir
@@ -381,7 +393,11 @@ func NewInventory(stage *ocfl.Stage, id string, spec ocfl.Spec, contDir string, 
 			}
 			for _, src := range srcs {
 				src := path.Join(inv.Head.String(), inv.ContentDirectory, src)
-				if err := makers[algID].Add(digs[algID], src); err != nil {
+				// Add content paths to manifest and fixity. It's ok if the same
+				// path is added multiple times, but only if the digest is the
+				// same.
+				err := makers[algID].Add(digs[algID], src)
+				if err != nil && !errors.Is(err, digest.ErrMapMakerExists) {
 					return err
 				}
 			}

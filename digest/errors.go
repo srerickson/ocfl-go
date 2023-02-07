@@ -1,6 +1,10 @@
 package digest
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/pkg/errors"
+)
 
 // DigestErr is returned when content's digest conflicts with an expected value
 type DigestErr struct {
@@ -46,3 +50,7 @@ type MapPathInvalidErr struct {
 func (p *MapPathInvalidErr) Error() string {
 	return fmt.Sprintf("invalid path: '%s'", p.Path)
 }
+
+// ErrMapMakerExists is returned when calling Add with a path and digest that
+// are already present in the MapMaker
+var ErrMapMakerExists = errors.New("path and digest exist")

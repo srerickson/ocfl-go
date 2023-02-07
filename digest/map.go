@@ -77,18 +77,6 @@ func (m Map) allPathDigests() (map[string]string, error) {
 	return files, nil
 }
 
-// Copy returns a distinct copy of the Map.
-func (m Map) Copy() *Map {
-	cp := &Map{
-		digests: make(map[string][]string, len(m.digests)),
-	}
-	for digest, paths := range m.digests {
-		cp.digests[digest] = make([]string, 0, len(paths))
-		cp.digests[digest] = append(cp.digests[digest], m.digests[digest]...)
-	}
-	return cp
-}
-
 // Normalized returns a copy of the map with normalized (lowercase) digests. An
 // error is returned if the same digest appears more than once.
 func (m Map) Normalized() (*Map, error) {
@@ -213,14 +201,14 @@ func (m *Map) validation() error {
 
 // A MapMaker is used to construct Maps or add new paths to existing digest.
 type MapMaker struct {
-	tree  *pathtree.Node[string]
-	norms map[string]string // normalized digest map
+	tree    *pathtree.Node[string]
+	digests map[string]struct{} // normalized digests
 }
 
 // inititalize MapMaker members if necessary
 func (mm *MapMaker) init() {
-	if mm.norms == nil {
-		mm.norms = map[string]string{}
+	if mm.digests == nil {
+		mm.digests = map[string]struct{}{}
 	}
 	if mm.tree == nil {
 		mm.tree = pathtree.NewDir[string]()
@@ -232,39 +220,27 @@ func (mm *MapMaker) init() {
 // Map is not modified.
 func MapMakerFrom(m *Map) (*MapMaker, error) {
 	mm := &MapMaker{
-		tree:  pathtree.NewDir[string](),
-		norms: map[string]string{}}
-
-	if err := m.EachPath(func(p, d string) error {
-		if !validPath(p) {
-			return &MapPathInvalidErr{p}
-		}
-		norm := normalizeDigest(d)
-		prevDigest, exists := mm.norms[norm]
-		if exists && d != prevDigest {
-			return &MapDigestConflictErr{Digest: norm}
-		}
-		if _, err := mm.tree.Get(p); err == nil {
-			return &MapPathConflictErr{Path: p}
-		}
-		if err := mm.tree.SetFile(p, d); err != nil {
-			return &MapPathConflictErr{Path: p}
-		}
-		mm.norms[norm] = d
-		return nil
-	}); err != nil {
+		tree:    pathtree.NewDir[string](),
+		digests: map[string]struct{}{},
+	}
+	if err := m.validation(); err != nil {
 		return nil, fmt.Errorf("digest map has errors: %w", err)
+	}
+	for pth, dig := range m.files {
+		norm := normalizeDigest(dig)
+		if err := mm.tree.SetFile(pth, norm); err != nil {
+			// if the digest map is valid, there should be no errors here.
+			panic(fmt.Errorf("this is a bug: %w", err))
+		}
+		mm.digests[norm] = struct{}{}
 	}
 	return mm, nil
 }
 
-// Add adds digest d and path p to the Map. The digest d may be added using a
-// modified form. For example, if the lowercase version of the digest exists and
-// the uppercase form is used in Add, the resulting digest map will associate
-// path p with the lowercase form. An error is returned if p is already present
-// in the MapMaker, or if adding the digest and path would otherwise result in
-// an invalid Map. Note, you cannot use Add() to change the digest for a path in
-// the MapMaker.
+// Add adds the normalized (lowercase) form of the digest d and the path p to
+// the MapMaker. If the digest and path are already present, ErrMapPathExists is
+// returned. If the path was added with a different digest, or if conflicts with
+// another path in the MapMaker, MapPathConflictErr is returned.
 func (mm *MapMaker) Add(d, p string) error {
 	mm.init()
 	if !validPath(p) {
@@ -274,13 +250,10 @@ func (mm *MapMaker) Add(d, p string) error {
 		return errors.New("cannot add empty digest")
 	}
 	norm := normalizeDigest(d)
-	prevDigest, digestExists := mm.norms[norm]
-	if digestExists {
-		// set d to previously added form
-		d = prevDigest
-	}
-	if _, err := mm.tree.Get(p); err == nil {
-		// path already exists
+	if node, err := mm.tree.Get(p); err == nil {
+		if !node.IsDir() && node.Val == norm {
+			return ErrMapMakerExists
+		}
 		return &MapPathConflictErr{Path: p}
 	}
 	if err := mm.tree.SetFile(p, d); err != nil {
@@ -289,22 +262,9 @@ func (mm *MapMaker) Add(d, p string) error {
 		// conflict.
 		return &MapPathConflictErr{Path: p}
 	}
-	if !digestExists {
-		mm.norms[norm] = d
-	}
+	mm.digests[norm] = struct{}{}
 	return nil
 }
-
-// func (mm *MapMaker) GetDigest(p string) string {
-// 	if mm.tree == nil || mm.norms == nil {
-// 		return ""
-// 	}
-// 	n, err := mm.tree.Get(p)
-// 	if err != nil {
-// 		return ""
-// 	}
-// 	return mm.norms[n.Val]
-// }
 
 // Map returns a point to a new [Map] as constructed or modified by the MapMaker.
 func (mm *MapMaker) Map() *Map {
@@ -330,7 +290,7 @@ func (mm *MapMaker) Map() *Map {
 // exists in the MapMaker. Note this is slightly different than [Map]'s
 // method with the same name.
 func (mm MapMaker) HasDigest(d string) bool {
-	_, exists := mm.norms[normalizeDigest(d)]
+	_, exists := mm.digests[normalizeDigest(d)]
 	return exists
 }
 

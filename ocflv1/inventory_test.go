@@ -99,7 +99,7 @@ func TestInventorNextVersionInventory(t *testing.T) {
 				t.Fatal("new inventory doesn't have additional version")
 			}
 			ver := newInv.Versions[newInv.Head]
-			if ver.Created.UTC().Truncate(time.Second) != created.UTC().Truncate(time.Second) {
+			if ver.Created.Unix() != created.Unix() {
 				t.Fatal("new version doesn't have right created timestamp")
 			}
 			if ver.Message != msg {
