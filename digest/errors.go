@@ -1,9 +1,8 @@
 package digest
 
 import (
+	"errors"
 	"fmt"
-
-	"github.com/pkg/errors"
 )
 
 // DigestErr is returned when content's digest conflicts with an expected value
