@@ -59,13 +59,9 @@ func (s *Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts .
 		if err != nil {
 			return fmt.Errorf("while building next inventory: %w", err)
 		}
-		// TODO: handle bumping OCFL spec. Also need to replace NAMASTE!
-		// if comm.spec.Cmp(newInv.Type.Spec) > 0 {
-		// 	newInv.Type = comm.spec.AsInvType()
-		// }
 	} else {
 		// new object
-		newInv, err = NewInventory(stage, id, comm.spec, comm.contentDir, comm.padding, comm.created, comm.message, &comm.user)
+		newInv, err = NewInventory(stage, id, comm.contentDir, comm.padding, comm.created, comm.message, &comm.user)
 		if err != nil {
 			return fmt.Errorf("while building new inventory: %w", err)
 		}

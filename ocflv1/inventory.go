@@ -353,7 +353,7 @@ func mergeStageManifests(stage *ocfl.Stage, manifests map[string]*digest.Map, re
 // directory to the content path found in the stage. All staged files must have
 // content paths or else the stage is considered incomplete and an error is
 // returne.
-func NewInventory(stage *ocfl.Stage, id string, spec ocfl.Spec, contDir string, padding int, created time.Time, msg string, user *User) (*Inventory, error) {
+func NewInventory(stage *ocfl.Stage, id string, contDir string, padding int, created time.Time, msg string, user *User) (*Inventory, error) {
 	if contDir == "" {
 		contDir = contentDir
 	}
@@ -361,10 +361,13 @@ func NewInventory(stage *ocfl.Stage, id string, spec ocfl.Spec, contDir string, 
 	if err := head.Valid(); err != nil {
 		return nil, fmt.Errorf("invalid padding: %d", padding)
 	}
+	if alg := stage.DigestAlg().ID(); !algorithms[alg] {
+		return nil, fmt.Errorf("invalid digest algorithm %s", alg)
+	}
 	inv := &Inventory{
 		ID:               id,
 		Head:             head,
-		Type:             spec.AsInvType(),
+		Type:             defaultSpec.AsInvType(),
 		DigestAlgorithm:  stage.DigestAlg().ID(),
 		ContentDirectory: contDir,
 		Versions: map[ocfl.VNum]*Version{
