@@ -83,10 +83,10 @@ func (inv Inventory) Digest() string {
 	return inv.digest
 }
 
-// ContentPath returns the content path for the logical path present in the
-// state for version vnum. The content path is relative to the object's root
-// directory (i.e, as it appears in the inventory manifest). If vnum is empty,
-// the inventories head version is used.
+// ContentPath resolves the logical path from the version state for vnum to a
+// content path (i.e., a manifest path). The content path is relative to the
+// object's root directory. If vnum is empty, the inventories head version is
+// used.
 func (inv *Inventory) ContentPath(vnum ocfl.VNum, logical string) (string, error) {
 	if vnum.IsZero() {
 		vnum = inv.Head
@@ -304,7 +304,7 @@ func mergeStageManifests(stage *ocfl.Stage, manifests map[string]*digest.Map, re
 		makers[algid] = m
 	}
 	stageAlg := stage.DigestAlg().ID()
-	stage.Walk(func(p string, n *ocfl.Index) error {
+	err := stage.Walk(func(p string, n *ocfl.Index) error {
 		if n.IsDir() {
 			return nil
 		}
@@ -339,6 +339,9 @@ func mergeStageManifests(stage *ocfl.Stage, manifests map[string]*digest.Map, re
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
 	maps := make(map[string]*digest.Map, len(makers))
 	for alg, maker := range makers {
 		maps[alg] = maker.Map()
@@ -418,6 +421,9 @@ func NewInventory(stage *ocfl.Stage, id string, contDir string, padding int, cre
 		maps[alg] = maker.Map()
 	}
 	inv.Manifest = maps[inv.DigestAlgorithm]
+	if inv.Manifest == nil {
+		inv.Manifest = &digest.Map{}
+	}
 	delete(maps, inv.DigestAlgorithm)
 	inv.Fixity = maps
 	return inv, nil
