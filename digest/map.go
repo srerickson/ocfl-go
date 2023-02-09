@@ -77,8 +77,9 @@ func (m Map) allPathDigests() (map[string]string, error) {
 	return files, nil
 }
 
-// Normalized returns a copy of the map with normalized (lowercase) digests. An
-// error is returned if the same digest appears more than once.
+// Normalized returns a copy of the map with normalized (lowercase) digests and
+// sorted slice of paths. An error is returned if the same digest appears more
+// than once.
 func (m Map) Normalized() (*Map, error) {
 	cp := &Map{
 		digests: make(map[string][]string, len(m.digests)),
@@ -88,8 +89,9 @@ func (m Map) Normalized() (*Map, error) {
 		if _, exists := cp.digests[norm]; exists {
 			return nil, &MapDigestConflictErr{Digest: norm}
 		}
-		cp.digests[norm] = make([]string, 0, len(paths))
-		cp.digests[norm] = append(cp.digests[digest], m.digests[digest]...)
+		normpaths := append(make([]string, 0, len(paths)), m.digests[digest]...)
+		sort.Strings(normpaths)
+		cp.digests[norm] = normpaths
 	}
 	return cp, nil
 }

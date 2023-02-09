@@ -82,8 +82,7 @@ func TestNewInventory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// set up a stage that reads from object root -- generally a bad idea
-			stage1 := ocfl.NewStage(inv.Alg(), ocfl.StageRoot(fsys, dir.Name()))
+			stage1 := ocfl.NewStage(inv.Alg())
 			// FIXME: this is so ugly. Granted, it's a strange use case but there
 			// should be an easier way to iterate over logical paths and their
 			// contents. Doing this through an index is overkill.
@@ -108,7 +107,7 @@ func TestNewInventory(t *testing.T) {
 					t.Fatal(err)
 				}
 				ver := inv.Versions[vnum]
-				stage := ocfl.NewStage(inv.Alg(), ocfl.StageIndex(idx), ocfl.StageRoot(fsys, dir.Name()))
+				stage := ocfl.NewStage(inv.Alg(), ocfl.StageIndex(idx))
 				idx.Walk(func(name string, tree *ocfl.Index) error {
 					if tree.IsDir() {
 						return nil
@@ -118,9 +117,13 @@ func TestNewInventory(t *testing.T) {
 					return stage.UnsafeAdd(name, src, digest)
 				})
 				newInv = nextVersionInventoryTest(t, newInv, stage, ver.Created, ver.Message, ver.User)
+				// check that new version state matches expected
+				expState, _ := inv.Versions[vnum].State.Normalized()
+				gotState, err := newInv.Versions[vnum].State.Normalized()
+				isNil(t, err, "new version state has errors", vnum.String())
+				isEq(t, gotState, expState, "state for", vnum.String(), "doesn't match")
 			}
 		})
-
 	}
 }
 
@@ -329,7 +332,9 @@ func nextVersionInventoryTest(t *testing.T, inv *ocflv1.Inventory, stage *ocfl.S
 func isEq(t *testing.T, got any, exp any, desc ...string) {
 	t.Helper()
 	if !reflect.DeepEqual(got, exp) {
-		t.Fatalf("%s: got='%v', expect='%v'", fmt.Sprint(desc), got, exp)
+		t.Logf("got='%v'", got)
+		t.Logf("exp='%v'", exp)
+		t.Fatal(desc)
 	}
 }
 
