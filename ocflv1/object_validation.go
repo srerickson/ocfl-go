@@ -310,8 +310,8 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, vn oc
 	// confirm version states in the version inventory match root inventory
 	for v, ver := range inv.Versions {
 		rootVer := vldr.rootInv.Versions[v]
-		rootState, _ := vldr.rootInv.Index(v)
-		verState, _ := inv.Index(v)
+		rootState, _ := vldr.rootInv.Index(v.Num())
+		verState, _ := inv.Index(v.Num())
 		changes, err := rootState.Diff(*verState)
 		if err != nil {
 			err := fmt.Errorf("unexpected err durring inventory diff: %w", err)

@@ -11,9 +11,10 @@ import (
 	"github.com/srerickson/ocfl/ocflv1"
 )
 
-var fixturePath = filepath.Join(`..`, `testdata`, `object-fixtures`, `1.0`)
+var fixturePath = filepath.Join(`..`, `testdata`, `object-fixtures`, `1.1`)
 var goodObjPath = filepath.Join(fixturePath, `good-objects`)
 
+//var warnObjPath = filepath.Join(fixturePath, `warn-objects`)
 //var badObjPath = filepath.Join(fixturePath, `bad-objects`)
 
 func TestReadObject(t *testing.T) {
@@ -33,7 +34,7 @@ func TestReadObject(t *testing.T) {
 	if inv.Head.Num() != 3 {
 		t.Error("expected head to be version 3")
 	}
-	cont, err := inv.ContentPath(ocfl.VNum{}, "foo/bar.xml")
+	cont, err := inv.ContentPath(0, "foo/bar.xml")
 	if err != nil {
 		t.Error(err)
 	}

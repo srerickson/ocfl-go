@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"path"
 	"strings"
@@ -12,211 +11,75 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/internal/xfer"
 )
 
 // Commit creates or updates the object with the given id using the contents of stage.
 func (s *Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts ...CommitOption) error {
-	s.commitLock.Lock()
+	s.commitLock.Lock() // only one commit at a time
 	defer s.commitLock.Unlock()
-	var inv *Inventory
-	obj, err := s.GetObject(ctx, id)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("getting object info from storage root: %w", err)
-	}
-	if obj != nil {
-		inv, err = obj.Inventory(ctx)
-		if err != nil {
-			return err
-		}
-	}
-	comm, err := newCommit(id, stage, inv, opts...)
-	if err != nil {
-		return err
-	}
-	return s.commit(ctx, comm)
-}
-
-// commit creates or updates an object in the store using stage.
-func (s *Store) commit(ctx context.Context, comm *commit) error {
-	writeFS, objPath, err := s.objectWriteFSPath(comm.id)
-	if err != nil {
-		return err
-	}
-	// build new inventory from previous
-	newInv, err := comm.nextInventory(comm.prevInv)
-	if err != nil {
-		return fmt.Errorf("building new version inventory: %w", err)
-	}
-	// file transfer list
-	xfers, err := transferMap(newInv, comm.manifest)
-	if err != nil {
-		return err
-	}
-	if fsys, _ := comm.stage.Root(); len(xfers) > 0 && fsys == nil {
-		return fmt.Errorf("stage doesn't provide an FS for reading files to upload")
-	}
-	comm.logger.Info("committing new object version", "id", comm.id, "head", comm.vnum, "alg", comm.alg, "message", comm.message)
-	// expect version directory to ErrNotExist or be empty
-	if comm.vnum.First() {
-		entries, err := s.fsys.ReadDir(ctx, objPath)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		if len(entries) != 0 {
-			return errors.New("object directory must be empty to commit")
-		}
-	} else {
-		entries, err := s.fsys.ReadDir(ctx, path.Join(objPath, comm.vnum.String()))
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		if len(entries) != 0 {
-			return fmt.Errorf("version directory '%s' must be empty to commit", comm.vnum.String())
-		}
-	}
-
-	// write declaration for first version
-	if comm.vnum.First() {
-		if comm.nowrite {
-			comm.logger.Info("skipping object declaration", "object_path", objPath)
-		} else {
-			decl := ocfl.Declaration{
-				Type:    ocfl.DeclObject,
-				Version: comm.spec,
-			}
-			if err := ocfl.WriteDeclaration(ctx, writeFS, objPath, decl); err != nil {
-				return err
-			}
-		}
-	}
-	// transfer files
-	srcFS, stageRoot := comm.stage.Root()
-	for src, dst := range xfers {
-		dst = path.Join(objPath, dst)
-		xfers[src] = dst
-		if comm.nowrite {
-			comm.logger.Info("skipping file transfer", "src", src, "dst", dst)
-		}
-	}
-	// fixme -- xfer keys are paths relative to stage root dir, not stage FS
-	remap := make(map[string]string, len(xfers))
-	for src, dst := range xfers {
-		remap[path.Join(stageRoot, src)] = dst
-	}
-	xfers = remap
-	if !comm.nowrite {
-		_, err := xfer.DigestXfer(ctx, srcFS, writeFS, xfers, xfer.WithProgress(comm.progress))
-		if err != nil {
-			return fmt.Errorf("while transfering content files: %w", err)
-		}
-	}
-	vPath := path.Join(objPath, comm.vnum.String())
-	if comm.nowrite {
-		comm.logger.Info("skipping inventory write", "object_path", objPath, "version_path", vPath)
-	} else {
-		if err := WriteInventory(ctx, writeFS, newInv, objPath, vPath); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// get the writeFS and object path for an object
-func (s *Store) objectWriteFSPath(objID string) (ocfl.WriteFS, string, error) {
 	writeFS, ok := s.fsys.(ocfl.WriteFS)
 	if !ok {
-		return nil, "", fmt.Errorf("storage root backend is read-only")
+		return fmt.Errorf("storage root backend is read-only")
 	}
 	if s.layoutFunc == nil {
-		return nil, "", fmt.Errorf("storage root layout must be set to commit: %w", ErrLayoutUndefined)
+		return fmt.Errorf("commit requires a storage root layout: %w", ErrLayoutUndefined)
 	}
-	objPath, err := s.layoutFunc(objID)
+	objPath, err := s.layoutFunc(id)
 	if err != nil {
-		return nil, "", fmt.Errorf("object ID must be valid to commit: %w", err)
+		return fmt.Errorf("cannot commit id '%s': %w", id, err)
 	}
-	return writeFS, path.Join(s.rootDir, objPath), nil
-}
-
-func transferMap(newInv *Inventory, stageMan *digest.Map) (map[string]string, error) {
-	xfer := map[string]string{}
-	if newInv == nil || newInv.Manifest == nil {
-		return nil, errors.New("stage is not complete")
+	obj, err := s.GetObject(ctx, id)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("reading storage root: %w", err)
 	}
-	for p, d := range newInv.Manifest.AllPaths() {
-		if !strings.HasPrefix(p, newInv.Head.String()+"/") {
-			continue
-		}
-		sources := stageMan.DigestPaths(d)
-		if len(sources) == 0 {
-			return nil, fmt.Errorf("no source file provided for digest: %s", d)
-		}
-		xfer[sources[0]] = p
-	}
-	return xfer, nil
-}
-
-// commit represents an OCFL object transformation
-type commit struct {
-	id      string // object id from Commit()
-	stage   *ocfl.Stage
-	prevInv *Inventory
-
-	// object options
-	vnum            ocfl.VNum       // version number for the stage
-	spec            ocfl.Spec       // OCFL spec for new version
-	contentDir      string          // content directory setting
-	contentPathFunc ContentPathFunc // function used to configure content paths
-	user            User
-	message         string
-	nowrite         bool // used for "dry run" commit
-	logger          logr.Logger
-
-	progress io.Writer
-	// generated from stage
-	alg      digest.Alg
-	state    *digest.Map // new version state
-	manifest *digest.Map // stage manifest (i.e., paths relative to stage's FS)
-}
-
-func newCommit(id string, stage *ocfl.Stage, prev *Inventory, opts ...CommitOption) (*commit, error) {
+	// defaults
 	comm := &commit{
-		id:              id,
+		storeFS:         writeFS,
+		objRoot:         path.Join(s.rootDir, objPath),
 		spec:            defaultSpec,
-		vnum:            ocfl.V(1),
 		contentPathFunc: DefaultContentPathFunc,
 		stage:           stage,
-		prevInv:         prev,
-		alg:             stage.DigestAlg(),
 		logger:          logr.Discard(),
+		created:         time.Now().UTC().Truncate(time.Second),
 	}
+	// load options
 	for _, opt := range opts {
 		opt(comm)
 	}
-	if prev != nil {
-		nextv, err := prev.Head.Next()
+	// build new inventory
+	var newInv *Inventory
+	if obj != nil {
+		// object update
+		prevInv, err := obj.Inventory(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("version scheme doesn't support versions after %s: %w", prev.Head, err)
+			return err
 		}
-		comm.vnum = nextv                       // ignoring any version number/padding options
-		comm.contentDir = prev.ContentDirectory // ignoring content directory options
-	}
-	man, err := stage.Manifest()
-	if err != nil {
-		return nil, fmt.Errorf("stage is inconsistent: can't create manifest: %w", err)
-	}
-	comm.manifest = man
-	comm.state = stage.VersionState()
-	if prev != nil {
-		if err := comm.validate(prev); err != nil {
-			return nil, fmt.Errorf("stage options are not valid for this object: %w", err)
+		newInv, err = prevInv.NextVersionInventory(stage, comm.created, comm.message, &comm.user)
+		if err != nil {
+			return fmt.Errorf("while building next inventory: %w", err)
+		}
+	} else {
+		// new object
+		newInv, err = NewInventory(stage, id, comm.contentDir, comm.padding, comm.created, comm.message, &comm.user)
+		if err != nil {
+			return fmt.Errorf("while building new inventory: %w", err)
 		}
 	}
-	return comm, nil
+	comm.newInv = newInv
+	return comm.commit(ctx)
 }
 
+// CommitOption is used configure Commit
 type CommitOption func(*commit)
+
+// WithOCFLSpec is used to set the OCFL specification for the new object
+// version.
+func WithOCFLSpec(spec ocfl.Spec) CommitOption {
+	return func(comm *commit) {
+		comm.spec = spec
+	}
+}
 
 // WithContentDir is used to set the ContentDirectory value for the first
 // version of an object. It is ignored for subsequent versions.
@@ -230,7 +93,15 @@ func WithContentDir(cd string) CommitOption {
 // version of an object. It is ignored for subsequent versions.
 func WithVersionPadding(p int) CommitOption {
 	return func(comm *commit) {
-		comm.vnum = ocfl.V(comm.vnum.Num(), p)
+		comm.padding = p
+	}
+}
+
+// WithVersion is used to enforce a particul version number for the commit.
+// The default is to increment the existing verion if possible.
+func WithVersion(v int) CommitOption {
+	return func(comm *commit) {
+		comm.requireV = v
 	}
 }
 
@@ -242,12 +113,14 @@ func WithContentPathFunc(fn ContentPathFunc) CommitOption {
 	}
 }
 
+// WithMessage sets the message for the new object version
 func WithMessage(msg string) CommitOption {
 	return func(comm *commit) {
 		comm.message = msg
 	}
 }
 
+// WithUser sets the user for the new object version
 func WithUser(name, addr string) CommitOption {
 	return func(comm *commit) {
 		comm.user.Name = name
@@ -255,17 +128,11 @@ func WithUser(name, addr string) CommitOption {
 	}
 }
 
-// WithNoWrite configures the commit to prevent any writes to the storage root.
-// This enables "dry run" commits.
-func WithNoWrite() CommitOption {
+// WithCreated sets the created timestamp for the new object version to
+// a non-default value. The default is
+func WithCreated(c time.Time) CommitOption {
 	return func(comm *commit) {
-		comm.nowrite = true
-	}
-}
-
-func WithProgressWriter(w io.Writer) CommitOption {
-	return func(comm *commit) {
-		comm.progress = w
+		comm.created = c
 	}
 }
 
@@ -285,139 +152,112 @@ func DefaultContentPathFunc(logical string, digest string) string {
 	return logical
 }
 
-// nextManifest builds a manifest from the commit using a previous manifest,
-// which may be nil
-func (comm *commit) nextManifest(prev *digest.Map) (*digest.Map, error) {
-	var maker *digest.MapMaker
-	if prev != nil {
-		var err error
-		maker, err = digest.MapMakerFrom(prev)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		maker = &digest.MapMaker{}
-	}
-	if comm.contentPathFunc == nil {
-		comm.contentPathFunc = DefaultContentPathFunc
-	}
-	if comm.contentDir == "" {
-		comm.contentDir = contentDir
-	}
-	walkfn := func(p string, node *ocfl.Index) error {
-		if node.IsDir() {
-			return nil
-		}
-		sum, ok := node.Val().Digests[comm.alg.ID()]
-		if !ok {
-			return fmt.Errorf("missing digest for '%s'", comm.alg)
-		}
-		if maker.HasDigest(sum) {
-			return nil
-		}
-		// content path in manifest
-		cont := comm.contentPathFunc(p, sum)
-		cont = path.Join(comm.vnum.String(), comm.contentDir, cont)
-		maker.Add(sum, cont)
-		return nil
-	}
-	if err := comm.stage.Walk(walkfn); err != nil {
-		return nil, err
-	}
-	dmap := maker.Map()
-	if err := dmap.Valid(); err != nil {
-		return nil, err
-	}
-	return dmap, nil
+// commit represents an OCFL object transformation
+type commit struct {
+	storeFS ocfl.WriteFS
+	objRoot string      // object root
+	stage   *ocfl.Stage // content to commit
+	newInv  *Inventory  // inventory to commit
+
+	// options
+	requireV        int             // new inventory must have this version number (if non-zero)
+	spec            ocfl.Spec       // OCFL spec for new version
+	padding         int             // padding (new objects only)
+	contentDir      string          // content directory setting (new objects only)
+	contentPathFunc ContentPathFunc // function used to configure content paths
+	user            User
+	message         string
+	created         time.Time
+
+	logger logr.Logger
 }
 
-// nextInventory generates the next inventory based the previous inventory (if it exists)
-func (comm *commit) nextInventory(prevInv *Inventory) (*Inventory, error) {
-	var inv *Inventory
-	var prevMan *digest.Map
-	if prevInv != nil {
-		if err := comm.validate(prevInv); err != nil {
-			return nil, fmt.Errorf("the object settings are not compatible with the existing object: %w", err)
-		}
-		prevMan = prevInv.Manifest
-	}
-	newMan, err := comm.nextManifest(prevMan)
+// commit performs the commit
+func (comm *commit) commit(ctx context.Context) error {
+	id := comm.newInv.ID
+	vnum := comm.newInv.Head
+	xfers, err := comm.transferMap()
 	if err != nil {
-		return nil, fmt.Errorf("error while building manifest: %w", err)
+		return fmt.Errorf("commit canceled: %w", err)
 	}
-	if prevInv == nil {
-		inv = &Inventory{
-			ID:               comm.id,
-			Head:             comm.vnum,
-			Type:             comm.spec.AsInvType(),
-			DigestAlgorithm:  comm.alg.ID(),
-			ContentDirectory: comm.contentDir,
-			Manifest:         newMan,
-			Versions:         map[ocfl.VNum]*Version{},
+	stageFS, _ := comm.stage.Root()
+	if len(xfers) > 0 && stageFS == nil {
+		return fmt.Errorf("commit canceled: stage is missing an FS")
+	}
+	comm.logger.Info("starting commit", "object_id", id, "head", vnum)
+	defer comm.logger.Info("commit complete", "object_id", id, "head", vnum)
+	if vnum.First() {
+		// for v1, expect version directory to ErrNotExist or be empty
+		entries, err := comm.storeFS.ReadDir(ctx, comm.objRoot)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("commit canceled: %w", err)
+		}
+		if len(entries) > 0 {
+			return errors.New("commit canceled: object directory is not empty")
 		}
 	} else {
-		inv = prevInv.Copy()
-		inv.Head = comm.vnum
-		inv.Manifest = newMan
-	}
-	// add the new version directory to the Inventory object
-	inv.Versions[inv.Head] = &Version{
-		Created: time.Now().Truncate(time.Second),
-		State:   comm.state,
-		Message: comm.message,
-	}
-	// only add user if name from stage is not empty
-	if comm.user.Name != "" {
-		inv.Versions[inv.Head].User = &User{
-			Name:    comm.user.Name,
-			Address: comm.user.Address,
+		// for v > 1, the version directory must not exist or be empty
+		entries, err := comm.storeFS.ReadDir(ctx, path.Join(comm.objRoot, vnum.String()))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("commit canceled: %w", err)
+		}
+		if len(entries) > 0 {
+			return fmt.Errorf("commit canceled: version directory '%s' not empty", vnum.String())
 		}
 	}
-	if err := inv.Validate().Err(); err != nil {
-		return nil, err
-	}
-	return inv, nil
-}
-
-// stageErrs checks that stage represent a valid next version for the inventory
-func (comm *commit) validate(inv *Inventory) error {
-	if inv.ID != comm.id {
-		return fmt.Errorf("new version ID doesn't match previous ID: %s", comm.id)
-	}
-	next, err := inv.Head.Next()
-	if err != nil {
-		return fmt.Errorf("the version numbering scheme does support another version: %w", err)
-	}
-	if next != comm.vnum {
-		return fmt.Errorf("new version number (%s) is not a valid successor of previous (%s)",
-			comm.vnum, inv.Head)
-	}
-	if comm.alg.ID() != inv.DigestAlgorithm {
-		return fmt.Errorf("new version must have same digest algorith as previous: %s", inv.DigestAlgorithm)
-	}
-	if inv.Type.Spec.Cmp(comm.spec) > 0 {
-		return errors.New("new version cannot have lower OCFL spec than previous version")
-	}
-	cd := func(c string) string {
-		if c == "" {
-			return contentDir
+	// write declaration for first version
+	// TODO: replace Namaste if new inventory uses newew spec
+	if vnum.First() {
+		decl := ocfl.Declaration{
+			Type:    ocfl.DeclObject,
+			Version: comm.newInv.Type.Spec,
 		}
-		return c
-	}
-	if cd(inv.ContentDirectory) != cd(comm.contentDir) {
-		return errors.New("stage and inventory have different contentDirectory settings")
-	}
-	// all digests in stage index should be accounted for in either the
-	// the stage's "add" manifest or the inventory manifest
-	stateMap := comm.stage.VersionState()
-	for _, digest := range stateMap.AllDigests() {
-		if inv.Manifest.HasDigest(digest) {
-			continue
+		if err := ocfl.WriteDeclaration(ctx, comm.storeFS, comm.objRoot, decl); err != nil {
+			return fmt.Errorf("writing object declaration: %w", err)
 		}
-		if comm.manifest.HasDigest(digest) {
-			continue
-		}
-		return fmt.Errorf("stage includes a digest with no known source: %s", digest)
+	}
+	// tranfser files from stage to object
+	if _, err := xfer.DigestXfer(ctx, stageFS, comm.storeFS, xfers); err != nil {
+		return fmt.Errorf("transfering new object contents: %w", err)
+	}
+	// write inventory to both object root and version directory
+	vDir := path.Join(comm.objRoot, vnum.String())
+	if err := WriteInventory(ctx, comm.storeFS, comm.newInv, comm.objRoot, vDir); err != nil {
+		return fmt.Errorf("writing new inventories: %w", err)
 	}
 	return nil
+}
+
+// transferMap builds a map of source/destination paths representing
+// file to copy from the stage to the object root. Source paths
+// are relative to the stage's FS. Destination paths are relative to
+// storage root's FS
+func (comm *commit) transferMap() (map[string]string, error) {
+	stageMan, err := comm.stage.Manifest()
+	if err != nil {
+		return nil, fmt.Errorf("stage has errors: %w", err)
+	}
+	inv := comm.newInv
+	if inv == nil || inv.Manifest == nil {
+		return nil, errors.New("stage is not complete: missing inventory manifest")
+	}
+	_, stageRoot := comm.stage.Root()
+	objRoot := comm.objRoot
+	xfer := map[string]string{}
+	for dst, dig := range inv.Manifest.AllPaths() {
+		// ignore manifest entries from previous versions
+		if !strings.HasPrefix(dst, inv.Head.String()+"/") {
+			continue
+		}
+		sources := stageMan.DigestPaths(dig)
+		if len(sources) == 0 {
+			return nil, fmt.Errorf("no source file provided for digest: %s", dig)
+		}
+		// prefix src with stage's root directory
+		src := path.Join(stageRoot, sources[0])
+		// prefix dst with object's root directory
+		dst = path.Join(objRoot, dst)
+		xfer[src] = dst
+	}
+	return xfer, nil
 }

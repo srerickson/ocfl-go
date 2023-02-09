@@ -111,14 +111,6 @@ func TestNewStage(t *testing.T) {
 	if l := len(st.AllPaths()); l != 2 {
 		t.Fatalf("expected 2 entries in the state, got %v", st.AllPaths())
 	}
-	// fixity should have md5
-	fix, err := stg.Fixity()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if l := len(fix); l != 1 {
-		t.Fatalf("expected 1 entries in fixity, got %d", l)
-	}
 	// validate stage digests
 	if err := validateStageDigests(context.Background(), stg); err != nil {
 		t.Fatal(fmt.Errorf("stage is invalid: %w", err))

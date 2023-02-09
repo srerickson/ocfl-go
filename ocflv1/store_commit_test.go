@@ -140,7 +140,7 @@ func TestStoreCommit(t *testing.T) {
 			t.Fatal("expected a message for version", num)
 		}
 	}
-	idx, err := inv.Index(ocfl.Head)
+	idx, err := inv.Index(ocfl.Head.Num())
 	if err != nil {
 		t.Fatal(err)
 	}

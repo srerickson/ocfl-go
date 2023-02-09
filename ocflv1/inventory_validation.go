@@ -245,6 +245,7 @@ func ValidateInventoryReader(ctx context.Context, reader io.Reader, alg digest.A
 	if err := result.Err(); err != nil {
 		return nil, result
 	}
+	inv.alg = alg
 	inv.digest = sum
 	return inv, result
 }
