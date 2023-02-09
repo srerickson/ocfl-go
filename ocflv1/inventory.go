@@ -21,6 +21,7 @@ import (
 
 var (
 	invSidecarContentsRexp = regexp.MustCompile(`^([a-fA-F0-9]+)\s+inventory\.json[\n]?$`)
+	ErrVersionNotFound     = errors.New("version not found in inventory")
 )
 
 // Inventory represents contents of an OCFL v1.x inventory.json file
@@ -83,17 +84,13 @@ func (inv Inventory) Digest() string {
 	return inv.digest
 }
 
-// ContentPath resolves the logical path from the version state for vnum to a
-// content path (i.e., a manifest path). The content path is relative to the
-// object's root directory. If vnum is empty, the inventories head version is
-// used.
-func (inv *Inventory) ContentPath(vnum ocfl.VNum, logical string) (string, error) {
-	if vnum.IsZero() {
-		vnum = inv.Head
-	}
-	ver, exists := inv.Versions[vnum]
-	if !exists {
-		return "", fmt.Errorf("no version: %s", vnum)
+// ContentPath resolves the logical path from the version state with number v to
+// a content path (i.e., a manifest path). The content path is relative to the
+// object's root directory. If v is zero, the inventories head version is used.
+func (inv Inventory) ContentPath(v int, logical string) (string, error) {
+	ver := inv.GetVersion(v)
+	if ver == nil {
+		return "", ErrVersionNotFound
 	}
 	sum := ver.State.GetDigest(logical)
 	if sum == "" {
@@ -104,6 +101,49 @@ func (inv *Inventory) ContentPath(vnum ocfl.VNum, logical string) (string, error
 		return "", fmt.Errorf("missing manifest entry for: %s", sum)
 	}
 	return paths[0], nil
+}
+
+// GetVersion returns the version entry from the entry with number v. If v is 0,
+// the head version is used. If no version entry exists, nil is returned
+func (inv Inventory) GetVersion(v int) *Version {
+	if inv.Versions == nil {
+		return nil
+	}
+	if v == 0 {
+		return inv.Versions[inv.Head]
+	}
+	return inv.Versions[ocfl.V(v, inv.Head.Padding())]
+}
+
+// EachStatePath calls fn for each file in the state for the version with number
+// v. If v is 0, the inventory's head version is used. The function fn is called
+// with the logical file path from the version state, the file's digest as it
+// appears in the version state, and a slice of content paths associated with
+// the digest from the inventory manifest. The digest will always be a non-empty
+// string and the slice of content paths will always include at least one entry.
+// If the digest and content paths for a logical path are not found (i.e., the
+// inventory is invalid), fn is not called; instead EachStatePath return an
+// error. If any call to fn returns a non-nil error, no additional calls are
+// made and the error is returned by EachStatePath. If no version state with
+// number v is present in the inventory, an error is returned.
+func (inv Inventory) EachStatePath(v int, fn func(f string, digest string, conts []string) error) error {
+	ver := inv.GetVersion(v)
+	if ver == nil || ver.State == nil {
+		return fmt.Errorf("%w: with index %d", ErrVersionNotFound, v)
+	}
+	if inv.Manifest == nil {
+		return errors.New("inventory has no manifest")
+	}
+	return ver.State.EachPath(func(lpath string, digest string) error {
+		if digest == "" {
+			return fmt.Errorf("missing digest for %s", lpath)
+		}
+		srcs := inv.Manifest.DigestPaths(digest)
+		if len(srcs) == 0 {
+			return fmt.Errorf("missing manifest entry for %s", digest)
+		}
+		return fn(lpath, digest, srcs)
+	})
 }
 
 // WriteInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
@@ -165,35 +205,22 @@ func readInventorySidecar(ctx context.Context, fsys ocfl.FS, name string) (strin
 
 // Index returns an *ocfl.Index representing the state for a version
 // in the inventory.
-func (inv *Inventory) Index(ver ocfl.VNum) (*ocfl.Index, error) {
-	if ver.IsZero() {
-		ver = inv.Head
-	}
-	v, ok := inv.Versions[ver]
-	if !ok {
-		return nil, errors.New("no such version")
-	}
+func (inv Inventory) Index(v int) (*ocfl.Index, error) {
 	root := pathtree.NewDir[ocfl.IndexItem]()
 	alg := inv.DigestAlgorithm
-	eachFunc := func(name, sum string) error {
-		manifestPaths := inv.Manifest.DigestPaths(sum)
+	eachFunc := func(name, sum string, srcs []string) error {
 		info := ocfl.IndexItem{
 			Digests:  digest.Set{alg: sum},
-			SrcPaths: manifestPaths,
+			SrcPaths: srcs,
 		}
-		if len(manifestPaths) > 0 {
-			for alg, fix := range inv.Fixity {
-				if sum := fix.GetDigest(manifestPaths[0]); sum != "" {
-					info.Digests[alg] = sum
-				}
+		for alg, fix := range inv.Fixity {
+			if sum := fix.GetDigest(srcs[0]); sum != "" {
+				info.Digests[alg] = sum
 			}
 		}
-		if err := root.SetFile(name, info); err != nil {
-			return err
-		}
-		return nil
+		return root.SetFile(name, info)
 	}
-	if err := v.State.EachPath(eachFunc); err != nil {
+	if err := inv.EachStatePath(v, eachFunc); err != nil {
 		return nil, err
 	}
 	idx := &ocfl.Index{}

@@ -268,10 +268,16 @@ func (stage *Stage) UnsafeAdd(lgcPath string, srcPath string, digests digest.Set
 	if stage.srcFiles == nil {
 		stage.srcFiles = make(map[string]struct{})
 	}
-	info := IndexItem{Digests: digests, SrcPaths: []string{srcPath}}
+	var srcs []string
+	if srcPath != "" {
+		srcs = []string{srcPath}
+	}
+	info := IndexItem{Digests: digests, SrcPaths: srcs}
 	stage.srcFiles[srcPath] = struct{}{}
 	if err := stage.idx.node.SetFile(lgcPath, info); err != nil {
-		delete(stage.srcFiles, srcPath)
+		if srcPath != "" {
+			delete(stage.srcFiles, srcPath)
+		}
 		return err
 	}
 	return nil

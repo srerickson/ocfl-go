@@ -29,7 +29,7 @@ func TestInventoryIndex(t *testing.T) {
 			if err := result.Err(); err != nil {
 				t.Fatal(err)
 			}
-			tree, err := inv.Index(ocfl.Head)
+			tree, err := inv.Index(0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -40,7 +40,7 @@ func TestInventoryIndex(t *testing.T) {
 				if _, exists := node.Val().Digests[inv.DigestAlgorithm]; !exists {
 					return errors.New("missing inventory's digest alg")
 				}
-				src, err := inv.ContentPath(ocfl.Head, name)
+				src, err := inv.ContentPath(0, name)
 				if err != nil {
 					return err
 				}
@@ -63,8 +63,9 @@ func TestInventoryIndex(t *testing.T) {
 }
 
 func TestNewInventory(t *testing.T) {
-	// The strategy of this test is essentially rebuild the inventories for each
-	// of the good fixture objects step by step.
+	// This test uses versions from fixture object inventories to simulate
+	// inventory construction and a series of updates. The resulting inventory
+	// should match the fixture inventory.
 	ctx := context.Background()
 	fsys := ocfl.DirFS(goodObjPath)
 	goodObjects, err := fsys.ReadDir(ctx, ".")
@@ -73,61 +74,80 @@ func TestNewInventory(t *testing.T) {
 	}
 	for _, dir := range goodObjects {
 		t.Run(dir.Name(), func(t *testing.T) {
+			// fixture inventory with "expected" values
 			name := path.Join(dir.Name(), "inventory.json")
-			inv, _ := ocflv1.ValidateInventory(ctx, fsys, name, nil)
-			// FIXME: this api is awkward. Index should just take an int
-			v1 := ocfl.V(1, inv.Head.Padding())
-			ver := inv.Versions[v1]
-			idx, err := inv.Index(v1)
-			if err != nil {
-				t.Fatal(err)
-			}
-			stage1 := ocfl.NewStage(inv.Alg())
-			// FIXME: this is so ugly. Granted, it's a strange use case but there
-			// should be an easier way to iterate over logical paths and their
-			// contents. Doing this through an index is overkill.
-			idx.Walk(func(name string, tree *ocfl.Index) error {
+			fixInv, result := ocflv1.ValidateInventory(ctx, fsys, name, nil)
+			isNil(t, result.Err(), "invalid fixture inventory")
+			// construct a stage and new inventory based on v1 of the fixture
+			stage1 := ocfl.NewStage(fixInv.Alg())
+			ver1 := fixInv.GetVersion(1)
+			idx1, err := fixInv.Index(1)
+			isNil(t, err, "failed to make index")
+			err = idx1.Walk(func(name string, tree *ocfl.Index) error {
 				if tree.IsDir() {
 					return nil
 				}
 				src := tree.Val().SrcPaths[0]
-				digest := tree.Val().Digests
-				return stage1.UnsafeAdd(name, src, digest)
+				// remove src's content directory prefix ("v1/content") so
+				// that the content paths match later on
+				src = strings.Join(strings.Split(src, "/")[2:], "/")
+				allDigests := tree.Val().Digests
+				return stage1.UnsafeAdd(name, src, allDigests)
 			})
+			isNil(t, err, "error staging new version state")
+			// test initial inventory construction
 			newInv := newInventoryTest(t, stage1,
-				inv.ID,
-				inv.ContentDirectory,
-				inv.Head.Padding(),
-				ver.Created, ver.Message, ver.User)
-
-			for i := 2; i <= inv.Head.Num(); i++ {
-				vnum := ocfl.V(i, inv.Head.Padding())
-				idx, err := inv.Index(vnum)
-				if err != nil {
-					t.Fatal(err)
-				}
-				ver := inv.Versions[vnum]
-				stage := ocfl.NewStage(inv.Alg(), ocfl.StageIndex(idx))
-				idx.Walk(func(name string, tree *ocfl.Index) error {
+				fixInv.ID,
+				fixInv.ContentDirectory,
+				fixInv.Head.Padding(),
+				ver1.Created, ver1.Message, ver1.User)
+			// simulate a series of updates to the new inventory
+			for i := 2; i <= fixInv.Head.Num(); i++ {
+				idx, err := fixInv.Index(i)
+				isNil(t, err, "failed to make index")
+				vnum := ocfl.V(i, fixInv.Head.Padding())
+				ver := fixInv.Versions[vnum]
+				stage := ocfl.NewStage(fixInv.Alg(), ocfl.StageIndex(idx))
+				err = idx.Walk(func(name string, tree *ocfl.Index) error {
 					if tree.IsDir() {
 						return nil
 					}
+					allDigests := tree.Val().Digests
 					src := tree.Val().SrcPaths[0]
-					digest := tree.Val().Digests
-					return stage.UnsafeAdd(name, src, digest)
+					// remove content directory prefix for staging
+					src = strings.Join(strings.Split(src, "/")[2:], "/")
+					// For the constructed inventory manifest to match the
+					// fixture's, we need to skip src paths that aren't present
+					// in the fixture manifest. This sounds like cheating but it
+					// isn't because deduplication in the manifest happens in
+					// some cases and not others. Deduplicate this source if
+					// it's deduplicated in the fixture manifest.
+					contPath := path.Join(vnum.String(), fixInv.ContentDirectory, src)
+					if fixInv.Manifest.GetDigest(contPath) == "" {
+						src = ""
+					}
+					return stage.UnsafeAdd(name, src, allDigests)
 				})
+				isNil(t, err, "error staging new version state")
+				// test the next version inventory
 				newInv = nextVersionInventoryTest(t, newInv, stage, ver.Created, ver.Message, ver.User)
 				// check that new version state matches expected
-				expState, _ := inv.Versions[vnum].State.Normalized()
-				gotState, err := newInv.Versions[vnum].State.Normalized()
-				isNil(t, err, "new version state has errors", vnum.String())
-				isEq(t, gotState, expState, "state for", vnum.String(), "doesn't match")
+				expState, _ := fixInv.GetVersion(i).State.Normalized()
+				gotState, err := newInv.GetVersion(i).State.Normalized()
+				isNil(t, err, "new version state has errors")
+				isEq(t, gotState, expState, "new version state doesn't match expected value")
 			}
+			// check final manifest matches expected
+			expManifest, _ := fixInv.Manifest.Normalized()
+			gotManifest, err := newInv.Manifest.Normalized()
+			isNil(t, err, "new inventory manifest has errors")
+			isEq(t, gotManifest, expManifest, "new inventory manifest doesn't match expected value")
 		})
 	}
 }
 
 func TestInventorNextVersionInventory(t *testing.T) {
+	// test different kinds of updates to fixture inventories
 	ctx := context.Background()
 	fsys := ocfl.DirFS(goodObjPath)
 	goodObjects, err := fsys.ReadDir(ctx, ".")
@@ -155,7 +175,7 @@ func TestInventorNextVersionInventory(t *testing.T) {
 				stage.UnsafeAdd("newfile.txt", "content.txt", digest.Set{inv.DigestAlgorithm: "abcd", digest.MD5().ID(): "1234"})
 				nextVersionInventoryTest(t, inv, stage, time.Now(), "new version", &ocflv1.User{Name: "Me", Address: "email:me@me.com"})
 			})
-			t.Run("stage re-add-digest", func(t *testing.T) {
+			t.Run("stage re-add digest", func(t *testing.T) {
 				// add file with lowercase digest, then remove it, then add it back as uppercase.
 				// this is meant to test merging a stage with a source path and a digest that already exists in the inventory.
 				// stage 1 -- new file, whacky digest format

@@ -34,7 +34,7 @@ func TestReadObject(t *testing.T) {
 	if inv.Head.Num() != 3 {
 		t.Error("expected head to be version 3")
 	}
-	cont, err := inv.ContentPath(ocfl.VNum{}, "foo/bar.xml")
+	cont, err := inv.ContentPath(0, "foo/bar.xml")
 	if err != nil {
 		t.Error(err)
 	}

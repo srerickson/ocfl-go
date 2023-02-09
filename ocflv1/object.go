@@ -138,7 +138,7 @@ func (obj *Object) NewStage(ctx context.Context, ver ocfl.VNum, opts ...ocfl.Sta
 	if err != nil {
 		return nil, err
 	}
-	idx, err := inv.Index(ver)
+	idx, err := inv.Index(ver.Num())
 	if err != nil {
 		return nil, err
 	}
