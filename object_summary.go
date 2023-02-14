@@ -11,9 +11,9 @@ const (
 	extensionsDir = "extensions"
 )
 
-// ObjInfo provides general information on an object
-// based on file and directories in the object root.
-type ObjInfo struct {
+// ObjectSummary provides an overview of an OCFL object based on file and
+// directory names in the object's root directory
+type ObjectSummary struct {
 	Declaration      Declaration
 	VersionDirs      VNums
 	Algorithm        string
@@ -22,10 +22,10 @@ type ObjInfo struct {
 	Unknown          []string
 }
 
-func ObjInfoFromFS(dir []fs.DirEntry) *ObjInfo {
-	var info ObjInfo
-	info.Declaration, _ = FindDeclaration(dir)
-	for _, e := range dir {
+func NewObjectSummary(entries []fs.DirEntry) *ObjectSummary {
+	var info ObjectSummary
+	info.Declaration, _ = FindDeclaration(entries)
+	for _, e := range entries {
 		if e.IsDir() {
 			if e.Name() == extensionsDir {
 				info.HasExtensionsDir = true
@@ -54,10 +54,11 @@ func ObjInfoFromFS(dir []fs.DirEntry) *ObjInfo {
 	return &info
 }
 
-func ReadObjInfo(ctx context.Context, fsys FS, p string) (*ObjInfo, error) {
+// ReadObjectSummary reads the directory p in fsys and retuns an ObjectSummary
+func ReadObjectSummary(ctx context.Context, fsys FS, p string) (*ObjectSummary, error) {
 	dir, err := fsys.ReadDir(ctx, p)
 	if err != nil {
 		return nil, err
 	}
-	return ObjInfoFromFS(dir), nil
+	return NewObjectSummary(dir), nil
 }

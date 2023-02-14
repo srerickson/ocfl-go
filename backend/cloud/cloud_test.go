@@ -127,7 +127,7 @@ func TestReadDir(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		info := ocfl.ObjInfoFromFS(entries)
+		info := ocfl.NewObjectSummary(entries)
 		if info.VersionDirs.Head() != ocfl.V(3) {
 			t.Errorf("expected readdir results to include v3, got %v", entries)
 		}
