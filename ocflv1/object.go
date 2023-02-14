@@ -29,7 +29,7 @@ type Object struct {
 	// path to object root
 	rootDir string
 	// cache of object info
-	info *ocfl.ObjInfo
+	info *ocfl.ObjectSummary
 	// cache of inventory
 	inv *Inventory
 	// cache of inventory sidecar
@@ -38,7 +38,7 @@ type Object struct {
 
 // GetObject returns a new Object with loaded inventory.
 func GetObject(ctx context.Context, fsys ocfl.FS, root string) (*Object, error) {
-	inf, err := ocfl.ReadObjInfo(ctx, fsys, root)
+	inf, err := ocfl.ReadObjectSummary(ctx, fsys, root)
 	if err != nil {
 		return nil, fmt.Errorf("reading object: %w", err)
 	}
@@ -67,13 +67,13 @@ func (obj *Object) Root() (ocfl.FS, string) {
 	return obj.fsys, obj.rootDir
 }
 
-// Info returns a description of the object's top-level directory contents. The
+// Summary returns a description of the object's top-level directory contents. The
 // value is cached: subsequent calls return the same value.
-func (obj *Object) Info(ctx context.Context) (*ocfl.ObjInfo, error) {
+func (obj *Object) Summary(ctx context.Context) (*ocfl.ObjectSummary, error) {
 	if obj.info != nil {
 		return obj.info, nil
 	}
-	inf, err := ocfl.ReadObjInfo(ctx, obj.fsys, obj.rootDir)
+	inf, err := ocfl.ReadObjectSummary(ctx, obj.fsys, obj.rootDir)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func (obj *Object) Inventory(ctx context.Context) (*Inventory, error) {
 	if obj.inv != nil {
 		return obj.inv, nil
 	}
-	info, err := obj.Info(ctx)
+	info, err := obj.Summary(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func (obj *Object) InventorySidecar(ctx context.Context) (string, error) {
 	if obj.sidecarDigest != "" {
 		return obj.sidecarDigest, nil
 	}
-	inf, err := obj.Info(ctx)
+	inf, err := obj.Summary(ctx)
 	if err != nil {
 		return "", err
 	}

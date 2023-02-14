@@ -48,8 +48,8 @@ type objectValidator struct {
 	Root string  // required
 
 	// entries belows are state set during validation
-	rootInfo ocfl.ObjInfo // info from root object
-	rootInv  *Inventory   // TODO: remove, state instead
+	rootInfo ocfl.ObjectSummary // info from root object
+	rootInv  *Inventory         // TODO: remove, state instead
 	ledger   *pathLedger
 	verSpecs map[ocfl.VNum]ocfl.Spec
 }
@@ -61,7 +61,7 @@ func (vldr *objectValidator) validate(ctx context.Context) *validation.Result {
 	if err != nil {
 		return vldr.LogFatal(lgr, err)
 	}
-	vldr.rootInfo = *ocfl.ObjInfoFromFS(rootList)
+	vldr.rootInfo = *ocfl.NewObjectSummary(rootList)
 	if vldr.rootInfo.Declaration.Name() == "" {
 		err := ec(ocfl.ErrDeclMissing, codes.E003.Ref(ocflv1_0))
 		return vldr.LogFatal(lgr, err)

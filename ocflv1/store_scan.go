@@ -117,7 +117,7 @@ type storeScanJob struct {
 	Path     string   // Path in the store to scan
 	Err      error    // Errors from job
 	Dirs     []string // sub directories
-	Info     *ocfl.ObjInfo
+	Info     *ocfl.ObjectSummary
 	NumFiles int // number of regular files
 }
 
@@ -138,5 +138,5 @@ func (j *storeScanJob) Do(ctx context.Context, fsys ocfl.FS) {
 			j.NumFiles++
 		}
 	}
-	j.Info = ocfl.ObjInfoFromFS(entries)
+	j.Info = ocfl.NewObjectSummary(entries)
 }
