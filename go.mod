@@ -1,9 +1,10 @@
 module github.com/srerickson/ocfl
 
-go 1.18
+go 1.20
 
 require (
 	github.com/aws/aws-sdk-go v1.43.31
+	github.com/carlmjohnson/workgroup v0.23.1
 	github.com/charmbracelet/lipgloss v0.6.0
 	github.com/go-logr/logr v1.2.3
 	github.com/goccy/go-yaml v1.9.5
@@ -41,6 +42,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.11.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.16.3 // indirect
 	github.com/aws/smithy-go v1.11.2 // indirect
+	github.com/carlmjohnson/deque v0.22.0 // indirect
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/golang-jwt/jwt/v4 v4.4.1 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
@@ -60,9 +62,10 @@ require (
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	go.opencensus.io v0.23.0 // indirect
+	golang.org/x/exp v0.0.0-20230116083435-1de6713980de // indirect
 	golang.org/x/net v0.0.0-20220401154927-543a649e0bdd // indirect
 	golang.org/x/oauth2 v0.0.0-20220309155454-6242fa91716a // indirect
-	golang.org/x/sys v0.0.0-20220919091848-fb04ddd9f9c8 // indirect
+	golang.org/x/sys v0.1.0 // indirect
 	golang.org/x/text v0.3.7 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	google.golang.org/api v0.74.0 // indirect
