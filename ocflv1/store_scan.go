@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path"
-	"sync"
-	"time"
 
+	"github.com/carlmjohnson/workgroup"
 	"github.com/srerickson/ocfl"
 )
 
@@ -18,125 +18,65 @@ var (
 )
 
 type ScanObjectsOpts struct {
-	Strict      bool          // validate storage root structure
-	Concurrency int           // numer of simultaneous readdir operations
-	Timeout     time.Duration // timeout for readdir operations
+	Strict      bool // validate storage root structure
+	Concurrency int  // numer of simultaneous readdir operations
 }
 
-// ScanObjects walks fsys from root returning a map of object root paths.
 func ScanObjects(ctx context.Context, fsys ocfl.FS, root string, fn func(*Object) error, conf *ScanObjectsOpts) error {
-	strict := false             // default: don't validate
-	maxBatchLen := 4            // default: process up to 4 paths at a time
-	timeout := time.Duration(0) // default: no timeout
+	strict := false                          // default: don't validate
+	extDir := path.Join(root, extensionsDir) // extensions path
+	numworkers := 4                          // default: number concurrent readdir workers
 	if conf != nil {
 		strict = conf.Strict
-		maxBatchLen = conf.Concurrency
-		timeout = conf.Timeout
+		numworkers = conf.Concurrency
 	}
-	if maxBatchLen < 1 {
-		maxBatchLen = 1
+	readDirTask := func(dir string) ([]fs.DirEntry, error) {
+		return fsys.ReadDir(ctx, dir)
 	}
-	pathQ := []string{root}                  // queue of paths to scan
-	extDir := path.Join(root, extensionsDir) // extensions path
-	for {
-		// process pathQ in batches, breaking if pathQ is empty
-		batchLen := maxBatchLen
-		qLen := len(pathQ)
-		if qLen == 0 {
-			break
+	scanMgr := func(dir string, entries []fs.DirEntry, err error) ([]string, error) {
+		if err != nil {
+			return nil, err
 		}
-		if qLen < batchLen {
-			batchLen = qLen
-		}
-		batch := make([]*storeScanJob, batchLen)
-		batchWait := sync.WaitGroup{}
-		for i := range batch {
-			batch[i] = &storeScanJob{
-				Path: pathQ[i],
+		objInf := ocfl.NewObjectSummary(entries)
+		numfiles := 0
+		var subDirs []string
+		for _, e := range entries {
+			if e.IsDir() {
+				subDirs = append(subDirs, path.Join(dir, e.Name()))
+			} else if e.Type().IsRegular() {
+				numfiles++
 			}
 		}
-		pathQ = pathQ[batchLen:]
-		batchWait.Add(batchLen)
-		for i := range batch {
-			j := batch[i]
-			go func() {
-				jobCtx := ctx
-				if timeout > 0 {
-					var cancel context.CancelFunc
-					jobCtx, cancel = context.WithTimeout(ctx, timeout)
-					defer cancel()
-				}
-				j.Do(jobCtx, fsys)
-				batchWait.Done()
-			}()
-		}
-		batchWait.Wait()
-		for _, result := range batch {
-			if result.Err != nil {
-				return result.Err
+		switch objInf.Declaration.Type {
+		case ocfl.DeclObject:
+			obj := &Object{fsys: fsys, rootDir: dir, info: objInf}
+			if err := fn(obj); err != nil {
+				return nil, err
 			}
-			if result.Info.Declaration.Type == ocfl.DeclObject {
-				obj := &Object{fsys: fsys, rootDir: result.Path, info: result.Info}
-				if err := fn(obj); err != nil {
-					return err
-				}
-				continue
+			return nil, nil // don't continue scan further into the object
+		case ocfl.DeclStore:
+			// store within a store is an error
+			if strict && dir != root {
+				return nil, fmt.Errorf("%w: %s", ErrNonObject, dir)
 			}
+		default:
+			// directories without a declaration must include sub-directories
+			// and only sub-directories -- however, the extensions directory
+			// may be empty.
 			if strict {
-				switch result.Info.Declaration.Type {
-				case ocfl.DeclStore:
-					// store within a store is an error
-					if result.Path != root {
-						return fmt.Errorf("%w: %s", ErrNonObject, result.Path)
-					}
-				default:
-					// directories without a declaration must include sub-directories
-					// and only sub-directories -- however, the extensions directory
-					// may be empty.
-					if result.Empty() && result.Path != extDir {
-						return fmt.Errorf("%w: %s", ErrEmptyDirs, result.Path)
-					}
-					if result.NumFiles > 0 {
-						return fmt.Errorf("%w: %s", ErrNonObject, result.Path)
-					}
+				if len(entries) == 0 && dir != extDir {
+					return nil, fmt.Errorf("%w: %s", ErrEmptyDirs, dir)
+				}
+				if numfiles > 0 {
+					return nil, fmt.Errorf("%w: %s", ErrNonObject, dir)
 				}
 			}
-			// don't continue scan into extensions sub-directories
-			if result.Path == extDir {
-				continue
-			}
-			// add sub-directories to scan queue
-			pathQ = append(pathQ, result.Dirs...)
 		}
-	}
-	return nil
-}
-
-// storeScanJob represents a readdir operation for store scanning
-type storeScanJob struct {
-	Path     string   // Path in the store to scan
-	Err      error    // Errors from job
-	Dirs     []string // sub directories
-	Info     *ocfl.ObjectSummary
-	NumFiles int // number of regular files
-}
-
-func (j storeScanJob) Empty() bool {
-	return len(j.Dirs) == 0 && j.NumFiles == 0
-}
-
-func (j *storeScanJob) Do(ctx context.Context, fsys ocfl.FS) {
-	entries, err := fsys.ReadDir(ctx, j.Path)
-	if err != nil {
-		j.Err = err
-		return
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			j.Dirs = append(j.Dirs, path.Join(j.Path, e.Name()))
-		} else if e.Type().IsRegular() {
-			j.NumFiles++
+		// don't continue scan into extensions sub-directories
+		if dir == extDir {
+			return nil, nil
 		}
+		return subDirs, nil
 	}
-	j.Info = ocfl.NewObjectSummary(entries)
+	return workgroup.Do(numworkers, readDirTask, scanMgr, root)
 }
