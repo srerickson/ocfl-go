@@ -1,126 +1,109 @@
 package pipeline
 
 import (
-	"context"
+	"errors"
 	"runtime"
 	"sync"
 )
 
+var ErrNotAdded = errors.New("task not added to pipeline")
+
 // pipeline is a parameterized type for processing generic Jobs
 // concurrently
 type pipeline[Tin, Tout any] struct {
-	setupFn  func(func(Tin) error) error
-	workFn   func(context.Context, Tin) (Tout, error)
-	resultFn func(Tout) error
 	numgos   int
-	workQ    chan Tin
-	resultQ  chan Tout
-	workWG   sync.WaitGroup
-	cancel   context.CancelFunc
-	err      error
-	errOnce  sync.Once
+	setupFn  func(func(Tin) error) error
+	workFn   func(Tin) (Tout, error)
+	resultFn func(Tin, Tout, error) error
+}
+
+type result[Tin, Tout any] struct {
+	in  Tin
+	out Tout
+	err error
 }
 
 // Run is a generic implementation of the fan-out/fan-in concurrency pattern.
 // The setup function is used to add values to a work queue; values are
-// processed in a separate go routines using the work function; finally, result
+// processed in separate go routines using the work function; finally, result
 // values are returned through the callback function, result, which runs in the
 // same go routine used to call Run(). Use gos to set the maximum number of
-// worker go routines (the default is runtime.NumCPU()). If setupFn, workFn, or
-// resultFn returns an error, the internal context for Run is cancelled and
-// the error is returned as Run's return value.
+// worker go routines (the default is runtime.NumCPU()).
+
 func Run[Tin, Tout any](
-	ctx context.Context,
 	setupFn func(func(Tin) error) error,
-	workFn func(context.Context, Tin) (Tout, error),
-	resultFn func(Tout) error, gos int) error {
+	workFn func(Tin) (Tout, error),
+	resultFn func(Tin, Tout, error) error, gos int) error {
 
 	return (&pipeline[Tin, Tout]{
 		numgos:   gos,
 		setupFn:  setupFn,
 		workFn:   workFn,
 		resultFn: resultFn,
-	}).run(ctx)
+	}).run()
 }
 
-func (p *pipeline[Tin, Tout]) run(ctx context.Context) error {
+func (p *pipeline[Tin, Tout]) run() error {
 	if p.numgos < 1 {
 		p.numgos = runtime.NumCPU()
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	p.cancel = cancel
-	p.workQ = make(chan Tin, p.numgos)
-	p.resultQ = make(chan Tout, p.numgos)
-
+	workQ := make(chan Tin)
+	resultQ := make(chan result[Tin, Tout], p.numgos)
+	term := make(chan struct{})
 	// jobs in
+	setupErr := make(chan error, 1)
 	go func() {
-		defer close(p.workQ)
+		defer close(workQ)
+		defer close(setupErr)
 		if p.setupFn == nil {
+			setupErr <- nil
 			return
 		}
 		addWork := func(w Tin) error {
 			select {
-			case p.workQ <- w:
+			case workQ <- w:
 				return nil
-			case <-ctx.Done():
-				return ctx.Err()
+			case <-term:
+				return ErrNotAdded
 			}
 		}
-		err := p.setupFn(addWork)
-		if err != nil {
-			p.setError(err)
-		}
+		setupErr <- p.setupFn(addWork)
 	}()
-
 	// workers
-	p.workWG.Add(p.numgos)
+	wg := sync.WaitGroup{}
+	wg.Add(p.numgos)
 	for i := 0; i < p.numgos; i++ {
-		go p.worker(ctx)
+		go func() {
+			defer wg.Done()
+			for in := range workQ {
+				r := result[Tin, Tout]{in: in}
+				if p.workFn != nil {
+					r.out, r.err = p.workFn(r.in)
+				}
+				resultQ <- r
+			}
+		}()
 	}
 	go func() {
-		defer close(p.resultQ)
-		p.workWG.Wait()
+		wg.Wait()
+		close(resultQ)
 	}()
 
 	// jobs out
-	for j := range p.resultQ {
-		if p.resultFn != nil {
-			if err := p.resultFn(j); err != nil {
-				p.setError(err)
-			}
+	var resultErr error
+	for r := range resultQ {
+		if p.resultFn == nil {
+			continue
+		}
+		// if resultFn returns an error, it's not called again.
+		if err := p.resultFn(r.in, r.out, r.err); err != nil {
+			resultErr = err
+			break
 		}
 	}
-	return p.err
-}
-
-func (p *pipeline[Tin, Tout]) worker(ctx context.Context) {
-	defer p.workWG.Done()
-	for j := range p.workQ {
-		var out Tout
-		if p.workFn != nil {
-			var err error
-			out, err = p.workFn(ctx, j)
-			if err != nil {
-				p.setError(err)
-				return
-			}
-		}
-		select {
-		case p.resultQ <- out:
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-func (p *pipeline[Tin, Tout]) setError(err error) {
-	if err != nil {
-		if p.cancel != nil {
-			p.cancel()
-		}
-		p.errOnce.Do(func() {
-			p.err = err
-		})
-	}
+	// at this point channels have either closed normally
+	// or they should be closed because of an error from
+	// resultFn. Prevent new tasks from setup.
+	close(term)
+	return errors.Join(resultErr, <-setupErr)
 }
