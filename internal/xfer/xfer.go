@@ -2,7 +2,6 @@ package xfer
 
 import (
 	"context"
-	"io"
 
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
@@ -10,19 +9,16 @@ import (
 )
 
 type xfer struct {
-	gnums    int
-	algs     []digest.Alg
-	progress io.Writer
-	src      ocfl.FS
-	dst      ocfl.WriteFS
+	gnums int
+	algs  []digest.Alg
+	src   ocfl.FS
+	dst   ocfl.WriteFS
 }
 
 type xferItem struct {
-	algs   []digest.Alg
-	src    string
-	dst    string
-	result digest.Set
-	err    error
+	algs []digest.Alg
+	src  string
+	dst  string
 }
 
 type Option func(*xfer)
@@ -39,12 +35,6 @@ func WithAlgs(algs ...digest.Alg) Option {
 	}
 }
 
-func WithProgress(p io.Writer) Option {
-	return func(x *xfer) {
-		x.progress = p
-	}
-}
-
 func DigestXfer(ctx context.Context, srcFS ocfl.FS, dstFS ocfl.WriteFS, files map[string]string, opts ...Option) (map[string]digest.Set, error) {
 	xf := &xfer{
 		src: srcFS,
@@ -53,56 +43,46 @@ func DigestXfer(ctx context.Context, srcFS ocfl.FS, dstFS ocfl.WriteFS, files ma
 	for _, o := range opts {
 		o(xf)
 	}
-	setup := func(add func(*xferItem) error) error {
+	setup := func(add func(xferItem) error) error {
 		for src, dst := range files {
-			item := &xferItem{
+			item := xferItem{
 				algs: xf.algs,
 				src:  src,
 				dst:  dst,
 			}
 			if err := add(item); err != nil {
-				return err
+				break
 			}
 		}
 		return nil
 	}
 	results := make(map[string]digest.Set, len(files))
-	resultFn := func(item *xferItem) error {
-		if item.err != nil {
-			return item.err
+	resultFn := func(item xferItem, result digest.Set, err error) error {
+		if err != nil {
+			return err
 		}
-		results[item.dst] = item.result
+		results[item.dst] = result
 		return nil
 	}
-	err := pipeline.Run(ctx, setup, xf.xferFunc(), resultFn, xf.gnums)
+	err := pipeline.Run(setup, xf.xferFunc(ctx), resultFn, xf.gnums)
 	if err != nil {
 		return nil, err
 	}
 	return results, nil
 }
 
-func (xf *xfer) xferFunc() func(context.Context, *xferItem) (*xferItem, error) {
-	return func(ctx context.Context, item *xferItem) (*xferItem, error) {
+func (xf *xfer) xferFunc(ctx context.Context) func(xferItem) (digest.Set, error) {
+	return func(item xferItem) (digest.Set, error) {
 		srcF, err := xf.src.OpenFile(ctx, item.src)
 		if err != nil {
-			item.err = err
-			return item, err
+			return nil, err
 		}
-		defer func() {
-			if err := srcF.Close(); err != nil && item.err == nil {
-				item.err = err
-			}
-		}()
+		defer srcF.Close()
 		dig := digest.NewDigester(item.algs...)
 		reader := dig.Reader(srcF)
-		if xf.progress != nil {
-			reader = io.TeeReader(reader, xf.progress)
-		}
 		if _, err := xf.dst.Write(ctx, item.dst, reader); err != nil {
-			item.err = err
-			return item, item.err
+			return nil, err
 		}
-		item.result = dig.Sums()
-		return item, item.err
+		return dig.Sums(), nil
 	}
 }

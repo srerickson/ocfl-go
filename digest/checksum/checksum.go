@@ -17,18 +17,10 @@ type job struct {
 	algs []digest.Alg // hash name -> hash constructor
 }
 
-// checksum result
-type result struct {
-	path string
-	sums digest.Set
-	err  error
-}
-
 type checksum struct {
 	openFunc func(string) (io.Reader, error)
 	fs       fs.FS
 	numGos   int
-	progress io.Writer
 	algs     map[string]digest.Alg
 }
 
@@ -60,11 +52,10 @@ func Run(ctx context.Context,
 			return add(job{path: name, algs: algs})
 		})
 	}
-	pipeResult := func(r result) error {
-		return resultFn(r.path, r.sums, r.err)
+	pipeResult := func(j job, sums digest.Set, err error) error {
+		return resultFn(j.path, sums, err)
 	}
 	return pipeline.Run(
-		ctx,
 		pipeSetup,
 		checksum.runFunc(),
 		pipeResult,
@@ -96,12 +87,6 @@ func WithNumGos(gos int) Option {
 	}
 }
 
-func WithProgress(w io.Writer) Option {
-	return func(c *checksum) {
-		c.progress = w
-	}
-}
-
 func WithAlgs(algs ...digest.Alg) Option {
 	return func(c *checksum) {
 		if c.algs == nil {
@@ -113,31 +98,21 @@ func WithAlgs(algs ...digest.Alg) Option {
 	}
 }
 
-func (ch *checksum) runFunc() func(context.Context, job) (result, error) {
-	return func(ctx context.Context, j job) (result, error) {
-		r := result{path: j.path}
+func (ch *checksum) runFunc() func(j job) (digest.Set, error) {
+	return func(j job) (digest.Set, error) {
 		f, err := ch.openFunc(j.path)
 		if err != nil {
-			return r, err
+			return nil, err
 		}
 		if closer, ok := f.(io.Closer); ok {
-			defer func() {
-				err := closer.Close()
-				if err != nil && r.err == nil {
-					r.err = err
-				}
-			}()
+			defer closer.Close()
 		}
 		algs := ch.mergeJobAlgs(j.algs)
 		dig := digest.NewDigester(algs...)
-		if ch.progress != nil {
-			f = io.TeeReader(f, ch.progress)
+		if _, err := dig.ReadFrom(f); err != nil {
+			return nil, err
 		}
-		_, r.err = dig.ReadFrom(f)
-		if r.err == nil {
-			r.sums = dig.Sums()
-		}
-		return r, r.err
+		return dig.Sums(), nil
 	}
 }
 

@@ -277,7 +277,7 @@ func TestStageWrite(t *testing.T) {
 			})
 		}
 		// transfer the file
-		xfer := func(ctx context.Context, name string) (string, error) {
+		xfer := func(name string) (string, error) {
 			f, err := seedFS.Open(name)
 			if err != nil {
 				return "", err
@@ -289,12 +289,12 @@ func TestStageWrite(t *testing.T) {
 			return name, nil
 		}
 		// check that the file was written
-		check := func(n string) error {
-			if _, _, err := stg.GetVal(n); err != nil {
+		check := func(src string, dst string, err error) error {
+			if err != nil {
 				return err
 			}
 			fsys, root := stg.Root()
-			f, err := fsys.OpenFile(ctx, path.Join(root, n))
+			f, err := fsys.OpenFile(ctx, path.Join(root, dst))
 			if err != nil {
 				return err
 			}
@@ -305,7 +305,7 @@ func TestStageWrite(t *testing.T) {
 			return nil
 		}
 		// run the pipeline with 4 go routines
-		if err := pipeline.Run(ctx, setup, xfer, check, 4); err != nil {
+		if err := pipeline.Run(setup, xfer, check, 4); err != nil {
 			t.Fatal(err)
 		}
 		// check that added files are in manifest

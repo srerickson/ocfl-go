@@ -1,7 +1,6 @@
 package pipeline_test
 
 import (
-	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -11,7 +10,6 @@ import (
 )
 
 func ExampleRun() {
-	ctx := context.Background()
 	fsys := os.DirFS(".")
 	type job struct {
 		name string
@@ -28,7 +26,7 @@ func ExampleRun() {
 			return err
 		})
 	}
-	workFn := func(ctx context.Context, j job) (result, error) {
+	workFn := func(j job) (result, error) {
 		r := result{name: j.name}
 		f, err := fsys.Open(j.name)
 		if err != nil {
@@ -42,14 +40,14 @@ func ExampleRun() {
 		r.sum = dig.Sums()[digest.SHA256id]
 		return r, nil
 	}
-	resultFn := func(r result) error {
-		if r.name == "pipeline.go" && r.sum != "" {
-			fmt.Println(r.name)
+	resultFn := func(in job, out result, err error) error {
+		if out.name == "pipeline.go" && out.sum != "" {
+			fmt.Println(out.name)
 			// Output: pipeline.go
 		}
 		return nil
 	}
-	if err := pipeline.Run(ctx, setupFn, workFn, resultFn, 0); err != nil {
+	if err := pipeline.Run(setupFn, workFn, resultFn, 0); err != nil {
 		panic(err)
 	}
 }

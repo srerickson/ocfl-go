@@ -1,52 +1,53 @@
 package pipeline_test
 
 import (
-	"context"
 	"errors"
 	"testing"
 
 	"github.com/srerickson/ocfl/internal/pipeline"
 )
 
-type job struct {
-	err error
-}
+type job int
+type result int
 
-type result struct {
-	err error
-}
-
-func run(ctx context.Context, j job) (result, error) {
-	return result(j), j.err
+func run(j job) (result, error) {
+	var r result
+	if j < 0 {
+		return r, errors.New("invalid value")
+	}
+	r = result(j * 2)
+	return r, nil
 }
 
 func TestPipelineNil(t *testing.T) {
-	err := pipeline.Run[job, result](context.Background(), nil, nil, nil, 0)
+	err := pipeline.Run[job, result](nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestPipelineErr(t *testing.T) {
-	ctx := context.Background()
+func TestPipelineSetupErr(t *testing.T) {
 	input := func(add func(job) error) error {
-		for i := 0; i < 5; i++ {
-			if err := add(job{}); err != nil {
-				return err
-			}
-		}
-		add(job{errors.New("catch me")})
-		for i := 0; i < 5; i++ {
-			if err := add(job{}); err != nil {
-				return err
-			}
-		}
+		return errors.New("catch me")
+	}
+	output := func(in job, out result, err error) error {
+		return err
+	}
+	err := pipeline.Run(input, run, output, 0)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+}
+
+func TestPipelineResultErr(t *testing.T) {
+	input := func(add func(job) error) error {
+		add(job(-1)) // invalid job
 		return nil
 	}
-	output := func(r result) error {
-		return r.err
+	output := func(in job, out result, err error) error {
+		return err
 	}
-	err := pipeline.Run(ctx, input, run, output, 0)
+	err := pipeline.Run(input, run, output, 0)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -54,21 +55,18 @@ func TestPipelineErr(t *testing.T) {
 
 func TestPipeline(t *testing.T) {
 	times := 100
-	ctx := context.Background()
 	input := func(add func(job) error) error {
 		for i := 0; i < times; i++ {
-			if err := add(job{}); err != nil {
-				return err
-			}
+			add(job(i))
 		}
 		return nil
 	}
 	var results int
-	output := func(r result) error {
+	output := func(in job, out result, err error) error {
 		results++
 		return nil
 	}
-	err := pipeline.Run(ctx, input, run, output, 0)
+	err := pipeline.Run(input, run, output, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,21 +76,20 @@ func TestPipeline(t *testing.T) {
 }
 
 func BenchmarkPipeline(b *testing.B) {
-	ctx := context.Background()
 	input := func(add func(job) error) error {
 		for i := 0; i < b.N; i++ {
-			if err := add(job{}); err != nil {
+			if err := add(job(i)); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	output := func(r result) error {
+	output := func(in job, out result, err error) error {
 		return nil
 	}
 	b.ResetTimer()
 	b.ReportAllocs()
-	err := pipeline.Run(ctx, input, run, output, 0)
+	err := pipeline.Run(input, run, output, 0)
 	if err != nil {
 		b.Fatal(err)
 	}
