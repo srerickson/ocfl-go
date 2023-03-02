@@ -55,13 +55,13 @@ func (s *Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts .
 		if err != nil {
 			return err
 		}
-		newInv, err = prevInv.NextVersionInventory(stage, comm.created, comm.message, &comm.user)
+		newInv, err = prevInv.NextVersionInventory(stage, comm.created, comm.message, comm.user)
 		if err != nil {
 			return fmt.Errorf("while building next inventory: %w", err)
 		}
 	} else {
 		// new object
-		newInv, err = NewInventory(stage, id, comm.contentDir, comm.padding, comm.created, comm.message, &comm.user)
+		newInv, err = NewInventory(stage, id, comm.contentDir, comm.padding, comm.created, comm.message, comm.user)
 		if err != nil {
 			return fmt.Errorf("while building new inventory: %w", err)
 		}
@@ -121,10 +121,9 @@ func WithMessage(msg string) CommitOption {
 }
 
 // WithUser sets the user for the new object version
-func WithUser(name, addr string) CommitOption {
+func WithUser(user User) CommitOption {
 	return func(comm *commit) {
-		comm.user.Name = name
-		comm.user.Address = addr
+		comm.user = &user
 	}
 }
 
@@ -165,7 +164,7 @@ type commit struct {
 	padding         int             // padding (new objects only)
 	contentDir      string          // content directory setting (new objects only)
 	contentPathFunc ContentPathFunc // function used to configure content paths
-	user            User
+	user            *User
 	message         string
 	created         time.Time
 
