@@ -31,6 +31,20 @@ func TestStoreCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	t.Run("without options", func(t *testing.T) {
+		stage := ocfl.NewStage(digest.SHA256()) // empty stage
+		if err = store.Commit(ctx, "object-0", stage); err != nil {
+			t.Fatal(err)
+		}
+		obj, err := store.GetObject(ctx, "object-0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := obj.Validate(ctx).Err(); err != nil {
+			t.Fatal(err)
+		}
+	})
+
 	// v1 - add one file "tmp.txt"
 	stage1 := ocfl.NewStage(digest.SHA256(), ocfl.StageRoot(stgFS, `stage1`))
 	if err := stage1.AddAllFromRoot(ctx); err != nil {
