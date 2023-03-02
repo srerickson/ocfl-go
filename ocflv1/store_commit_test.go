@@ -56,7 +56,7 @@ func TestStoreCommit(t *testing.T) {
 	if err = store.Commit(ctx, "object-1", stage1,
 		ocflv1.WithContentDir("foo"),
 		ocflv1.WithVersionPadding(2),
-		ocflv1.WithUser("Will", "mailto:Will@email.com"),
+		ocflv1.WithUser(ocflv1.User{Name: "Will", Address: "mailto:Will@email.com"}),
 		ocflv1.WithMessage("first commit"),
 	); err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func TestStoreCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.Commit(ctx, "object-1", stage2,
-		ocflv1.WithUser("Wanda", "mailto:wanda@email.com"),
+		ocflv1.WithUser(ocflv1.User{Name: "Wanda", Address: "mailto:wanda@email.com"}),
 		ocflv1.WithMessage("second commit")); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestStoreCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.Commit(ctx, "object-1", stage3,
-		ocflv1.WithUser("Woody", "mailto:Woody@email.com"),
+		ocflv1.WithUser(ocflv1.User{Name: "Woody", Address: "mailto:Woody@email.com"}),
 		ocflv1.WithMessage("third commit"),
 	); err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestStoreCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.Commit(ctx, "object-1", stage4,
-		ocflv1.WithUser("Winnie", "mailto:Winnie@no.com"),
+		ocflv1.WithUser(ocflv1.User{Name: "Winnie", Address: "mailto:Winnie@no.com"}),
 		ocflv1.WithMessage("last commit"),
 	); err != nil {
 		t.Fatal(err)

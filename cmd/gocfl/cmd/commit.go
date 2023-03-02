@@ -124,7 +124,7 @@ func runCommit(ctx context.Context, conf *Config) {
 	commitUI := &ProgressWriter{preamble: "committing " + commitFlags.objectID + " "}
 	commitOpts := []ocflv1.CommitOption{
 		ocflv1.WithMessage(commitFlags.commitMsg),
-		ocflv1.WithUser(commitFlags.userName, commitFlags.userAddr),
+		ocflv1.WithUser(ocflv1.User{Name: commitFlags.userName, Address: commitFlags.userAddr}),
 		ocflv1.WithLogger(log),
 	}
 	commitFn := func(w io.Writer) error {
