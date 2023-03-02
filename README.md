@@ -34,8 +34,12 @@ Here is a high-level overview of what's working and what's not:
 - [x] Flexible API for 'staging' object changes between versions.
 - [x] Support for OCFL v1.0 and v1.1 
 - [x] Reasonable test coverage
-- [ ] Ability to purge objects from a storage root
+- [x] Ability to purge objects from a storage root
 - [ ] Object locking (to prevent simultaneous writes)
 - [ ] Consistent, informative error/log messages
 - [ ] Well-documented API
 - [ ] Stable API
+
+## Development
+
+Requires go >= 1.20.
