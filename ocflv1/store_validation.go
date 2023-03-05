@@ -84,10 +84,10 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 	//E071: The value of the [ocfl_layout.json] extension key must be the
 	//registered extension name for the extension defining the arrangement under
 	//the storage root.
-	var layout storeLayout
+	var layout storeConfig
 	var layoutFunc extensions.LayoutFunc
 	if hasLayout {
-		err = readLayout(ctx, fsys, root, &layout)
+		err = readStoreConfig(ctx, fsys, root, &layout)
 		if err != nil {
 			result.LogFatal(lgr, err)
 		}
