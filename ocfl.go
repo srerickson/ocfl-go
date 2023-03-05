@@ -9,7 +9,7 @@ import "github.com/srerickson/ocfl/digest"
 
 const (
 	// package version
-	Version = "0.0.13"
+	Version = "0.0.14"
 
 	// log levels
 	LevelDebug   = 10
