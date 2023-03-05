@@ -41,6 +41,11 @@ func (l customLayout) NewFunc() (extensions.LayoutFunc, error) {
 
 func TestGetStore(t *testing.T) {
 	ctx := context.Background()
+	t.Run("not a storage root", func(t *testing.T) {
+		if _, err := ocflv1.GetStore(ctx, ocfl.DirFS("."), "."); err == nil {
+			t.Fatal("expected an error")
+		}
+	})
 	// map to store to expected # of objects
 	var storeTests = []storeTest{
 		{name: `good-stores/reg-extension-dir-root`, size: 1, layout: nil},

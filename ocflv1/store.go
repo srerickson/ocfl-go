@@ -21,7 +21,7 @@ var ErrLayoutUndefined = errors.New("storage root layout is undefined")
 type Store struct {
 	fsys       ocfl.FS
 	rootDir    string // storage root directory
-	config     storeLayout
+	config     storeConfig
 	spec       ocfl.Spec
 	layoutFunc extensions.LayoutFunc
 	layoutErr  error // error from ReadLayout()
@@ -29,7 +29,7 @@ type Store struct {
 }
 
 // store layout represent ocfl_layout.json file
-type storeLayout map[string]string
+type storeConfig map[string]string
 
 type InitStoreConf struct {
 	Spec        ocfl.Spec
@@ -72,8 +72,8 @@ func InitStore(ctx context.Context, fsys ocfl.WriteFS, root string, conf *InitSt
 	if _, err := ocfl.WriteSpecFile(ctx, fsys, root, conf.Spec); err != nil {
 		return err
 	}
-	layt := newLayout(conf.Description, conf.Layout)
-	if err := writeLayout(ctx, fsys, root, layt); err != nil {
+	layt := newStoreConfig(conf.Description, conf.Layout)
+	if err := writeStoreConfig(ctx, fsys, root, layt); err != nil {
 		return err
 	}
 	if err := writeExtensionConfig(ctx, fsys, root, conf.Layout); err != nil {
@@ -90,43 +90,36 @@ func InitStore(ctx context.Context, fsys ocfl.WriteFS, root string, conf *InitSt
 // GetStore returns a *Store for the OCFL Storage Root at root in fsys. The path
 // root must be a directory/prefix with storage root declaration file.
 func GetStore(ctx context.Context, fsys ocfl.FS, root string) (*Store, error) {
-	dirList, err := fsys.ReadDir(ctx, root)
-	if err != nil {
-		return nil, fmt.Errorf("reading storage root: %w", err)
+	// Don't use fs.ReadDir here as we would with GetObject because storage
+	// roots might have huge numbers of directory entries. Instead, open storage
+	// root declarations until we find one (or return error)
+	var ocflVer ocfl.Spec
+	for _, s := range []ocfl.Spec{ocflv1_1, ocflv1_0} {
+		decl := ocfl.Declaration{Type: ocfl.DeclStore, Version: s}.Name()
+		if err := ocfl.ValidateDeclaration(ctx, fsys, path.Join(root, decl)); err != nil {
+			if errors.Is(err, ocfl.ErrDeclOpen) {
+				continue
+			}
+			return nil, fmt.Errorf("reading storage root delaration: %w", err)
+		}
+		ocflVer = s
+		break
 	}
-	decl, err := ocfl.FindDeclaration(dirList)
-	if err != nil {
-		err := fmt.Errorf("not an ocfl storage root: %w", err)
-		return nil, err
-	}
-	if decl.Type != ocfl.DeclStore {
-		err := fmt.Errorf("not an ocfl storage root: %s", root)
-		return nil, err
-	}
-	ocflVer := decl.Version
-	if !ocflVerSupported[ocflVer] {
-		return nil, fmt.Errorf("%s: %w", ocflVer, ErrOCFLVersion)
-	}
-	err = ocfl.ValidateDeclaration(ctx, fsys, path.Join(root, decl.Name()))
-	if err != nil {
-		return nil, fmt.Errorf("storage root declaration is invalid: %w", err)
+	if ocflVer.Empty() {
+		return nil, fmt.Errorf("not an OCFL v1.x storage root: %s", ocfl.ErrDeclOpen)
 	}
 	str := &Store{
 		fsys:    fsys,
 		rootDir: root,
 		spec:    ocflVer,
 	}
-	for _, inf := range dirList {
-		if inf.Type().IsRegular() && inf.Name() == layoutName {
-			str.config = storeLayout{}
-			err = readLayout(ctx, fsys, root, &str.config)
-			if err != nil {
-				return nil, fmt.Errorf("reading storage root ")
-			}
-			break
-		}
+	cfg := storeConfig{}
+	err := readStoreConfig(ctx, fsys, root, &cfg)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
 	}
-	if str.config != nil {
+	if err == nil {
+		str.config = cfg
 		// if ReadLayout fails, we don't return the error here. The store can
 		// still be used, however, the error should be returned by ResolveID()
 		// or other methods requiring the layout from the configuration.
@@ -311,16 +304,16 @@ func writeExtensionConfig(ctx context.Context, fsys ocfl.WriteFS, root string, e
 	return nil
 }
 
-func newLayout(description string, layout extensions.Layout) storeLayout {
+func newStoreConfig(description string, layout extensions.Layout) storeConfig {
 	return map[string]string{
 		descriptionKey: description,
 		extensionKey:   layout.Name(),
 	}
 }
 
-// readLayout reads the `ocfl_layout.json` files in the storage root
+// readStoreConfig reads the `ocfl_layout.json` files in the storage root
 // and unmarshals into the value pointed to by layout
-func readLayout(ctx context.Context, fsys ocfl.FS, root string, layout *storeLayout) error {
+func readStoreConfig(ctx context.Context, fsys ocfl.FS, root string, layout *storeConfig) error {
 	f, err := fsys.OpenFile(ctx, path.Join(root, layoutName))
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", layoutName, err)
@@ -332,9 +325,9 @@ func readLayout(ctx context.Context, fsys ocfl.FS, root string, layout *storeLay
 	return nil
 }
 
-// writeLayout marshals the value pointe to by layout and writes the result to
+// writeStoreConfig marshals the value pointe to by layout and writes the result to
 // the `ocfl_layout.json` files in the storage root.
-func writeLayout(ctx context.Context, fsys ocfl.WriteFS, root string, layout storeLayout) error {
+func writeStoreConfig(ctx context.Context, fsys ocfl.WriteFS, root string, layout storeConfig) error {
 	b, err := json.Marshal(layout)
 	if err != nil {
 		return fmt.Errorf("encoding %s: %w", layoutName, err)
