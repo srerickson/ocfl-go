@@ -43,7 +43,7 @@ func init() {
 	commitCmd.Flags().StringVar(&commitFlags.objectID, "id", "", "Object ID")
 	commitCmd.Flags().StringVar(&commitFlags.srcPath, "stage", "", "staging directory for the new object version")
 	// commitCmd.Flags().StringVar(&commitFlags.srcRepo, "stage-repo", "", "repo name for staged files")
-	commitCmd.Flags().BoolVar(&commitFlags.dryRun, "dry-run", false, "dry run commit. No files are written to the storage root")
+	// commitCmd.Flags().BoolVar(&commitFlags.dryRun, "dry-run", false, "dry run commit. No files are written to the storage root")
 	commitCmd.Flags().StringVarP(&commitFlags.digestAlg, "alg", "", "sha512", "digest algorithm for new objects (sha512 or sha256). Ignored for updates.")
 	commitCmd.Flags().StringVarP(&commitFlags.userAddr, "addr", "a", "", "committer's email address")
 	commitCmd.Flags().StringVarP(&commitFlags.userName, "name", "n", "", "committer's name")
