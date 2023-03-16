@@ -52,16 +52,19 @@ func runInitRoot(ctx context.Context, conf *Config) {
 		log.Error(err, "cannot initialize storage root")
 		return
 	}
-	layoutExt, err := extensions.Get(initRootFlags.layoutName)
-	if err != nil {
-		log.Error(err, "failed to initialize storage root", "layout", initRootFlags.layoutName)
-		return
-	}
-	layout, ok := layoutExt.(extensions.Layout)
-	if !ok {
-		err := errors.New("extension is not a layout extension")
-		log.Error(err, "failed to initialize storage root", "layout", initRootFlags.layoutName)
-		return
+	var layout extensions.Layout
+	if initRootFlags.layoutName != "" {
+		layoutExt, err := extensions.Get(initRootFlags.layoutName)
+		if err != nil {
+			log.Error(err, "can't initialize storage root with layout", "layout", initRootFlags.layoutName)
+			return
+		}
+		layout, ok = layoutExt.(extensions.Layout)
+		if !ok {
+			err := errors.New("extension is not a layout extension")
+			log.Error(err, "can't initialize storage root with layout", "layout", initRootFlags.layoutName)
+			return
+		}
 	}
 	if err := ocflv1.InitStore(ctx, writeFS, root, &ocflv1.InitStoreConf{
 		Layout:      layout,
