@@ -24,61 +24,33 @@ var (
 
 // Object represents an existing OCFL v1.x object
 type Object struct {
-	// backend filesystem
-	fsys ocfl.FS
-	// path to object root
-	rootDir string
-	// cache of object info
-	info *ocfl.ObjectSummary
+	ocfl.ObjectRoot
+
 	// cache of inventory
 	inv *Inventory
 	// cache of inventory sidecar
 	sidecarDigest string
 }
 
-// GetObject returns a new Object with loaded inventory.
-func GetObject(ctx context.Context, fsys ocfl.FS, root string) (*Object, error) {
-	inf, err := ocfl.ReadObjectSummary(ctx, fsys, root)
-	if err != nil {
-		return nil, fmt.Errorf("reading object: %w", err)
-	}
-	if inf.Declaration.Type != ocfl.DeclObject {
-		return nil, fmt.Errorf("declared type: %s: %w", inf.Declaration.Type, ErrNotObject)
-
-	}
-	if !ocflVerSupported[inf.Declaration.Version] {
-		return nil, fmt.Errorf("%s: %w", inf.Declaration.Version, ErrOCFLVersion)
-	}
-	err = ocfl.ValidateDeclaration(ctx, fsys, path.Join(root, inf.Declaration.Name()))
+// GetObject returns a new Object
+func GetObject(ctx context.Context, fsys ocfl.FS, p string) (*Object, error) {
+	root, err := ocfl.GetObjectRoot(ctx, fsys, p)
 	if err != nil {
 		return nil, err
 	}
-	obj := &Object{
-		fsys:    fsys,
-		rootDir: root,
-		info:    inf,
+	if !ocflVerSupported[root.Spec] {
+		return nil, fmt.Errorf("%s: %w", root.Spec, ErrOCFLVersion)
 	}
-	return obj, nil
+	if err = root.ValidateDeclaration(ctx); err != nil {
+		return nil, err
+	}
+	return &Object{ObjectRoot: *root}, nil
 }
 
 // Root returns the object's FS and root directory. The root directory is a path
 // relative to the object's ocfl.FS.
 func (obj *Object) Root() (ocfl.FS, string) {
-	return obj.fsys, obj.rootDir
-}
-
-// Summary returns a description of the object's top-level directory contents. The
-// value is cached: subsequent calls return the same value.
-func (obj *Object) Summary(ctx context.Context) (*ocfl.ObjectSummary, error) {
-	if obj.info != nil {
-		return obj.info, nil
-	}
-	inf, err := ocfl.ReadObjectSummary(ctx, obj.fsys, obj.rootDir)
-	if err != nil {
-		return nil, err
-	}
-	obj.info = inf
-	return obj.info, nil
+	return obj.ObjectRoot.FS, obj.ObjectRoot.Path
 }
 
 // Inventory returns the root inventory for the object. The first time
@@ -89,16 +61,12 @@ func (obj *Object) Inventory(ctx context.Context) (*Inventory, error) {
 	if obj.inv != nil {
 		return obj.inv, nil
 	}
-	info, err := obj.Summary(ctx)
-	if err != nil {
-		return nil, err
-	}
-	name := path.Join(obj.rootDir, inventoryFile)
-	alg, err := digest.Get(info.Algorithm)
+	name := path.Join(obj.Path, inventoryFile)
+	alg, err := digest.Get(obj.Algorithm)
 	if err != nil {
 		return nil, fmt.Errorf("reading inventory: %w", err)
 	}
-	inv, results := ValidateInventory(ctx, obj.fsys, name, alg)
+	inv, results := ValidateInventory(ctx, obj.FS, name, alg)
 	if err := results.Err(); err != nil {
 		return nil, fmt.Errorf("reading inventory: %w", err)
 	}
@@ -112,12 +80,9 @@ func (obj *Object) InventorySidecar(ctx context.Context) (string, error) {
 	if obj.sidecarDigest != "" {
 		return obj.sidecarDigest, nil
 	}
-	inf, err := obj.Summary(ctx)
-	if err != nil {
-		return "", err
-	}
-	sidecarFile := path.Join(obj.rootDir, inventoryFile+"."+inf.Algorithm)
-	sidecar, err := readInventorySidecar(ctx, obj.fsys, sidecarFile)
+
+	sidecarFile := path.Join(obj.Path, inventoryFile+"."+obj.Algorithm)
+	sidecar, err := readInventorySidecar(ctx, obj.FS, sidecarFile)
 	if err != nil {
 		return "", err
 	}
@@ -127,7 +92,7 @@ func (obj *Object) InventorySidecar(ctx context.Context) (string, error) {
 
 // Validate validations the object using the given validation Options
 func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) *validation.Result {
-	_, r := ValidateObject(ctx, obj.fsys, obj.rootDir, opts...)
+	_, r := ValidateObject(ctx, obj.FS, obj.Path, opts...)
 	return r
 }
 

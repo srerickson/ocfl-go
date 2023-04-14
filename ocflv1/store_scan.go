@@ -37,7 +37,6 @@ func ScanObjects(ctx context.Context, fsys ocfl.FS, root string, fn func(*Object
 		if err != nil {
 			return nil, err
 		}
-		objInf := ocfl.NewObjectSummary(entries)
 		numfiles := 0
 		var subDirs []string
 		for _, e := range entries {
@@ -47,10 +46,16 @@ func ScanObjects(ctx context.Context, fsys ocfl.FS, root string, fn func(*Object
 				numfiles++
 			}
 		}
-		switch objInf.Declaration.Type {
+		decl, _ := ocfl.FindDeclaration(entries)
+		switch decl.Type {
 		case ocfl.DeclObject:
-			obj := &Object{fsys: fsys, rootDir: dir, info: objInf}
-			if err := fn(obj); err != nil {
+			objRoot, err := ocfl.NewObjectRoot(fsys, dir, entries)
+			if err != nil {
+				// this is a bug: NewObjectRoot and FindDeclaration
+				// aren't working together
+				panic(err)
+			}
+			if err := fn(&Object{ObjectRoot: *objRoot}); err != nil {
 				return nil, err
 			}
 			return nil, nil // don't continue scan further into the object
