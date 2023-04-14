@@ -96,6 +96,7 @@ func TestOpenFile(t *testing.T) {
 }
 
 func TestReadDir(t *testing.T) {
+	ctx := context.Background()
 	b, err := fileblob.OpenBucket(objPath, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +104,7 @@ func TestReadDir(t *testing.T) {
 	defer b.Close()
 	buck := cloud.NewFS(b)
 	t.Run("invalid path (..)", func(t *testing.T) {
-		_, err := buck.OpenFile(context.Background(), `..`)
+		_, err := buck.OpenFile(ctx, `..`)
 		if err == nil {
 			t.Fatal("expected an error")
 		}
@@ -113,7 +114,7 @@ func TestReadDir(t *testing.T) {
 		}
 	})
 	t.Run("invalid path (empty)", func(t *testing.T) {
-		_, err := buck.OpenFile(context.Background(), ``)
+		_, err := buck.OpenFile(ctx, ``)
 		if err == nil {
 			t.Fatal("expected an error")
 		}
@@ -123,20 +124,16 @@ func TestReadDir(t *testing.T) {
 		}
 	})
 	t.Run("top-level directory", func(t *testing.T) {
-		entries, err := buck.ReadDir(context.Background(), `.`)
+		obj, err := ocfl.GetObjectRoot(ctx, buck, ".")
 		if err != nil {
 			t.Fatal(err)
 		}
-		info := ocfl.NewObjectSummary(entries)
-		if info.VersionDirs.Head() != ocfl.V(3) {
-			t.Errorf("expected readdir results to include v3, got %v", entries)
-		}
-		if info.Declaration.Type != "ocfl_object" {
-			t.Errorf("expected readdir results to include namasted, got %v", entries)
+		if v := obj.VersionDirs.Head(); v != ocfl.V(3) {
+			t.Errorf("expected readdir results to include v3, got %v", v)
 		}
 	})
 	t.Run("sub-directory", func(t *testing.T) {
-		entries, err := buck.ReadDir(context.Background(), `v1`)
+		entries, err := buck.ReadDir(ctx, `v1`)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -163,7 +160,7 @@ func TestReadDir(t *testing.T) {
 		}
 	})
 	t.Run("existing file", func(t *testing.T) {
-		_, err := buck.ReadDir(context.Background(), `inventory.json`)
+		_, err := buck.ReadDir(ctx, `inventory.json`)
 		if err == nil {
 			t.Fatal("expected an error")
 		}
@@ -176,7 +173,7 @@ func TestReadDir(t *testing.T) {
 		}
 	})
 	t.Run("non-existing (prefix of existing)", func(t *testing.T) {
-		_, err := buck.ReadDir(context.Background(), `v`)
+		_, err := buck.ReadDir(ctx, `v`)
 		if err == nil {
 			t.Fatal("expected an error")
 		}
@@ -201,7 +198,7 @@ func TestReadDir(t *testing.T) {
 		b := memBucket(keys)
 		defer b.Close()
 		bucket := cloud.NewFS(b)
-		entries, err := bucket.ReadDir(context.Background(), "dir")
+		entries, err := bucket.ReadDir(ctx, "dir")
 		if err != nil {
 			t.Fatal(err)
 		}

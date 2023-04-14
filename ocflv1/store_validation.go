@@ -133,8 +133,8 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 	//sub-directories other than as a directory hierarchy used to store OCFL
 	//Objects or for storage root extensions.
 	scanFn := func(obj *Object) error {
-		objRoot := obj.rootDir
-		objSpec := obj.info.Declaration.Version
+		_, objRoot := obj.Root()
+		objSpec := obj.Spec
 		objLgr := lgr.WithName(objRoot)
 		if ocflV.Cmp(objSpec) < 0 {
 			// object ocfl spec is higher than storage root's

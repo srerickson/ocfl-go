@@ -31,8 +31,8 @@ type Declaration struct {
 	Version Spec
 }
 
-// FindDeclaration returns the declaration from a slice of fs.DirEntrys. An
-// error is returned if the number of declarations is is not one.
+// FindDeclaration returns the declaration from a fs.DirEntry slice. An
+// error is returned if the number of declarations is not one.
 func FindDeclaration(items []fs.DirEntry) (Declaration, error) {
 	var found []Declaration
 	for _, e := range items {
