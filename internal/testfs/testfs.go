@@ -1,17 +1,17 @@
 package testfs
 
 import (
-	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/backend/cloud"
+	"github.com/srerickson/ocfl/logger"
 	"gocloud.dev/blob/memblob"
 )
 
 type MemFS struct {
-	ocfl.WriteFS
+	*cloud.FS
 }
 
 func NewMemFS() *MemFS {
 	return &MemFS{
-		WriteFS: cloud.NewFS(memblob.OpenBucket(nil)),
+		FS: cloud.NewFS(memblob.OpenBucket(nil), cloud.WithLogger(logger.DefaultLogger())),
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"testing/fstest"
 
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/internal/testfs"
 	"github.com/srerickson/ocfl/internal/xfer"
 )
@@ -32,7 +31,7 @@ func dstFS(files map[string]string) (ocfl.WriteFS, error) {
 	return dst, nil
 }
 
-func TestXfer(t *testing.T) {
+func TestCopy(t *testing.T) {
 	ctx := context.Background()
 	src := srcFS(map[string]string{
 		"file.txt":  "content",
@@ -50,10 +49,7 @@ func TestXfer(t *testing.T) {
 		"file3.txt": "file3.txt",
 		"file4.txt": "file4.txt",
 	}
-	algs := []digest.Alg{digest.MD5(), digest.SHA256()}
-	result, err := xfer.DigestXfer(ctx, src, dst, files, xfer.WithAlgs(algs...), xfer.WithGoNums(2))
-	if err != nil {
+	if err := xfer.Copy(ctx, src, dst, files, 2); err != nil {
 		t.Fatal(err)
 	}
-	t.Log(result)
 }
