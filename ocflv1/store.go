@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -27,7 +26,6 @@ type Store struct {
 	spec       ocfl.Spec
 	layoutFunc extensions.LayoutFunc
 	layoutErr  error // error from ReadLayout()
-	commitLock sync.Mutex
 }
 
 // store layout represent ocfl_layout.json file
@@ -90,9 +88,7 @@ func InitStore(ctx context.Context, fsys ocfl.WriteFS, root string, conf *InitSt
 }
 
 // Commit creates or updates the object with the given id using the contents of stage.
-func (s *Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts ...CommitOption) error {
-	s.commitLock.Lock() // only one commit at a time
-	defer s.commitLock.Unlock()
+func (s Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts ...CommitOption) error {
 	writeFS, ok := s.fsys.(ocfl.WriteFS)
 	if !ok {
 		return fmt.Errorf("storage root backend is read-only")
