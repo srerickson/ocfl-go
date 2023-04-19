@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"runtime"
 	"strings"
 	"time"
 
@@ -216,7 +217,8 @@ func (comm *commit) commit(ctx context.Context) error {
 		}
 	}
 	// tranfser files from stage to object
-	if _, err := xfer.DigestXfer(ctx, stageFS, comm.storeFS, xfers); err != nil {
+	// TODO: set concurrency with commit option
+	if err := xfer.Copy(ctx, stageFS, comm.storeFS, xfers, runtime.NumCPU()); err != nil {
 		return fmt.Errorf("transfering new object contents: %w", err)
 	}
 	// write inventory to both object root and version directory
@@ -227,7 +229,7 @@ func (comm *commit) commit(ctx context.Context) error {
 	return nil
 }
 
-// transferMap builds a map of source/destination paths representing
+// transferMap builds a map of destination/source paths representing
 // file to copy from the stage to the object root. Source paths
 // are relative to the stage's FS. Destination paths are relative to
 // storage root's FS
@@ -256,7 +258,7 @@ func (comm *commit) transferMap() (map[string]string, error) {
 		src := path.Join(stageRoot, sources[0])
 		// prefix dst with object's root directory
 		dst = path.Join(objRoot, dst)
-		xfer[src] = dst
+		xfer[dst] = src
 	}
 	return xfer, nil
 }

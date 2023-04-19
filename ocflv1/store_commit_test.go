@@ -16,12 +16,27 @@ func TestStoreCommit(t *testing.T) {
 	storePath := "test-stage"
 	ctx := context.Background()
 	storeFS := testfs.NewMemFS() // store
-	stgFS := ocfl.NewFS(fstest.MapFS{
+	stageContent := fstest.MapFS{
 		`stage1/tmp.txt`:       &fstest.MapFile{Data: []byte(`content1`)},
 		`stage3/a/tmp.txt`:     &fstest.MapFile{Data: []byte(`content2`)},
 		`stage3/a/another.txt`: &fstest.MapFile{Data: []byte(`content3`)},
-	})
-
+	}
+	// stage1 commit is from storeFS, copy files
+	for n := range stageContent {
+		if !strings.HasPrefix(n, "stage1") {
+			continue
+		}
+		f, err := stageContent.Open(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := storeFS.Write(ctx, n, f); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// initialize store
 	if err := ocflv1.InitStore(ctx, storeFS, storePath, nil); err != nil {
 		t.Fatal(err)
@@ -46,7 +61,7 @@ func TestStoreCommit(t *testing.T) {
 	})
 
 	// v1 - add one file "tmp.txt"
-	stage1 := ocfl.NewStage(digest.SHA256(), ocfl.StageRoot(stgFS, `stage1`))
+	stage1 := ocfl.NewStage(digest.SHA256(), ocfl.StageRoot(storeFS, `stage1`))
 	if err := stage1.AddAllFromRoot(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +100,7 @@ func TestStoreCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stage3, err := obj.NewStage(ctx, ocfl.Head, ocfl.StageRoot(stgFS, `stage3`))
+	stage3, err := obj.NewStage(ctx, ocfl.Head, ocfl.StageRoot(ocfl.NewFS(stageContent), `stage3`))
 	if err != nil {
 		t.Fatal(err)
 	}
