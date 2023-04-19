@@ -9,7 +9,9 @@ import (
 	"io/fs"
 	"path"
 	"sync"
+	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/extensions"
 	"github.com/srerickson/ocfl/validation"
@@ -85,6 +87,62 @@ func InitStore(ctx context.Context, fsys ocfl.WriteFS, root string, conf *InitSt
 		}
 	}
 	return nil
+}
+
+// Commit creates or updates the object with the given id using the contents of stage.
+func (s *Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts ...CommitOption) error {
+	s.commitLock.Lock() // only one commit at a time
+	defer s.commitLock.Unlock()
+	writeFS, ok := s.fsys.(ocfl.WriteFS)
+	if !ok {
+		return fmt.Errorf("storage root backend is read-only")
+	}
+	if s.layoutFunc == nil {
+		return fmt.Errorf("commit requires a storage root layout: %w", ErrLayoutUndefined)
+	}
+	objPath, err := s.layoutFunc(id)
+	if err != nil {
+		return fmt.Errorf("cannot commit id '%s': %w", id, err)
+	}
+	obj, err := s.GetObject(ctx, id)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("reading storage root: %w", err)
+	}
+	// defaults
+	comm := &commit{
+		storeFS:         writeFS,
+		objRoot:         path.Join(s.rootDir, objPath),
+		spec:            defaultSpec,
+		contentPathFunc: DefaultContentPathFunc,
+		stage:           stage,
+		logger:          logr.Discard(),
+		created:         time.Now().UTC().Truncate(time.Second),
+	}
+	// load options
+	for _, opt := range opts {
+		opt(comm)
+	}
+	// build new inventory
+	var newInv *Inventory
+	if obj != nil {
+		// object update
+		prevInv, err := obj.Inventory(ctx)
+		if err != nil {
+			return err
+		}
+		newInv, err = prevInv.NextVersionInventory(stage, comm.created, comm.message, comm.user)
+		if err != nil {
+			return fmt.Errorf("while building next inventory: %w", err)
+		}
+	} else {
+		// new object
+		newInv, err = NewInventory(stage, id, comm.contentDir, comm.padding, comm.created, comm.message, comm.user)
+		if err != nil {
+			return fmt.Errorf("while building new inventory: %w", err)
+		}
+	}
+	comm.newInv = newInv
+	return comm.commit(ctx)
 }
 
 // GetStore returns a *Store for the OCFL Storage Root at root in fsys. The path
