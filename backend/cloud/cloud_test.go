@@ -1,6 +1,7 @@
 package cloud_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -319,6 +320,62 @@ func TestRemoveAll(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestCopy(t *testing.T) {
+	ctx := context.Background()
+	testContent := map[string][]byte{
+		"a/b/c.txt": []byte("sample data"),
+		"a/b.txt":   []byte("more sample data"),
+	}
+	type removeTest struct {
+		src       string
+		dst       string
+		expectErr bool
+	}
+	testTable := map[string]removeTest{
+		"basic":                {src: "a/b.txt", dst: "a/b2.txt", expectErr: false},
+		"overwrite dst":        {src: "a/b.txt", dst: "a/b/c.txt", expectErr: false},
+		"src is doesn't exist": {src: "none", dst: "c.txt", expectErr: true},
+		"src is empty":         {src: "", dst: "c.txt", expectErr: true},
+		"src is invalid":       {src: ".", dst: "c.txt", expectErr: true},
+		"dst is empty":         {src: "a/b.txt", dst: "", expectErr: true},
+		"dst is invalid":       {src: "a/b.txt", dst: ".", expectErr: true},
+	}
+	for testName, test := range testTable {
+		t.Run(testName, func(t *testing.T) {
+			buck := memBucket(testContent)
+			fsys := cloud.NewFS(buck)
+			err := fsys.Copy(ctx, test.dst, test.src)
+			if test.expectErr && err == nil {
+				t.Fatal("expected an error")
+			}
+			if !test.expectErr {
+				if err != nil {
+					t.Fatal(err)
+				}
+				dstF, err := fsys.OpenFile(ctx, test.dst)
+				if err != nil {
+					t.Fatal(err)
+				}
+				dstByts, err := io.ReadAll(dstF)
+				if err != nil {
+					t.Fatal(err)
+				}
+				srcF, err := fsys.OpenFile(ctx, test.src)
+				if err != nil {
+					t.Fatal(err)
+				}
+				srcByts, err := io.ReadAll(srcF)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(srcByts, dstByts) {
+					t.Fatal("destintation doesn't have samve content as source")
+				}
 			}
 		})
 	}

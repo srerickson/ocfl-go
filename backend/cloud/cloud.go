@@ -253,3 +253,24 @@ func (fsys *FS) RemoveAll(ctx context.Context, name string) error {
 	}
 	return nil
 }
+
+func (fsys *FS) Copy(ctx context.Context, dst, src string) error {
+	fsys.log.V(ocfl.LevelDebug).Info("copy", "dst", dst, "src", src)
+	for _, p := range []string{src, dst} {
+		if !fs.ValidPath(p) {
+			return &fs.PathError{
+				Op:   "copy",
+				Path: p,
+				Err:  fs.ErrInvalid,
+			}
+		}
+		if p == "." {
+			return &fs.PathError{
+				Op:   "copy",
+				Path: p,
+				Err:  fs.ErrInvalid,
+			}
+		}
+	}
+	return fsys.Bucket.Copy(ctx, dst, src, &blob.CopyOptions{})
+}
