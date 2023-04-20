@@ -87,22 +87,24 @@ func InitStore(ctx context.Context, fsys ocfl.WriteFS, root string, conf *InitSt
 	return nil
 }
 
-// Commit creates or updates the object with the given id using the contents of stage.
+// Commit creates or updates the object with the given id using the contents of stage. The returned
+// error is always a CommitError
 func (s Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts ...CommitOption) error {
 	writeFS, ok := s.fsys.(ocfl.WriteFS)
 	if !ok {
-		return fmt.Errorf("storage root backend is read-only")
+		return &CommitError{Err: fmt.Errorf("storage root backend is read-only")}
 	}
 	if s.layoutFunc == nil {
-		return fmt.Errorf("commit requires a storage root layout: %w", ErrLayoutUndefined)
+		err := fmt.Errorf("commit requires a storage root layout: %w", ErrLayoutUndefined)
+		return &CommitError{Err: err}
 	}
 	objPath, err := s.layoutFunc(id)
 	if err != nil {
-		return fmt.Errorf("cannot commit id '%s': %w", id, err)
+		return &CommitError{Err: fmt.Errorf("cannot commit id '%s': %w", id, err)}
 	}
 	obj, err := s.GetObject(ctx, id)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("reading storage root: %w", err)
+		return &CommitError{Err: fmt.Errorf("reading storage root: %w", err)}
 	}
 	// defaults
 	comm := &commit{
@@ -124,17 +126,19 @@ func (s Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts ..
 		// object update
 		prevInv, err := obj.Inventory(ctx)
 		if err != nil {
-			return err
+			return &CommitError{Err: err}
 		}
 		newInv, err = prevInv.NextVersionInventory(stage, comm.created, comm.message, comm.user)
 		if err != nil {
-			return fmt.Errorf("while building next inventory: %w", err)
+			err := fmt.Errorf("while building next inventory: %w", err)
+			return &CommitError{Err: err}
 		}
 	} else {
 		// new object
 		newInv, err = NewInventory(stage, id, comm.contentDir, comm.padding, comm.created, comm.message, comm.user)
 		if err != nil {
-			return fmt.Errorf("while building new inventory: %w", err)
+			err := fmt.Errorf("while building new inventory: %w", err)
+			return &CommitError{Err: err}
 		}
 	}
 	comm.newInv = newInv
