@@ -53,14 +53,11 @@ type objectValidator struct {
 // ValidateObject performs complete validation of the object at path p in fsys.
 func (vldr *objectValidator) validate(ctx context.Context) *validation.Result {
 	lgr := vldr.opts.Logger
-	rootList, err := vldr.FS.ReadDir(ctx, vldr.Root)
+	obj, err := ocfl.GetObjectRoot(ctx, vldr.FS, vldr.Root)
 	if err != nil {
 		return vldr.LogFatal(lgr, err)
 	}
-	vldr.root, err = ocfl.NewObjectRoot(vldr.FS, vldr.Root, rootList)
-	if err != nil {
-		return vldr.LogFatal(lgr, err)
-	}
+	vldr.root = obj
 	ocflV := vldr.root.Spec
 	switch ocflV {
 	case ocfl.Spec{1, 0}:

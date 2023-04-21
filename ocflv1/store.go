@@ -102,10 +102,6 @@ func (s Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts ..
 	if err != nil {
 		return &CommitError{Err: fmt.Errorf("cannot commit id '%s': %w", id, err)}
 	}
-	obj, err := s.GetObject(ctx, id)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return &CommitError{Err: fmt.Errorf("reading storage root: %w", err)}
-	}
 	// defaults
 	comm := &commit{
 		storeFS:         writeFS,
@@ -121,27 +117,27 @@ func (s Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts ..
 		opt(comm)
 	}
 	// build new inventory
-	var newInv *Inventory
-	if obj != nil {
-		// object update
-		prevInv, err := obj.Inventory(ctx)
-		if err != nil {
-			return &CommitError{Err: err}
-		}
-		newInv, err = prevInv.NextVersionInventory(stage, comm.created, comm.message, comm.user)
-		if err != nil {
-			err := fmt.Errorf("while building next inventory: %w", err)
-			return &CommitError{Err: err}
-		}
-	} else {
-		// new object
-		newInv, err = NewInventory(stage, id, comm.contentDir, comm.padding, comm.created, comm.message, comm.user)
-		if err != nil {
-			err := fmt.Errorf("while building new inventory: %w", err)
-			return &CommitError{Err: err}
-		}
+	obj, err := s.GetObject(ctx, id)
+	if err != nil && !errors.Is(err, ocfl.ErrObjectNotFound) {
+		return &CommitError{Err: err}
 	}
-	comm.newInv = newInv
+	if obj == nil {
+		// new object
+		comm.newInv, err = NewInventory(stage, id, comm.contentDir, comm.padding, comm.created, comm.message, comm.user)
+		if err != nil {
+			return &CommitError{Err: fmt.Errorf("while building new inventory: %w", err)}
+		}
+		return comm.commit(ctx)
+	}
+	// object update
+	prevInv, err := obj.Inventory(ctx)
+	if err != nil {
+		return &CommitError{Err: err}
+	}
+	comm.newInv, err = prevInv.NextVersionInventory(stage, comm.created, comm.message, comm.user)
+	if err != nil {
+		return &CommitError{Err: fmt.Errorf("while building next inventory: %w", err)}
+	}
 	return comm.commit(ctx)
 }
 

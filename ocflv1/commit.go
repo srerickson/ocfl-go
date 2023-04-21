@@ -36,7 +36,7 @@ type commit struct {
 }
 
 // commit performs the commit
-func (comm *commit) commit(ctx context.Context) *CommitError {
+func (comm *commit) commit(ctx context.Context) error {
 	id := comm.newInv.ID
 	vnum := comm.newInv.Head
 	xfers, err := comm.transferMap()
