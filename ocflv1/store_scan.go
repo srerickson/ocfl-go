@@ -49,12 +49,7 @@ func ScanObjects(ctx context.Context, fsys ocfl.FS, root string, fn func(*Object
 		decl, _ := ocfl.FindDeclaration(entries)
 		switch decl.Type {
 		case ocfl.DeclObject:
-			objRoot, err := ocfl.NewObjectRoot(fsys, dir, entries)
-			if err != nil {
-				// this is a bug: NewObjectRoot and FindDeclaration
-				// aren't working together
-				panic(err)
-			}
+			objRoot := ocfl.NewObjectRoot(fsys, dir, entries)
 			if err := fn(&Object{ObjectRoot: *objRoot}); err != nil {
 				return nil, err
 			}

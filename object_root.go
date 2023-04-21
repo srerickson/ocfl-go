@@ -15,36 +15,35 @@ const (
 	maxNonConform = 8
 )
 
-var ErrNotObjectRoot = errors.New("not an OCFL object root directory")
-var ErrObjectRootMode = errors.New("file in object root has invalid mode")
+var ErrObjectNotFound = errors.New("OCFL object root not found")
 
 // GetObjectRoot reads the contents of directory dir in fsys, confirms that an
 // OCFL Object declaration is present, and returns a new ObjectRoot reference
 // based on the directory contents. If the directory cannot be ready or a
-// declaration is not found, an error is returned. Note, the object declaration
+// declaration is not found, ErrObjectNotFound is returned. Note, the object declaration
 // is not read or fully validated. The returned ObjectRoot may be invalid.
 func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error) {
 	entries, err := fsys.ReadDir(ctx, dir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %s", ErrObjectNotFound, err.Error())
 	}
-	return NewObjectRoot(fsys, dir, entries)
+	obj := NewObjectRoot(fsys, dir, entries)
+	if !obj.HasDeclaration() {
+		return nil, fmt.Errorf("%w: %s", ErrObjectNotFound, ErrDeclMissing.Error())
+	}
+	return obj, nil
 }
 
 // NewObjectRoot constructs an ObjectRoot for the directory dir in fsys using
-// the given fs.DirEntry slice as dir's contents. If entries does not include
-// an entry for the object declaration file, an error is returned.
-func NewObjectRoot(fsys FS, dir string, entries []fs.DirEntry) (*ObjectRoot, error) {
+// the given fs.DirEntry slice as dir's contents. The returned ObjectRoot may
+// be invalid.
+func NewObjectRoot(fsys FS, dir string, entries []fs.DirEntry) *ObjectRoot {
 	// set zero values for everything except FS and Path
 	obj := &ObjectRoot{
 		FS:   fsys,
 		Path: dir,
 	}
 	for _, e := range entries {
-		if !e.IsDir() && !e.Type().IsRegular() {
-			err := fmt.Errorf("%w: %s", ErrObjectRootMode, e.Name())
-			return nil, err
-		}
 		name := e.Name()
 		if e.IsDir() {
 			if name == extensionsDir {
@@ -70,17 +69,11 @@ func NewObjectRoot(fsys FS, dir string, entries []fs.DirEntry) (*ObjectRoot, err
 			}
 			var decl Declaration
 			if err := ParseDeclaration(name, &decl); err == nil {
-				if obj.Flags&FoundDeclaration > 0 {
-					// multiple declaration files
-					return nil, ErrDeclMultiple
+				if decl.Type == DeclObject && !obj.HasDeclaration() {
+					obj.Spec = decl.Version
+					obj.Flags |= FoundDeclaration
+					continue
 				}
-				if decl.Type != DeclObject {
-					// not an object declaration
-					return nil, ErrNotObjectRoot
-				}
-				obj.Spec = decl.Version
-				obj.Flags |= FoundDeclaration
-				continue
 			}
 		}
 		// entry doesn't conform to OCFL spec
@@ -88,10 +81,7 @@ func NewObjectRoot(fsys FS, dir string, entries []fs.DirEntry) (*ObjectRoot, err
 			obj.NonConform = append(obj.NonConform, name)
 		}
 	}
-	if obj.Flags&FoundDeclaration == 0 {
-		return nil, ErrDeclMissing
-	}
-	return obj, nil
+	return obj
 }
 
 // ObjectRoot represents an existing OCFL object root directory. Instances are
@@ -112,7 +102,7 @@ const (
 	// FoundDeclaration indicates that an ObjectRoot has been initialized
 	// and an object declaration file is confirmed to exist in the object's root
 	// directory
-	FoundDeclaration = 1 << iota
+	FoundDeclaration ObjectRootFlag = 1 << iota
 	// FoundInventory indicates that an ObjectRoot includes an "inventory.json"
 	// file
 	FoundInventory
@@ -126,10 +116,15 @@ const (
 
 // ValidateDeclaration reads and validates the contents of the OCFL object
 // declaration in the object root.
-func (obj *ObjectRoot) ValidateDeclaration(ctx context.Context) error {
-	if obj.Flags&FoundDeclaration == 0 {
-		return ErrNotObjectRoot
+func (obj ObjectRoot) ValidateDeclaration(ctx context.Context) error {
+	if !obj.HasDeclaration() {
+		return ErrDeclMissing
 	}
 	pth := path.Join(obj.Path, Declaration{Type: DeclObject, Version: obj.Spec}.Name())
 	return ValidateDeclaration(ctx, obj.FS, pth)
+}
+
+// HasDeclaration returns true if the object's FoundDeclaration is set
+func (obj ObjectRoot) HasDeclaration() bool {
+	return obj.Flags&FoundDeclaration != 0
 }
