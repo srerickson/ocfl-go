@@ -8,9 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"time"
 
-	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/extensions"
 	"github.com/srerickson/ocfl/validation"
@@ -102,43 +100,7 @@ func (s Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts ..
 	if err != nil {
 		return &CommitError{Err: fmt.Errorf("cannot commit id '%s': %w", id, err)}
 	}
-	// defaults
-	comm := &commit{
-		storeFS:         writeFS,
-		objRoot:         path.Join(s.rootDir, objPath),
-		spec:            defaultSpec,
-		contentPathFunc: DefaultContentPathFunc,
-		stage:           stage,
-		logger:          logr.Discard(),
-		created:         time.Now().UTC().Truncate(time.Second),
-	}
-	// load options
-	for _, opt := range opts {
-		opt(comm)
-	}
-	// build new inventory
-	obj, err := s.GetObject(ctx, id)
-	if err != nil && !errors.Is(err, ocfl.ErrObjectNotFound) {
-		return &CommitError{Err: err}
-	}
-	if obj == nil {
-		// new object
-		comm.newInv, err = NewInventory(stage, id, comm.contentDir, comm.padding, comm.created, comm.message, comm.user)
-		if err != nil {
-			return &CommitError{Err: fmt.Errorf("while building new inventory: %w", err)}
-		}
-		return comm.commit(ctx)
-	}
-	// object update
-	prevInv, err := obj.Inventory(ctx)
-	if err != nil {
-		return &CommitError{Err: err}
-	}
-	comm.newInv, err = prevInv.NextVersionInventory(stage, comm.created, comm.message, comm.user)
-	if err != nil {
-		return &CommitError{Err: fmt.Errorf("while building next inventory: %w", err)}
-	}
-	return comm.commit(ctx)
+	return Commit(ctx, writeFS, path.Join(s.rootDir, objPath), id, stage, opts...)
 }
 
 // GetStore returns a *Store for the OCFL Storage Root at root in fsys. The path
