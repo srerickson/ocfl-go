@@ -126,5 +126,9 @@ func (obj ObjectRoot) ValidateDeclaration(ctx context.Context) error {
 
 // HasDeclaration returns true if the object's FoundDeclaration is set
 func (obj ObjectRoot) HasDeclaration() bool {
-	return obj.Flags&FoundDeclaration != 0
+	return obj.Flags&FoundDeclaration > 0
+}
+
+func (obj ObjectRoot) HasInventory() bool {
+	return obj.Flags&FoundInventory > 0
 }
