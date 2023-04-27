@@ -114,11 +114,11 @@ func (vldr *objectValidator) validateRoot(ctx context.Context) error {
 		err := fmt.Errorf(`%w: %s`, ErrObjRootStructure, name)
 		vldr.LogFatal(lgr, ec(err, codes.E001.Ref(ocflV)))
 	}
-	if vldr.root.Flags&ocfl.FoundInventory == 0 {
+	if !vldr.root.HasInventory() {
 		err := fmt.Errorf(`%w: not found`, ErrInventoryOpen)
 		vldr.LogFatal(lgr, ec(err, codes.E063.Ref(ocflV)))
 	}
-	if vldr.root.Flags&ocfl.FoundSidecar == 0 { // empty algorithm indicates missing sidecar file in root
+	if !vldr.root.HasSidecar() {
 		err := fmt.Errorf(`%w: not found`, ErrInvSidecarOpen)
 		vldr.LogFatal(lgr, ec(err, codes.E058.Ref(ocflV)))
 	} else if !algorithms[vldr.root.Algorithm] {

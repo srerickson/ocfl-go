@@ -20,8 +20,10 @@ var ErrObjectNotFound = errors.New("OCFL object root not found")
 // GetObjectRoot reads the contents of directory dir in fsys, confirms that an
 // OCFL Object declaration is present, and returns a new ObjectRoot reference
 // based on the directory contents. If the directory cannot be ready or a
-// declaration is not found, ErrObjectNotFound is returned. Note, the object declaration
-// is not read or fully validated. The returned ObjectRoot may be invalid.
+// declaration is not found, ErrObjectNotFound is returned. Note, the object
+// declaration is not read or fully validated. The returned ObjectRoot will have
+// the FoundDeclaration flag set, but other flags expected for a complete object
+// root may not be set (e.g., if the inventory is missing).
 func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error) {
 	entries, err := fsys.ReadDir(ctx, dir)
 	if err != nil {
@@ -124,11 +126,17 @@ func (obj ObjectRoot) ValidateDeclaration(ctx context.Context) error {
 	return ValidateDeclaration(ctx, obj.FS, pth)
 }
 
-// HasDeclaration returns true if the object's FoundDeclaration is set
+// HasDeclaration returns true if the object's FoundDeclaration flag is set
 func (obj ObjectRoot) HasDeclaration() bool {
 	return obj.Flags&FoundDeclaration > 0
 }
 
+// HasInventory returns true if the object's FoundInventory flag is set
 func (obj ObjectRoot) HasInventory() bool {
 	return obj.Flags&FoundInventory > 0
+}
+
+// HasSidecar returns true if the object's FoundSidecar flag is set
+func (obj ObjectRoot) HasSidecar() bool {
+	return obj.Flags&FoundSidecar > 0
 }
