@@ -11,6 +11,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"gocloud.dev/blob"
+	"gocloud.dev/gcerrors"
 )
 
 var ErrNotDir = fmt.Errorf("not a directory")
@@ -71,6 +72,9 @@ func (fsys *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	}
 	reader, err := fsys.Bucket.NewReader(ctx, name, fsys.readerOpts)
 	if err != nil {
+		if gcerrors.Code(err) == gcerrors.NotFound {
+			err = errors.Join(err, fs.ErrNotExist)
+		}
 		return nil, &fs.PathError{
 			Op:   "openfile",
 			Path: name,
@@ -114,6 +118,9 @@ func (fsys *FS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
+			}
+			if gcerrors.Code(err) == gcerrors.NotFound {
+				err = errors.Join(err, fs.ErrNotExist)
 			}
 			return nil, &fs.PathError{
 				Op:   "readdir",
