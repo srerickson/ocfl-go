@@ -27,28 +27,30 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, id string, s
 	for _, optFunc := range optFuncs {
 		optFunc(opts)
 	}
-	obj, err := GetObject(ctx, fsys, objRoot)
-	if err != nil && !errors.Is(err, ocfl.ErrObjectNotFound) {
-		return &CommitError{Err: err}
-	}
-	// new object
-	if obj == nil {
+	// read existing inventory
+	f, err := fsys.OpenFile(ctx, path.Join(objRoot, inventoryFile))
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			return &CommitError{Err: err}
+		}
+		// no existing inventory: build v1 inventory
 		inv, err := NewInventory(stage, id, opts.contentDir, opts.padding, opts.created, opts.message, opts.user)
 		if err != nil {
 			return &CommitError{Err: fmt.Errorf("while building new inventory: %w", err)}
 		}
 		return commit(ctx, fsys, objRoot, inv, stage, opts)
 	}
-	// update object
-	prevInv, err := obj.Inventory(ctx)
-	if err != nil {
-		return &CommitError{Err: err}
+	// update existing inventory
+	defer f.Close()
+	existInv, vErr := ValidateInventoryReader(ctx, f, nil)
+	if err := vErr.Err(); err != nil {
+		return &CommitError{Err: fmt.Errorf("existing inventory is invalid: %w", err)}
 	}
-	inv, err := prevInv.NextVersionInventory(stage, opts.created, opts.message, opts.user)
+	nextInv, err := existInv.NextVersionInventory(stage, opts.created, opts.message, opts.user)
 	if err != nil {
 		return &CommitError{Err: fmt.Errorf("while building next inventory: %w", err)}
 	}
-	return commit(ctx, fsys, objRoot, inv, stage, opts)
+	return commit(ctx, fsys, objRoot, nextInv, stage, opts)
 }
 
 // Commit error wraps an error from a commit.
@@ -182,37 +184,27 @@ func commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, inv *Invento
 	}
 	opts.logger.Info("starting commit", "object_id", id, "head", vnum)
 	defer opts.logger.Info("commit complete", "object_id", id, "head", vnum)
-	if vnum.First() {
-		// for v1, expect version directory to ErrNotExist or be empty
-		entries, err := fsys.ReadDir(ctx, objRoot)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	// init object root
+	obj, err := ocfl.InitObjectRoot(ctx, fsys, objRoot, inv.Type.Spec)
+	if err != nil {
+		if !errors.Is(err, ocfl.ErrObjectExists) {
+			return &CommitError{Err: fmt.Errorf("initializing object root: %w", err), Dirty: true}
+		}
+		// existing object root
+		if obj != nil && obj.Spec.Cmp(inv.Type.Spec) > 0 {
+			err := fmt.Errorf("existing object declaration has higher OCFL spec than inventory (v%s > v%s)", obj.Spec, inv.Type.Spec)
 			return &CommitError{Err: err}
 		}
-		if len(entries) > 0 {
-			err := errors.New("commit canceled: object directory is not empty")
-			return &CommitError{Err: err}
-		}
-	} else {
-		// for v > 1, the version directory must not exist or be empty
-		entries, err := fsys.ReadDir(ctx, path.Join(objRoot, vnum.String()))
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return &CommitError{Err: err}
-		}
-		if len(entries) > 0 {
-			err := fmt.Errorf("version directory '%s' not empty", vnum.String())
+		// TODO: upgrade object declaration.
+		if obj != nil && obj.Spec.Cmp(inv.Type.Spec) < 0 {
+			err := fmt.Errorf("upgrading existing object declaration from OCFL v%s to %s is not yet supported", obj.Spec, inv.Type.Spec)
 			return &CommitError{Err: err}
 		}
 	}
-	// write declaration for first version
-	// TODO: replace Namaste if new inventory uses newew spec
-	if vnum.First() {
-		decl := ocfl.Declaration{
-			Type:    ocfl.DeclObject,
-			Version: inv.Type.Spec,
-		}
-		if err := ocfl.WriteDeclaration(ctx, fsys, objRoot, decl); err != nil {
-			return &CommitError{Err: err}
-		}
+	// don't overwrite any existing content directories
+	if obj.HasVersionDir(inv.Head) {
+		err := fmt.Errorf("a directory for '%s' already exists", inv.Head.String())
+		return &CommitError{Err: err}
 	}
 	// tranfser files from stage to object
 	// TODO: set concurrency with commit option
