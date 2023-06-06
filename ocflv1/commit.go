@@ -18,10 +18,9 @@ import (
 func Commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, id string, stage *ocfl.Stage, optFuncs ...CommitOption) error {
 	// defaults
 	opts := &commitOpt{
-		spec:            defaultSpec,
-		contentPathFunc: DefaultContentPathFunc,
-		logger:          logr.Discard(),
-		created:         time.Now().UTC().Truncate(time.Second),
+		spec:    defaultSpec,
+		logger:  logr.Discard(),
+		created: time.Now().UTC().Truncate(time.Second),
 	}
 	// load options
 	for _, optFunc := range optFuncs {
@@ -73,15 +72,14 @@ func (c CommitError) Unwrap() error {
 // commitOpt is the internal struct for commit options configured
 // using one of the CommitOptions
 type commitOpt struct {
-	requireHEAD     int             // new inventory must have this version number (if non-zero)
-	spec            ocfl.Spec       // OCFL spec for new version
-	padding         int             // padding (new objects only)
-	contentPathFunc ContentPathFunc // function used to configure content paths
-	contentDir      string          // inventory'ßs content directory setting (new objects only)
-	user            *User           // inventory's version state user
-	message         string          // inventory's version state message
-	created         time.Time       // inventory's version state created value
-	logger          logr.Logger
+	requireHEAD int       // new inventory must have this version number (if non-zero)
+	spec        ocfl.Spec // OCFL spec for new version
+	padding     int       // padding (new objects only)
+	contentDir  string    // inventory's content directory setting (new objects only)
+	user        *User     // inventory's version state user
+	message     string    // inventory's version state message
+	created     time.Time // inventory's version state created value
+	logger      logr.Logger
 }
 
 // CommitOption is used configure Commit
@@ -119,14 +117,6 @@ func WithHEAD(v int) CommitOption {
 	}
 }
 
-// WithContentPathFunc is a functional option used to set the stage's content path
-// function.
-func WithContentPathFunc(fn ContentPathFunc) CommitOption {
-	return func(comm *commitOpt) {
-		comm.contentPathFunc = fn
-	}
-}
-
 // WithMessage sets the message for the new object version
 func WithMessage(msg string) CommitOption {
 	return func(comm *commitOpt) {
@@ -153,16 +143,6 @@ func WithLogger(logger logr.Logger) CommitOption {
 	return func(comm *commitOpt) {
 		comm.logger = logger
 	}
-}
-
-// ContentPathFunc is a function used to determin the path for content
-// file in an OCFL object version.
-type ContentPathFunc func(logical string, digest string) string
-
-// DefaultContentPathFunc is the default ContentPathFunc. It returns
-// logical
-func DefaultContentPathFunc(logical string, digest string) string {
-	return logical
 }
 
 // commit performs the commit
