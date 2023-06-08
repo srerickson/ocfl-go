@@ -268,16 +268,13 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, vn oc
 	if err := vldr.Err(); err != nil {
 		return err
 	}
-
 	// add the version inventory's OCFL version to validations state (E103)
 	vldr.verSpecs[vn] = inv.Type.Spec
 	if err := vldr.ledger.addInventory(inv, false); err != nil {
 		// err indicates inventory reports different digest from a previous inventory
 		vldr.LogFatal(lgr, ec(err, codes.E066.Ref(inv.Type.Spec)))
 	}
-	//
-	// head version inventory?
-	//
+	// Is this the HEAD version directory?
 	if vn == vldr.rootInv.Head {
 		if inv.digest == vldr.rootInv.digest {
 			return nil // don't need to validate any further
@@ -302,31 +299,25 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, vn oc
 		err := fmt.Errorf("inventory head is %s, expected %s", inv.Head, vn)
 		vldr.LogFatal(lgr, ec(err, codes.E040.Ref(inv.Type.Spec)))
 	}
-	// confirm version states in the version inventory match root inventory
+	// confirm that each version's logical state in the version directory
+	// inventory matches the corresponding logical state in the root inventory.
+	// Because the digest algorithm can change between versions, we're comparing
+	// the set of logical paths, and their correspondance to
 	for v, ver := range inv.Versions {
 		rootVer := vldr.rootInv.Versions[v]
-		rootState, _ := vldr.rootInv.Index(v.Num())
-		verState, _ := inv.Index(v.Num())
-		changes, err := rootState.Diff(*verState)
+		rootState, err := vldr.rootInv.LogicalState(v.Num())
 		if err != nil {
-			err := fmt.Errorf("unexpected err durring inventory diff: %w", err)
 			vldr.LogFatal(lgr, err)
 			return err
 		}
-		if !changes.Equal() {
-			errFmt := "in version %s inventory, %s state doesn't match root inventory: %s: %v"
-			if len(changes.Added.Children()) > 0 {
-				err := fmt.Errorf(errFmt, vn, v, "unexpected files", changes.Added)
-				vldr.LogFatal(lgr, ec(err, codes.E066.Ref(inv.Type.Spec)))
-			}
-			if len(changes.Removed.Children()) > 0 {
-				err := fmt.Errorf(errFmt, vn, v, `missing file(s)`, changes.Removed)
-				vldr.LogFatal(lgr, ec(err, codes.E066.Ref(inv.Type.Spec)))
-			}
-			if len(changes.Changed.Children()) > 0 {
-				err := fmt.Errorf(errFmt, vn, v, `changed file content`, changes.Changed)
-				vldr.LogFatal(lgr, ec(err, codes.E066.Ref(inv.Type.Spec)))
-			}
+		verState, err := inv.LogicalState(v.Num())
+		if err != nil {
+			vldr.LogFatal(lgr, err)
+			return err
+		}
+		if !rootState.SameContentAs(verState) {
+			err := fmt.Errorf("logical state for version %d in root inventory doesn't match that in %s/%s", v.Num(), vn, inventoryFile)
+			vldr.LogFatal(lgr, ec(err, codes.E066.Ref(inv.Type.Spec)))
 		}
 		if ver.Message != rootVer.Message {
 			err := fmt.Errorf(`message for version %s differs from root inventory`, v)

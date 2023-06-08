@@ -455,3 +455,19 @@ func NewInventory(stage *ocfl.Stage, id string, contDir string, padding int, cre
 	inv.Fixity = maps
 	return inv, nil
 }
+
+func (inv Inventory) LogicalState(v int) (lstate LogicalState, err error) {
+	if lstate.Alg, err = digest.Get(inv.DigestAlgorithm); err != nil {
+		return
+	}
+	lstate.Paths = map[string]ManifestEntry{}
+	err = inv.EachStatePath(v, func(logical string, digest string, content []string) error {
+		c := append([]string{}, content...)
+		lstate.Paths[logical] = ManifestEntry{ContentPaths: c, Digest: digest}
+		return nil
+	})
+	if err != nil {
+		lstate = LogicalState{}
+	}
+	return
+}
