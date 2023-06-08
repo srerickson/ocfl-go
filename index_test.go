@@ -83,12 +83,13 @@ func TestIndexGetVal(t *testing.T) {
 
 func TestIndexDiff(t *testing.T) {
 	var (
-		unchanged = "a/b/c/unchanged.txt"
-		changed   = "a/b/c/changed.txt"
-		added     = "a/b/c/added.txt"
-		removed   = "a/b/c/removed.txt"
+		unchanged = "unchanged.txt"
+		changed   = "changed.txt"
+		added     = "added.txt"
+		removed   = "removed.txt"
+		collision = "collision.txt"
 	)
-	a, _ := newTestIndex(map[string]ocfl.IndexItem{
+	a, err := newTestIndex(map[string]ocfl.IndexItem{
 		unchanged: {
 			Digests:  digest.Set{digest.SHA256id: "abc1"},
 			SrcPaths: []string{"v1/content/file1.txt"},
@@ -101,12 +102,22 @@ func TestIndexDiff(t *testing.T) {
 			Digests:  digest.Set{digest.SHA256id: "abc3"},
 			SrcPaths: []string{"v1/content/file3.txt"},
 		},
+		collision: {
+			Digests: digest.Set{
+				digest.SHA256id: "abc4",
+				digest.MD5id:    "abc5",
+			},
+			SrcPaths: []string{"v1/content/file4.txt"},
+		},
 	})
-	b, _ := newTestIndex(map[string]ocfl.IndexItem{
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := newTestIndex(map[string]ocfl.IndexItem{
 		unchanged: {
-			// same only because common SrcPath
+			// unchanged but different digest alg!
 			Digests:  digest.Set{digest.SHA512id: "def1"},
-			SrcPaths: []string{"v1/content/file1.txt", "v2/content/file1.txt"},
+			SrcPaths: []string{"v1/content/file1.txt"},
 		},
 		changed: {
 			Digests:  digest.Set{digest.SHA256id: "def2"},
@@ -116,7 +127,18 @@ func TestIndexDiff(t *testing.T) {
 			Digests:  digest.Set{digest.SHA256id: "def3"},
 			SrcPaths: []string{"v2/content/file3.txt"},
 		},
+		collision: {
+			// content changed but same md5!
+			Digests: digest.Set{
+				digest.SHA256id: "def4",
+				digest.MD5id:    "abc5",
+			},
+			SrcPaths: []string{"v2/content/file4.txt"},
+		},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	changes, err := a.Diff(*b)
 	if err != nil {
 		t.Fatal(err)
