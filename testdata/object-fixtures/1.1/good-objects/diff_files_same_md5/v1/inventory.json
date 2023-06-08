@@ -1,0 +1,40 @@
+{
+  "digestAlgorithm": "sha512",
+  "fixity": {
+    "md5": {
+      "008ee33a9d58b51cfeb425b0959121c9": [
+        "v1/content/message1.bin",
+        "v1/content/message2.bin"
+      ]
+    }
+  },
+  "head": "v1",
+  "id": "https://example.org/same_md5sum_example",
+  "manifest": {
+    "62ace927ccc0a720c346b36ee2c2e223fd7c03c97d4cad99a9410d0f465bd764aa8312bc961ad8dacf6e6caf2eed813333347c1032825fd026fe50bc427b40ef": [
+      "v1/content/message2.bin"
+    ],
+    "a31cffeeaf410435d5b802e87c7f4b17ec8f1ac433f0ed2366989cc7e26f75f1ec76e0f9a031aa8622e2e27e7b1773d2fa63c387191fa3ed6658e652fb15e645": [
+      "v1/content/message1.bin"
+    ]
+  },
+  "type": "https://ocfl.io/1.1/spec/#inventory",
+  "versions": {
+    "v1": {
+      "created": "2023-05-08T00:00:00Z",
+      "message": "Example of two different files with same MD5 fixity value",
+      "state": {
+        "62ace927ccc0a720c346b36ee2c2e223fd7c03c97d4cad99a9410d0f465bd764aa8312bc961ad8dacf6e6caf2eed813333347c1032825fd026fe50bc427b40ef": [
+          "message2.bin"
+        ],
+        "a31cffeeaf410435d5b802e87c7f4b17ec8f1ac433f0ed2366989cc7e26f75f1ec76e0f9a031aa8622e2e27e7b1773d2fa63c387191fa3ed6658e652fb15e645": [
+          "message1.bin"
+        ]
+      },
+      "user": {
+        "address": "mailto:a_person@example.org",
+        "name": "A Person"
+      }
+    }
+  }
+}
