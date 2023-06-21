@@ -97,8 +97,8 @@ func main() {
 	create := func(t objTask) (void, error) {
 		genr := rand.New(rand.NewSource(t.seed))
 		srcFS := ocfl.NewFS(ocfltest.GenerateFS(genr, 5, 1024))
-		stage := ocfl.NewStage(digest.SHA256(), ocfl.StageRoot(srcFS, "."))
-		if err := stage.AddAllFromRoot(ctx); err != nil {
+		stage, _ := ocfl.NewStage(digest.SHA256(), digest.Map{}, srcFS)
+		if err := stage.AddRoot(ctx, "."); err != nil {
 			log.Fatal(err)
 		}
 		return void{}, store.Commit(ctx, t.id, stage)

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"path"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/srerickson/ocfl"
@@ -305,17 +306,17 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, vn oc
 	// the set of logical paths, and their correspondance to
 	for v, ver := range inv.Versions {
 		rootVer := vldr.rootInv.Versions[v]
-		rootState, err := vldr.rootInv.LogicalState(v.Num())
+		rootState, err := vldr.rootInv.objectState(v.Num())
 		if err != nil {
 			vldr.LogFatal(lgr, err)
 			return err
 		}
-		verState, err := inv.LogicalState(v.Num())
+		verState, err := inv.objectState(v.Num())
 		if err != nil {
 			vldr.LogFatal(lgr, err)
 			return err
 		}
-		if !rootState.SameContentAs(verState) {
+		if !sameObjectVersionState(rootState, verState) {
 			err := fmt.Errorf("logical state for version %d in root inventory doesn't match that in %s/%s", v.Num(), vn, inventoryFile)
 			vldr.LogFatal(lgr, ec(err, codes.E066.Ref(inv.Type.Spec)))
 		}
@@ -520,4 +521,47 @@ func newVersionDirInfo(entries []fs.DirEntry) versionDirInfo {
 		info.dirs = append(info.dirs, e.Name())
 	}
 	return info
+}
+
+// SameObjectVersionState is used to test whether two objects states are the
+// same (in the context of the same object). Both objects States must share the
+// the same FS and Root. It returns true if both states have the same logical
+// paths corresponding to the same content paths.
+func sameObjectVersionState(stateA, stateB *ocfl.ObjectState) bool {
+	if stateA.FS != nil && stateB.FS != nil && stateA.FS != stateB.FS {
+		return false
+	}
+	if stateA.Root != "" && stateB.Root != "" && stateA.Root != stateB.Root {
+		return false
+	}
+	err := stateA.EachPath(func(name string, d string) error {
+		otherDigest := stateB.Map.GetDigest(name)
+		if otherDigest == "" {
+			return errors.New("not the same")
+		}
+		contentPaths := stateA.Manifest.DigestPaths(d)
+		otherPaths := stateB.Manifest.DigestPaths(otherDigest)
+		if len(contentPaths) != len(otherPaths) {
+			return errors.New("not the same")
+		}
+		sort.Strings(contentPaths)
+		sort.Strings(otherPaths)
+		for i, p := range contentPaths {
+			if otherPaths[i] != p {
+				return errors.New("not the same")
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return false
+	}
+	// make sure all logical paths in other state are also in state
+	err = stateB.EachPath(func(otherName string, _ string) error {
+		if stateA.GetDigest(otherName) == "" {
+			return errors.New("not the same")
+		}
+		return nil
+	})
+	return err == nil
 }
