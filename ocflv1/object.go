@@ -97,21 +97,16 @@ func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) *vali
 	return r
 }
 
-// NewStage returns a Stage based on the specified version of the object. If ver
-// is the empty value, the head version is used.
-func (obj *Object) NewStage(ctx context.Context, ver ocfl.VNum, opts ...ocfl.StageOption) (*ocfl.Stage, error) {
+func (obj Object) ObjectState(ctx context.Context, i int) (*ocfl.ObjectState, error) {
 	inv, err := obj.Inventory(ctx)
 	if err != nil {
 		return nil, err
 	}
-	idx, err := inv.Index(ver.Num())
+	state, err := inv.objectState(i)
 	if err != nil {
 		return nil, err
 	}
-	alg, err := digest.Get(inv.DigestAlgorithm)
-	if err != nil {
-		return nil, err
-	}
-	opts = append(opts, ocfl.StageIndex(idx))
-	return ocfl.NewStage(alg, opts...), nil
+	state.FS = obj.FS
+	state.Root = obj.ObjectRoot.Path
+	return state, nil
 }

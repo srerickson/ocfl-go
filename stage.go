@@ -7,109 +7,90 @@ import (
 	"io"
 	"io/fs"
 	"path"
+	"runtime"
+	"sort"
 	"strings"
-	"sync"
 
 	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/digest/checksum"
 	"github.com/srerickson/ocfl/internal/pathtree"
 )
 
-var errNoFS = errors.New("cannot add files to a stage without a backing FS")
-var ErrExists = errors.New("the path exists and cannot be replaced")
-var ErrCopyPath = errors.New("source or destination path is parent of the other")
+var (
+	ErrStageNoFS  = errors.New("stage's FS is not set")
+	ErrStageNoAlg = errors.New("stage's digest algorithm is not set")
+	ErrExists     = errors.New("the path exists and cannot be replaced")
+	ErrCopyPath   = errors.New("source or destination path is parent of the other")
+)
 
-// Stage is used to assemble the content (or "state") of an OCFL object prior to
-// committing. A Stage can be backed by an FS, allowing new content to be added
-// to the stage. Exising content can be removed, renamed, and copied, using
-// Stage's methods. Use NewStage() create a new Stage.
+// Stage is used to construct, add content to, and manipulate an object state prior
+// to commit.
 type Stage struct {
-	idx       *Index
-	alg       digest.Alg
-	srcFiles  map[string]struct{} // added source files
-	writeLock sync.RWMutex
-	fs        FS
-	root      string // a prefix for all source paths in the index
-	init      bool
+	FS              // FS for adding new content to the stage
+	Root string     // base directory for all content
+	Alg  digest.Alg // Primary digest algorith (sha512 or sha256)
+
+	contents map[string]stageEntry  // map[digest]entry
+	state    *pathtree.Node[string] // mutable directory structure
 }
 
-// NewStage creates a new Stage. Stage options should include a source
-// directory for adding files (StageRoot) or an initial index for setting existing
-// content (StageIndex).
-func NewStage(alg digest.Alg, opts ...StageOption) *Stage {
-	stg := &Stage{
-		idx: newEmptyIndex(),
-		alg: alg,
-	}
-	for _, opt := range opts {
-		opt(stg)
-	}
-	if stg.fs != nil && stg.root == "" {
-		stg.root = "."
-	}
-	stg.init = true
-	return stg
+type stageEntry struct {
+	paths  []string   // content paths relative to Root in FS
+	fixity digest.Set // additional digests associate with paths
 }
 
-type StageOption func(*Stage)
-
-// StageIndex is used in NewStage to set the stage's initial index. It is used,
-// for example, to set the stage to match an existing object version.
-func StageIndex(idx *Index) StageOption {
-	return func(stage *Stage) {
-		if !stage.init {
-			// copy idx so it's not modified
-			cp := idx.node.Copy()
-			// clear all source paths in the index (they refer to existing files
-			// in the object).
-			pathtree.Walk(cp, func(_ string, n *pathtree.Node[IndexItem]) error {
-				if n.IsDir() {
-					return nil
-				}
-				n.Val.SrcPaths = nil
-				return nil
-			})
-			stage.idx = &Index{node: *cp}
-		}
+// NewStage creates a new stage with alg as its digest algorithm, init as it its
+// initial state and fsys as it backing FS for new content. To initialize an
+// empty stage, use an empty digest.Map. If the backing FS is nil, new content
+// cannot be added to the stage. The returned stage's Root is set to ".". An
+// error is only returned if init is an invalid digest.Map.
+func NewStage(alg digest.Alg, init digest.Map, fsys FS) (*Stage, error) {
+	stage := &Stage{
+		Alg:      alg,
+		FS:       fsys,
+		Root:     ".",
+		contents: map[string]stageEntry{},
 	}
-}
-
-// StageRoot is used to set the backing FS and root directory for the stage.
-// Setting the root is necessary for adding new files to the Stage. Setting the
-// stage root does not automatically add the contents of the stage root to the
-// stage. (Use AddExisting for that). After setting the root, other processes
-// should not write to files in the root or stage corruption may occur.
-func StageRoot(fsys FS, root string) StageOption {
-	return func(stage *Stage) {
-		if !stage.init {
-			stage.fs = fsys
-			stage.root = root
-		}
+	if err := stage.SetState(init); err != nil {
+		return nil, err
 	}
+	return stage, nil
 }
 
-// Root returns stage's backing root directory. If none is set, it returns nil
-// and an empty string.
-func (stage *Stage) Root() (FS, string) {
-	return stage.fs, stage.root
-}
-
-// DigestAlg returns stage's digest algorithm.
-func (stage *Stage) DigestAlg() digest.Alg {
-	return stage.alg
-}
-
-// AddAllFromRoot adds all files in the stage's root to the index. Previously staged
-// files that aren't present in the stage root are removed. Checksums are
-// calculated for all fies in the directory using the stage's digest algorith
-// and optional fixity algorithms. When addings files to the stage, the file's path
-// relative to the stage root is treated as a logical path.
-func (stage *Stage) AddAllFromRoot(ctx context.Context, fixity ...digest.Alg) error {
-	if stage.fs == nil {
-		return errNoFS
+// AddPath digests the file identified with name and adds the path to the stage.
+// The path name and the associated digest are added to both the stage state and
+// its manifest. The file is digested using the stage's primary digest algorith
+// and any additional algorithms given by 'fixity'.
+func (stage *Stage) AddPath(ctx context.Context, name string, fixity ...digest.Alg) error {
+	if err := stage.checkConfig(); err != nil {
+		return err
 	}
-	newIndex := newEmptyIndex()
-	// setup callback walks srcDir and adds files for checksum
+	fullName := path.Join(stage.Root, name)
+	f, err := stage.OpenFile(ctx, fullName)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	digester := digest.NewDigester(append(fixity, stage.Alg)...)
+	if _, err := digester.ReadFrom(f); err != nil {
+		return fmt.Errorf("during digest of '%s': %w", fullName, err)
+	}
+	return stage.UnsafeAddPath(name, digester.Sums())
+}
+
+// AddRoot adds all files in the Stage Root and its subdirectories to the stage.
+// Contents are digested using the stage digest algorithm and optional fixity
+// algorithms. Paths are added to the stage root with the path relative to the
+// Root. If a path was previously added to the stage state, the previous digest
+// value associated with path is replaced. However, if a path was previously
+// added to the stage manifest (e.g., with UnsafeAdd...) using a different
+// digest, AddRoot will fail with an error.
+func (stage *Stage) AddRoot(ctx context.Context, root string, fixity ...digest.Alg) error {
+	stage.Root = path.Clean(root)
+	if err := stage.checkConfig(); err != nil {
+		return err
+	}
+	algs := append([]digest.Alg{stage.Alg}, fixity...)
 	setup := func(addfn func(name string, algs ...digest.Alg) error) error {
 		eachFileFn := func(name string, _ fs.DirEntry, err error) error {
 			if err != nil {
@@ -117,138 +98,113 @@ func (stage *Stage) AddAllFromRoot(ctx context.Context, fixity ...digest.Alg) er
 			}
 			return addfn(name)
 		}
-		//
-		return EachFile(ctx, stage.fs, stage.root, eachFileFn)
+		return EachFile(ctx, stage.FS, stage.Root, eachFileFn)
 	}
-	// result callback adds result to the new index
+	// digest result: add results to the stage
 	results := func(name string, result digest.Set, err error) error {
 		if err != nil {
 			return err
 		}
-		// name is a path relative to stage.FS: trim the root prefix
-		src := strings.TrimPrefix(name, stage.root+"/")
-		info := IndexItem{
-			SrcPaths: []string{src},
-			Digests:  result,
+		if stage.Root != "." {
+			// Trim name so it's relative to root.
+			name = strings.TrimPrefix(name, stage.Root+"/")
 		}
-		return newIndex.node.SetFile(src, info)
+		return stage.UnsafeAddPath(name, result)
 	}
 	// checksum file opener uses the stage FS
 	open := func(name string) (io.Reader, error) {
-		return stage.fs.OpenFile(ctx, name)
+		return stage.OpenFile(ctx, name)
 	}
 	// append required options
 	opts := []checksum.Option{
 		checksum.WithOpenFunc(open),
-		checksum.WithAlgs(fixity...),
-		checksum.WithAlgs(stage.alg),
+		checksum.WithAlgs(algs...),
+		checksum.WithNumGos(runtime.NumCPU()), // TODO: make this setable
 	}
+	// run checksum
 	if err := checksum.Run(ctx, setup, results, opts...); err != nil {
-		return fmt.Errorf("while staging files in '%s': %w ", stage.root, err)
+		return fmt.Errorf("while staging root '%s': %w ", root, err)
 	}
-	// reset the stage
-	stage.srcFiles = map[string]struct{}{}
-	stage.idx = newIndex
-	newIndex.Walk(func(name string, n *Index) error {
-		if !n.IsDir() {
-			stage.srcFiles[name] = struct{}{}
-		}
-		return nil
-	})
 	return nil
 }
 
-// Remove removes path n from the stage root.
-func (stage *Stage) Remove(n string) error {
-	if _, err := stage.idx.node.Remove(n); err != nil {
+func (stage *Stage) UnsafeAddPath(name string, digests digest.Set) error {
+	return stage.UnsafeAddPathAs(name, name, digests)
+}
+
+func (stage *Stage) UnsafeAddPathAs(content string, logical string, digests digest.Set) error {
+	dig, fixity, err := splitDigests(digests, stage.Alg)
+	if err != nil {
 		return err
 	}
-	stage.idx.node.RemoveEmptyDirs()
+	if logical != "" {
+		if err := stage.addToState(dig, logical); err != nil {
+			return err
+		}
+	}
+	if content != "" {
+		if err := stage.addToManifest(dig, content, fixity); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (stage *Stage) SetState(state digest.Map) error {
+	if err := state.Valid(); err != nil {
+		return err
+	}
+	newState := pathtree.NewDir[string]()
+	state.EachPath(func(n, d string) error {
+		return newState.SetFile(n, d)
+	})
+	stage.state = newState
+	return nil
+}
+
+func (stage *Stage) UnsafeSetManifest(manifest digest.Map) {
+	manifest.EachPath(func(name, digs string) error {
+		return stage.addToManifest(digs, name, nil)
+	})
+}
+
+// Remove removes the logical path from the stage
+func (stage *Stage) Remove(n string) error {
+	if stage.state == nil {
+		stage.state = pathtree.NewDir[string]()
+	}
+	if _, err := stage.state.Remove(n); err != nil {
+		return err
+	}
+	stage.state.RemoveEmptyDirs()
 	return nil
 }
 
 // Rename renames path src to dst in the stage root. If dst exists, it is
 // over-written.
 func (stage *Stage) Rename(src, dst string) error {
-	return stage.idx.node.Rename(src, dst)
-}
-
-// Copy copies src to dst. An error is returned if dst exists, src is a parent
-// of dst, or if dst is a parent of src.
-func (stage *Stage) Copy(src, dst string) error {
-	if _, _, err := stage.GetVal(dst); err == nil {
-		return fmt.Errorf("%w: %s", ErrExists, dst)
+	if stage.state == nil {
+		stage.state = pathtree.NewDir[string]()
 	}
-	if src == "." || dst == "." || strings.HasPrefix(dst, src+"/") || strings.HasPrefix(src, dst+"/") {
-		return fmt.Errorf("cannot copy '%s' to '%s': %w", src, dst, ErrCopyPath)
+	return stage.state.Rename(src, dst)
+}
+
+// State
+func (stage Stage) State() *digest.Map {
+	if stage.state == nil {
+		return &digest.Map{}
 	}
-	srcNode, err := stage.idx.node.Get(src)
-	if err != nil {
-		return err
-	}
-	cp := srcNode.Copy()
-	return stage.idx.node.Set(dst, cp)
-}
-
-// GetVal returns the IndexItem stored in stage for path p along with a boolean
-// indicating if path is a directory. An error is returned if no value is stored
-// for p or if p is not a valid path. GetVal is safe to run from multiple go routines.
-func (stage *Stage) GetVal(name string) (IndexItem, bool, error) {
-	stage.writeLock.RLock()
-	defer stage.writeLock.RUnlock()
-	item, isdir, err := stage.idx.GetVal(name)
-	return IndexItem(item), isdir, err
-}
-
-// Walk runs fn on all logical paths (both files and directories) in the stage,
-// beginning with the root (".").
-func (stage *Stage) Walk(fn IndexWalkFunc) error {
-	return stage.idx.Walk(fn)
-}
-
-func (stage *Stage) Manifest() (*digest.Map, error) {
-	alg := stage.alg.ID()
 	maker := &digest.MapMaker{}
-	walkFn := func(p string, n *Index) error {
-		if n.node.IsDir() {
+	walkFn := func(p string, n *pathtree.Node[string]) error {
+		if n.IsDir() {
 			return nil
 		}
-		dig := n.node.Val.Digests[alg]
-		if dig == "" {
-			return fmt.Errorf("missing %s for '%s'", alg, p)
-		}
-		for _, src := range n.node.Val.SrcPaths {
-			if err := maker.Add(dig, src); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if err := stage.idx.Walk(walkFn); err != nil {
-		return nil, err
-	}
-	return maker.Map(), nil
-}
-
-// VersionState returns a digest map for the logical paths in the stage using
-// the stage's primary digest algorithm.
-func (stage *Stage) VersionState() *digest.Map {
-	alg := stage.DigestAlg()
-	maker := &digest.MapMaker{}
-	walkFn := func(p string, n *Index) error {
-		if n.node.IsDir() {
-			return nil
-		}
-		dig, exists := n.node.Val.Digests[alg.ID()]
-		if !exists {
-			return fmt.Errorf("stage is missing required %s", alg.ID())
-		}
-		if err := maker.Add(dig, p); err != nil {
+		if err := maker.Add(n.Val, p); err != nil {
 			return err
 		}
 		return nil
 	}
-	if err := stage.idx.Walk(walkFn); err != nil {
+	if err := pathtree.Walk(stage.state, walkFn); err != nil {
 		// an error here represents a bug and
 		// it should be addressed in testing.
 		panic(err)
@@ -256,81 +212,114 @@ func (stage *Stage) VersionState() *digest.Map {
 	return maker.Map()
 }
 
-// UnsafeAdd is a low-level method for adding entries to the Stage. Because it
-// can result in stage corruption, it should be avoided. Despite its name, UnsafeAdd
-// is safe to run from multiple go routines.
-func (stage *Stage) UnsafeAdd(lgcPath string, srcPath string, digests digest.Set) error {
-	stage.writeLock.Lock()
-	defer stage.writeLock.Unlock()
-	if id := stage.alg.ID(); digests[id] == "" {
-		return fmt.Errorf("missing required %s digest", id)
-	}
-	if stage.srcFiles == nil {
-		stage.srcFiles = make(map[string]struct{})
-	}
-	var srcs []string
-	if srcPath != "" {
-		srcs = []string{srcPath}
-	}
-	info := IndexItem{Digests: digests, SrcPaths: srcs}
-	stage.srcFiles[srcPath] = struct{}{}
-	if err := stage.idx.node.SetFile(lgcPath, info); err != nil {
-		if srcPath != "" {
-			delete(stage.srcFiles, srcPath)
+func (stage Stage) Manifest() *digest.Map {
+	// FIXME: shouldn't regenerate State every time
+	state := stage.State()
+	maker := digest.MapMaker{}
+	for d, entry := range stage.contents {
+		if state.HasDigest(d) {
+			for _, p := range entry.paths {
+				if err := maker.Add(d, p); err != nil {
+					panic(err)
+				}
+			}
 		}
-		return err
+	}
+	return maker.Map()
+}
+
+func (stage Stage) ContentPaths(dig string) []string {
+	if stage.contents == nil {
+		return nil
+	}
+	return append([]string{}, stage.contents[dig].paths...)
+}
+
+func (stage Stage) GetStateDigest(lgcPath string) string {
+	if stage.state == nil {
+		return ""
+	}
+	node, _ := stage.state.Get(lgcPath)
+	if node == nil {
+		return ""
+	}
+	return node.Val
+}
+
+func (stage *Stage) addToState(dig, name string) error {
+	if stage.state == nil {
+		stage.state = pathtree.NewDir[string]()
+	}
+	return stage.state.SetFile(name, dig)
+}
+
+func (stage *Stage) addToManifest(dig, name string, fixity digest.Set) error {
+	if stage.contents == nil {
+		stage.contents = map[string]stageEntry{}
+	}
+	// // path exists under a different digest?
+	// for d, e := range stageFS.contents {
+	// 	if d == dgst {
+	// 		continue
+	// 	}
+	// 	for _, p := range e.paths {
+	// 		if p == path {
+	// 			return fmt.Errorf("the path '%s' was previously assigned to a different digest value", path)
+	// 		}
+	// 	}
+	// }
+	entry := stage.contents[dig]
+	entry.addPath(name)
+	entry.addFixity(fixity)
+	stage.contents[dig] = entry
+	return nil
+}
+
+func (stage *Stage) checkConfig() error {
+	if stage.Root == "" {
+		stage.Root = "."
+	}
+	if stage.FS == nil {
+		return ErrStageNoFS
+	}
+	if !fs.ValidPath(stage.Root) {
+		return fmt.Errorf("path '%s': %w", stage.Root, fs.ErrInvalid)
+	}
+	if stage.Alg == nil {
+		return errors.New("stage's digest algorithm is not set")
 	}
 	return nil
 }
 
-// WriteFile writes the contents of the io.Reader to a new file at the path, p,
-// relative to the stage root. The stage's fs must be an ocfl.WriteFS and the
-// source path must not have already been added to the stage. Checksums for the
-// stage digest algorithm (and optional fixity algorithms) are created while the
-// file is written. The path, p, is also treated as a logical path and added to
-// the stage index, with a reference to the newly created file. WriteFile is
-// safe to use from multiple go routines.
-func (stage *Stage) WriteFile(ctx context.Context, p string, r io.Reader, fixity ...digest.Alg) (int64, error) {
-	if stage.fs == nil {
-		return 0, errNoFS
+func (entry *stageEntry) addPath(stagePath string) {
+	i := sort.SearchStrings(entry.paths, stagePath)
+	if i < len(entry.paths) && entry.paths[i] == stagePath {
+		return // already present
 	}
-	writeFS, ok := stage.fs.(WriteFS)
-	if !ok {
-		return 0, fmt.Errorf("stage's backing filesystem is not writable")
-	}
-	if stage.setSrcFileExists(p) {
-		return 0, fmt.Errorf("cannot write to the previously staged source path: '%s': %w", p, ErrExists)
-	}
-	fullP := path.Join(stage.root, p)
-	digester := digest.NewDigester(append(fixity, stage.alg)...)
-	size, err := writeFS.Write(ctx, fullP, digester.Reader(r))
-	if err != nil {
-		stage.unsetSrcFile(p)
-		return 0, err
-	}
-	if err := stage.UnsafeAdd(p, p, digester.Sums()); err != nil {
-		return 0, err
-	}
-	return size, nil
+	entry.paths = append(entry.paths, "")
+	copy(entry.paths[i+1:], entry.paths[i:])
+	entry.paths[i] = stagePath
 }
 
-// setSrcFileExists adds p to stage's srcFile map and
-// returns a bool if it already existed
-func (stage *Stage) setSrcFileExists(p string) bool {
-	stage.writeLock.Lock()
-	defer stage.writeLock.Unlock()
-	if stage.srcFiles == nil {
-		stage.srcFiles = make(map[string]struct{})
+func (entry *stageEntry) addFixity(fixity digest.Set) {
+	if len(fixity) == 0 {
+		return
 	}
-	_, exists := stage.srcFiles[p]
-	if !exists {
-		stage.srcFiles[p] = struct{}{}
+	if entry.fixity == nil {
+		entry.fixity = fixity
+		return
 	}
-	return exists
+	for alg, dig := range fixity {
+		entry.fixity[alg] = dig
+	}
 }
 
-func (stage *Stage) unsetSrcFile(p string) {
-	stage.writeLock.Lock()
-	defer stage.writeLock.Unlock()
-	delete(stage.srcFiles, p)
+func splitDigests(set digest.Set, alg digest.Alg) (string, digest.Set, error) {
+	id := alg.ID()
+	dig := set[id]
+	if dig == "" {
+		return "", nil, fmt.Errorf("missing %s value", id)
+	}
+	delete(set, id)
+	return dig, set, nil
 }

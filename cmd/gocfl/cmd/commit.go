@@ -114,8 +114,11 @@ func runCommit(ctx context.Context, conf *Config) {
 	var stage *ocfl.Stage
 	digestUI := &ProgressWriter{preamble: "computing digests "}
 	digestFn := func(w io.Writer) error {
-		stage = ocfl.NewStage(alg, ocfl.StageRoot(srcFS, srcRoot))
-		return stage.AddAllFromRoot(ctx)
+		stage, err = ocfl.NewStage(alg, digest.Map{}, srcFS)
+		if err != nil {
+			return err
+		}
+		return stage.AddRoot(ctx, srcRoot)
 	}
 	if err := digestUI.Start(digestFn); err != nil {
 		log.Error(err, "staging failed")

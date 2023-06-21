@@ -16,7 +16,6 @@ import (
 
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/internal/pathtree"
 )
 
 var (
@@ -203,271 +202,121 @@ func readInventorySidecar(ctx context.Context, fsys ocfl.FS, name string) (strin
 	return string(matches[1]), nil
 }
 
-// Index returns an *ocfl.Index representing the state for a version
-// in the inventory.
-func (inv Inventory) Index(v int) (*ocfl.Index, error) {
-	root := pathtree.NewDir[ocfl.IndexItem]()
-	alg := inv.DigestAlgorithm
-	eachFunc := func(name, sum string, srcs []string) error {
-		info := ocfl.IndexItem{
-			Digests:  digest.Set{alg: sum},
-			SrcPaths: srcs,
+func (inv *Inventory) normalizeDigests() error {
+	// manifest + all version state + all fixity
+	invMaps := make([]*digest.Map, 0, 1+len(inv.Versions)+len(inv.Fixity))
+	if inv.Manifest != nil {
+		invMaps = append(invMaps, inv.Manifest)
+	}
+	for _, v := range inv.Versions {
+		if v.State == nil {
+			continue
 		}
-		for alg, fix := range inv.Fixity {
-			if sum := fix.GetDigest(srcs[0]); sum != "" {
-				info.Digests[alg] = sum
+		invMaps = append(invMaps, v.State)
+	}
+	for _, f := range inv.Fixity {
+		if f == nil {
+			continue
+		}
+		invMaps = append(invMaps, f)
+	}
+	for _, m := range invMaps {
+		if m.HasUppercaseDigests() {
+			newMap, err := m.Normalized()
+			if err != nil {
+				return err
 			}
+			*m = *newMap
 		}
-		return root.SetFile(name, info)
 	}
-	if err := inv.EachStatePath(v, eachFunc); err != nil {
-		return nil, err
-	}
-	idx := &ocfl.Index{}
-	idx.SetRoot(root)
-	return idx, nil
+	return nil
 }
 
-// NextVersionInventory returns a new inventory that is a valid successor for
-// the calling inventory. The new inventory will have an incremented version
-// number and a new version state based on the contents of the stage. Additional
-// arguments are used to set the new version's created timestamp, message
-// string, and user information. The new inventory will use lowercase digest
-// strings for manifest, version state, and fixity entries. Manifest paths for
-// new content files are formed by joining the new version's content directory
-// to the content path found in the stage. All staged files with digests not
-// found in the calling inventory's manifest must include content paths;
-// otherwise, the stage is considered incomplete and an error is returned. If
-// the stage uses a digest algorithm that is different from the calling
-// inventory's, an error is returned.
-func (inv Inventory) NextVersionInventory(stage *ocfl.Stage, created time.Time, msg string, user *User) (*Inventory, error) {
-	next, err := inv.Head.Next()
-	if err != nil {
-		return nil, fmt.Errorf("the inventory's version numbering scheme does not support versions beyond %s: %w", inv.Head, err)
+// addVersionState. This assumes head is already incremented
+func (inv *Inventory) addVersion(stage *ocfl.Stage, pathfn func(string, []string) []string, created time.Time, msg string, user *User) (err error) {
+	if inv.Head, err = inv.Head.Next(); err != nil {
+		return fmt.Errorf("inventory's version scheme doesn't allow additional versions: %w", err)
 	}
-	algid := stage.DigestAlg().ID()
-	if inv.DigestAlgorithm != algid {
-		return nil, fmt.Errorf("stage and inventory use different digest algorithms: '%s' != '%s'", algid, inv.DigestAlgorithm)
+	if err = inv.normalizeDigests(); err != nil {
+		return fmt.Errorf("while normalizing inventory digests: %w", err)
 	}
-	newInv, err := inv.normalizedCopy()
-	if err != nil {
-		return nil, fmt.Errorf("in source inventory: %w", err)
+	if inv.Versions == nil {
+		inv.Versions = map[ocfl.VNum]*Version{}
 	}
-	newInv.Head = next
-	newInv.Versions[newInv.Head] = &Version{
-		Created: created.Truncate(time.Second),
-		User:    user,
+	newState := stage.State()
+	inv.Versions[inv.Head] = &Version{
+		State:   newState,
 		Message: msg,
-		State:   stage.VersionState(),
+		Created: created,
+		User:    user,
 	}
-	prevManFixity := make(map[string]*digest.Map, 1+len(inv.Fixity))
-	prevManFixity[algid] = inv.Manifest
-	for alg, fix := range inv.Fixity {
-		prevManFixity[alg] = fix
+	if inv.ContentDirectory == "" {
+		inv.ContentDirectory = contentDir
 	}
-	// func to rename stage source path to manifest path.
-	// Stage source paths are relative to the stage root;
-	// need to prefix version directory and content.
-	rename := func(src string) string {
-		return path.Join(newInv.Head.String(), newInv.ContentDirectory, src)
-	}
-	newManifests, err := mergeStageManifests(stage, prevManFixity, rename)
-	if err != nil {
-		return nil, err
-	}
-	newInv.Manifest = newManifests[newInv.DigestAlgorithm]
-	delete(newManifests, newInv.DigestAlgorithm)
-	newInv.Fixity = newManifests
-	return newInv, nil
-}
-
-// returns a copy of the inventory with normalized paths
-func (inv Inventory) normalizedCopy() (*Inventory, error) {
-	man, err := inv.Manifest.Normalized()
-	if err != nil {
-		return nil, fmt.Errorf("in manifest: %w", err)
-	}
-	newInv := inv
-	newInv.digest = "" // don't copy digest value (read from sidecar)
-	newInv.Manifest = man
-	newInv.Versions = make(map[ocfl.VNum]*Version, len(inv.Versions))
-	for v, ver := range inv.Versions {
-		newInv.Versions[v] = &Version{
-			Created: ver.Created,
-			Message: ver.Message,
-		}
-		state, err := ver.State.Normalized()
-		if err != nil {
-			return nil, fmt.Errorf("in version %s state: %w", v, err)
-		}
-		newInv.Versions[v].State = state
-		if ver.User != nil {
-			newInv.Versions[v].User = &User{
-				Name:    ver.User.Name,
-				Address: ver.User.Address,
-			}
-		}
-	}
-	newInv.Fixity = make(map[string]*digest.Map, len(inv.Fixity))
-	for alg, m := range inv.Fixity {
-		fix, err := m.Normalized()
-		if err != nil {
-			return nil, fmt.Errorf("in %s fixity: %w", alg, err)
-		}
-		newInv.Fixity[alg] = fix
-	}
-	return &newInv, nil
-}
-
-// mergeStageManifests merges the source paths and digests from the stage into
-// the set of manifests, applying the rename function to the source path.
-func mergeStageManifests(stage *ocfl.Stage, manifests map[string]*digest.Map, renameFunc func(string) string) (map[string]*digest.Map, error) {
-	makers := map[string]*digest.MapMaker{}
-	for algid := range manifests {
-		m, err := digest.MapMakerFrom(manifests[algid])
-		if err != nil {
-			return nil, fmt.Errorf("in previous manifest: %w", err)
-		}
-		makers[algid] = m
-	}
-	stageAlg := stage.DigestAlg().ID()
-	err := stage.Walk(func(p string, n *ocfl.Index) error {
-		if n.IsDir() {
-			return nil
-		}
-		digs := n.Val().Digests
-		srcs := n.Val().SrcPaths
-		if digs[stageAlg] == "" {
-			return fmt.Errorf("missing '%s' for path '%s'", stageAlg, p)
-		}
-		for algID := range digs {
-			if makers[algID] == nil {
-				makers[algID] = &digest.MapMaker{}
-			}
-			for _, src := range srcs {
-				if renameFunc != nil {
-					src = renameFunc(src)
-				}
-				// It's ok if the path has already been added to the map maker
-				// since another logical path in the stage might use the same
-				// source path. The error we are concerned with is whether the
-				// source path was previously added with a different digest.
-				err := makers[algID].Add(digs[algID], src)
-				if err != nil && !errors.Is(err, digest.ErrMapMakerExists) {
-					return err
-				}
-			}
-		}
-		// the primary digest for each logical path in the stage should have a
-		// content path in the new manifest. check that the maker for the new
-		// manifest has an entry for the digest.
-		if !makers[stageAlg].HasDigest(digs[stageAlg]) {
-			return fmt.Errorf("missing content path for '%s'", p)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	maps := make(map[string]*digest.Map, len(makers))
-	for alg, maker := range makers {
-		maps[alg] = maker.Map()
-	}
-	return maps, nil
-}
-
-// NewInventory creates an initial inventory for the first version of an object
-// based on the contets of the stage. The new inventory will use lowercase
-// digest strings for manifest, version state, and fixity entries. Manifest
-// paths for new content files are formed by joining the new version's content
-// directory to the content path found in the stage. All staged files must have
-// content paths or else the stage is considered incomplete and an error is
-// returne.
-func NewInventory(stage *ocfl.Stage, id string, contDir string, padding int, created time.Time, msg string, user *User) (*Inventory, error) {
-	if contDir == "" {
-		contDir = contentDir
-	}
-	head := ocfl.V(1, padding)
-	if err := head.Valid(); err != nil {
-		return nil, fmt.Errorf("invalid padding: %d", padding)
-	}
-	if alg := stage.DigestAlg().ID(); !algorithms[alg] {
-		return nil, fmt.Errorf("invalid digest algorithm %s", alg)
-	}
-	inv := &Inventory{
-		ID:               id,
-		Head:             head,
-		Type:             defaultSpec.AsInvType(),
-		DigestAlgorithm:  stage.DigestAlg().ID(),
-		ContentDirectory: contDir,
-		Versions: map[ocfl.VNum]*Version{
-			head: {
-				Created: created.Truncate(time.Second),
-				User:    user,
-				Message: msg,
-				State:   stage.VersionState(),
-			},
-		},
-	}
-	makers := map[string]*digest.MapMaker{}
-	walkFn := func(p string, n *ocfl.Index) error {
-		if n.IsDir() {
-			return nil
-		}
-		digs := n.Val().Digests
-		srcs := n.Val().SrcPaths
-		if digs[inv.DigestAlgorithm] == "" {
-			return fmt.Errorf("missing %s for '%s'", inv.DigestAlgorithm, p)
-		}
-		// for a new inventory every file in the stage must have a source
-		if len(srcs) == 0 {
-			return fmt.Errorf("missing content path for '%s'", p)
-		}
-		for algID := range digs {
-			if makers[algID] == nil {
-				makers[algID] = &digest.MapMaker{}
-			}
-			for _, src := range srcs {
-				src := path.Join(inv.Head.String(), inv.ContentDirectory, src)
-				// Add content paths to manifest and fixity. It's ok if the same
-				// path is added multiple times, but only if the digest is the
-				// same.
-				err := makers[algID].Add(digs[algID], src)
-				if err != nil && !errors.Is(err, digest.ErrMapMakerExists) {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-	if err := stage.Walk(walkFn); err != nil {
-		return nil, fmt.Errorf("in new inventory stage: %w", err)
-	}
-	maps := map[string]*digest.Map{}
-	for alg, maker := range makers {
-		maps[alg] = maker.Map()
-	}
-	inv.Manifest = maps[inv.DigestAlgorithm]
 	if inv.Manifest == nil {
 		inv.Manifest = &digest.Map{}
 	}
-	delete(maps, inv.DigestAlgorithm)
-	inv.Fixity = maps
-	return inv, nil
+	// pathTransformation applied to stage export's manifest and fixity
+	// to generate inventory's manifest and fixity
+	pathTransform := func(digest string, paths []string) []string {
+		// apply user-specified path transform first
+		if pathfn != nil {
+			paths = pathfn(digest, paths)
+		}
+		// prefix paths with "{vnum}/content"
+		for i, p := range paths {
+			paths[i] = path.Join(inv.Head.String(), inv.ContentDirectory, p)
+
+		}
+		return paths
+	}
+	// generate new manifest entries
+	stageManifest := stage.Manifest()
+	if stageManifest != nil {
+		*stageManifest, err = stageManifest.PathTransform(pathTransform)
+		if err != nil {
+			return fmt.Errorf("path transformation resulted in an invalid manifest: %w", err)
+		}
+	}
+
+	// generate new manifest: apply path tranformation and merge
+	if inv.Manifest, err = inv.Manifest.Merge(stageManifest); err != nil {
+		return fmt.Errorf("while generating new manifest: %w", err)
+	}
+	// for fixAlg, stageFix := range stage.Fixity {
+	// 	if inv.Fixity == nil {
+	// 		inv.Fixity = map[string]*digest.Map{}
+	// 	}
+	// 	var newFixEntries digest.Map
+	// 	if newFixEntries, err = stageFix.PathTransform(pathTransform); err != nil {
+	// 		return fmt.Errorf("transformation resulted in an invalid fixity entry: %w", err)
+	// 	}
+	// 	if inv.Fixity[fixAlg] == nil {
+	// 		inv.Fixity[fixAlg] = &newFixEntries
+	// 		continue
+	// 	}
+	// 	if inv.Fixity[fixAlg], err = inv.Fixity[fixAlg].Merge(&newFixEntries); err != nil {
+	// 		return fmt.Errorf("while generating new fixity entries: %w", err)
+	// 	}
+	// }
+	return nil
 }
 
-func (inv Inventory) LogicalState(v int) (lstate LogicalState, err error) {
-	if lstate.Alg, err = digest.Get(inv.DigestAlgorithm); err != nil {
-		return
+func (inv Inventory) objectState(v int) (*ocfl.ObjectState, error) {
+	ver := inv.GetVersion(v)
+	if ver == nil {
+		return nil, fmt.Errorf("%w: with index %d", ErrVersionNotFound, v)
 	}
-	lstate.Paths = map[string]ManifestEntry{}
-	err = inv.EachStatePath(v, func(logical string, digest string, content []string) error {
-		c := append([]string{}, content...)
-		lstate.Paths[logical] = ManifestEntry{ContentPaths: c, Digest: digest}
-		return nil
-	})
+	alg, err := digest.Get(inv.DigestAlgorithm)
 	if err != nil {
-		lstate = LogicalState{}
+		return nil, err
 	}
-	return
+
+	return &ocfl.ObjectState{
+		Manifest: *inv.Manifest,
+		Map:      *ver.State,
+		Message:  ver.Message,
+		Created:  ver.Created,
+		Alg:      alg,
+	}, nil
 }

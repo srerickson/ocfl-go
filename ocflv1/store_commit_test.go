@@ -47,7 +47,7 @@ func TestStoreCommit(t *testing.T) {
 	}
 
 	t.Run("without options", func(t *testing.T) {
-		stage := ocfl.NewStage(digest.SHA256()) // empty stage
+		stage := &ocfl.Stage{Alg: digest.SHA256()} // empty stage
 		if err = store.Commit(ctx, "object-0", stage); err != nil {
 			t.Fatal(err)
 		}
@@ -61,12 +61,15 @@ func TestStoreCommit(t *testing.T) {
 	})
 
 	// v1 - add one file "tmp.txt"
-	stage1 := ocfl.NewStage(digest.SHA256(), ocfl.StageRoot(storeFS, `stage1`))
-	if err := stage1.AddAllFromRoot(ctx); err != nil {
+	stage1, err := ocfl.NewStage(digest.SHA256(), digest.Map{}, storeFS)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := stage1.GetVal("tmp.txt"); err != nil {
+	if err := stage1.AddRoot(ctx, "stage1"); err != nil {
 		t.Fatal(err)
+	}
+	if stage1.GetStateDigest("tmp.txt") == "" {
+		t.Fatal("missing expected digest")
 	}
 	if err = store.Commit(ctx, "object-1", stage1,
 		ocflv1.WithContentDir("foo"),
@@ -82,9 +85,13 @@ func TestStoreCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal()
 	}
-	stage2, err := obj.NewStage(ctx, ocfl.Head)
+	state, err := obj.ObjectState(ctx, 0)
 	if err != nil {
-		t.Fatal()
+		t.Fatal(err)
+	}
+	stage2, err := ocfl.NewStage(state.Alg, state.Map, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := stage2.Remove("tmp.txt"); err != nil {
 		t.Fatal(err)
@@ -96,15 +103,15 @@ func TestStoreCommit(t *testing.T) {
 	}
 
 	// v3 - new files and rename one
-	obj, err = store.GetObject(ctx, "object-1")
+	_, err = store.GetObject(ctx, "object-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	stage3, err := obj.NewStage(ctx, ocfl.Head, ocfl.StageRoot(ocfl.NewFS(stageContent), `stage3`))
+	stage3, err := ocfl.NewStage(digest.SHA256(), digest.Map{}, ocfl.NewFS(stageContent))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stage3.AddAllFromRoot(ctx); err != nil {
+	if err = stage3.AddRoot(ctx, "stage3"); err != nil {
 		t.Fatal(err)
 	}
 	// rename one of the staged files
@@ -123,11 +130,19 @@ func TestStoreCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stage4, err := obj.NewStage(ctx, ocfl.Head, ocfl.StageRoot(testfs.NewMemFS(), `.`))
+	objState, err := obj.ObjectState(ctx, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := stage4.WriteFile(ctx, "a/another.txt", strings.NewReader("fresh deats")); err != nil {
+	stage4fsys := testfs.NewMemFS()
+	if _, err := stage4fsys.Write(ctx, "a/another.txt", strings.NewReader("fresh deats")); err != nil {
+		t.Fatal(err)
+	}
+	stage4, err := ocfl.NewStage(objState.Alg, objState.Map, stage4fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stage4.AddPath(ctx, "a/another.txt"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Commit(ctx, "object-1", stage4,
@@ -169,17 +184,17 @@ func TestStoreCommit(t *testing.T) {
 			t.Fatal("expected a message for version", num)
 		}
 	}
-	idx, err := inv.Index(ocfl.Head.Num())
+	finalState, err := obj.ObjectState(ctx, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := idx.GetVal("tmp.txt"); err != nil {
-		t.Fatal(err)
+	if finalState.GetDigest("tmp.txt") == "" {
+		t.Fatal("missing expected file")
 	}
-	if _, _, err := idx.GetVal("a/another.txt"); err != nil {
-		t.Fatal(err)
+	if finalState.GetDigest("a/another.txt") == "" {
+		t.Fatal("missing expected file")
 	}
-	if idx.Len() != 2 {
+	if len(finalState.AllPaths()) != 2 {
 		t.Fatal("expected only two items")
 	}
 }
