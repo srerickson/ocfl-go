@@ -119,7 +119,7 @@ func TestMapMakerAdd(t *testing.T) {
 		}
 	}
 	// Adding to existing
-	mm, err := digest.MapMakerFrom(digest.NewMapUnsafe(map[string][]string{
+	mm, err := digest.MapMakerFrom(*digest.NewMapUnsafe(map[string][]string{
 		"abcd1": {"file.txt", "a/file2.txt"},
 		"abcd2": {"a/b/data.csv"},
 	}))
@@ -181,6 +181,43 @@ func TestMapMarshalJSON(t *testing.T) {
 		t.Run(desc, func(t *testing.T) {
 			if _, err := json.Marshal(digest.NewMapUnsafe(digests)); err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+
+}
+
+func TestMapMerge(t *testing.T) {
+	base := digest.NewMapUnsafe(map[string][]string{
+		"1234":   {"datafile.txt"},
+		"abcde1": {"newfile.txt"},
+	})
+	for desc, digests := range validMaps {
+		t.Run("valid map: "+desc, func(t *testing.T) {
+			m2 := digest.NewMapUnsafe(digests)
+			merged, err := base.Merge(m2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for p, expectDigest := range base.AllPaths() {
+				gotDigest := merged.GetDigest(p)
+				if gotDigest != expectDigest {
+					t.Fatalf("merged digest for '%s' is '%s', expected '%s'", p, gotDigest, expectDigest)
+				}
+			}
+			for p, expectDigest := range m2.AllPaths() {
+				gotDigest := merged.GetDigest(p)
+				if gotDigest != expectDigest {
+					t.Fatalf("merged digest for '%s' is '%s', expected '%s'", p, gotDigest, expectDigest)
+				}
+			}
+		})
+	}
+	for desc, digests := range invalidMaps {
+		t.Run("invalid map: "+desc, func(t *testing.T) {
+			m2 := digest.NewMapUnsafe(digests)
+			if _, err := base.Merge(m2); err == nil {
+				t.Fatal("expected an errot")
 			}
 		})
 	}
