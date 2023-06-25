@@ -37,14 +37,10 @@ func TestStage(t *testing.T) {
 	if err := stage.AddRoot(ctx, "."); err != nil {
 		t.Fatal(err)
 	}
-	manifest := stage.Manifest()
 	state := stage.State()
 	for name := range data {
 		if state.GetDigest(name) == "" {
 			t.Fatalf("state from stage does not included '%s' as expected", name)
-		}
-		if manifest.GetDigest(name) == "" {
-			t.Fatalf("manifest from stage does not included '%s' as expected", name)
 		}
 	}
 }

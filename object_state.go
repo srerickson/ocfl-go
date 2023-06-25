@@ -43,13 +43,14 @@ type ObjectState struct {
 func (state *ObjectState) AsStage(asFS bool) (*Stage, error) {
 	stage, err := NewStage(state.Alg, state.Map, nil)
 	if err != nil {
-		err := fmt.Errorf("building stage from invalid object state: %w", err)
-		panic(err)
+		return nil, err
 	}
 	if asFS {
 		stage.FS = state
 		stage.Root = "."
-		stage.UnsafeSetManifest(state.Map)
+		if err := stage.UnsafeSetManifestFixty(state.Map, nil); err != nil {
+			return nil, err
+		}
 	}
 	return stage, nil
 }

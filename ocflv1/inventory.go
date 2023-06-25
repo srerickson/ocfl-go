@@ -237,11 +237,21 @@ func (inv *Inventory) addVersion(stage *ocfl.Stage, pathfn func(string, []string
 	if inv.Head, err = inv.Head.Next(); err != nil {
 		return fmt.Errorf("inventory's version scheme doesn't allow additional versions: %w", err)
 	}
+	// normalize all digests in the inventory. If we don't do this
+	// non-normalized digests in previous version states might cause problems
+	// since the updated manifest/fixity will be normalized.
 	if err = inv.normalizeDigests(); err != nil {
 		return fmt.Errorf("while normalizing inventory digests: %w", err)
 	}
 	if inv.Versions == nil {
 		inv.Versions = map[ocfl.VNum]*Version{}
+	}
+	if inv.DigestAlgorithm == "" {
+		inv.DigestAlgorithm = stage.Alg.ID()
+		inv.alg = stage.Alg
+	}
+	if inv.DigestAlgorithm != stage.Alg.ID() {
+		return fmt.Errorf("inventory uses %s: can't commit stage using %s", inv.DigestAlgorithm, stage.Alg.ID())
 	}
 	newState := stage.State()
 	inv.Versions[inv.Head] = &Version{
@@ -270,35 +280,47 @@ func (inv *Inventory) addVersion(stage *ocfl.Stage, pathfn func(string, []string
 		}
 		return paths
 	}
-	// generate new manifest entries
-	stageManifest := stage.Manifest()
-	if stageManifest != nil {
-		*stageManifest, err = stageManifest.PathTransform(pathTransform)
+	// generate new manifest and fixity entries
+	manifestMaker, err := digest.MapMakerFrom(*inv.Manifest)
+	if err != nil {
+		return fmt.Errorf("existing inventory's manifest has errors: %w", err)
+	}
+	fixityMakers := make(map[string]*digest.MapMaker, len(inv.Fixity))
+	for alg, fix := range inv.Fixity {
+		fixityMakers[alg], err = digest.MapMakerFrom(*fix)
 		if err != nil {
-			return fmt.Errorf("path transformation resulted in an invalid manifest: %w", err)
+			return fmt.Errorf("existing inventory's fixity has errors: %w", err)
 		}
 	}
+	for _, dig := range newState.AllDigests() {
+		// if the digest is present in the previous manifest, ignore it.
+		if inv.Manifest.HasDigest(dig) {
+			continue
+		}
+		// New content paths are based on the logical paths found in the stage
+		// state.
+		contentPaths := pathTransform(dig, newState.DigestPaths(dig))
+		if err := manifestMaker.AddPaths(dig, contentPaths...); err != nil {
+			return fmt.Errorf("while generating new manifest: %w", err)
+		}
+		for alg, val := range stage.GetFixity(dig) {
+			if fixityMakers[alg] == nil {
+				fixityMakers[alg] = &digest.MapMaker{}
+			}
+			if err := fixityMakers[alg].AddPaths(val, contentPaths...); err != nil {
+				return fmt.Errorf("while generating new fixity: %w", err)
+			}
+		}
 
-	// generate new manifest: apply path tranformation and merge
-	if inv.Manifest, err = inv.Manifest.Merge(stageManifest); err != nil {
-		return fmt.Errorf("while generating new manifest: %w", err)
 	}
-	// for fixAlg, stageFix := range stage.Fixity {
-	// 	if inv.Fixity == nil {
-	// 		inv.Fixity = map[string]*digest.Map{}
-	// 	}
-	// 	var newFixEntries digest.Map
-	// 	if newFixEntries, err = stageFix.PathTransform(pathTransform); err != nil {
-	// 		return fmt.Errorf("transformation resulted in an invalid fixity entry: %w", err)
-	// 	}
-	// 	if inv.Fixity[fixAlg] == nil {
-	// 		inv.Fixity[fixAlg] = &newFixEntries
-	// 		continue
-	// 	}
-	// 	if inv.Fixity[fixAlg], err = inv.Fixity[fixAlg].Merge(&newFixEntries); err != nil {
-	// 		return fmt.Errorf("while generating new fixity entries: %w", err)
-	// 	}
-	// }
+	inv.Manifest = manifestMaker.Map()
+	inv.Fixity = map[string]*digest.Map{}
+	for alg, fixmaker := range fixityMakers {
+		inv.Fixity[alg] = fixmaker.Map()
+	}
+	if err := inv.Validate().Err(); err != nil {
+		return fmt.Errorf("generated inventory is not valid (this is probably a bug): %w", err)
+	}
 	return nil
 }
 

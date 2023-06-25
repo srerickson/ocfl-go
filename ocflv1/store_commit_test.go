@@ -93,7 +93,7 @@ func TestStoreCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stage2.Remove("tmp.txt"); err != nil {
+	if err := stage2.RemovePath("tmp.txt"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Commit(ctx, "object-1", stage2,
@@ -115,7 +115,7 @@ func TestStoreCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	// rename one of the staged files
-	if err := stage3.Rename("a/tmp.txt", "tmp.txt"); err != nil {
+	if err := stage3.RenamePath("a/tmp.txt", "tmp.txt"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Commit(ctx, "object-1", stage3,

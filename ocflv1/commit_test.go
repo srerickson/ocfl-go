@@ -1,7 +1,6 @@
 package ocflv1_test
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -17,18 +16,18 @@ import (
 )
 
 // WriteFS with stage content for testing
-func newCommitTestWriteFS(files map[string][]byte) (ocfl.WriteFS, error) {
-	ctx := context.Background()
-	fsys := testfs.NewMemFS()
-	// stage1 commit is from storeFS, copy files
-	for n, b := range files {
-		_, err := fsys.Write(ctx, n, bytes.NewReader(b))
-		if err != nil {
-			return nil, err
-		}
-	}
-	return fsys, nil
-}
+// func newCommitTestWriteFS(files map[string][]byte) (ocfl.WriteFS, error) {
+// 	ctx := context.Background()
+// 	fsys := testfs.NewMemFS()
+// 	// stage1 commit is from storeFS, copy files
+// 	for n, b := range files {
+// 		_, err := fsys.Write(ctx, n, bytes.NewReader(b))
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 	}
+// 	return fsys, nil
+// }
 
 // tests for ocflv1.Commit():
 

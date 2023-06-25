@@ -128,17 +128,24 @@ func (stage *Stage) AddRoot(ctx context.Context, root string, fixity ...digest.A
 	return nil
 }
 
+// UnsafeAddPath adds name to the stage as both a logical path and a content
+// path and associates name with the digests in the digest.Set. digests must
+// include an entry with the stage's default digest algorithm. It is unsafe
+// because neither the digest or the existence of the file are confirmed.
 func (stage *Stage) UnsafeAddPath(name string, digests digest.Set) error {
 	return stage.UnsafeAddPathAs(name, name, digests)
 }
 
+// UnsafeAddPathAs adds a logical path to the stage stage and the content path
+// to the stage manifest. It is unsafe because neither the digest or the
+// existence of the file are confirmed.
 func (stage *Stage) UnsafeAddPathAs(content string, logical string, digests digest.Set) error {
 	dig, fixity, err := splitDigests(digests, stage.Alg)
 	if err != nil {
 		return err
 	}
 	if logical != "" {
-		if err := stage.addToState(dig, logical); err != nil {
+		if err := stage.SetStateDigest(logical, dig); err != nil {
 			return err
 		}
 	}
@@ -150,6 +157,7 @@ func (stage *Stage) UnsafeAddPathAs(content string, logical string, digests dige
 	return nil
 }
 
+// SetState sets the stage's state, replacing any previous values.
 func (stage *Stage) SetState(state digest.Map) error {
 	if err := state.Valid(); err != nil {
 		return err
@@ -162,14 +170,23 @@ func (stage *Stage) SetState(state digest.Map) error {
 	return nil
 }
 
-func (stage *Stage) UnsafeSetManifest(manifest digest.Map) {
-	manifest.EachPath(func(name, digs string) error {
-		return stage.addToManifest(digs, name, nil)
+// UnsafeSetManifestFixty replaces the stage's existing content paths and fixity
+// values to match manifest and fixity.
+func (stage *Stage) UnsafeSetManifestFixty(manifest digest.Map, fixity map[string]*digest.Map) error {
+	stage.contents = nil
+	return manifest.EachPath(func(name, dig string) error {
+		altDigests := digest.Set{}
+		for alg, dmap := range fixity {
+			if fixDig := dmap.GetDigest(name); fixDig != "" {
+				altDigests[alg] = fixDig
+			}
+		}
+		return stage.addToManifest(dig, name, altDigests)
 	})
 }
 
-// Remove removes the logical path from the stage
-func (stage *Stage) Remove(n string) error {
+// RemovePath removes the logical path from the stage
+func (stage *Stage) RemovePath(n string) error {
 	if stage.state == nil {
 		stage.state = pathtree.NewDir[string]()
 	}
@@ -180,16 +197,16 @@ func (stage *Stage) Remove(n string) error {
 	return nil
 }
 
-// Rename renames path src to dst in the stage root. If dst exists, it is
+// RenamePath renames path src to dst in the stage root. If dst exists, it is
 // over-written.
-func (stage *Stage) Rename(src, dst string) error {
+func (stage *Stage) RenamePath(src, dst string) error {
 	if stage.state == nil {
 		stage.state = pathtree.NewDir[string]()
 	}
 	return stage.state.Rename(src, dst)
 }
 
-// State
+// State returns a digest map representing the Stage's logical state.
 func (stage Stage) State() *digest.Map {
 	if stage.state == nil {
 		return &digest.Map{}
@@ -207,27 +224,14 @@ func (stage Stage) State() *digest.Map {
 	if err := pathtree.Walk(stage.state, walkFn); err != nil {
 		// an error here represents a bug and
 		// it should be addressed in testing.
+		err = fmt.Errorf("while exporting stage state: %w", err)
 		panic(err)
 	}
 	return maker.Map()
 }
 
-func (stage Stage) Manifest() *digest.Map {
-	// FIXME: shouldn't regenerate State every time
-	state := stage.State()
-	maker := digest.MapMaker{}
-	for d, entry := range stage.contents {
-		if state.HasDigest(d) {
-			for _, p := range entry.paths {
-				if err := maker.Add(d, p); err != nil {
-					panic(err)
-				}
-			}
-		}
-	}
-	return maker.Map()
-}
-
+// ContentPaths returns the staged content paths for the given
+// digest
 func (stage Stage) ContentPaths(dig string) []string {
 	if stage.contents == nil {
 		return nil
@@ -235,6 +239,20 @@ func (stage Stage) ContentPaths(dig string) []string {
 	return append([]string{}, stage.contents[dig].paths...)
 }
 
+// GetFixity returns altnerate digest values for the content with the primary
+// digest value dig
+func (stage Stage) GetFixity(dig string) digest.Set {
+	fix := stage.contents[dig].fixity
+	set := make(digest.Set, len(fix))
+	for k, v := range fix {
+		set[k] = v
+	}
+	return set
+}
+
+// GetStateDigest returns the digest associated with the the logical path in the
+// stage state. If the path isn't present as a file in the stage state, an empty
+// string is returned.
 func (stage Stage) GetStateDigest(lgcPath string) string {
 	if stage.state == nil {
 		return ""
@@ -246,28 +264,32 @@ func (stage Stage) GetStateDigest(lgcPath string) string {
 	return node.Val
 }
 
-func (stage *Stage) addToState(dig, name string) error {
+// SetStateDigest sets the digest for the logical path to dig replacing the
+// previous value if one exists. An error is returned if the logical path exists
+// in the state state as a directory or if a parent directory of the logical
+// path exists as a file.
+func (stage *Stage) SetStateDigest(lgcPath, dig string) error {
 	if stage.state == nil {
 		stage.state = pathtree.NewDir[string]()
 	}
-	return stage.state.SetFile(name, dig)
+	return stage.state.SetFile(lgcPath, dig)
 }
 
 func (stage *Stage) addToManifest(dig, name string, fixity digest.Set) error {
 	if stage.contents == nil {
 		stage.contents = map[string]stageEntry{}
 	}
-	// // path exists under a different digest?
-	// for d, e := range stageFS.contents {
-	// 	if d == dgst {
-	// 		continue
-	// 	}
-	// 	for _, p := range e.paths {
-	// 		if p == path {
-	// 			return fmt.Errorf("the path '%s' was previously assigned to a different digest value", path)
-	// 		}
-	// 	}
-	// }
+	// path exists under a different digest?
+	for d, e := range stage.contents {
+		if d == dig {
+			continue
+		}
+		for _, p := range e.paths {
+			if p == name {
+				return fmt.Errorf("the path '%s' was previously assigned to a different digest value", name)
+			}
+		}
+	}
 	entry := stage.contents[dig]
 	entry.addPath(name)
 	entry.addFixity(fixity)
