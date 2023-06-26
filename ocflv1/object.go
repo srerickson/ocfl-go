@@ -79,9 +79,12 @@ func (obj *Object) SyncInventory(ctx context.Context) error {
 	return nil
 }
 
-// Validate fully validates the Object.
+// Validate fully validates the Object. If the object is valid, the Object's inventory
+// is updated with the inventory downloaded during validation.
 func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) *validation.Result {
 	newObj, r := ValidateObject(ctx, obj.FS, obj.Path, opts...)
-	obj.Inventory = newObj.Inventory
+	if r.Err() == nil {
+		obj.Inventory = newObj.Inventory
+	}
 	return r
 }
