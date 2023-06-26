@@ -6,7 +6,7 @@ import (
 
 	"github.com/matryer/is"
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/internal/testfs"
+	"github.com/srerickson/ocfl/backend/memfs"
 )
 
 type vNumTest struct {
@@ -97,7 +97,7 @@ func TestParseInventoryType(t *testing.T) {
 
 func TestWriteSpecFile(t *testing.T) {
 	ctx := context.Background()
-	fsys := testfs.NewMemFS()
+	fsys := memfs.New()
 	test := func(spec ocfl.Spec) {
 		name, err := ocfl.WriteSpecFile(ctx, fsys, "dir1", spec)
 		if err != nil {

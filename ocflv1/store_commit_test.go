@@ -7,15 +7,15 @@ import (
 	"testing/fstest"
 
 	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl/backend/memfs"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/internal/testfs"
 	"github.com/srerickson/ocfl/ocflv1"
 )
 
 func TestStoreCommit(t *testing.T) {
 	storePath := "test-stage"
 	ctx := context.Background()
-	storeFS := testfs.NewMemFS() // store
+	storeFS := memfs.New() // store
 	stageContent := fstest.MapFS{
 		`stage1/tmp.txt`:       &fstest.MapFile{Data: []byte(`content1`)},
 		`stage3/a/tmp.txt`:     &fstest.MapFile{Data: []byte(`content2`)},
@@ -134,7 +134,7 @@ func TestStoreCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stage4fsys := testfs.NewMemFS()
+	stage4fsys := memfs.New()
 	if _, err := stage4fsys.Write(ctx, "a/another.txt", strings.NewReader("fresh deats")); err != nil {
 		t.Fatal(err)
 	}

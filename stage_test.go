@@ -6,13 +6,13 @@ import (
 	"testing"
 
 	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl/backend/memfs"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/internal/testfs"
 )
 
 func newTestFS(data map[string][]byte) ocfl.FS {
 	ctx := context.Background()
-	fsys := testfs.NewMemFS()
+	fsys := memfs.New()
 	for name, file := range data {
 		_, err := fsys.Write(ctx, name, bytes.NewBuffer(file))
 		if err != nil {

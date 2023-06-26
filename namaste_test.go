@@ -7,7 +7,7 @@ import (
 
 	"github.com/matryer/is"
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/internal/testfs"
+	"github.com/srerickson/ocfl/backend/memfs"
 )
 
 func TestParseName(t *testing.T) {
@@ -53,7 +53,7 @@ func TestValidate(t *testing.T) {
 
 func TestWriteDeclaration(t *testing.T) {
 	is := is.New(t)
-	fsys := testfs.NewMemFS()
+	fsys := memfs.New()
 	ctx := context.Background()
 	v := ocfl.Spec{12, 1}
 	dec := &ocfl.Declaration{"ocfl", v}

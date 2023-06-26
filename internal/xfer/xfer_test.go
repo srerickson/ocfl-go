@@ -7,7 +7,7 @@ import (
 	"testing/fstest"
 
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/internal/testfs"
+	"github.com/srerickson/ocfl/backend/memfs"
 	"github.com/srerickson/ocfl/internal/xfer"
 )
 
@@ -21,7 +21,7 @@ func srcFS(files map[string]string) ocfl.FS {
 
 func dstFS(files map[string]string) (ocfl.WriteFS, error) {
 	ctx := context.Background()
-	dst := testfs.NewMemFS()
+	dst := memfs.New()
 	for f, c := range files {
 		_, err := dst.Write(ctx, f, strings.NewReader(c))
 		if err != nil {
