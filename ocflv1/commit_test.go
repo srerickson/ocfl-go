@@ -131,49 +131,129 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocflv1.Object, t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := obj.State(0)
+	originalState, err := obj.State(0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// new content from in-memory FS
-	newContent := map[string]io.Reader{
-		"testdata/delete.txt":     strings.NewReader("This file will be deleted"),
-		"testdata/rename-src.txt": strings.NewReader("This file will be renamed"),
-		"testdata/updated.txt":    strings.NewReader("This file will be updated"),
-		"testdata/unchanged.txt":  strings.NewReader("This file will be unchanged"),
+	// 1st Commit
+	{
+		newContent := map[string]io.Reader{
+			"testdata/delete.txt":     strings.NewReader("This file will be deleted"),
+			"testdata/rename-src.txt": strings.NewReader("This file will be renamed"),
+			"testdata/updated.txt":    strings.NewReader("This file will be updated"),
+			"testdata/unchanged.txt":  strings.NewReader("This file will be unchanged"),
+		}
+		newContentFS, err := memfs.NewWith(newContent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stage, err := ocfl.NewStage(originalState.Alg, originalState.Map, newContentFS)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := stage.AddRoot(ctx, ".", digest.MD5()); err != nil {
+			t.Fatal(err)
+		}
+		if err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, stage); err != nil {
+			t.Fatal(err)
+		}
+		// validite
+		updatedObj, result := ocflv1.ValidateObject(ctx, writeFS, obj.Path)
+		if err := result.Err(); err != nil {
+			t.Fatal(err)
+		}
+		updatedState, err := updatedObj.State(0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// check that new inventory has new content in fixity
+		md5fixity := updatedObj.Inventory.Fixity[digest.MD5id]
+		if md5fixity == nil || len(md5fixity.AllDigests()) == 0 {
+			t.Fatal("inventory should have md5 block in fixity")
+		}
+		// expected state paths
+		var expectedPaths []string
+		for name := range newContent {
+			expectedPaths = append(expectedPaths, name)
+		}
+		for name := range originalState.AllPaths() {
+			expectedPaths = append(expectedPaths, name)
+		}
+		// check that expected paths exist
+		for _, name := range expectedPaths {
+			dig := updatedState.GetDigest(name)
+			if dig == "" {
+				t.Fatal("missing path in updated state:", name)
+			}
+			if _, ok := newContent[name]; !ok {
+				continue
+			}
+			for _, p := range updatedState.Manifest.DigestPaths(dig) {
+				if md5fixity.GetDigest(p) == "" {
+					t.Fatal("missing path in updated fixity", name)
+				}
+			}
+		}
 	}
-	newContentFS, err := memfs.NewWith(newContent)
-	if err != nil {
-		t.Fatal(err)
+	// 2nd Commit
+	{
+		if err := obj.SyncInventory(ctx); err != nil {
+			t.Fatal(err)
+		}
+		state, err := obj.State(0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		newContentFS, err := memfs.NewWith(map[string]io.Reader{
+			"testdata/updated.txt": strings.NewReader("This is updated content"),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stage, err := ocfl.NewStage(state.Alg, state.Map, newContentFS)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := stage.AddPath(ctx, "testdata/updated.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if err := stage.RemovePath("testdata/delete.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if err := stage.RenamePath("testdata/rename-src.txt", "testdata/rename-dst.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, stage); err != nil {
+			t.Fatal(err)
+		}
+		updatedObj, result := ocflv1.ValidateObject(ctx, writeFS, obj.Path)
+		if err := result.Err(); err != nil {
+			t.Fatal(err)
+		}
+		updatedState, err := updatedObj.State(0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updatedState.GetDigest("testdata/delete.txt") != "" {
+			t.Fatal("expected 'testdata/delete.txt' to be removed")
+		}
+		if updatedState.GetDigest("testdata/rename-src.txt") != "" {
+			t.Fatal("expected 'testdata/rename-src.txt' to be removed")
+		}
+		if updatedState.GetDigest("testdata/rename-dst.txt") == "" {
+			t.Fatal("expected 'testdata/rename-dst.txt' to exist")
+		}
+		// check updated path
+		prevState, err := updatedObj.State(updatedObj.Inventory.Head.Num() - 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		updatedPath := "testdata/updated.txt"
+		prevDigest := prevState.GetDigest(updatedPath)
+		if prevDigest == updatedState.GetDigest(updatedPath) {
+			t.Fatalf("expected '%s' to have changed", updatedPath)
+		}
 	}
-	stage, err := ocfl.NewStage(state.Alg, state.Map, newContentFS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := stage.AddRoot(ctx, ".", digest.MD5()); err != nil {
-		t.Fatal(err)
-	}
-	if err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, stage); err != nil {
-		t.Fatal(err)
-	}
-
-	// validite
-	obj2, result := ocflv1.ValidateObject(ctx, writeFS, obj.Path)
-	if err := result.Err(); err != nil {
-		t.Fatal(err)
-	}
-	state2, err := obj2.State(0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries, err := state2.ReadDir(ctx, "testdata")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 4 {
-		t.Fatal("expected 4 entries in 'testdata'")
-	}
-	// TODO: commit with remove, rename, update
 }
 
 // creates a temporary directory and copies all files in the object into the
