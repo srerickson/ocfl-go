@@ -85,7 +85,7 @@ func TestStoreCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal()
 	}
-	state, err := obj.ObjectState(ctx, 0)
+	state, err := obj.State(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestStoreCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	objState, err := obj.ObjectState(ctx, 0)
+	objState, err := obj.State(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,10 +160,7 @@ func TestStoreCommit(t *testing.T) {
 	if result := obj.Validate(ctx); result.Err() != nil {
 		t.Fatal("object is invalid", result.Err())
 	}
-	inv, err := obj.Inventory(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	inv := obj.Inventory
 	if inv.ContentDirectory != "foo" {
 		t.Fatal("expected foo")
 	}
@@ -184,7 +181,7 @@ func TestStoreCommit(t *testing.T) {
 			t.Fatal("expected a message for version", num)
 		}
 	}
-	finalState, err := obj.ObjectState(ctx, 0)
+	finalState, err := obj.State(0)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,19 +22,18 @@ var (
 	ErrObjRootStructure   = errors.New("object includes invalid files or directories")
 )
 
-// Object represents an existing OCFL v1.x object
+// Object represents an existing OCFL v1.x object. Use GetObject() to initialize
+// new Objects.
 type Object struct {
 	ocfl.ObjectRoot
-
-	// cache of inventory
-	inv *Inventory
-	// cache of inventory sidecar
-	sidecarDigest string
+	Inventory Inventory
 }
 
-// GetObject returns a new Object
-func GetObject(ctx context.Context, fsys ocfl.FS, p string) (*Object, error) {
-	root, err := ocfl.GetObjectRoot(ctx, fsys, p)
+// GetObject returns the Object at the path in fsys. It returns an error if the
+// object's root directory doesn't include an object declaration file, or if the
+// root inventory is invalid.
+func GetObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) {
+	root, err := ocfl.GetObjectRoot(ctx, fsys, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -45,68 +44,44 @@ func GetObject(ctx context.Context, fsys ocfl.FS, p string) (*Object, error) {
 		// what is the best error to use here?
 		return nil, ErrInventoryOpen
 	}
-	return &Object{ObjectRoot: *root}, nil
-}
-
-// Root returns the object's FS and root directory. The root directory is a path
-// relative to the object's ocfl.FS.
-func (obj *Object) Root() (ocfl.FS, string) {
-	return obj.ObjectRoot.FS, obj.ObjectRoot.Path
-}
-
-// Inventory returns the root inventory for the object. The first time
-// Inventory() is called, the inventory is downloaded, validated, and returned.
-// An error is returned if the inventory cannot be read or it is invalid.  The
-// value is cached: subsequent calls return the same value.
-func (obj *Object) Inventory(ctx context.Context) (*Inventory, error) {
-	if obj.inv != nil {
-		return obj.inv, nil
-	}
-	name := path.Join(obj.Path, inventoryFile)
-	alg, err := digest.Get(obj.Algorithm)
-	if err != nil {
-		return nil, fmt.Errorf("reading inventory: %w", err)
-	}
-	inv, results := ValidateInventory(ctx, obj.FS, name, alg)
-	if err := results.Err(); err != nil {
-		return nil, fmt.Errorf("reading inventory: %w", err)
-	}
-	obj.inv = inv
-	return obj.inv, nil
-}
-
-// InventorySidecar returns the digest stored in the root inventory sidecar
-// file.  The value is cached: subsequent calls return the same value.
-func (obj *Object) InventorySidecar(ctx context.Context) (string, error) {
-	if obj.sidecarDigest != "" {
-		return obj.sidecarDigest, nil
-	}
-
-	sidecarFile := path.Join(obj.Path, inventoryFile+"."+obj.Algorithm)
-	sidecar, err := readInventorySidecar(ctx, obj.FS, sidecarFile)
-	if err != nil {
-		return "", err
-	}
-	obj.sidecarDigest = sidecar
-	return obj.sidecarDigest, nil
-}
-
-// Validate validations the object using the given validation Options
-func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) *validation.Result {
-	_, r := ValidateObject(ctx, obj.FS, obj.Path, opts...)
-	return r
-}
-
-func (obj Object) ObjectState(ctx context.Context, i int) (*ocfl.ObjectState, error) {
-	inv, err := obj.Inventory(ctx)
-	if err != nil {
+	obj := &Object{ObjectRoot: *root}
+	if err := obj.SyncInventory(ctx); err != nil {
 		return nil, err
 	}
-	state, err := inv.objectState(i)
+	return obj, nil
+}
+
+// State initializes a new ocfl.ObjectState for the object version with the
+// given index. If the index is 0, the most recent version (HEAD) is used.
+func (obj Object) State(i int) (*ocfl.ObjectState, error) {
+	state, err := obj.Inventory.objectState(i)
 	if err != nil {
 		return nil, err
 	}
 	state.FS = obj.FS
-	state.Root = obj.ObjectRoot.Path
+	state.Root = obj.Path
 	return state, nil
+}
+
+// SyncInventory downloads and validates the object's root inventory. If
+// successful the object's Inventory value is updated.
+func (obj *Object) SyncInventory(ctx context.Context) error {
+	name := path.Join(obj.Path, inventoryFile)
+	alg, err := digest.Get(obj.Algorithm)
+	if err != nil {
+		return fmt.Errorf("reading inventory: %w", err)
+	}
+	inv, results := ValidateInventory(ctx, obj.FS, name, alg)
+	if err := results.Err(); err != nil {
+		return fmt.Errorf("reading inventory: %w", err)
+	}
+	obj.Inventory = *inv
+	return nil
+}
+
+// Validate fully validates the Object.
+func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) *validation.Result {
+	newObj, r := ValidateObject(ctx, obj.FS, obj.Path, opts...)
+	obj.Inventory = newObj.Inventory
+	return r
 }

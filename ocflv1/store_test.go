@@ -90,16 +90,11 @@ func TestGetStore(t *testing.T) {
 			}
 
 			scanFn := func(obj *ocflv1.Object) error {
-				inv, err := obj.Inventory(ctx)
-				if err != nil {
+				if err := obj.SyncInventory(ctx); err != nil {
 					return err
 				}
-				// test layout works
-				_, err = store.GetObject(ctx, inv.ID)
-				if err != nil {
-					return err
-				}
-				return nil
+				_, err = store.GetObject(ctx, obj.Inventory.ID)
+				return err
 			}
 
 			if err := store.ScanObjects(ctx, scanFn, nil); err != nil {

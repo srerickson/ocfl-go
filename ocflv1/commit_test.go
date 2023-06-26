@@ -43,11 +43,10 @@ func TestCommit(t *testing.T) {
 		if obj.Path != root {
 			t.Fatal("expected object path to be", root)
 		}
-		inv, err := obj.Inventory(ctx)
-		if err != nil {
+		if err := obj.SyncInventory(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if inv.ID != id {
+		if obj.Inventory.ID != id {
 			t.Fatal("expected object id to be", id)
 		}
 	})
@@ -81,7 +80,7 @@ func ExampleCommit_copyobject() {
 	if err != nil {
 		log.Fatal("couldn't open source object:", err.Error())
 	}
-	state, err := sourceObject.ObjectState(ctx, 0)
+	state, err := sourceObject.State(0)
 	if err != nil {
 		log.Fatal("couldn't retrieve logical state")
 	}
@@ -132,11 +131,7 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocflv1.Object, t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := obj.ObjectState(ctx, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inv, err := obj.Inventory(ctx)
+	state, err := obj.State(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +153,7 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocflv1.Object, t *testing
 	if err := stage.AddRoot(ctx, ".", digest.MD5()); err != nil {
 		t.Fatal(err)
 	}
-	if err := ocflv1.Commit(ctx, writeFS, obj.Path, inv.ID, stage); err != nil {
+	if err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, stage); err != nil {
 		t.Fatal(err)
 	}
 
@@ -167,7 +162,7 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocflv1.Object, t *testing
 	if err := result.Err(); err != nil {
 		t.Fatal(err)
 	}
-	state2, err := obj2.ObjectState(ctx, 0)
+	state2, err := obj2.State(0)
 	if err != nil {
 		t.Fatal(err)
 	}

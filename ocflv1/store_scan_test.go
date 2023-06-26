@@ -64,7 +64,7 @@ func TestScanObjects(t *testing.T) {
 					}
 					numObjs := 0
 					scanFn := func(obj *ocflv1.Object) error {
-						if _, err := obj.Inventory(ctx); err != nil {
+						if err := obj.SyncInventory(ctx); err != nil {
 							t.Fatal(err)
 						}
 						numObjs++

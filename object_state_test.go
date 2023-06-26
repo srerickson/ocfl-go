@@ -104,13 +104,12 @@ func TestObjecState(t *testing.T) {
 		fixtures := filepath.Join(`testdata`, `object-fixtures`, `1.1`)
 		fsys := ocfl.DirFS(fixtures)
 		runTestsFn := func(obj *ocflv1.Object) error {
-			inv, err := obj.Inventory(ctx)
-			if err != nil {
+			if err := obj.SyncInventory(ctx); err != nil {
 				return err
 			}
 			// test all version states
-			for vnum := range inv.Versions {
-				state, err := obj.ObjectState(ctx, vnum.Num())
+			for vnum := range obj.Inventory.Versions {
+				state, err := obj.State(vnum.Num())
 				if err != nil {
 					return err
 				}

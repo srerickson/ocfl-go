@@ -33,7 +33,7 @@ func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...Vali
 	if err := result.Err(); err != nil {
 		return nil, result
 	}
-	obj := &Object{ObjectRoot: *vldr.root}
+	obj := &Object{ObjectRoot: *vldr.root, Inventory: *vldr.rootInv}
 	return obj, result
 }
 

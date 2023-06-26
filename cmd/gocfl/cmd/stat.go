@@ -68,13 +68,11 @@ func runStat(ctx context.Context, conf *Config) {
 
 		numObjs := 0
 		scanFn := func(obj *ocflv1.Object) error {
-			_, p := obj.Root()
-			inv, err := obj.Inventory(ctx)
-			if err != nil {
+			if err := obj.SyncInventory(ctx); err != nil {
 				log.Error(err, "can't read object inventory")
 				return nil
 			}
-			fmt.Println(p, ": ", inv.ID)
+			fmt.Println(obj.Path, ": ", obj.Inventory.ID)
 			numObjs++
 			return nil
 		}
@@ -93,14 +91,13 @@ func statObject(ctx context.Context, str *ocflv1.Store, id string) {
 		log.Error(err, "can't read object")
 		return
 	}
-	inv, err := obj.Inventory(ctx)
-	if err != nil {
+	if err := obj.SyncInventory(ctx); err != nil {
 		log.Error(err, "can't read object inventory")
 		return
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", " ")
-	if err := enc.Encode(&inv); err != nil {
+	if err := enc.Encode(&obj.Inventory); err != nil {
 		log.Error(err, "print stats")
 	}
 

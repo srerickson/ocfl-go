@@ -23,18 +23,14 @@ func TestReadObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inv, err := obj.Inventory(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	vnums := inv.VNums()
+	vnums := obj.Inventory.VNums()
 	if len(vnums) != 3 {
 		t.Error("expected 3 versions")
 	}
-	if inv.Head.Num() != 3 {
+	if obj.Inventory.Head.Num() != 3 {
 		t.Error("expected head to be version 3")
 	}
-	cont, err := inv.ContentPath(0, "foo/bar.xml")
+	cont, err := obj.Inventory.ContentPath(0, "foo/bar.xml")
 	if err != nil {
 		t.Error(err)
 	}

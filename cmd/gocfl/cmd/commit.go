@@ -100,12 +100,8 @@ func runCommit(ctx context.Context, conf *Config) {
 			log.Error(err, "can't update object")
 			return
 		}
-		inv, err := obj.Inventory(ctx)
-		if err != nil {
-			log.Error(err, "can't update object")
-			return
-		}
-		digestAlg = inv.DigestAlgorithm
+
+		digestAlg = obj.Inventory.DigestAlgorithm
 	}
 	alg, err := digest.Get(digestAlg)
 	if err != nil {

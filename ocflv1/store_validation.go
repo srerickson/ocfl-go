@@ -133,9 +133,8 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 	//sub-directories other than as a directory hierarchy used to store OCFL
 	//Objects or for storage root extensions.
 	scanFn := func(obj *Object) error {
-		_, objRoot := obj.Root()
 		objSpec := obj.Spec
-		objLgr := lgr.WithName(objRoot)
+		objLgr := lgr.WithName(obj.Path)
 		if ocflV.Cmp(objSpec) < 0 {
 			// object ocfl spec is higher than storage root's
 			result.LogFatal(objLgr, ErrObjectVersion)
@@ -153,20 +152,22 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 		if err := obj.Validate(ctx, objValidOpts...).Err(); err != nil {
 			return nil // return nil to continue validating objects in the Scan
 		}
-		inv, err := obj.Inventory(ctx) // I just need the ID
-		if err != nil {
+		// I just need the ID
+		if err != obj.SyncInventory(ctx) {
 			result.LogFatal(objLgr, fmt.Errorf("%s: %w", errMsg, err))
 			return nil
 		}
+
 		if layoutFunc != nil {
-			p, err := layoutFunc(inv.ID)
+			id := obj.Inventory.ID
+			p, err := layoutFunc(id)
 			if err != nil {
-				err := fmt.Errorf("object id '%s' is not compatible with the storage root layout: %w", inv.ID, err)
+				err := fmt.Errorf("object id '%s' is not compatible with the storage root layout: %w", id, err)
 				result.LogWarn(objLgr, err)
 				return nil
 			}
-			if expRoot := path.Join(root, p); expRoot != objRoot {
-				err := fmt.Errorf("object path '%s' does not conform with storage root layout. expected '%s'", objRoot, expRoot)
+			if expRoot := path.Join(root, p); expRoot != obj.Path {
+				err := fmt.Errorf("object path '%s' does not conform with storage root layout. expected '%s'", obj.Path, expRoot)
 				result.LogWarn(objLgr, err)
 				return nil
 			}
