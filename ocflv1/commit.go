@@ -246,7 +246,7 @@ func transferMap(stage *ocfl.Stage, inv *Inventory, objRoot string) (map[string]
 		if stage.FS == nil {
 			return nil, errors.New("missing staged content FS")
 		}
-		sources := stage.ContentPaths(dig)
+		sources := stage.GetContent(dig)
 		if len(sources) == 0 {
 			return nil, fmt.Errorf("no source file provided for digest: %s", dig)
 		}

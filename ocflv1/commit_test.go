@@ -26,7 +26,7 @@ func TestCommit(t *testing.T) {
 		alg := digest.SHA256()
 		root := "object-root"
 		id := "001"
-		stage, err := ocfl.NewStage(alg, digest.Map{}, nil)
+		stage, err := ocfl.NewStage(alg, digest.Map{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -95,8 +95,13 @@ func ExampleCommit_copyobject() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// commit
-	stage, err := state.AsStage(true)
+	// construct a stage using the object's state, manifest and fixity.
+	stage, err := ocfl.NewStage(state.Alg, state.Map)
+	if err != nil {
+		log.Fatal(err)
+	}
+	stage.SetFS(sourceObject.FS, sourceObject.Path)
+	err = stage.UnsafeSetManifestFixty(*sourceObject.Inventory.Manifest, sourceObject.Inventory.Fixity)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -147,11 +152,11 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocflv1.Object, t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		stage, err := ocfl.NewStage(originalState.Alg, originalState.Map, newContentFS)
+		stage, err := ocfl.NewStage(originalState.Alg, originalState.Map)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := stage.AddRoot(ctx, ".", digest.MD5()); err != nil {
+		if err := stage.AddFS(ctx, newContentFS, ".", digest.MD5()); err != nil {
 			t.Fatal(err)
 		}
 		if err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, stage); err != nil {
@@ -210,11 +215,11 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocflv1.Object, t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		stage, err := ocfl.NewStage(state.Alg, state.Map, newContentFS)
+		stage, err := ocfl.NewStage(state.Alg, state.Map)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := stage.AddPath(ctx, "testdata/updated.txt"); err != nil {
+		if err := stage.AddFS(ctx, newContentFS, "."); err != nil {
 			t.Fatal(err)
 		}
 		if err := stage.RemovePath("testdata/delete.txt"); err != nil {

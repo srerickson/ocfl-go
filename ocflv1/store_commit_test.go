@@ -61,11 +61,11 @@ func TestStoreCommit(t *testing.T) {
 	})
 
 	// v1 - add one file "tmp.txt"
-	stage1, err := ocfl.NewStage(digest.SHA256(), digest.Map{}, storeFS)
+	stage1, err := ocfl.NewStage(digest.SHA256(), digest.Map{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stage1.AddRoot(ctx, "stage1"); err != nil {
+	if err := stage1.AddFS(ctx, storeFS, "stage1"); err != nil {
 		t.Fatal(err)
 	}
 	if stage1.GetStateDigest("tmp.txt") == "" {
@@ -89,7 +89,7 @@ func TestStoreCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stage2, err := ocfl.NewStage(state.Alg, state.Map, nil)
+	stage2, err := ocfl.NewStage(state.Alg, state.Map)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,11 +107,11 @@ func TestStoreCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stage3, err := ocfl.NewStage(digest.SHA256(), digest.Map{}, ocfl.NewFS(stageContent))
+	stage3, err := ocfl.NewStage(digest.SHA256(), digest.Map{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = stage3.AddRoot(ctx, "stage3"); err != nil {
+	if err = stage3.AddFS(ctx, ocfl.NewFS(stageContent), "stage3"); err != nil {
 		t.Fatal(err)
 	}
 	// rename one of the staged files
@@ -138,11 +138,11 @@ func TestStoreCommit(t *testing.T) {
 	if _, err := stage4fsys.Write(ctx, "a/another.txt", strings.NewReader("fresh deats")); err != nil {
 		t.Fatal(err)
 	}
-	stage4, err := ocfl.NewStage(objState.Alg, objState.Map, stage4fsys)
+	stage4, err := ocfl.NewStage(objState.Alg, objState.Map)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stage4.AddPath(ctx, "a/another.txt"); err != nil {
+	if err := stage4.AddFS(ctx, stage4fsys, "."); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Commit(ctx, "object-1", stage4,

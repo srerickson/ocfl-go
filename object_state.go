@@ -35,26 +35,6 @@ type ObjectState struct {
 	index     *pathtree.Node[string] // logical directory structure
 }
 
-// AsState returns a Stage based on the ObjectState. It panics if the object
-// state is invalid. If asFS is true, the state returned Stage also uses the
-// state as it's backing FS and the stage manifest will match the state. This is
-// useful in cases where the Stage will be used to create or update a different
-// than the one the Object State is derived from.
-func (state *ObjectState) AsStage(asFS bool) (*Stage, error) {
-	stage, err := NewStage(state.Alg, state.Map, nil)
-	if err != nil {
-		return nil, err
-	}
-	if asFS {
-		stage.FS = state
-		stage.Root = "."
-		if err := stage.UnsafeSetManifestFixty(state.Map, nil); err != nil {
-			return nil, err
-		}
-	}
-	return stage, nil
-}
-
 // OpenFile is used to access files in the Objects State by their logical paths
 func (state *ObjectState) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	if err := state.buildIndex(); err != nil {

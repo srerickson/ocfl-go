@@ -145,24 +145,30 @@ func (node *Node[T]) MkdirAll(p string) (*Node[T], error) {
 	if !fs.ValidPath(p) {
 		return nil, fmt.Errorf("%w: '%s'", ErrInvalidPath, p)
 	}
-	if p == "." && node.children != nil {
+	if p == "." && node.IsDir() {
 		return node, nil
 	}
+	name := p
 	for {
-		if node.children == nil {
-			return nil, fmt.Errorf("%w: '%s'", ErrNotDir, p)
+		if !node.IsDir() {
+			return nil, fmt.Errorf("%w: '%s'", ErrNotDir, name)
 		}
-		first, rest, more := strings.Cut(p, "/")
+		// first/re/st
+		first, rest, more := strings.Cut(name, "/")
 		nextNode, exists := node.children[first]
 		if !exists {
 			nextNode = NewDir[T]()
 			node.children[first] = nextNode
 		}
-		node = nextNode
-		p = rest
+		node = nextNode // may not be directory
+		name = rest
 		if !more {
 			break
 		}
+	}
+	// final node should be a directory
+	if !node.IsDir() {
+		return nil, fmt.Errorf("%w: '%s'", ErrNotDir, p)
 	}
 	return node, nil
 }
