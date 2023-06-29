@@ -9,12 +9,8 @@
 </a>
 
 This is an implementation of the Oxford Common File Layout
-([OCFL](https://ocfl.io/) ) for Go. A command line interface (`gocfl`) for
-creating, updating, and validating OCFL storage roots and objects is also
-included. 
-
-*Both the API and CLI are under heavy development and will have constant
-breaking changes*!
+([OCFL](https://ocfl.io/)) for Go. The API is under heavy
+development and will have constant breaking changes.
 
 ## What is OCFL?
 
@@ -35,7 +31,6 @@ Here is a high-level overview of what's working and what's not:
 - [x] Support for OCFL v1.0 and v1.1 
 - [x] Reasonable test coverage
 - [x] Ability to purge objects from a storage root
-- [ ] Object locking (to prevent simultaneous writes)
 - [ ] Consistent, informative error/log messages
 - [ ] Well-documented API
 - [ ] Stable API
