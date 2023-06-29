@@ -10,17 +10,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/internal/xfer"
+	"github.com/srerickson/ocfl/logging"
 	"github.com/srerickson/ocfl/validation"
+	"golang.org/x/exp/slog"
 )
 
 func Commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, id string, stage *ocfl.Stage, optFuncs ...CommitOption) error {
 	// defaults
 	opts := &commitOpt{
 		spec:       defaultSpec,
-		logger:     logr.Discard(),
+		logger:     logging.DefaultLogger(),
 		created:    time.Now().UTC().Truncate(time.Second),
 		contentDir: contentDir,
 	}
@@ -97,7 +98,7 @@ type commitOpt struct {
 	message     string                          // inventory's version state message
 	created     time.Time                       // inventory's version state created value
 	pathFn      func(string, []string) []string // function to tranform staged content paths
-	logger      logr.Logger
+	logger      *slog.Logger
 }
 
 // CommitOption is used configure Commit
@@ -168,7 +169,7 @@ func WithManifestPathFunc(fn func(digest string, paths []string) []string) Commi
 	}
 }
 
-func WithLogger(logger logr.Logger) CommitOption {
+func WithLogger(logger *slog.Logger) CommitOption {
 	return func(comm *commitOpt) {
 		comm.logger = logger
 	}

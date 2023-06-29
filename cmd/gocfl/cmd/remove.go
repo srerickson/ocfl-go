@@ -22,7 +22,7 @@ var removeCmd = &coral.Command{
 	Run: func(cmd *coral.Command, args []string) {
 		conf, err := getConfig()
 		if err != nil {
-			log.Error(err, "can't load config")
+			log.Error("can't load config", "err", err)
 			return
 		}
 		runRemove(cmd.Context(), conf, removeFlags.isPath, args[0])
@@ -38,7 +38,7 @@ func init() {
 func runRemove(ctx context.Context, conf *Config, isPath bool, arg string) {
 	fsys, root, err := conf.NewFSPath(ctx, rootFlags.repoName)
 	if err != nil {
-		log.Error(err, "could not initialize storage driver", "repo", rootFlags.repoName)
+		log.Error("could not initialize storage driver", "repo", rootFlags.repoName, "err", err)
 		return
 	}
 	if closer, ok := fsys.(io.Closer); ok {
@@ -47,25 +47,25 @@ func runRemove(ctx context.Context, conf *Config, isPath bool, arg string) {
 	writeFS, ok := fsys.(ocfl.WriteFS)
 	if !ok {
 		err := errors.New("storage driver is read-only")
-		log.Error(err, "cannot initialize storage root")
+		log.Error("cannot initialize storage root", "err", err)
 		return
 	}
 	store, err := ocflv1.GetStore(ctx, writeFS, root)
 	if err != nil {
-		log.Error(err, "can't connect to storage root")
+		log.Error("can't connect to storage root", "err", err)
 		return
 	}
 	rmPath := arg
 	if !isPath {
 		objPath, err := store.ResolveID(arg)
 		if err != nil {
-			log.Error(err, "can't resolve path for object")
+			log.Error("can't resolve path for object", "err", err)
 			return
 		}
 		rmPath = path.Join(root, objPath)
 	}
 	if err := writeFS.RemoveAll(ctx, rmPath); err != nil {
-		log.Error(err, "error during remove")
+		log.Error("error during remove", "err", err)
 		return
 	}
 	log.Info("removed", "dir", rmPath)

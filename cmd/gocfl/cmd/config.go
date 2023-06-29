@@ -61,14 +61,14 @@ func init() {
 func runConfig(cmd *coral.Command, args []string) {
 	conf, err := getConfig()
 	if err != nil {
-		log.Error(err, "can't load config", "file", rootFlags.cfgFile)
+		log.Error("can't load config", "file", rootFlags.cfgFile, "err", err)
 		return
 	}
 	writer := io.Writer(os.Stdout)
 	if configFlags.saveConfig {
 		f, err := os.OpenFile(rootFlags.cfgFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
-			log.Error(err, "can't open config file for writing")
+			log.Error("can't open config file for writing", "err", err)
 			return
 		}
 		defer f.Close()
@@ -76,7 +76,7 @@ func runConfig(cmd *coral.Command, args []string) {
 		log.Info("saving config to file", "file", rootFlags.cfgFile)
 	}
 	if err := yaml.NewEncoder(writer).Encode(conf); err != nil {
-		log.Error(err, "error encoding or writing config")
+		log.Error("error encoding or writing config", "err", err)
 	}
 }
 

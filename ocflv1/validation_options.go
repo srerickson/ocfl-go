@@ -1,17 +1,18 @@
 package ocflv1
 
 import (
-	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
+	"github.com/srerickson/ocfl/logging"
 	"github.com/srerickson/ocfl/validation"
+	"golang.org/x/exp/slog"
 )
 
 type validationOptions struct {
 	// Validation errors/warnings logged here. Defaults to logr.Discard()
-	Logger logr.Logger
+	Logger *slog.Logger
 
-	// MaxErrs sets the capacity (max size) for the returned validation.Result.
+	// MaxErrs sets the capacity (max size)s for the returned validation.Result.
 	// Defaults to 100. Use -1 for no limit.
 	MaxErrs int
 
@@ -35,7 +36,7 @@ type validationOptions struct {
 func defaultValidationOptions() *validationOptions {
 	return &validationOptions{
 		AlgRegistry:  ocfl.AlgRegistry(),
-		Logger:       logr.Discard(),
+		Logger:       logging.DefaultLogger(),
 		FallbackOCFL: ocflv1_0,
 		MaxErrs:      100,
 	}
@@ -46,7 +47,7 @@ func defaultValidationOptions() *validationOptions {
 type ValidationOption func(*validationOptions)
 
 // ValidationLogger sets the logger where validation errors are logged.
-func ValidationLogger(l logr.Logger) ValidationOption {
+func ValidationLogger(l *slog.Logger) ValidationOption {
 	return func(opts *validationOptions) {
 		opts.Logger = l
 	}

@@ -30,7 +30,7 @@ var commitCmd = &coral.Command{
 	Run: func(cmd *coral.Command, args []string) {
 		conf, err := getConfig()
 		if err != nil {
-			log.Error(err, "can't load config")
+			log.Error("can't load config", "err", err)
 			return
 		}
 		runCommit(cmd.Context(), conf)
@@ -67,7 +67,7 @@ func runCommit(ctx context.Context, conf *Config) {
 	// storage root repo
 	fsys, root, err := conf.NewFSPath(ctx, rootFlags.repoName)
 	if err != nil {
-		log.Error(err, "could not initialize storage driver", "repo", rootFlags.repoName)
+		log.Error("could not initialize storage driver", "repo", rootFlags.repoName, "err", err)
 		return
 	}
 	if closer, ok := fsys.(io.Closer); ok {
@@ -76,7 +76,7 @@ func runCommit(ctx context.Context, conf *Config) {
 	writeFS, ok := fsys.(ocfl.WriteFS)
 	if !ok {
 		err := errors.New("storage driver is read-only")
-		log.Error(err, "cannot initialize storage root")
+		log.Error("cannot initialize storage root", "err", err)
 		return
 	}
 	// stage repo
@@ -84,11 +84,11 @@ func runCommit(ctx context.Context, conf *Config) {
 	srcRepo.Path = commitFlags.srcPath
 	srcFS, srcRoot, err := srcRepo.GetFSPath(ctx)
 	if err != nil {
-		log.Error(err, "could not initialize storage driver for staging directory")
+		log.Error("could not initialize storage driver for staging directory", "err", err)
 	}
 	store, err := ocflv1.GetStore(ctx, writeFS, root)
 	if err != nil {
-		log.Error(err, "can't commit")
+		log.Error("can't commit", "err", err)
 		return
 	}
 	// set digest algorith from exsting object
@@ -97,7 +97,7 @@ func runCommit(ctx context.Context, conf *Config) {
 		var err error
 		obj, err = store.GetObject(ctx, commitFlags.objectID)
 		if err != nil {
-			log.Error(err, "can't update object")
+			log.Error("can't update object", "err", err)
 			return
 		}
 
@@ -105,7 +105,7 @@ func runCommit(ctx context.Context, conf *Config) {
 	}
 	alg, err := digest.Get(digestAlg)
 	if err != nil {
-		log.Error(err, "can't commit")
+		log.Error("can't commit", "err", err)
 	}
 	var stage *ocfl.Stage
 	digestUI := &ProgressWriter{preamble: "computing digests "}
@@ -117,7 +117,7 @@ func runCommit(ctx context.Context, conf *Config) {
 		return stage.AddFS(ctx, srcFS, srcRoot)
 	}
 	if err := digestUI.Start(digestFn); err != nil {
-		log.Error(err, "staging failed")
+		log.Error("staging failed", "err", err)
 		return
 	}
 	commitUI := &ProgressWriter{preamble: "committing " + commitFlags.objectID + " "}
@@ -130,7 +130,7 @@ func runCommit(ctx context.Context, conf *Config) {
 		return store.Commit(ctx, commitFlags.objectID, stage, commitOpts...)
 	}
 	if err := commitUI.Start(commitFn); err != nil {
-		log.Error(err, "commit failed")
+		log.Error("commit failed", "err", err)
 		return
 	}
 	log.Info("commit complete")

@@ -173,7 +173,7 @@ func (vldr *objectValidator) validateRootInventory(ctx context.Context) error {
 		copyValidationOptions(vldr.opts),
 		appendResult(vldr.Result),
 		FallbackOCFL(vldr.root.Spec),
-		ValidationLogger(lgr.WithName(inventoryFile)),
+		ValidationLogger(lgr.With("inventory_file", name)),
 	}
 	inv, _ := ValidateInventory(ctx, vldr.FS, name, alg, opts...)
 	if err := vldr.Err(); err != nil {
@@ -203,7 +203,7 @@ func (vldr *objectValidator) validateRootInventory(ctx context.Context) error {
 
 func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum) error {
 	ocflV := vldr.root.Spec // assumed ocfl version (until inventory is decoded)
-	lgr := vldr.opts.Logger.WithName(ver.String())
+	lgr := vldr.opts.Logger.With("version", ver.String())
 	vDir := path.Join(vldr.Root, ver.String())
 	entries, err := vldr.FS.ReadDir(ctx, vDir)
 	if err != nil {
@@ -255,9 +255,9 @@ func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum)
 }
 
 func (vldr *objectValidator) validateVersionInventory(ctx context.Context, vn ocfl.VNum, sidecarAlg digest.Alg) error {
-	lgr := vldr.opts.Logger.WithName(vn.String()).WithName(inventoryFile)
 	vDir := path.Join(vldr.Root, vn.String())
 	name := path.Join(vDir, inventoryFile)
+	lgr := vldr.opts.Logger.With("inventory_file", name)
 	alg := sidecarAlg
 	opts := []ValidationOption{
 		copyValidationOptions(vldr.opts),

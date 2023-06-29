@@ -24,7 +24,7 @@ var initRootCmd = &coral.Command{
 	Run: func(cmd *coral.Command, args []string) {
 		conf, err := getConfig()
 		if err != nil {
-			log.Error(err, "can't load config")
+			log.Error("can't load config", "err", err)
 			return
 		}
 		runInitRoot(cmd.Context(), conf)
@@ -40,7 +40,7 @@ func init() {
 func runInitRoot(ctx context.Context, conf *Config) {
 	fsys, root, err := conf.NewFSPath(ctx, rootFlags.repoName)
 	if err != nil {
-		log.Error(err, "could not initialize storage driver", "repo", rootFlags.repoName)
+		log.Error("could not initialize storage driver", "repo", rootFlags.repoName, "err", err)
 		return
 	}
 	if closer, ok := fsys.(io.Closer); ok {
@@ -49,20 +49,20 @@ func runInitRoot(ctx context.Context, conf *Config) {
 	writeFS, ok := fsys.(ocfl.WriteFS)
 	if !ok {
 		err := errors.New("storage driver is read-only")
-		log.Error(err, "cannot initialize storage root")
+		log.Error("cannot initialize storage root", "err", err)
 		return
 	}
 	var layout extensions.Layout
 	if initRootFlags.layoutName != "" {
 		layoutExt, err := extensions.Get(initRootFlags.layoutName)
 		if err != nil {
-			log.Error(err, "can't initialize storage root with layout", "layout", initRootFlags.layoutName)
+			log.Error("can't initialize storage root with layout", "layout", initRootFlags.layoutName, "err", err)
 			return
 		}
 		layout, ok = layoutExt.(extensions.Layout)
 		if !ok {
 			err := errors.New("extension is not a layout extension")
-			log.Error(err, "can't initialize storage root with layout", "layout", initRootFlags.layoutName)
+			log.Error("can't initialize storage root with layout", "layout", initRootFlags.layoutName, "err", err)
 			return
 		}
 	}
@@ -70,7 +70,7 @@ func runInitRoot(ctx context.Context, conf *Config) {
 		Layout:      layout,
 		Description: initRootFlags.description,
 	}); err != nil {
-		log.Error(err, "during storage root initialization")
+		log.Error("during storage root initialization", "err", err)
 		return
 	}
 	runStat(ctx, conf)

@@ -5,7 +5,7 @@ import (
 	"io"
 
 	"github.com/srerickson/ocfl/backend/cloud"
-	"github.com/srerickson/ocfl/logger"
+	"github.com/srerickson/ocfl/logging"
 	"gocloud.dev/blob/memblob"
 )
 
@@ -15,7 +15,7 @@ type FS struct {
 
 func New() *FS {
 	return &FS{
-		FS: cloud.NewFS(memblob.OpenBucket(nil), cloud.WithLogger(logger.DefaultLogger())),
+		FS: cloud.NewFS(memblob.OpenBucket(nil), cloud.WithLogger(logging.DefaultLogger())),
 	}
 }
 
