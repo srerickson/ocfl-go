@@ -218,6 +218,11 @@ func (stage *Stage) SetStateDigest(lgcPath, dig string) error {
 	if stage.state == nil {
 		stage.state = pathtree.NewDir[string]()
 	}
+	node, err := stage.state.Get(lgcPath)
+	if err == nil && node.IsDir() {
+		// TODO: unified type for path conflict error
+		return fmt.Errorf("can't add '%s' because it was previously added as a directory", lgcPath)
+	}
 	return stage.state.SetFile(lgcPath, dig)
 }
 
@@ -357,11 +362,17 @@ func (entry *stageEntry) addFixity(fixity digest.Set) {
 }
 
 func splitDigests(set digest.Set, alg digest.Alg) (string, digest.Set, error) {
-	id := alg.ID()
-	dig := set[id]
-	if dig == "" {
-		return "", nil, fmt.Errorf("missing %s value", id)
+	newSet := digest.Set{}
+	dig := ""
+	for setAlg, setVal := range set {
+		if setAlg == alg.ID() {
+			dig = setVal
+			continue
+		}
+		newSet[setAlg] = setVal
 	}
-	delete(set, id)
-	return dig, set, nil
+	if dig == "" {
+		return "", nil, fmt.Errorf("missing %s value", alg.ID())
+	}
+	return dig, newSet, nil
 }

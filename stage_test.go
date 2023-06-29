@@ -32,7 +32,7 @@ func TestStageAddFS(t *testing.T) {
 		"unstaged.txt":   []byte("this file is not staged"),
 	}
 	contentFS := newTestFS(data)
-	t.Run("valid", func(t *testing.T) {
+	t.Run("valid inputs", func(t *testing.T) {
 		stage, err := ocfl.NewStage(digest.SHA256(), digest.Map{})
 		if err != nil {
 			t.Fatal(err)
@@ -58,7 +58,7 @@ func TestStageAddFS(t *testing.T) {
 			}
 		}
 	})
-	t.Run("invalid", func(t *testing.T) {
+	t.Run("invalid inputs", func(t *testing.T) {
 		stage, err := ocfl.NewStage(digest.SHA256(), digest.Map{})
 		if err != nil {
 			t.Fatal(err)
@@ -96,7 +96,7 @@ func TestStageAddPath(t *testing.T) {
 		"unstaged.txt":   []byte("this file is not accessible in the stage"),
 	}
 	contentFS := newTestFS(data)
-	t.Run("valid", func(t *testing.T) {
+	t.Run("valid inputs", func(t *testing.T) {
 		stage, err := ocfl.NewStage(digest.SHA256(), digest.Map{})
 		if err != nil {
 			t.Fatal(err)
@@ -123,8 +123,7 @@ func TestStageAddPath(t *testing.T) {
 			}
 		}
 	})
-	t.Run("invalid", func(t *testing.T) {
-
+	t.Run("invalid inputs", func(t *testing.T) {
 		t.Run("without fs", func(t *testing.T) {
 			stage, err := ocfl.NewStage(digest.SHA256(), digest.Map{})
 			if err != nil {
@@ -159,6 +158,30 @@ func TestStageAddPath(t *testing.T) {
 			stage.SetFS(contentFS, "dir")
 			if err := stage.AddPath(ctx, "missing"); err == nil {
 				t.Fatal("expect an error")
+			}
+		})
+	})
+}
+
+func TestStageUnsafeAddPathAs(t *testing.T) {
+	t.Run("invalid inputs", func(t *testing.T) {
+		t.Run("conflict in logical path", func(t *testing.T) {
+			stage, err := ocfl.NewStage(digest.SHA256(), digest.Map{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			digests := digest.Set{digest.SHA256id: `abc`}
+			err = stage.UnsafeAddPathAs("", "dir/file", digests)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = stage.UnsafeAddPathAs("", "dir", digests)
+			if err == nil {
+				t.Error("expect an error when adding a path that already exists as a directory")
+			}
+			err = stage.UnsafeAddPathAs("", "dir/file/file", digests)
+			if err == nil {
+				t.Error("expect an error when adding a path that treats an existing file as a directory")
 			}
 		})
 	})
