@@ -21,7 +21,7 @@ var validateCmd = &coral.Command{
 	Run: func(cmd *coral.Command, args []string) {
 		conf, err := getConfig()
 		if err != nil {
-			log.Error(err, "can't load config")
+			log.Error("can't load config", "err", err)
 			return
 		}
 		runValidate(cmd.Context(), conf)
@@ -36,7 +36,7 @@ func init() {
 func runValidate(ctx context.Context, conf *Config) {
 	fsys, root, err := conf.NewFSPath(ctx, rootFlags.repoName)
 	if err != nil {
-		log.Error(err, "could not initialize storage driver", "repo", rootFlags.repoName)
+		log.Error("could not initialize storage driver", "repo", rootFlags.repoName, "err", err)
 		return
 	}
 	if closer, ok := fsys.(io.Closer); ok {
@@ -44,20 +44,20 @@ func runValidate(ctx context.Context, conf *Config) {
 	}
 	str, err := ocflv1.GetStore(ctx, fsys, root)
 	if err != nil {
-		log.Error(err, "could not read storage root", "path", root)
+		log.Error("could not read storage root", "path", root, "err", err)
 		return
 	}
 	if validateFlags.objectID != "" {
 		pth, err := str.ResolveID(validateFlags.objectID)
 		if err != nil {
-			log.Error(err, "invalid object ID")
+			log.Error("invalid object ID", "err", err)
 			return
 		}
 		name := path.Join(root, pth)
 		_, result := ocflv1.ValidateObject(ctx, fsys, name, ocflv1.ValidationLogger(log))
 
 		if err := result.Err(); err != nil {
-			log.Error(err, "object is not valid")
+			log.Error("object is not valid", "err", err)
 			return
 		}
 		log.Info("object is valid", "id", validateFlags.objectID)
@@ -66,7 +66,7 @@ func runValidate(ctx context.Context, conf *Config) {
 	result := str.Validate(ctx, ocflv1.ValidationLogger(log))
 
 	if err := result.Err(); err != nil {
-		log.Error(err, "store is not valid")
+		log.Error("store is not valid", "err", err)
 		return
 	}
 	log.Info("store is valid")

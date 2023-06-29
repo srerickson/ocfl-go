@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/srerickson/ocfl/backend/cloud"
-	"github.com/srerickson/ocfl/logger"
+	"github.com/srerickson/ocfl/logging"
 	"gocloud.dev/blob"
 	_ "gocloud.dev/blob/azureblob"
 )
@@ -21,19 +21,18 @@ import (
 var progress bool
 
 func main() {
-	log := logger.DefaultLogger()
-	logger.SetVerbosity(10)
+	log := logging.DefaultLogger()
 	flag.BoolVar(&progress, "progress", false, "progress")
 	flag.Parse()
 	name := flag.Arg(0)
 	if name == "" {
 		err := errors.New("file name is required")
-		log.Error(err, "quitting")
+		log.Error("quitting", "err", err)
 		os.Exit(1)
 	}
 	name, err := filepath.Abs(name)
 	if err != nil {
-		log.Error(err, "quitting")
+		log.Error("quitting", "err", err)
 		os.Exit(1)
 	}
 	base := filepath.Base(name)
@@ -41,7 +40,7 @@ func main() {
 	bucketName := "ocfl"
 	bucket, err := blob.OpenBucket(ctx, "azblob://"+bucketName)
 	if err != nil {
-		log.Error(err, "quitting")
+		log.Error("quitting", "err", err)
 		os.Exit(1)
 	}
 	opts := &blob.WriterOptions{
@@ -51,14 +50,14 @@ func main() {
 	wFS := cloud.NewFS(bucket, cloud.WithLogger(log))
 	f, err := os.Open(name)
 	if err != nil {
-		log.Error(err, "quitting")
+		log.Error("quitting", "err", err)
 		os.Exit(1)
 	}
 	defer f.Close()
 	start := time.Now()
 	if !progress {
 		if _, err := wFS.WriterOptions(opts).Write(ctx, base, f); err != nil {
-			log.Error(err, "transfer failed")
+			log.Error("transfer failed", "err", err)
 			os.Exit(1)
 		}
 		log.Info("done", "time", time.Since(start).Seconds())
@@ -72,7 +71,7 @@ func main() {
 		return nil
 	})
 	if err != nil {
-		log.Error(err, "transfer failed")
+		log.Error("transfer failed", "err", err)
 		os.Exit(1)
 	}
 	log.Info("done", "time", time.Since(start).Seconds())

@@ -134,7 +134,7 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 	//Objects or for storage root extensions.
 	scanFn := func(obj *Object) error {
 		objSpec := obj.Spec
-		objLgr := lgr.WithName(obj.Path)
+		objLgr := lgr.With("object_path", obj.Path)
 		if ocflV.Cmp(objSpec) < 0 {
 			// object ocfl spec is higher than storage root's
 			result.LogFatal(objLgr, ErrObjectVersion)

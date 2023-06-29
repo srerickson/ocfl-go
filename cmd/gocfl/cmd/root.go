@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/iand/logfmtr"
 	"github.com/muesli/coral"
+	"golang.org/x/exp/slog"
 )
 
 const defaultCfg = `.gocfl.yaml`
@@ -31,12 +31,7 @@ var (
 		SilenceUsage: true,
 	}
 
-	log = logfmtr.NewWithOptions(logfmtr.Options{
-		Writer:    os.Stderr,
-		Colorize:  true,
-		Humanize:  true,
-		NameDelim: "/",
-	})
+	log = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{}))
 )
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -61,14 +56,10 @@ func init() {
 }
 
 func initConfig() {
-	if rootFlags.verbose {
-		logfmtr.SetVerbosity(10)
-	}
-
 	if rootFlags.cfgFile == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			log.Error(err, "can't determine home directory")
+			log.Error("can't determine home directory", "err", err)
 		}
 		rootFlags.cfgFile = filepath.Join(home, defaultCfg)
 	}

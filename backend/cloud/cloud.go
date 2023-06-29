@@ -8,10 +8,11 @@ import (
 	"io/fs"
 	"path"
 
-	"github.com/go-logr/logr"
 	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl/logging"
 	"gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
+	"golang.org/x/exp/slog"
 )
 
 var ErrNotDir = fmt.Errorf("not a directory")
@@ -19,7 +20,7 @@ var ErrNotDir = fmt.Errorf("not a directory")
 // FS is a generic backend for cloud storage backends using a blob.Bucket
 type FS struct {
 	*blob.Bucket
-	log        logr.Logger
+	log        *slog.Logger
 	writerOpts *blob.WriterOptions
 	readerOpts *blob.ReaderOptions
 }
@@ -31,7 +32,7 @@ type fsOption func(*FS)
 func NewFS(b *blob.Bucket, opts ...fsOption) *FS {
 	fsys := &FS{
 		Bucket: b,
-		log:    logr.Discard(),
+		log:    logging.DefaultLogger(),
 	}
 	for _, opt := range opts {
 		opt(fsys)
@@ -39,7 +40,7 @@ func NewFS(b *blob.Bucket, opts ...fsOption) *FS {
 	return fsys
 }
 
-func WithLogger(l logr.Logger) fsOption {
+func WithLogger(l *slog.Logger) fsOption {
 	return func(fsys *FS) {
 		fsys.log = l
 	}
@@ -62,7 +63,7 @@ func (fsys *FS) ReaderOptions(opts *blob.ReaderOptions) *FS {
 }
 
 func (fsys *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
-	fsys.log.V(ocfl.LevelDebug).Info("open file", "name", name)
+	fsys.log.DebugCtx(ctx, "open file", "name", name)
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{
 			Op:   "openfile",
@@ -92,7 +93,7 @@ func (fsys *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 }
 
 func (fsys *FS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
-	fsys.log.V(ocfl.LevelDebug).Info("read dir", "name", name)
+	fsys.log.DebugCtx(ctx, "read dir", "name", name)
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{
 			Op:   "readdir",
@@ -156,7 +157,7 @@ func (fsys *FS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error)
 }
 
 func (fsys *FS) Write(ctx context.Context, name string, r io.Reader) (int64, error) {
-	fsys.log.V(ocfl.LevelDebug).Info("write file", "name", name)
+	fsys.log.DebugCtx(ctx, "write file", "name", name)
 	if !fs.ValidPath(name) || name == "." {
 		return 0, &fs.PathError{
 			Op:   "write",
@@ -192,7 +193,7 @@ func (fsys *FS) Write(ctx context.Context, name string, r io.Reader) (int64, err
 }
 
 func (fsys *FS) Remove(ctx context.Context, name string) error {
-	fsys.log.V(ocfl.LevelDebug).Info("remove file", "name", name)
+	fsys.log.DebugCtx(ctx, "remove file", "name", name)
 	if !fs.ValidPath(name) {
 		return &fs.PathError{
 			Op:   "remove",
@@ -218,7 +219,7 @@ func (fsys *FS) Remove(ctx context.Context, name string) error {
 }
 
 func (fsys *FS) RemoveAll(ctx context.Context, name string) error {
-	fsys.log.V(ocfl.LevelDebug).Info("remove dir", "name", name)
+	fsys.log.DebugCtx(ctx, "remove dir", "name", name)
 	if !fs.ValidPath(name) {
 		return &fs.PathError{
 			Op:   "remove",
@@ -249,7 +250,7 @@ func (fsys *FS) RemoveAll(ctx context.Context, name string) error {
 		if next == nil {
 			break
 		}
-		fsys.log.V(ocfl.LevelDebug).Info("remove file", "name", next.Key)
+		fsys.log.DebugCtx(ctx, "remove file", "name", next.Key)
 		if err := fsys.Bucket.Delete(ctx, next.Key); err != nil {
 			return &fs.PathError{
 				Op:   "remove",
@@ -262,7 +263,7 @@ func (fsys *FS) RemoveAll(ctx context.Context, name string) error {
 }
 
 func (fsys *FS) Copy(ctx context.Context, dst, src string) error {
-	fsys.log.V(ocfl.LevelDebug).Info("copy", "dst", dst, "src", src)
+	fsys.log.DebugCtx(ctx, "copy", "dst", dst, "src", src)
 	for _, p := range []string{src, dst} {
 		if !fs.ValidPath(p) {
 			return &fs.PathError{

@@ -3,7 +3,7 @@ package validation
 import (
 	"sync"
 
-	"github.com/go-logr/logr"
+	"golang.org/x/exp/slog"
 )
 
 const (
@@ -74,7 +74,7 @@ func (r *Result) AddWarn(err error) *Result {
 }
 
 // LogFatal adds err to the result as a fatal error and writes err to the logger
-func (r *Result) LogFatal(logger logr.Logger, err error) *Result {
+func (r *Result) LogFatal(logger *slog.Logger, err error) *Result {
 	if err != nil {
 		r.AddFatal(err)
 		r.logType(logger, err, fatal)
@@ -84,7 +84,7 @@ func (r *Result) LogFatal(logger logr.Logger, err error) *Result {
 
 // LogWarn adds err to the result as a warning error and writes err to the
 // logger
-func (r *Result) LogWarn(logger logr.Logger, err error) *Result {
+func (r *Result) LogWarn(logger *slog.Logger, err error) *Result {
 	if err != nil {
 		r.AddWarn(err)
 		r.logType(logger, err, warn)
@@ -147,7 +147,7 @@ func (r *Result) Merge(src *Result) {
 }
 
 // Log logs all errs in the in reset to the logger
-func (r *Result) Log(logger logr.Logger) {
+func (r *Result) Log(logger *slog.Logger) {
 	for _, err := range r.warn {
 		r.logType(logger, err, warn)
 	}
@@ -156,12 +156,16 @@ func (r *Result) Log(logger logr.Logger) {
 	}
 }
 
-func (r *Result) logType(logger logr.Logger, err error, typ string) {
-	vals := []interface{}{"type", typ}
+func (r *Result) logType(logger *slog.Logger, err error, typ string) {
+	vals := []interface{}{}
 	if vErr, ok := err.(ErrorCode); ok {
 		if ref := vErr.OCFLRef(); ref != nil {
-			vals = append(vals, "OCFL", ref.Code)
+			vals = append(vals, "spec_code", ref.Code)
 		}
 	}
-	logger.Info(err.Error(), vals...)
+	if typ == fatal {
+		logger.Error(err.Error(), vals...)
+		return
+	}
+	logger.Warn(err.Error(), vals...)
 }

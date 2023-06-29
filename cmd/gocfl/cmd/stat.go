@@ -24,7 +24,7 @@ var statCmd = &coral.Command{
 	Run: func(cmd *coral.Command, args []string) {
 		conf, err := getConfig()
 		if err != nil {
-			log.Error(err, "can't load config")
+			log.Error("can't load config", "err", err)
 			return
 		}
 		runStat(cmd.Context(), conf)
@@ -40,7 +40,7 @@ func init() {
 func runStat(ctx context.Context, conf *Config) {
 	fsys, root, err := conf.NewFSPath(ctx, rootFlags.repoName)
 	if err != nil {
-		log.Error(err, "could not initialize storage driver", "repo", rootFlags.repoName)
+		log.Error("could not initialize storage driver", "repo", rootFlags.repoName, "err", err)
 		return
 	}
 	if closer, ok := fsys.(io.Closer); ok {
@@ -48,7 +48,7 @@ func runStat(ctx context.Context, conf *Config) {
 	}
 	str, err := ocflv1.GetStore(ctx, fsys, root)
 	if err != nil {
-		log.Error(err, "could not read storage root", "path", root)
+		log.Error("could not read storage root", "path", root, "err", err)
 		return
 	}
 	log.Info("storage root info",
@@ -69,7 +69,7 @@ func runStat(ctx context.Context, conf *Config) {
 		numObjs := 0
 		scanFn := func(obj *ocflv1.Object) error {
 			if err := obj.SyncInventory(ctx); err != nil {
-				log.Error(err, "can't read object inventory")
+				log.Error("can't read object inventory", "err", err)
 				return nil
 			}
 			fmt.Println(obj.Path, ": ", obj.Inventory.ID)
@@ -77,7 +77,7 @@ func runStat(ctx context.Context, conf *Config) {
 			return nil
 		}
 		if err := str.ScanObjects(ctx, scanFn, opts); err != nil {
-			log.Error(err, "storage root scan quit with errors")
+			log.Error("storage root scan quit with errors", "err", err)
 			return
 		}
 		log.Info("scan complete", "object_count", numObjs)
@@ -88,17 +88,17 @@ func runStat(ctx context.Context, conf *Config) {
 func statObject(ctx context.Context, str *ocflv1.Store, id string) {
 	obj, err := str.GetObject(ctx, id)
 	if err != nil {
-		log.Error(err, "can't read object")
+		log.Error("can't read object", "err", err)
 		return
 	}
 	if err := obj.SyncInventory(ctx); err != nil {
-		log.Error(err, "can't read object inventory")
+		log.Error("can't read object inventory", "err", err)
 		return
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", " ")
 	if err := enc.Encode(&obj.Inventory); err != nil {
-		log.Error(err, "print stats")
+		log.Error(err.Error())
 	}
 
 }
