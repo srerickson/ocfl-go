@@ -8,6 +8,7 @@ import (
 
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
+	"github.com/srerickson/ocfl/logging"
 	"github.com/srerickson/ocfl/validation"
 )
 
@@ -71,7 +72,8 @@ func (obj *Object) SyncInventory(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reading inventory: %w", err)
 	}
-	inv, results := ValidateInventory(ctx, obj.FS, name, alg)
+	nolog := ValidationLogger(logging.DisabledLogger())
+	inv, results := ValidateInventory(ctx, obj.FS, name, alg, nolog)
 	if err := results.Err(); err != nil {
 		return fmt.Errorf("reading inventory: %w", err)
 	}
