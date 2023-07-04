@@ -14,7 +14,12 @@ import (
 	"github.com/srerickson/ocfl/validation"
 )
 
-var ErrLayoutUndefined = errors.New("storage root layout is undefined")
+var (
+	ErrLayoutUndefined = errors.New("storage root layout is undefined")
+	ErrEmptyDirs       = errors.New("storage root includes empty directories")
+	ErrNonObject       = errors.New("storage root includes files that aren't part of an object")
+	ErrObjectVersion   = errors.New("storage root includes objects with higher OCFL version than the storage root")
+)
 
 // Store represents an existing OCFL v1.x Storage Root.
 type Store struct {
@@ -172,10 +177,15 @@ func (s *Store) Spec() ocfl.Spec {
 	return s.spec
 }
 
-// ScanObjects scans the storage root for objects, returning a map of path/ocfl
-// version pairs. No validation checks are performed.
-func (s *Store) ScanObjects(ctx context.Context, fn func(*Object) error, opts *ScanObjectsOpts) error {
-	return ScanObjects(ctx, s.fsys, s.rootDir, fn, opts)
+// Objects iterates over over the OCFL Object in the storage root and calls fn
+// for each. If an error is encountered while loading the object, the error is
+// passed to fn. If fn returns an error the iteration process terminates.
+func (s Store) Objects(ctx context.Context, fn func(*Object, error) error) error {
+	sel := ocfl.PathSelector{
+		Dir:       s.rootDir,
+		SkipDirFn: func(n string) bool { return n == path.Join(s.rootDir, extensionsDir) },
+	}
+	return Objects(ctx, s.fsys, sel, fn)
 }
 
 // Validate performs complete validation on the store

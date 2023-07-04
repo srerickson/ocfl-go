@@ -1,27 +1,13 @@
 package ocfl_test
 
 import (
-	"bytes"
 	"context"
 	"strings"
 	"testing"
 
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/backend/memfs"
 	"github.com/srerickson/ocfl/digest"
 )
-
-func newTestFS(data map[string][]byte) ocfl.FS {
-	ctx := context.Background()
-	fsys := memfs.New()
-	for name, file := range data {
-		_, err := fsys.Write(ctx, name, bytes.NewBuffer(file))
-		if err != nil {
-			panic(err)
-		}
-	}
-	return fsys
-}
 
 func TestStageAddFS(t *testing.T) {
 	ctx := context.Background()

@@ -94,13 +94,10 @@ func (stage *Stage) AddFS(ctx context.Context, fsys FS, root string, fixity ...d
 	}
 	algs := append([]digest.Alg{stage.Alg}, fixity...)
 	setup := func(addfn func(name string, algs ...digest.Alg) error) error {
-		eachFileFn := func(name string, _ fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
+		eachFileFn := func(name string) error {
 			return addfn(name)
 		}
-		return EachFile(ctx, stage.FS, stage.Root, eachFileFn)
+		return Files(ctx, stage.FS, Dir(stage.Root), eachFileFn)
 	}
 	// digest result: add results to the stage
 	results := func(name string, result digest.Set, err error) error {

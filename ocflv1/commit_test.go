@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"os"
 	"path"
@@ -54,18 +53,18 @@ func TestCommit(t *testing.T) {
 		ctx := context.Background()
 		fixtures := filepath.Join(`..`, `testdata`, `object-fixtures`, `1.1`)
 		fsys := ocfl.DirFS(fixtures)
-		runTestsFn := func(obj *ocflv1.Object) error {
-			t.Run(obj.Path, func(t *testing.T) {
-				testUpdateObject(ctx, obj, t)
+		runTestsFn := func(objRoot *ocfl.ObjectRoot) error {
+			t.Run(objRoot.Path, func(t *testing.T) {
+				testUpdateObject(ctx, objRoot, t)
 			})
 			return nil
 		}
 		// add all version state of all good objects to states
-		if err := ocflv1.ScanObjects(ctx, fsys, "good-objects", runTestsFn, nil); err != nil {
+		if err := ocfl.ObjectRoots(ctx, fsys, ocfl.Dir("good-objects"), runTestsFn); err != nil {
 			t.Fatal(err)
 		}
 		// add all versions state of all warn objects to stattes
-		if err := ocflv1.ScanObjects(ctx, fsys, "warn-objects", runTestsFn, nil); err != nil {
+		if err := ocfl.ObjectRoots(ctx, fsys, ocfl.Dir("warn-objects"), runTestsFn); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -121,7 +120,7 @@ func ExampleCommit_copyobject() {
 	//Output: object is valid
 }
 
-func testUpdateObject(ctx context.Context, fixtureObj *ocflv1.Object, t *testing.T) {
+func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testing.T) {
 	tmpdir, err := mkObjectTemp(fixtureObj)
 	if err != nil {
 		t.Fatal(err)
@@ -265,16 +264,13 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocflv1.Object, t *testing
 // directory, returning the tmp directory root. The object will be located at
 // obj.Path in the new tmp directory. The caller should remember to removeall
 // the temp directoy.
-func mkObjectTemp(obj *ocflv1.Object) (string, error) {
+func mkObjectTemp(obj *ocfl.ObjectRoot) (string, error) {
 	ctx := context.Background()
 	tmpdir, err := os.MkdirTemp("", "test-ocfl-object-*")
 	if err != nil {
 		return "", err
 	}
-	err = ocfl.EachFile(ctx, obj.FS, obj.Path, func(name string, info fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
+	err = ocfl.Files(ctx, obj.FS, ocfl.Dir(obj.Path), func(name string) error {
 		dir := path.Dir(name)
 		if err := os.MkdirAll(filepath.Join(tmpdir, filepath.FromSlash(dir)), 0777); err != nil {
 			return err

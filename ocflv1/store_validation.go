@@ -9,6 +9,7 @@ import (
 
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/extensions"
+	"github.com/srerickson/ocfl/internal/walkdirs"
 	"github.com/srerickson/ocfl/ocflv1/codes"
 	"github.com/srerickson/ocfl/validation"
 )
@@ -132,49 +133,81 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 	//E088: An OCFL Storage Root MUST NOT contain directories or
 	//sub-directories other than as a directory hierarchy used to store OCFL
 	//Objects or for storage root extensions.
-	scanFn := func(obj *Object) error {
-		objSpec := obj.Spec
-		objLgr := lgr.With("object_path", obj.Path)
-		if ocflV.Cmp(objSpec) < 0 {
+	validateObjectRoot := func(objRoot *ocfl.ObjectRoot) error {
+		objectLogger := lgr.With("object_path", objRoot.Path)
+		if ocflV.Cmp(objRoot.Spec) < 0 {
 			// object ocfl spec is higher than storage root's
-			result.LogFatal(objLgr, ErrObjectVersion)
+			result.LogFatal(objectLogger, ErrObjectVersion)
 		}
 		if opts.SkipObjects {
 			return nil
 		}
-		errMsg := "invalid object"
-		//objPath := path.Join(root, objRoot)
+		obj := &Object{ObjectRoot: *objRoot}
 		objValidOpts := []ValidationOption{
 			copyValidationOptions(opts),
-			ValidationLogger(objLgr),
+			ValidationLogger(objectLogger),
 			appendResult(result),
 		}
 		if err := obj.Validate(ctx, objValidOpts...).Err(); err != nil {
 			return nil // return nil to continue validating objects in the Scan
 		}
-		// I just need the ID
-		if err != obj.SyncInventory(ctx) {
-			result.LogFatal(objLgr, fmt.Errorf("%s: %w", errMsg, err))
-			return nil
-		}
-
 		if layoutFunc != nil {
 			id := obj.Inventory.ID
 			p, err := layoutFunc(id)
 			if err != nil {
 				err := fmt.Errorf("object id '%s' is not compatible with the storage root layout: %w", id, err)
-				result.LogWarn(objLgr, err)
+				result.LogWarn(objectLogger, err)
 				return nil
 			}
-			if expRoot := path.Join(root, p); expRoot != obj.Path {
-				err := fmt.Errorf("object path '%s' does not conform with storage root layout. expected '%s'", obj.Path, expRoot)
-				result.LogWarn(objLgr, err)
+			if expRoot := path.Join(root, p); expRoot != objRoot.Path {
+				err := fmt.Errorf("object path '%s' does not conform with storage root layout. expected '%s'", objRoot.Path, expRoot)
+				result.LogWarn(objectLogger, err)
 				return nil
 			}
 		}
 		return nil
 	}
-	if err := ScanObjects(ctx, fsys, root, scanFn, &ScanObjectsOpts{Strict: true}); err != nil {
+	walkDirsFn := func(name string, entries []fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		decl, _ := ocfl.FindDeclaration(entries)
+		switch decl.Type {
+		case ocfl.DeclObject:
+			objRoot := ocfl.NewObjectRoot(fsys, name, entries)
+			if err := validateObjectRoot(objRoot); err != nil {
+				return err
+			}
+			return walkdirs.ErrSkipDirs // don't continue scan further into the object
+		case ocfl.DeclStore:
+			// store within a store is an error
+			if name != root {
+				return fmt.Errorf("%w: %s", ErrNonObject, name)
+			}
+		default:
+			// directories without a declaration must include sub-directories
+			// and only sub-directories -- however, the extensions directory
+			// may be empty. we shouldn't be walking extensions dir
+			numfiles := 0
+			for _, e := range entries {
+				if e.Type().IsRegular() {
+					numfiles++
+				}
+			}
+			if len(entries) == 0 {
+				return fmt.Errorf("%w: %s", ErrEmptyDirs, name)
+			}
+			if numfiles > 0 {
+				return fmt.Errorf("%w: %s", ErrNonObject, name)
+			}
+		}
+		return nil
+	}
+
+	skip := func(name string) bool {
+		return name == path.Join(root, path.Join(root, extensionsDir))
+	}
+	if err := walkdirs.WalkDirs(ctx, fsys, root, skip, walkDirsFn, 0); err != nil {
 		if errors.Is(err, ErrEmptyDirs) {
 			result.LogFatal(lgr, ec(err, codes.E073.Ref(ocflV)))
 		}

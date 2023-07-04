@@ -7,8 +7,10 @@ import (
 	"io"
 	"io/fs"
 	"path"
+	"strings"
 
 	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl/internal/walkdirs"
 	"github.com/srerickson/ocfl/logging"
 	"gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
@@ -23,6 +25,10 @@ type FS struct {
 	log        *slog.Logger
 	writerOpts *blob.WriterOptions
 	readerOpts *blob.ReaderOptions
+
+	// Experimental config
+	ObjectRootsUseWalkDirs bool
+	ObjectRootWalkDirsGos  int
 }
 
 var _ ocfl.WriteFS = (*FS)(nil)
@@ -281,4 +287,138 @@ func (fsys *FS) Copy(ctx context.Context, dst, src string) error {
 		}
 	}
 	return fsys.Bucket.Copy(ctx, dst, src, &blob.CopyOptions{})
+}
+
+// ObjectRoots implements ObjectRootIterator
+func (fsys *FS) ObjectRoots(ctx context.Context, sel ocfl.PathSelector, fn func(obj *ocfl.ObjectRoot) error) error {
+	if fsys.ObjectRootsUseWalkDirs {
+		return fsys.objectRootsWalkDirs(ctx, sel, fn)
+	}
+	return fsys.objectRootsList(ctx, sel, fn)
+}
+
+// an ObjectRoots strategy based on WalkDirs
+func (fsys *FS) objectRootsWalkDirs(ctx context.Context, sel ocfl.PathSelector, fn func(obj *ocfl.ObjectRoot) error) error {
+	walkFn := func(name string, entries []fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		objRoot := ocfl.NewObjectRoot(fsys, name, entries)
+		if objRoot.HasDeclaration() {
+			if err := fn(objRoot); err != nil {
+				return err
+			}
+			// don't walk object subdirectories
+			return walkdirs.ErrSkipDirs
+		}
+		return nil
+	}
+	return walkdirs.WalkDirs(ctx, fsys, sel.Path(), sel.SkipDir, walkFn, fsys.ObjectRootWalkDirsGos)
+}
+
+// an ObjectRoots strategy based on List()
+func (fsys *FS) objectRootsList(ctx context.Context, sel ocfl.PathSelector, fn func(obj *ocfl.ObjectRoot) error) error {
+	dir := sel.Path()
+	fsys.log.Debug("objectroots", "dir", dir)
+	if !fs.ValidPath(dir) {
+		return &fs.PathError{
+			Op:   "each_object",
+			Path: dir,
+			Err:  fs.ErrInvalid,
+		}
+	}
+	var opts blob.ListOptions
+	if dir != "." {
+		opts.Prefix = dir + "/"
+	}
+	var obj *ocfl.ObjectRoot
+	iter := fsys.List(&opts)
+	for {
+		item, err := iter.Next(ctx)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return err
+		}
+		keyDir := path.Dir(item.Key)
+		if sel.SkipDir(keyDir) {
+			continue
+		}
+		keyBase := path.Base(item.Key)
+		// key is a declaration file?
+		var decl ocfl.Declaration
+		if ocfl.ParseDeclaration(keyBase, &decl); decl.Type == ocfl.DeclObject {
+			// new object declaration: apply fn to existing obj and reset
+			if obj != nil {
+				fsys.log.Debug("complete object",
+					"path", obj.Path,
+					"alg", obj.Algorithm,
+					"has_declaration", obj.HasDeclaration(),
+					"has_inventory", obj.HasInventory(),
+					"has_sidecar", obj.HasSidecar(),
+					"versions", obj.VersionDirs,
+				)
+				if err := fn(obj); err != nil {
+					return err
+				}
+			}
+			obj = &ocfl.ObjectRoot{
+				FS:    fsys,
+				Path:  keyDir,
+				Spec:  decl.Version,
+				Flags: ocfl.FoundDeclaration,
+			}
+			continue
+		}
+		// only continue with this key if is within the object's root
+		if obj.Path == "" || !strings.HasPrefix(item.Key, obj.Path) {
+			fsys.log.Debug("each_object", "skipkey", item.Key)
+			continue
+		}
+		// item path relative to the object root
+		// handle object root file entries
+		if keyDir == obj.Path {
+			// inventory.json
+			if keyBase == "inventory.json" {
+				obj.Flags = obj.Flags | ocfl.FoundInventory
+				continue
+			}
+			// sidecar
+			if strings.HasPrefix(keyBase, "inventory.json.") {
+				obj.Algorithm = strings.TrimPrefix(keyBase, "inventory.json.")
+				obj.Flags |= ocfl.FoundSidecar
+				continue
+			}
+
+		}
+		// directories in object root: versions and extensions
+		child, _, _ := strings.Cut(strings.TrimPrefix(item.Key, obj.Path+"/"), "/")
+		if child == "extensions" && (obj.Flags&ocfl.FoundExtensions) == 0 {
+			obj.Flags |= ocfl.FoundExtensions
+			continue
+		}
+		var v ocfl.VNum
+		if err := ocfl.ParseVNum(child, &v); err == nil {
+			var found bool
+			for _, prev := range obj.VersionDirs {
+				if v == prev {
+					found = true
+					break
+				}
+			}
+			if !found {
+				obj.VersionDirs = append(obj.VersionDirs, v)
+			}
+			continue
+		}
+		// otherwise, non-conforming file
+		obj.NonConform = append(obj.NonConform, child)
+		continue
+	}
+	// haven't called fn on final object
+	if obj != nil {
+		return fn(obj)
+	}
+	return nil
 }
