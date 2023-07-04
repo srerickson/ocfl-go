@@ -90,3 +90,15 @@ func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) *vali
 	}
 	return r
 }
+
+// Objects iterates over over the OCFL Object in fsys with the given path
+// selector and calls fn for each. If an error is encountered while loading the
+// object, the error is passed to fn. If fn returns an error the iteration
+// process terminates.
+func Objects(ctx context.Context, fsys ocfl.FS, pth ocfl.PathSelector, fn func(*Object, error) error) error {
+	eachRoot := func(root *ocfl.ObjectRoot) error {
+		obj := Object{ObjectRoot: *root}
+		return fn(&obj, obj.SyncInventory(ctx))
+	}
+	return ocfl.ObjectRoots(ctx, fsys, pth, eachRoot)
+}

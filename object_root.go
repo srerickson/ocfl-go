@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"path"
 	"strings"
+
+	"github.com/srerickson/ocfl/internal/walkdirs"
 )
 
 const (
@@ -180,4 +182,38 @@ func (obj ObjectRoot) HasVersionDir(dir VNum) bool {
 		}
 	}
 	return false
+}
+
+// ObjectRootIterator is used to iterate over object roots
+type ObjectRootIterator interface {
+	// ObjectRoots searches root and its subdirectories for OCFL object declarations
+	// and calls fn for each object root it finds. The *ObjectRoot passed to fn is
+	// confirmed to have an object declaration, but no other validation checks are
+	// made.
+	ObjectRoots(ctx context.Context, sel PathSelector, fn func(obj *ObjectRoot) error) error
+}
+
+// ObjectRoots searches root and its subdirectories for OCFL object declarations
+// and calls fn for each object root it finds. The *ObjectRoot passed to fn is
+// confirmed to have an object declaration, but no other validation checks are
+// made.
+func ObjectRoots(ctx context.Context, fsys FS, sel PathSelector, fn func(*ObjectRoot) error) error {
+	if iterFS, ok := fsys.(ObjectRootIterator); ok {
+		return iterFS.ObjectRoots(ctx, sel, fn)
+	}
+	walkFn := func(name string, entries []fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		objRoot := NewObjectRoot(fsys, name, entries)
+		if objRoot.HasDeclaration() {
+			if err := fn(objRoot); err != nil {
+				return err
+			}
+			// don't walk object subdirectories
+			return walkdirs.ErrSkipDirs
+		}
+		return nil
+	}
+	return walkdirs.WalkDirs(ctx, fsys, sel.Path(), sel.SkipDir, walkFn, 0)
 }

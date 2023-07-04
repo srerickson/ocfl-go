@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"time"
+	"strings"
+
+	"github.com/srerickson/ocfl/internal/walkdirs"
 )
 
 var ErrNotFile = errors.New("not a file")
@@ -39,19 +41,98 @@ type CopyFS interface {
 	Copy(ctx context.Context, dst string, src string) error
 }
 
-// NewFS wraps an io/fs.FS as an ocfl.FS
-func NewFS(fsys fs.FS) FS {
-	return &ioFS{FS: fsys}
+// Files walks the directory tree under root, calling fn
+func Files(ctx context.Context, fsys FS, pth PathSelector, fn func(name string) error) error {
+	if iter, ok := fsys.(FilesIterator); ok {
+		return iter.Files(ctx, pth, fn)
+	}
+	walkFn := func(dir string, entries []fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			if !e.Type().IsRegular() {
+				// TODO: log symlinks and irregular files as warnings
+				continue
+			}
+			if err := fn(path.Join(dir, e.Name())); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return walkdirs.WalkDirs(ctx, fsys, pth.Path(), pth.SkipDir, walkFn, 0)
 }
 
-// DirFS is shorthand for NewFS(os.DirFS(dir))
-func DirFS(dir string) FS {
-	return NewFS(os.DirFS(dir))
+// FilesIterator is used to iterate over regular files in an FS
+type FilesIterator interface {
+	FS
+	// Files calls a function for each filename satisfying the path selector.
+	// The function should only be called for "regular" files (never for
+	// directories or symlinks).
+	Files(context.Context, PathSelector, func(name string) error) error
+}
+
+// PathSelector is used to configure iterators that walk an FS. See FilesIterator and
+// ObjectRootsIterator.
+type PathSelector struct {
+	// Dir is a parent directory for all paths that satisfy the selector. All
+	// paths in the selection match Dir or have Dir as a parent (prefix). If Dir
+	// is not a well-formed path (see fs.ValidPath), then no path names will
+	// satisfy the path selector. There is one exception: The empty string is
+	// converted to "." by consumers of the selector using Path().
+	Dir string
+
+	// SkipDirFn is used to skip directories during an iteration process. If the
+	// function returns true for a given path, the directory's contents will be
+	// skipped. The string parameter is always a directory name relative to an
+	// FS.
+	SkipDirFn func(dir string) bool
+}
+
+// Dir is a convenient way to construct a PathSelector for a given directory.
+func Dir(name string) PathSelector { return PathSelector{Dir: name} }
+
+// Path returns name as a valid path or an empty string if name is not a
+// valid path
+func (ps PathSelector) Path() string {
+	if ps.Dir == "" {
+		return "."
+	}
+	if !fs.ValidPath(ps.Dir) {
+		return ""
+	}
+	return ps.Dir
+}
+
+// SkipDir returns true if dir should be skipped during an interation process
+// that uses the path selector
+func (ps PathSelector) SkipDir(name string) bool {
+	if !fs.ValidPath(name) {
+		return true
+	}
+	d := ps.Dir
+	if d == "." {
+		d = ""
+	}
+	if !strings.HasPrefix(name, d) {
+		return true
+	}
+	if ps.SkipDirFn != nil {
+		return ps.SkipDirFn(name)
+	}
+	return false
 }
 
 type ioFS struct {
 	fs.FS
 }
+
+// NewFS wraps an io/fs.FS as an ocfl.FS
+func NewFS(fsys fs.FS) FS { return &ioFS{FS: fsys} }
+
+// DirFS is shorthand for NewFS(os.DirFS(dir))
+func DirFS(dir string) FS { return NewFS(os.DirFS(dir)) }
 
 func (fsys *ioFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	if err := ctx.Err(); err != nil {
@@ -73,83 +154,3 @@ func (fsys *ioFS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, erro
 	}
 	return fs.ReadDir(fsys.FS, name)
 }
-
-// EachFile walks the directory tree under root, calling walkFN on each file
-// (not for directories). If a non-regulard file is found, walkFN is called with
-// a non-nil error.
-func EachFile(ctx context.Context, fsys FS, root string, walkFn fs.WalkDirFunc) error {
-	fn := func(name string, d fs.DirEntry, err error) error {
-		if d.Type().IsDir() {
-			return err
-		}
-		if !d.Type().IsRegular() && err == nil {
-			err = ErrNotFile
-		}
-		return walkFn(name, d, err)
-	}
-	return walk(ctx, fsys, root, fn)
-}
-
-// walk is similar to the standard library's io/fs.walk except that it takes
-// a context and walkDirFn is not called for the top-level directory itself.
-func walk(ctx context.Context, fsys FS, name string, walkDirFn fs.WalkDirFunc) error {
-	err := walkDir(ctx, fsys, name, fakeDirEntry{name}, walkDirFn)
-	if err == fs.SkipDir {
-		return nil
-	}
-	return err
-}
-
-func walkDir(ctx context.Context, fsys FS, name string, d fs.DirEntry, walkDirFn fs.WalkDirFunc) error {
-	// this code is adapated from the standard library's io/fs.Walk
-	// Copyright 2020 The Go Authors. All rights reserved.
-	// Use of this source code is governed by a BSD-style
-	// license that can be found in Go's LICENSE file
-	// https: //github.com/golang/go/blob/master/src/io/fs/walk.go
-	if err := walkDirFn(name, d, ctx.Err()); err != nil || !d.IsDir() {
-		if err == fs.SkipDir && d.IsDir() {
-			// Successfully skipped directory.
-			err = nil
-		}
-		return err
-	}
-	dirs, err := fsys.ReadDir(ctx, name)
-	if err != nil {
-		// Second call, to report ReadDir error.
-		err = walkDirFn(name, d, err)
-		if err != nil {
-			if err == fs.SkipDir && d.IsDir() {
-				err = nil
-			}
-			return err
-		}
-	}
-
-	for _, d1 := range dirs {
-		name1 := path.Join(name, d1.Name())
-		if err := walkDir(ctx, fsys, name1, d1, walkDirFn); err != nil {
-			if err == fs.SkipDir {
-				break
-			}
-			return err
-		}
-	}
-	return nil
-}
-
-// fakeDirEntry is used to fake dirinfo for the first call to walkDirInfo
-type fakeDirEntry struct {
-	name string
-}
-
-func (fake fakeDirEntry) Name() string               { return fake.name }
-func (fake fakeDirEntry) IsDir() bool                { return true }
-func (fake fakeDirEntry) Type() fs.FileMode          { return fs.ModeDir }
-func (fake fakeDirEntry) Info() (fs.FileInfo, error) { return fake, nil }
-func (fake fakeDirEntry) ModTime() time.Time         { return time.Time{} }
-func (fake fakeDirEntry) Mode() fs.FileMode          { return 0777 | fs.ModeDir }
-func (fake fakeDirEntry) Size() int64                { return 0 }
-func (fake fakeDirEntry) Sys() any                   { return nil }
-
-var _ fs.DirEntry = (*fakeDirEntry)(nil)
-var _ fs.FileInfo = (*fakeDirEntry)(nil)

@@ -103,7 +103,8 @@ func TestObjecState(t *testing.T) {
 	t.Run("fixures", func(t *testing.T) {
 		fixtures := filepath.Join(`testdata`, `object-fixtures`, `1.1`)
 		fsys := ocfl.DirFS(fixtures)
-		runTestsFn := func(obj *ocflv1.Object) error {
+		runTestsFn := func(objRoot *ocfl.ObjectRoot) error {
+			obj := &ocflv1.Object{ObjectRoot: *objRoot}
 			if err := obj.SyncInventory(ctx); err != nil {
 				return err
 			}
@@ -121,11 +122,11 @@ func TestObjecState(t *testing.T) {
 			return nil
 		}
 		// add all version state of all good objects to states
-		if err := ocflv1.ScanObjects(ctx, fsys, "good-objects", runTestsFn, nil); err != nil {
+		if err := ocfl.ObjectRoots(ctx, fsys, ocfl.Dir("good-objects"), runTestsFn); err != nil {
 			t.Fatal(err)
 		}
 		// add all versions state of all warn objects to stattes
-		if err := ocflv1.ScanObjects(ctx, fsys, "warn-objects", runTestsFn, nil); err != nil {
+		if err := ocfl.ObjectRoots(ctx, fsys, ocfl.Dir("warn-objects"), runTestsFn); err != nil {
 			t.Fatal(err)
 		}
 	})
