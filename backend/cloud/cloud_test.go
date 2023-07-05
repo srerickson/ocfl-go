@@ -17,6 +17,7 @@ import (
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/fileblob"
 	"gocloud.dev/blob/memblob"
+	"golang.org/x/exp/slog"
 )
 
 var _ ocfl.ObjectRootIterator = (*cloud.FS)(nil)
@@ -427,5 +428,34 @@ func TestObjectRoots(t *testing.T) {
 	}
 	if numobjs != 12 {
 		t.Fatalf("expected 12 objects to be called, got %d", numobjs)
+	}
+}
+
+func TestLogging(t *testing.T) {
+	ctx := context.Background()
+	buff := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(buff, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	membuck := memBucket(map[string][]byte{"a/file.txt": []byte("content")})
+	fsys := cloud.NewFS(membuck, cloud.WithLogger(logger))
+	loggingFuncs := map[string]func(){
+		"openfile": func() {
+			f, _ := fsys.OpenFile(ctx, `a/file.txt`)
+			if f != nil {
+				defer f.Close()
+			}
+		},
+		"readdir":     func() { fsys.ReadDir(ctx, `a`) },
+		"write":       func() { fsys.Write(ctx, "tmp", strings.NewReader("cont")) },
+		"remove":      func() { fsys.Remove(ctx, "a/file.txt") },
+		"removeall":   func() { fsys.RemoveAll(ctx, "a") },
+		"copy":        func() { fsys.Copy(ctx, "a", "b") },
+		"objectroots": func() { fsys.ObjectRoots(ctx, ocfl.Dir("."), func(_ *ocfl.ObjectRoot) error { return nil }) },
+	}
+	for fnName, fn := range loggingFuncs {
+		fn()
+		if buff.Len() == 0 {
+			t.Error(fnName, "didn't write to logger as expected")
+		}
+		buff.WriteTo(io.Discard)
 	}
 }

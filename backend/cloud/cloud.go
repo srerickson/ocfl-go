@@ -371,7 +371,7 @@ func (fsys *FS) objectRootsList(ctx context.Context, sel ocfl.PathSelector, fn f
 			continue
 		}
 		// only continue with this key if is within the object's root
-		if obj.Path == "" || !strings.HasPrefix(item.Key, obj.Path) {
+		if obj == nil || !strings.HasPrefix(item.Key, obj.Path) {
 			fsys.debugLog(ctx, "objectroots.skipping", "key", item.Key)
 			continue
 		}
@@ -426,5 +426,5 @@ func (fsys *FS) debugLog(ctx context.Context, method string, args ...any) {
 	if fsys.log == nil {
 		return
 	}
-	fsys.debugLog(ctx, method, args...)
+	fsys.log.DebugCtx(ctx, method, args...)
 }

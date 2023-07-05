@@ -24,6 +24,7 @@ var numgos int
 
 func main() {
 	ctx := context.Background()
+	// logging.SetDefaultLevel(slog.LevelDebug)
 	logger := logging.DefaultLogger()
 	flag.IntVar(&numgos, "gos", runtime.NumCPU(), "number of goroutines used for inventory downloading")
 	flag.Parse()
@@ -86,7 +87,7 @@ func parseURI(ctx context.Context, name string) (ocfl.FS, string, error) {
 		if err != nil {
 			return nil, "", err
 		}
-		return cloud.NewFS(bucket), strings.TrimPrefix(rl.Path, "/"), nil
+		return cloud.NewFS(bucket, cloud.WithLogger(logging.DefaultLogger())), strings.TrimPrefix(rl.Path, "/"), nil
 	default:
 		return ocfl.DirFS(name), ".", nil
 	}
