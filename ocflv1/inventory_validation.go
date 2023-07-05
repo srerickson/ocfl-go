@@ -240,7 +240,7 @@ func ValidateInventoryReader(ctx context.Context, reader io.Reader, alg digest.A
 	// validate inventory and merge/log results. Use Log here because
 	// asValidInventory doesn't do logging
 	inv, invResult := decInv.asValidInventory()
-	invResult.Log(lgr)
+	invResult.LogAll(lgr)
 	result.Merge(invResult)
 	if err := result.Err(); err != nil {
 		return nil, result

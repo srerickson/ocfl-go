@@ -3,7 +3,6 @@ package ocflv1
 import (
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/logging"
 	"github.com/srerickson/ocfl/validation"
 	"golang.org/x/exp/slog"
 )
@@ -36,7 +35,6 @@ type validationOptions struct {
 func defaultValidationOptions() *validationOptions {
 	return &validationOptions{
 		AlgRegistry:  ocfl.AlgRegistry(),
-		Logger:       logging.DefaultLogger(),
 		FallbackOCFL: ocflv1_0,
 		MaxErrs:      100,
 	}

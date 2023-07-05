@@ -14,7 +14,7 @@ import (
 var (
 	isStore bool
 	name    string
-	logger  = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logger  = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 )
 
 func main() {
@@ -42,6 +42,6 @@ func validate(root string, isStore bool, logger *slog.Logger) error {
 		result := ocflv1.ValidateStore(ctx, fsys, ".", ocflv1.ValidationLogger(logger))
 		return result.Err()
 	}
-	result := ocflv1.ValidateStore(ctx, fsys, ".", ocflv1.ValidationLogger(logger))
+	_, result := ocflv1.ValidateObject(ctx, fsys, ".", ocflv1.ValidationLogger(logger))
 	return result.Err()
 }

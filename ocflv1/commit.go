@@ -12,7 +12,6 @@ import (
 
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/internal/xfer"
-	"github.com/srerickson/ocfl/logging"
 	"github.com/srerickson/ocfl/validation"
 	"golang.org/x/exp/slog"
 )
@@ -21,7 +20,6 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, id string, s
 	// defaults
 	opts := &commitOpt{
 		spec:       defaultSpec,
-		logger:     logging.DefaultLogger(),
 		created:    time.Now().UTC().Truncate(time.Second),
 		contentDir: contentDir,
 	}
@@ -187,8 +185,10 @@ func commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, inv *Invento
 	if err != nil {
 		return &CommitError{Err: err}
 	}
-	opts.logger.Info("starting commit", "object_id", id, "head", vnum)
-	defer opts.logger.Info("commit complete", "object_id", id, "head", vnum)
+	if opts.logger != nil {
+		opts.logger.Info("starting commit", "object_id", id, "head", vnum)
+		defer opts.logger.Info("commit complete", "object_id", id, "head", vnum)
+	}
 	// init object root
 	obj, err := ocfl.InitObjectRoot(ctx, fsys, objRoot, inv.Type.Spec)
 	if err != nil {

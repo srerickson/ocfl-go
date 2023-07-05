@@ -134,10 +134,13 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 	//sub-directories other than as a directory hierarchy used to store OCFL
 	//Objects or for storage root extensions.
 	validateObjectRoot := func(objRoot *ocfl.ObjectRoot) error {
-		objectLogger := lgr.With("object_path", objRoot.Path)
+		objLgr := lgr
+		if objLgr != nil {
+			objLgr = objLgr.With("object_path", objRoot.Path)
+		}
 		if ocflV.Cmp(objRoot.Spec) < 0 {
 			// object ocfl spec is higher than storage root's
-			result.LogFatal(objectLogger, ErrObjectVersion)
+			result.LogFatal(objLgr, ErrObjectVersion)
 		}
 		if opts.SkipObjects {
 			return nil
@@ -145,7 +148,7 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 		obj := &Object{ObjectRoot: *objRoot}
 		objValidOpts := []ValidationOption{
 			copyValidationOptions(opts),
-			ValidationLogger(objectLogger),
+			ValidationLogger(objLgr),
 			appendResult(result),
 		}
 		if err := obj.Validate(ctx, objValidOpts...).Err(); err != nil {
@@ -156,12 +159,12 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 			p, err := layoutFunc(id)
 			if err != nil {
 				err := fmt.Errorf("object id '%s' is not compatible with the storage root layout: %w", id, err)
-				result.LogWarn(objectLogger, err)
+				result.LogWarn(objLgr, err)
 				return nil
 			}
 			if expRoot := path.Join(root, p); expRoot != objRoot.Path {
 				err := fmt.Errorf("object path '%s' does not conform with storage root layout. expected '%s'", objRoot.Path, expRoot)
-				result.LogWarn(objectLogger, err)
+				result.LogWarn(objLgr, err)
 				return nil
 			}
 		}
@@ -175,14 +178,13 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 		switch decl.Type {
 		case ocfl.DeclObject:
 			objRoot := ocfl.NewObjectRoot(fsys, name, entries)
-			if err := validateObjectRoot(objRoot); err != nil {
-				return err
-			}
+			validateObjectRoot(objRoot)
 			return walkdirs.ErrSkipDirs // don't continue scan further into the object
 		case ocfl.DeclStore:
 			// store within a store is an error
 			if name != root {
-				return fmt.Errorf("%w: %s", ErrNonObject, name)
+				err := fmt.Errorf("%w: %s", ErrNonObject, name)
+				result.LogFatal(lgr, ec(err, codes.E084.Ref(ocflV)))
 			}
 		default:
 			// directories without a declaration must include sub-directories
@@ -195,10 +197,12 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 				}
 			}
 			if len(entries) == 0 {
-				return fmt.Errorf("%w: %s", ErrEmptyDirs, name)
+				err := fmt.Errorf("%w: %s", ErrEmptyDirs, name)
+				result.LogFatal(lgr, ec(err, codes.E073.Ref(ocflV)))
 			}
 			if numfiles > 0 {
-				return fmt.Errorf("%w: %s", ErrNonObject, name)
+				err := fmt.Errorf("%w: %s", ErrNonObject, name)
+				result.LogFatal(lgr, ec(err, codes.E084.Ref(ocflV)))
 			}
 		}
 		return nil
@@ -208,12 +212,7 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 		return name == path.Join(root, path.Join(root, extensionsDir))
 	}
 	if err := walkdirs.WalkDirs(ctx, fsys, root, skip, walkDirsFn, 0); err != nil {
-		if errors.Is(err, ErrEmptyDirs) {
-			result.LogFatal(lgr, ec(err, codes.E073.Ref(ocflV)))
-		}
-		if errors.Is(err, ErrNonObject) {
-			result.LogFatal(lgr, ec(err, codes.E084.Ref(ocflV)))
-		}
+		result.LogFatal(lgr, err)
 	}
 	return result
 }
