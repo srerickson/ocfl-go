@@ -62,7 +62,7 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, id string, s
 		}
 	}
 	// apply the staged changes to the inventory
-	if err := inv.addVersion(stage, opts.pathFn, opts.created, opts.message, opts.user); err != nil {
+	if err := inv.AddVersion(stage, opts.message, opts.user, opts.created, opts.pathFn); err != nil {
 		return &CommitError{Err: err}
 	}
 	return commit(ctx, fsys, objRoot, inv, stage, opts)

@@ -232,8 +232,12 @@ func (inv *Inventory) normalizeDigests() error {
 	return nil
 }
 
-// addVersionState. This assumes head is already incremented
-func (inv *Inventory) addVersion(stage *ocfl.Stage, pathfn func(string, []string) []string, created time.Time, msg string, user *User) (err error) {
+// AddVersion builds a new version and updates the inventory using state and
+// manifest from the provided stage. The new version will have have the given
+// message, user, and created timestamp. The function pathfn, is used The
+// inventories head is incremented. The function pathfn is optional and is is
+// used to customize content paths for new manifest entries.
+func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *User, created time.Time, pathfn func(string, []string) []string) (err error) {
 	if inv.Head, err = inv.Head.Next(); err != nil {
 		return fmt.Errorf("inventory's version scheme doesn't allow additional versions: %w", err)
 	}
@@ -251,7 +255,7 @@ func (inv *Inventory) addVersion(stage *ocfl.Stage, pathfn func(string, []string
 		inv.alg = stage.Alg
 	}
 	if inv.DigestAlgorithm != stage.Alg.ID() {
-		return fmt.Errorf("inventory uses %s: can't commit stage using %s", inv.DigestAlgorithm, stage.Alg.ID())
+		return fmt.Errorf("inventory uses %s: can't update with stage using %s", inv.DigestAlgorithm, stage.Alg.ID())
 	}
 	newState := stage.State()
 	inv.Versions[inv.Head] = &Version{
@@ -311,7 +315,6 @@ func (inv *Inventory) addVersion(stage *ocfl.Stage, pathfn func(string, []string
 				return fmt.Errorf("while generating new fixity: %w", err)
 			}
 		}
-
 	}
 	inv.Manifest = manifestMaker.Map()
 	inv.Fixity = map[string]*digest.Map{}
