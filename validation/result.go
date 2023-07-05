@@ -146,8 +146,8 @@ func (r *Result) Merge(src *Result) {
 	}
 }
 
-// Log logs all errs in the in reset to the logger
-func (r *Result) Log(logger *slog.Logger) {
+// LogAll logs all errs in the in reset to the logger
+func (r *Result) LogAll(logger *slog.Logger) {
 	for _, err := range r.warn {
 		r.logType(logger, err, warn)
 	}
@@ -157,10 +157,13 @@ func (r *Result) Log(logger *slog.Logger) {
 }
 
 func (r *Result) logType(logger *slog.Logger, err error, typ string) {
+	if logger == nil {
+		return
+	}
 	vals := []interface{}{}
 	if vErr, ok := err.(ErrorCode); ok {
 		if ref := vErr.OCFLRef(); ref != nil {
-			vals = append(vals, "spec_code", ref.Code)
+			vals = append(vals, "ocfl_err", ref.Code)
 		}
 	}
 	if typ == fatal {

@@ -173,7 +173,9 @@ func (vldr *objectValidator) validateRootInventory(ctx context.Context) error {
 		copyValidationOptions(vldr.opts),
 		appendResult(vldr.Result),
 		FallbackOCFL(vldr.root.Spec),
-		ValidationLogger(lgr.With("inventory_file", name)),
+	}
+	if lgr != nil {
+		opts = append(opts, ValidationLogger(lgr.With("inventory_file", name)))
 	}
 	inv, _ := ValidateInventory(ctx, vldr.FS, name, alg, opts...)
 	if err := vldr.Err(); err != nil {
@@ -203,7 +205,10 @@ func (vldr *objectValidator) validateRootInventory(ctx context.Context) error {
 
 func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum) error {
 	ocflV := vldr.root.Spec // assumed ocfl version (until inventory is decoded)
-	lgr := vldr.opts.Logger.With("version", ver.String())
+	lgr := vldr.opts.Logger
+	if lgr != nil {
+		lgr = lgr.With("version", ver.String())
+	}
 	vDir := path.Join(vldr.Root, ver.String())
 	entries, err := vldr.FS.ReadDir(ctx, vDir)
 	if err != nil {
@@ -255,15 +260,17 @@ func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum)
 }
 
 func (vldr *objectValidator) validateVersionInventory(ctx context.Context, vn ocfl.VNum, sidecarAlg digest.Alg) error {
+	lgr := vldr.opts.Logger
 	vDir := path.Join(vldr.Root, vn.String())
 	name := path.Join(vDir, inventoryFile)
-	lgr := vldr.opts.Logger.With("inventory_file", name)
 	alg := sidecarAlg
 	opts := []ValidationOption{
 		copyValidationOptions(vldr.opts),
 		appendResult(vldr.Result),
 		FallbackOCFL(vldr.root.Spec),
-		ValidationLogger(lgr),
+	}
+	if lgr != nil {
+		opts = append(opts, ValidationLogger(lgr.With("inventory_file", name)))
 	}
 	inv, _ := ValidateInventory(ctx, vldr.FS, name, alg, opts...)
 	if err := vldr.Err(); err != nil {
@@ -340,7 +347,9 @@ func (vldr *objectValidator) validateExtensionsDir(ctx context.Context) error {
 	lgr := vldr.opts.Logger
 	extDir := path.Join(vldr.Root, extensionsDir)
 	items, err := vldr.FS.ReadDir(ctx, extDir)
-	// log := vldr.Log.WithName(extensionsDir)
+	if lgr != nil {
+		lgr = lgr.With(extensionsDir)
+	}
 	ocflV := vldr.root.Spec
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {

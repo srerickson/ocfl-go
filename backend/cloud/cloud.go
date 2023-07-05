@@ -11,7 +11,6 @@ import (
 
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/internal/walkdirs"
-	"github.com/srerickson/ocfl/logging"
 	"gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
 	"golang.org/x/exp/slog"
@@ -38,7 +37,6 @@ type fsOption func(*FS)
 func NewFS(b *blob.Bucket, opts ...fsOption) *FS {
 	fsys := &FS{
 		Bucket: b,
-		log:    logging.DefaultLogger(),
 	}
 	for _, opt := range opts {
 		opt(fsys)
@@ -69,7 +67,7 @@ func (fsys *FS) ReaderOptions(opts *blob.ReaderOptions) *FS {
 }
 
 func (fsys *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
-	fsys.log.DebugCtx(ctx, "open file", "name", name)
+	fsys.debugLog(ctx, "openfile", "name", name)
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{
 			Op:   "openfile",
@@ -99,7 +97,7 @@ func (fsys *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 }
 
 func (fsys *FS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
-	fsys.log.DebugCtx(ctx, "read dir", "name", name)
+	fsys.debugLog(ctx, "readdir", "name", name)
 	if !fs.ValidPath(name) {
 		return nil, &fs.PathError{
 			Op:   "readdir",
@@ -163,7 +161,7 @@ func (fsys *FS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error)
 }
 
 func (fsys *FS) Write(ctx context.Context, name string, r io.Reader) (int64, error) {
-	fsys.log.DebugCtx(ctx, "write file", "name", name)
+	fsys.debugLog(ctx, "write", "name", name)
 	if !fs.ValidPath(name) || name == "." {
 		return 0, &fs.PathError{
 			Op:   "write",
@@ -199,7 +197,7 @@ func (fsys *FS) Write(ctx context.Context, name string, r io.Reader) (int64, err
 }
 
 func (fsys *FS) Remove(ctx context.Context, name string) error {
-	fsys.log.DebugCtx(ctx, "remove file", "name", name)
+	fsys.debugLog(ctx, "remove", "name", name)
 	if !fs.ValidPath(name) {
 		return &fs.PathError{
 			Op:   "remove",
@@ -225,7 +223,7 @@ func (fsys *FS) Remove(ctx context.Context, name string) error {
 }
 
 func (fsys *FS) RemoveAll(ctx context.Context, name string) error {
-	fsys.log.DebugCtx(ctx, "remove dir", "name", name)
+	fsys.debugLog(ctx, "removeall", "name", name)
 	if !fs.ValidPath(name) {
 		return &fs.PathError{
 			Op:   "remove",
@@ -256,7 +254,7 @@ func (fsys *FS) RemoveAll(ctx context.Context, name string) error {
 		if next == nil {
 			break
 		}
-		fsys.log.DebugCtx(ctx, "remove file", "name", next.Key)
+		fsys.debugLog(ctx, "removeall.delete", "name", next.Key)
 		if err := fsys.Bucket.Delete(ctx, next.Key); err != nil {
 			return &fs.PathError{
 				Op:   "remove",
@@ -269,7 +267,7 @@ func (fsys *FS) RemoveAll(ctx context.Context, name string) error {
 }
 
 func (fsys *FS) Copy(ctx context.Context, dst, src string) error {
-	fsys.log.DebugCtx(ctx, "copy", "dst", dst, "src", src)
+	fsys.debugLog(ctx, "copy", "dst", dst, "src", src)
 	for _, p := range []string{src, dst} {
 		if !fs.ValidPath(p) {
 			return &fs.PathError{
@@ -299,6 +297,7 @@ func (fsys *FS) ObjectRoots(ctx context.Context, sel ocfl.PathSelector, fn func(
 
 // an ObjectRoots strategy based on WalkDirs
 func (fsys *FS) objectRootsWalkDirs(ctx context.Context, sel ocfl.PathSelector, fn func(obj *ocfl.ObjectRoot) error) error {
+	fsys.debugLog(ctx, "objectroots", "dir", sel.Path(), "strategy", "walkdir")
 	walkFn := func(name string, entries []fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -319,7 +318,7 @@ func (fsys *FS) objectRootsWalkDirs(ctx context.Context, sel ocfl.PathSelector, 
 // an ObjectRoots strategy based on List()
 func (fsys *FS) objectRootsList(ctx context.Context, sel ocfl.PathSelector, fn func(obj *ocfl.ObjectRoot) error) error {
 	dir := sel.Path()
-	fsys.log.Debug("objectroots", "dir", dir)
+	fsys.debugLog(ctx, "objectroots", "dir", dir, "strategy", "listkeys")
 	if !fs.ValidPath(dir) {
 		return &fs.PathError{
 			Op:   "each_object",
@@ -351,8 +350,8 @@ func (fsys *FS) objectRootsList(ctx context.Context, sel ocfl.PathSelector, fn f
 		if ocfl.ParseDeclaration(keyBase, &decl); decl.Type == ocfl.DeclObject {
 			// new object declaration: apply fn to existing obj and reset
 			if obj != nil {
-				fsys.log.Debug("complete object",
-					"path", obj.Path,
+				fsys.debugLog(ctx, "objectroots.complete",
+					"dir", obj.Path,
 					"alg", obj.Algorithm,
 					"has_declaration", obj.HasDeclaration(),
 					"has_inventory", obj.HasInventory(),
@@ -373,7 +372,7 @@ func (fsys *FS) objectRootsList(ctx context.Context, sel ocfl.PathSelector, fn f
 		}
 		// only continue with this key if is within the object's root
 		if obj.Path == "" || !strings.HasPrefix(item.Key, obj.Path) {
-			fsys.log.Debug("each_object", "skipkey", item.Key)
+			fsys.debugLog(ctx, "objectroots.skipping", "key", item.Key)
 			continue
 		}
 		// item path relative to the object root
@@ -421,4 +420,11 @@ func (fsys *FS) objectRootsList(ctx context.Context, sel ocfl.PathSelector, fn f
 		return fn(obj)
 	}
 	return nil
+}
+
+func (fsys *FS) debugLog(ctx context.Context, method string, args ...any) {
+	if fsys.log == nil {
+		return
+	}
+	fsys.debugLog(ctx, method, args...)
 }
