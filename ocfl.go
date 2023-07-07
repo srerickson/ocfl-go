@@ -10,10 +10,6 @@ import "github.com/srerickson/ocfl/digest"
 const (
 	// package version
 	Version = "0.0.15"
-
-	// log levels
-	LevelDebug   = 10
-	LevelWarning = 5
 )
 
 // AlgRegistry returns the global digest algorithm registry
