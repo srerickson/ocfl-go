@@ -102,6 +102,44 @@ func TestMapValid(t *testing.T) {
 	}
 }
 
+func TestMapEq(t *testing.T) {
+	type eqTest struct {
+		a      digest.Map
+		b      digest.Map
+		expect bool
+	}
+	eqTests := map[string]eqTest{
+		"empty maps": {expect: true},
+		"same": {
+			a:      *digest.NewMapUnsafe(map[string][]string{"abc": {"1", "2", "3"}}),
+			b:      *digest.NewMapUnsafe(map[string][]string{"abc": {"1", "2", "3"}}),
+			expect: true},
+		"same with mixed case dgiests": {
+			a:      *digest.NewMapUnsafe(map[string][]string{"ABC": {"1", "2", "3"}}),
+			b:      *digest.NewMapUnsafe(map[string][]string{"abc": {"1", "2", "3"}}),
+			expect: true},
+		"same with different ordered paths": {
+			a:      *digest.NewMapUnsafe(map[string][]string{"abc": {"1", "2", "3"}}),
+			b:      *digest.NewMapUnsafe(map[string][]string{"abc": {"1", "3", "2"}}),
+			expect: true},
+		"different digests": {
+			a:      *digest.NewMapUnsafe(map[string][]string{"abc1": {"1", "2", "3"}}),
+			b:      *digest.NewMapUnsafe(map[string][]string{"abc2": {"1", "2", "3"}}),
+			expect: false},
+		"different paths": {
+			a:      *digest.NewMapUnsafe(map[string][]string{"abc": {"1", "2"}}),
+			b:      *digest.NewMapUnsafe(map[string][]string{"abc": {"1", "2", "3"}}),
+			expect: false},
+	}
+	for n, eqt := range eqTests {
+		t.Run(n, func(t *testing.T) {
+			if eq := (eqt.a).Eq(eqt.b); eqt.expect != eq {
+				t.Errorf("Eq() got=%v, expect=%v", eq, eqt.expect)
+			}
+		})
+	}
+}
+
 func TestMapMakerAdd(t *testing.T) {
 	// Adding Invalid Paths
 	for _, p := range invalidPaths {
