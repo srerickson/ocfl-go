@@ -88,17 +88,66 @@ func (m Map) HasUppercaseDigests() bool {
 	return false
 }
 
+// Eq returns true if m and the other Map have the same content: they have the
+// same (normalized) digests corresponding to the same set of paths. If either
+// map has a digest conflict (same digest appears twice with different case), Eq
+// returns false.
+func (m Map) Eq(other Map) bool {
+	mlen := len(m.digests)
+	if mlen != len(other.digests) {
+		return false
+	}
+	if mlen == 0 {
+		return true
+	}
+	if m.HasUppercaseDigests() {
+		var err error
+		m, err = m.Normalized()
+		if err != nil {
+			return false
+		}
+	}
+	if other.HasUppercaseDigests() {
+		var err error
+		other, err = other.Normalized()
+		if err != nil {
+			return false
+		}
+	}
+	for dig, paths := range m.digests {
+		otherPaths, ok := other.digests[dig]
+		if !ok {
+			return false
+		}
+		if len(paths) != len(otherPaths) {
+			return false
+		}
+		if !sort.IsSorted(sort.StringSlice(paths)) {
+			sort.Strings(paths)
+		}
+		if !sort.IsSorted(sort.StringSlice(otherPaths)) {
+			sort.Strings(otherPaths)
+		}
+		for i, p := range paths {
+			if p != otherPaths[i] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // Normalized returns a copy of the map with normalized (lowercase) digests and
 // sorted slice of paths. An error is returned if the same digest appears more
 // than once.
-func (m Map) Normalized() (*Map, error) {
-	cp := &Map{
+func (m Map) Normalized() (Map, error) {
+	cp := Map{
 		digests: make(map[string][]string, len(m.digests)),
 	}
 	for digest, paths := range m.digests {
 		norm := normalizeDigest(digest)
 		if _, exists := cp.digests[norm]; exists {
-			return nil, &MapDigestConflictErr{Digest: norm}
+			return Map{}, &MapDigestConflictErr{Digest: norm}
 		}
 		normpaths := append(make([]string, 0, len(paths)), m.digests[digest]...)
 		sort.Strings(normpaths)

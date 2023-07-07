@@ -226,7 +226,7 @@ func (inv *Inventory) normalizeDigests() error {
 			if err != nil {
 				return err
 			}
-			*m = *newMap
+			*m = newMap
 		}
 	}
 	return nil
