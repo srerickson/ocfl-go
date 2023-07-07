@@ -105,6 +105,8 @@ func (s Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts ..
 	if err != nil {
 		return &CommitError{Err: fmt.Errorf("cannot commit id '%s': %w", id, err)}
 	}
+	// include the storage root spec so it can be checked during commit.
+	opts = append(opts, withStoreSpec(s.spec))
 	return Commit(ctx, writeFS, path.Join(s.rootDir, objPath), id, stage, opts...)
 }
 

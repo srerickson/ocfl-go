@@ -16,10 +16,11 @@ import (
 	"golang.org/x/exp/slog"
 )
 
+// Commit creates or updates an object in fsys using the provided stage state
+// and content.
 func Commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, id string, stage *ocfl.Stage, optFuncs ...CommitOption) error {
-	// defaults
+	// default commit options
 	opts := &commitOpt{
-		spec:       defaultSpec,
 		created:    time.Now().UTC().Truncate(time.Second),
 		contentDir: contentDir,
 	}
@@ -27,12 +28,14 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, id string, s
 	for _, optFunc := range optFuncs {
 		optFunc(opts)
 	}
-	var inv *Inventory
+	updating := false  // update or creating?
+	var inv *Inventory // new inventory
 	// read existing inventory
 	invFile, openErr := fsys.OpenFile(ctx, path.Join(objRoot, inventoryFile))
 	if openErr == nil {
 		// updating existing object
 		defer invFile.Close()
+		updating = true
 		var vErr *validation.Result
 		inv, vErr = ValidateInventoryReader(ctx, invFile, nil, ValidationLogger(opts.logger))
 		if err := vErr.Err(); err != nil {
@@ -40,7 +43,17 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, id string, s
 			return &CommitError{Err: err}
 		}
 		if inv.ID != id {
-			err := fmt.Errorf("existing inventory ID ('%s') doesn't match ID given to Commit ('%s')", inv.ID, id)
+			err := fmt.Errorf("existing Object ID (%q) doesn't match ID given to Commit (%q)", inv.ID, id)
+			return &CommitError{Err: err}
+		}
+		invState, err := inv.objectState(0)
+		if err != nil {
+			// inventory should be valid
+			err := fmt.Errorf("can't create object state with existing inventory (this is a bug): %w", err)
+			return &CommitError{Err: err}
+		}
+		if !opts.allowUnchanged && invState.Eq(*stage.State()) {
+			err := fmt.Errorf("new version would have same state as existing version")
 			return &CommitError{Err: err}
 		}
 	}
@@ -53,15 +66,43 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, id string, s
 			err := errors.New("stage algorith required for new objects")
 			return &CommitError{Err: err}
 		}
+		// create new inventory with '0' head version:
+		// the head is incremented later by inv.AddVersion
 		inv = &Inventory{
 			ID:               id,
-			Head:             ocfl.V(0, opts.padding), // head incremented by inv.AddVersion
-			Type:             opts.spec.AsInvType(),
+			Head:             ocfl.V(0, opts.padding),
 			DigestAlgorithm:  stage.Alg.ID(),
 			ContentDirectory: opts.contentDir,
 		}
 	}
-	// apply the staged changes to the inventory
+	// Determine the spec to use for new inventory if no spec option was given.
+	var spec = opts.spec
+	if spec.Empty() {
+		switch {
+		// use  the storage root's spec, if available
+		case !opts.storeSpec.Empty():
+			spec = opts.storeSpec
+		// use the existing object's spec, if available.
+		case updating:
+			spec = inv.Type.Spec
+		// otherwise, default spec
+		default:
+			spec = defaultSpec
+		}
+	}
+	// check that the spec valid:
+	// - storage root's spec is a max
+	// - existing object spec is a min
+	if !opts.storeSpec.Empty() && spec.Cmp(opts.storeSpec) > 0 {
+		err := fmt.Errorf("object's OCFL spec can't be set higher than the storage root's (%s)", opts.storeSpec)
+		return &CommitError{Err: err}
+	}
+	if updating && spec.Cmp(inv.Type.Spec) < 0 {
+		err := fmt.Errorf("object's OCFL spec can't be set lower than the existing value (%s)", inv.Type.Spec)
+		return &CommitError{Err: err}
+	}
+	inv.Type = spec.AsInvType()
+	// update inventory with state from stage
 	if err := inv.AddVersion(stage, opts.message, opts.user, opts.created, opts.pathFn); err != nil {
 		return &CommitError{Err: err}
 	}
@@ -88,15 +129,18 @@ func (c CommitError) Unwrap() error {
 // commitOpt is the internal struct for commit options configured
 // using one of the CommitOptions
 type commitOpt struct {
-	requireHEAD int                             // new inventory must have this version number (if non-zero)
-	spec        ocfl.Spec                       // OCFL spec for new version
-	padding     int                             // padding (new objects only)
-	contentDir  string                          // inventory's content directory setting (new objects only)
-	user        *User                           // inventory's version state user
-	message     string                          // inventory's version state message
-	created     time.Time                       // inventory's version state created value
-	pathFn      func(string, []string) []string // function to tranform staged content paths
-	logger      *slog.Logger
+	requireHEAD    int       // new inventory must have this version number (if non-zero)
+	spec           ocfl.Spec // OCFL spec for new version
+	storeSpec      ocfl.Spec // OCFL spec from storage root (used internally)
+	user           *User     // inventory's version state user
+	message        string    // inventory's version state message
+	created        time.Time // inventory's version state created value
+	allowUnchanged bool      // allow new versions with same state as previous version
+	contentDir     string    // inventory's content directory setting (new objects only)
+	padding        int       // padding (new objects only)
+
+	pathFn func(string, []string) []string // function to transform paths in stage state
+	logger *slog.Logger
 }
 
 // CommitOption is used configure Commit
@@ -167,9 +211,26 @@ func WithManifestPathFunc(fn func(digest string, paths []string) []string) Commi
 	}
 }
 
+// WithLogger sets the logger used for logging during commit.
 func WithLogger(logger *slog.Logger) CommitOption {
 	return func(comm *commitOpt) {
 		comm.logger = logger
+	}
+}
+
+// WithAllowUnchanged enables committing a version with the same state
+// as the existing head version.
+func WithAllowUnchanged() CommitOption {
+	return func(comm *commitOpt) {
+		comm.allowUnchanged = true
+	}
+}
+
+// withStoreSpec is used by Store.Commit() to pass the storage
+// root's OCFL spec to Commit()
+func withStoreSpec(spec ocfl.Spec) CommitOption {
+	return func(comm *commitOpt) {
+		comm.storeSpec = spec
 	}
 }
 
@@ -189,7 +250,7 @@ func commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, inv *Invento
 		opts.logger.Info("starting commit", "object_id", id, "head", vnum)
 		defer opts.logger.Info("commit complete", "object_id", id, "head", vnum)
 	}
-	// init object root
+	// init object root: it returns both obj and error if the object already exists.
 	obj, err := ocfl.InitObjectRoot(ctx, fsys, objRoot, inv.Type.Spec)
 	if err != nil {
 		if !errors.Is(err, ocfl.ErrObjectExists) {

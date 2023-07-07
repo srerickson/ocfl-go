@@ -209,7 +209,7 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 	}
 
 	skip := func(name string) bool {
-		return name == path.Join(root, path.Join(root, extensionsDir))
+		return name == path.Join(root, extensionsDir)
 	}
 	if err := walkdirs.WalkDirs(ctx, fsys, root, skip, walkDirsFn, 0); err != nil {
 		result.LogFatal(lgr, err)

@@ -49,6 +49,36 @@ func TestCommit(t *testing.T) {
 			t.Fatal("expected object id to be", id)
 		}
 	})
+	t.Run("allow unchanged", func(t *testing.T) {
+		ctx := context.Background()
+		fsys, err := memfs.NewWith(map[string]io.Reader{
+			"file.txt": strings.NewReader("content"),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		alg := digest.SHA256()
+		root := "object-root"
+		id := "001"
+		stage, err := ocfl.NewStage(alg, digest.Map{})
+		if err != nil {
+			t.Fatal("Commit() test setup:", err)
+		}
+		if err := stage.AddFS(ctx, fsys, "."); err != nil {
+			t.Fatal("Commit() test setup:", err)
+		}
+		if err := ocflv1.Commit(ctx, fsys, root, id, stage); err != nil {
+			t.Fatal("Commit() test setup:", err)
+		}
+		err = ocflv1.Commit(ctx, fsys, root, id, stage)
+		if err == nil {
+			t.Error("Commit() should return an error because of duplicate version")
+		}
+		err = ocflv1.Commit(ctx, fsys, root, id, stage, ocflv1.WithAllowUnchanged())
+		if err != nil {
+			t.Error("Commit() didn't allow unchanged version with WithAllowUnchange", err)
+		}
+	})
 	t.Run("update fixture", func(t *testing.T) {
 		ctx := context.Background()
 		fixtures := filepath.Join(`..`, `testdata`, `object-fixtures`, `1.1`)
