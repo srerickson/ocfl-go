@@ -122,3 +122,12 @@ func TestWriteSpecFile(t *testing.T) {
 		t.Fatal("expected an error")
 	}
 }
+
+func TestSpecEmpty(t *testing.T) {
+	if !(ocfl.Spec{}).Empty() {
+		t.Error("empty spec value should be Empty()")
+	}
+	if (ocfl.Spec{1, 0}).Empty() {
+		t.Error("non-empty spec value should not be Empty()")
+	}
+}
