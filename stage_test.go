@@ -19,10 +19,7 @@ func TestStageAddFS(t *testing.T) {
 	}
 	contentFS := newTestFS(data)
 	t.Run("valid inputs", func(t *testing.T) {
-		stage, err := ocfl.NewStage(digest.SHA256(), digest.Map{})
-		if err != nil {
-			t.Fatal(err)
-		}
+		stage := ocfl.NewStage(digest.SHA256())
 		if err := stage.AddFS(ctx, contentFS, "dir", digest.SHA1()); err != nil {
 			t.Fatal(err)
 		}
@@ -45,10 +42,7 @@ func TestStageAddFS(t *testing.T) {
 		}
 	})
 	t.Run("invalid inputs", func(t *testing.T) {
-		stage, err := ocfl.NewStage(digest.SHA256(), digest.Map{})
-		if err != nil {
-			t.Fatal(err)
-		}
+		stage := ocfl.NewStage(digest.SHA256())
 		t.Run("invalid root", func(t *testing.T) {
 			err := stage.AddFS(ctx, contentFS, "../dir")
 			if err == nil {
@@ -83,10 +77,7 @@ func TestStageAddPath(t *testing.T) {
 	}
 	contentFS := newTestFS(data)
 	t.Run("valid inputs", func(t *testing.T) {
-		stage, err := ocfl.NewStage(digest.SHA256(), digest.Map{})
-		if err != nil {
-			t.Fatal(err)
-		}
+		stage := ocfl.NewStage(digest.SHA256())
 		stage.SetFS(contentFS, "dir")
 		if err := stage.AddPath(ctx, "README.txt", digest.SHA1()); err != nil {
 			t.Fatal(err)
@@ -111,10 +102,8 @@ func TestStageAddPath(t *testing.T) {
 	})
 	t.Run("invalid inputs", func(t *testing.T) {
 		t.Run("without fs", func(t *testing.T) {
-			stage, err := ocfl.NewStage(digest.SHA256(), digest.Map{})
-			if err != nil {
-				t.Fatal(err)
-			}
+			stage := ocfl.NewStage(digest.SHA256())
+
 			if err := stage.AddPath(ctx, "README.txt"); err == nil {
 				t.Fatal("expected an error")
 			}
@@ -124,10 +113,7 @@ func TestStageAddPath(t *testing.T) {
 				"dir/conflict":          []byte("'conflict' as a file"),
 				"dir/conflict/file.txt": []byte("'conflict' as a parent directory"),
 			}
-			stage, err := ocfl.NewStage(digest.SHA256(), digest.Map{})
-			if err != nil {
-				t.Fatal(err)
-			}
+			stage := ocfl.NewStage(digest.SHA256())
 			stage.SetFS(newTestFS(data), "dir")
 			if err := stage.AddPath(ctx, "conflict"); err != nil {
 				t.Fatal()
@@ -137,10 +123,7 @@ func TestStageAddPath(t *testing.T) {
 			}
 		})
 		t.Run("missing path", func(t *testing.T) {
-			stage, err := ocfl.NewStage(digest.SHA256(), digest.Map{})
-			if err != nil {
-				t.Fatal(err)
-			}
+			stage := ocfl.NewStage(digest.SHA256())
 			stage.SetFS(contentFS, "dir")
 			if err := stage.AddPath(ctx, "missing"); err == nil {
 				t.Fatal("expect an error")
@@ -152,12 +135,9 @@ func TestStageAddPath(t *testing.T) {
 func TestStageUnsafeAddPathAs(t *testing.T) {
 	t.Run("invalid inputs", func(t *testing.T) {
 		t.Run("conflict in logical path", func(t *testing.T) {
-			stage, err := ocfl.NewStage(digest.SHA256(), digest.Map{})
-			if err != nil {
-				t.Fatal(err)
-			}
+			stage := ocfl.NewStage(digest.SHA256())
 			digests := digest.Set{digest.SHA256id: `abc`}
-			err = stage.UnsafeAddPathAs("", "dir/file", digests)
+			err := stage.UnsafeAddPathAs("", "dir/file", digests)
 			if err != nil {
 				t.Fatal(err)
 			}

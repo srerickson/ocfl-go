@@ -92,10 +92,7 @@ func stage(ctx context.Context, dir string, algID string) (*ocfl.Stage, error) {
 	if err != nil {
 		return nil, err
 	}
-	stage, err := ocfl.NewStage(alg, digest.Map{})
-	if err != nil {
-		return nil, err
-	}
+	stage := ocfl.NewStage(alg)
 	return stage, stage.AddFS(ctx, srcFS, ".")
 }
 
