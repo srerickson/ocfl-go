@@ -190,6 +190,34 @@ func (stage Stage) State() *digest.Map {
 	return maker.Map()
 }
 
+// Manifest returns a digest.Map with content paths for digests in the stage
+// state (if present in the stage manifest). Because manifest paths are not
+// checked when they are added to the stage, it's possible for the manifest to
+// be invalid, which is why this method can return an error.
+func (stage Stage) Manifest() (*digest.Map, error) {
+	if stage.state == nil || stage.manifest == nil {
+		return &digest.Map{}, nil
+	}
+	maker := &digest.MapMaker{}
+	walkFn := func(p string, n *pathtree.Node[string]) error {
+		if n.IsDir() {
+			return nil
+		}
+		if cont := stage.GetContent(n.Val); len(cont) > 0 {
+			if err := maker.Add(n.Val, cont[0]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := pathtree.Walk(stage.state, walkFn); err != nil {
+		// an error here represents a bug and
+		// it should be addressed in testing.
+		return nil, fmt.Errorf("building stage manifest: %w", err)
+	}
+	return maker.Map(), nil
+}
+
 // GetStateDigest returns the digest associated with the the logical path in the
 // stage state. If the path isn't present as a file in the stage state, an empty
 // string is returned.
@@ -250,7 +278,10 @@ func (stage *Stage) UnsafeAddPath(name string, digests digest.Set) error {
 
 // UnsafeAddPathAs adds a logical path to the stage and the content path to the
 // stage manifest. It is unsafe because neither the digest or the existence of
-// the file are confirmed.
+// the file are confirmed. If the content path is empty, the manifest is not
+// updated; similarly, if the logical path is empty, the stage state is not
+// updated. This allows for selectively adding entries to either the stage
+// manifest or the stage state.
 func (stage *Stage) UnsafeAddPathAs(content string, logical string, digests digest.Set) error {
 	dig, fixity, err := splitDigests(digests, stage.Alg)
 	if err != nil {

@@ -152,3 +152,31 @@ func TestStageUnsafeAddPathAs(t *testing.T) {
 		})
 	})
 }
+
+func TestStageManifest(t *testing.T) {
+	stage := ocfl.NewStage(digest.SHA256())
+
+	// in manifest and state
+	if err := stage.UnsafeAddPathAs("c-1", "l-1", digest.Set{digest.SHA256id: `abc1`}); err != nil {
+		t.Fatal(err)
+	}
+	// in state but not manifest
+	if err := stage.UnsafeAddPathAs("", "l-2", digest.Set{digest.SHA256id: `abc2`}); err != nil {
+		t.Fatal(err)
+	}
+	// in manifest but not state
+	if err := stage.UnsafeAddPathAs("c-3", "", digest.Set{digest.SHA256id: `abc3`}); err != nil {
+		t.Fatal(err)
+	}
+	man, err := stage.Manifest()
+	if err != nil {
+		t.Fatal("Manifest() error:", err)
+	}
+	paths := man.AllPaths()
+	if l := len(paths); l != 1 {
+		t.Errorf("Manifest() has more files than expected, got=%d, expect=%d", l, 1)
+	}
+	if d := paths["c-1"]; d == "" {
+		t.Errorf("Manifest() didn't have expected value for path: got=%s, expected=%s", d, "abc1")
+	}
+}
