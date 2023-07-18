@@ -39,20 +39,17 @@ type Stage struct {
 	state    *pathtree.Node[string] // mutable directory structure
 }
 
-// NewStage creates a new stage with the given digest algorithm and initial
-// state. The digest algorithm should be either sha512 or sha256. If the stage
-// will be used to update an object, the algorithm should match the object's.
-// The resulting stage has no backing FS, so content cannot be added. To add new
-// content to the stage use AddFS or SetFS.
-func NewStage(alg digest.Alg, state digest.Map) (*Stage, error) {
-	stage := &Stage{
+// NewStage creates a new stage with the given digest algorithm, which should be
+// either sha512 or sha256. If the stage will be used to update an object, the
+// algorithm should match the object's. The new stage has an empty state and
+// manifest and no backing FS. To add new content to the stage use AddFS or
+// SetFS.
+func NewStage(alg digest.Alg) *Stage {
+	return &Stage{
 		Alg:      alg,
 		manifest: map[string]stageEntry{},
+		state:    pathtree.NewDir[string](),
 	}
-	if err := stage.SetState(state); err != nil {
-		return nil, err
-	}
-	return stage, nil
 }
 
 // SetFS sets the stage FS and root directory and clears any previously added
