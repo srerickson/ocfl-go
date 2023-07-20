@@ -47,10 +47,7 @@ type Version struct {
 }
 
 // User represent a Version's user entry
-type User struct {
-	Name    string `json:"name"`
-	Address string `json:"address,omitempty"`
-}
+type User ocfl.User
 
 // VNums returns a sorted slice of VNums corresponding to the keys in the
 // inventory's 'versions' block.
