@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log"
 	"path"
 	"sync"
 	"time"
@@ -20,35 +19,47 @@ const (
 )
 
 // ObjectState encapsulates a set of logical content (i.e., an object version
-// state) and its mapping to specific content in fs (i.e., paths in a manifest that
-// can be read from an FS)
+// state) and its mapping to specific content paths in Manifest.
 type ObjectState struct {
 	digest.Map            // digests / logical paths
 	Manifest   digest.Map // digests / content paths
 	Alg        digest.Alg // algorith used for digests
-	FS         FS         // FS for content paths
-	Root       string     // content paths are relative to Root
-	Created    time.Time
-	Message    string
+	User       *User      // user who created object state
+	Created    time.Time  // object state created at
+	Message    string     // message associated with object state
+}
+
+// User is a generic user information struct
+type User struct {
+	Name    string `json:"name"`
+	Address string `json:"address,omitempty"`
+}
+
+// ObjectStateFS implements FS for the logical contents of the ObjectState
+type ObjectStateFS struct {
+	ObjectState
+	// OpenContentFile opens a content file using the path from the object state
+	// manifest.
+	OpenContentFile func(ctx context.Context, name string) (fs.File, error)
 
 	buildLock sync.Mutex
 	index     *pathtree.Node[string] // logical directory structure
 }
 
 // OpenFile is used to access files in the Objects State by their logical paths
-func (state *ObjectState) OpenFile(ctx context.Context, name string) (fs.File, error) {
+func (state *ObjectStateFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	if err := state.buildIndex(); err != nil {
 		return nil, wrapFSPathError("openfile", name, err)
 	}
+	// node value is the content path corresponding to the logical path
 	node, err := state.index.Get(name)
 	if err != nil {
 		return nil, wrapFSPathError("openfile", name, err)
 	}
 	if node.IsDir() {
-		log.Println(name)
 		return nil, wrapFSPathError("openfile", name, ErrNotFile)
 	}
-	f, err := state.FS.OpenFile(ctx, path.Join(state.Root, node.Val))
+	f, err := state.OpenContentFile(ctx, node.Val)
 	if err != nil {
 		return nil, wrapFSPathError("openfile", name, err)
 	}
@@ -60,7 +71,7 @@ func (state *ObjectState) OpenFile(ctx context.Context, name string) (fs.File, e
 }
 
 // OpenDir is used to access directories in the Objects State by their logical paths
-func (state *ObjectState) ReadDir(ctx context.Context, dirPath string) ([]fs.DirEntry, error) {
+func (state *ObjectStateFS) ReadDir(ctx context.Context, dirPath string) ([]fs.DirEntry, error) {
 	if err := state.buildIndex(); err != nil {
 		return nil, wrapFSPathError("opendir", dirPath, err)
 	}
@@ -174,7 +185,7 @@ func (info objStateFileInfo) Sys() any {
 	return nil
 }
 
-func (state *ObjectState) buildIndex() (err error) {
+func (state *ObjectStateFS) buildIndex() (err error) {
 	state.buildLock.Lock()
 	defer state.buildLock.Unlock()
 	if state.index == nil {

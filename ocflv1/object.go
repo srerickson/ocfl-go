@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path"
 
 	"github.com/srerickson/ocfl"
@@ -54,14 +55,18 @@ func GetObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) {
 
 // State initializes a new ocfl.ObjectState for the object version with the
 // given index. If the index is 0, the most recent version (HEAD) is used.
-func (obj Object) State(i int) (*ocfl.ObjectState, error) {
+func (obj Object) State(i int) (*ocfl.ObjectStateFS, error) {
 	state, err := obj.Inventory.objectState(i)
 	if err != nil {
 		return nil, err
 	}
-	state.FS = obj.FS
-	state.Root = obj.Path
-	return state, nil
+	openFn := func(ctx context.Context, name string) (fs.File, error) {
+		return obj.FS.OpenFile(ctx, path.Join(obj.Path, name))
+	}
+	return &ocfl.ObjectStateFS{
+		ObjectState:     *state,
+		OpenContentFile: openFn,
+	}, nil
 }
 
 // SyncInventory downloads and validates the object's root inventory. If

@@ -532,12 +532,6 @@ func newVersionDirInfo(entries []fs.DirEntry) versionDirInfo {
 // the same FS and Root. It returns true if both states have the same logical
 // paths corresponding to the same content paths.
 func sameObjectVersionState(stateA, stateB *ocfl.ObjectState) bool {
-	if stateA.FS != nil && stateB.FS != nil && stateA.FS != stateB.FS {
-		return false
-	}
-	if stateA.Root != "" && stateB.Root != "" && stateA.Root != stateB.Root {
-		return false
-	}
 	err := stateA.EachPath(func(name string, d string) error {
 		otherDigest := stateB.Map.GetDigest(name)
 		if otherDigest == "" {

@@ -14,7 +14,7 @@ import (
 )
 
 // full test of an object state
-func testObjectState(ctx context.Context, state *ocfl.ObjectState, t *testing.T) {
+func testObjectState(ctx context.Context, state *ocfl.ObjectStateFS, t *testing.T) {
 	state.EachPath(func(pathName, dig string) error {
 		t.Run("OpenFile(): "+pathName, func(t *testing.T) {
 			t.Parallel()
@@ -77,7 +77,7 @@ func TestObjecState(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("with zero values", func(t *testing.T) {
-		var state ocfl.ObjectState
+		var state ocfl.ObjectStateFS
 		t.Run("invalid path", func(t *testing.T) {
 			_, err := state.OpenFile(ctx, "../file.txt")
 			if !errors.Is(err, fs.ErrInvalid) {
