@@ -9,7 +9,7 @@ import "github.com/srerickson/ocfl/digest"
 
 const (
 	// package version
-	Version = "0.0.15"
+	Version = "0.0.16"
 )
 
 // AlgRegistry returns the global digest algorithm registry
