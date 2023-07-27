@@ -43,7 +43,7 @@ type CopyFS interface {
 
 // Files walks the directory tree under root, calling fn
 func Files(ctx context.Context, fsys FS, pth PathSelector, fn func(name string) error) error {
-	if iter, ok := fsys.(FilesIterator); ok {
+	if iter, ok := fsys.(FileIterator); ok {
 		return iter.Files(ctx, pth, fn)
 	}
 	walkFn := func(dir string, entries []fs.DirEntry, err error) error {
@@ -64,8 +64,8 @@ func Files(ctx context.Context, fsys FS, pth PathSelector, fn func(name string) 
 	return walkdirs.WalkDirs(ctx, fsys, pth.Path(), pth.SkipDir, walkFn, 0)
 }
 
-// FilesIterator is used to iterate over regular files in an FS
-type FilesIterator interface {
+// FileIterator is used to iterate over regular files in an FS
+type FileIterator interface {
 	FS
 	// Files calls a function for each filename satisfying the path selector.
 	// The function should only be called for "regular" files (never for
@@ -73,8 +73,8 @@ type FilesIterator interface {
 	Files(context.Context, PathSelector, func(name string) error) error
 }
 
-// PathSelector is used to configure iterators that walk an FS. See FilesIterator and
-// ObjectRootsIterator.
+// PathSelector is used to configure iterators that walk an FS. See FileIterator and
+// ObjectRootIterator.
 type PathSelector struct {
 	// Dir is a parent directory for all paths that satisfy the selector. All
 	// paths in the selection match Dir or have Dir as a parent (prefix). If Dir
