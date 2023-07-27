@@ -13,7 +13,6 @@ import (
 
 const (
 	inventoryFile = "inventory.json"
-	extensionsDir = "extensions"
 	maxNonConform = 8
 )
 
@@ -82,7 +81,7 @@ func NewObjectRoot(fsys FS, dir string, entries []fs.DirEntry) *ObjectRoot {
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() {
-			if name == extensionsDir {
+			if name == ExtensionsDir {
 				obj.Flags |= FoundExtensions
 				continue
 			}
