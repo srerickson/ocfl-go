@@ -1,8 +1,6 @@
-// This repository provides the github.com/srerickson/ocfl module, an
-// implementation of the OCFL specification. The top-level package provides
-// version-independent types, functions, and variables. The ocflv1 package
-// provides the bulk of implementation. It implements both OCFL v1.0 and v1.1.
-// Command line tools can be found in `cmd`.
+// This module is an implementation of the Oxford Common File Layout (OCFL)
+// specification. The top-level package provides version-independent
+// functionality. The ocflv1 package provides the bulk of implementation.
 package ocfl
 
 import "github.com/srerickson/ocfl/digest"
@@ -11,6 +9,11 @@ const (
 	// package version
 	Version       = "0.0.16"
 	ExtensionsDir = "extensions"
+)
+
+var (
+	Spec1_0 = Spec{1, 0}
+	Spec1_1 = Spec{1, 1}
 )
 
 // AlgRegistry returns the global digest algorithm registry
