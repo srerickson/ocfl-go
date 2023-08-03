@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"io/fs"
 	"os"
 
 	"github.com/srerickson/ocfl"
@@ -62,7 +63,7 @@ func main() {
 	// get object
 	if _, err := store.GetObject(ctx, id); err != nil {
 		// not an error if object doesn't exist
-		if !errors.Is(err, ocfl.ErrObjectNotFound) {
+		if !errors.Is(err, fs.ErrNotExist) {
 			quit(err)
 		}
 		if !newObj {

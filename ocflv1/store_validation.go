@@ -44,7 +44,7 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 	//NAMASTE specification.
 	//E080: The text contents of [the OCFL version declaration file] MUST be
 	//the same as dvalue, followed by a newline (\n).
-	err = ocfl.ValidateDeclaration(ctx, fsys, path.Join(root, decl.Name()))
+	err = ocfl.ReadDeclaration(ctx, fsys, path.Join(root, decl.Name()))
 	if err != nil {
 		result.LogFatal(lgr, ec(err, codes.E080.Ref(ocflV)))
 	}

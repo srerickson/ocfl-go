@@ -3,7 +3,6 @@ package ocfl
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"path"
 	"strings"
@@ -17,8 +16,7 @@ const (
 )
 
 var (
-	ErrObjectNotFound = errors.New("OCFL object declaration not found")
-	ErrObjectExists   = errors.New("OCFL object declaration already exists")
+	ErrObjectExists = errors.New("OCFL object declaration already exists")
 )
 
 // GetObjectRoot reads the contents of directory dir in fsys, confirms that an
@@ -31,11 +29,11 @@ var (
 func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error) {
 	entries, err := fsys.ReadDir(ctx, dir)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrObjectNotFound, err.Error())
+		return nil, err
 	}
 	obj := NewObjectRoot(fsys, dir, entries)
 	if !obj.HasDeclaration() {
-		return nil, fmt.Errorf("%w: %s", ErrObjectNotFound, ErrDeclMissing.Error())
+		return nil, ErrDeclNotExist
 	}
 	return obj, nil
 }
@@ -153,10 +151,10 @@ const (
 // declaration in the object root.
 func (obj ObjectRoot) ValidateDeclaration(ctx context.Context) error {
 	if !obj.HasDeclaration() {
-		return ErrDeclMissing
+		return ErrDeclNotExist
 	}
 	pth := path.Join(obj.Path, Declaration{Type: DeclObject, Version: obj.Spec}.Name())
-	return ValidateDeclaration(ctx, obj.FS, pth)
+	return ReadDeclaration(ctx, obj.FS, pth)
 }
 
 // HasDeclaration returns true if the object's FoundDeclaration flag is set

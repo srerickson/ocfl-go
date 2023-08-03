@@ -17,11 +17,9 @@ const (
 )
 
 var (
-	ErrDeclMissing  = errors.New("NAMASTE declaration not found")
-	ErrDeclMultiple = errors.New("multiple NAMASTE declarations found")
-	ErrDeclOpen     = errors.New("could not open NAMASTE declaration")
-	ErrDeclWrite    = errors.New("could not write NAMASTE declaration")
+	ErrDeclNotExist = fmt.Errorf("missing declaration: %w", fs.ErrNotExist)
 	ErrDeclInvalid  = errors.New("invalid NAMASTE declaration contents")
+	ErrDeclMultiple = errors.New("multiple NAMASTE declarations found")
 	namasteRE       = regexp.MustCompile(`^0=([a-z_]+)_([0-9]+\.[0-9]+)$`)
 )
 
@@ -47,7 +45,7 @@ func FindDeclaration(items []fs.DirEntry) (Declaration, error) {
 	}
 	switch len(found) {
 	case 0:
-		return Declaration{}, ErrDeclMissing
+		return Declaration{}, ErrDeclNotExist
 	case 1:
 		return found[0], nil
 	}
@@ -75,30 +73,30 @@ func (d Declaration) Contents() string {
 func ParseDeclaration(name string, dec *Declaration) error {
 	m := namasteRE.FindStringSubmatch(name)
 	if len(m) != 3 {
-		return ErrDeclMissing
+		return ErrDeclNotExist
 	}
 	dec.Type = m[1]
 	err := ParseSpec(m[2], &dec.Version)
 	if err != nil {
-		return ErrDeclMissing
+		return ErrDeclNotExist
 	}
 	return nil
 }
 
-// ValidateDeclaration validates a namaste declaration with path name
-func ValidateDeclaration(ctx context.Context, root FS, name string) error {
+// ReadDeclaration validates a namaste declaration
+func ReadDeclaration(ctx context.Context, fsys FS, filePath string) error {
 	var d Declaration
-	if err := ParseDeclaration(path.Base(name), &d); err != nil {
+	if err := ParseDeclaration(path.Base(filePath), &d); err != nil {
 		return err
 	}
-	f, err := root.OpenFile(ctx, name)
+	f, err := fsys.OpenFile(ctx, filePath)
 	if err != nil {
-		return fmt.Errorf(`%w: %s`, ErrDeclOpen, err.Error())
+		return fmt.Errorf("opening declaration: %w", err)
 	}
 	defer f.Close()
 	decl, err := io.ReadAll(f)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading declaration: %w", err)
 	}
 	if string(decl) != d.Contents() {
 		return ErrDeclInvalid
@@ -110,7 +108,7 @@ func WriteDeclaration(ctx context.Context, root WriteFS, dir string, d Declarati
 	cont := strings.NewReader(d.Contents())
 	_, err := root.Write(ctx, path.Join(dir, d.Name()), cont)
 	if err != nil {
-		return fmt.Errorf(`%w: %s`, ErrDeclWrite, err.Error())
+		return fmt.Errorf(`writing declaration: %w`, err)
 	}
 	return nil
 }
