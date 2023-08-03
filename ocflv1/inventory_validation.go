@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"strings"
 
@@ -230,7 +231,7 @@ func ValidateInventoryReader(ctx context.Context, reader io.Reader, alg digest.A
 				decErr.ocflV = opts.FallbackOCFL
 			}
 			return nil, result.LogFatal(lgr, err)
-		} else if errors.Is(err, ErrInventoryOpen) {
+		} else if errors.Is(err, fs.ErrNotExist) {
 			result.LogFatal(lgr, ec(err, codes.E063.Ref(opts.FallbackOCFL)))
 			return nil, result
 		}

@@ -14,10 +14,8 @@ import (
 )
 
 var (
-	ErrNotObject          = errors.New("not an OCFL object")
 	ErrOCFLVersion        = errors.New("unsupported OCFL version")
-	ErrInventoryOpen      = errors.New("could not read inventory file")
-	ErrInvSidecarOpen     = errors.New("could not read inventory sidecar file")
+	ErrInventoryNotExist  = fmt.Errorf("missing inventory file: %w", fs.ErrNotExist)
 	ErrInvSidecarContents = errors.New("invalid inventory sidecar contents")
 	ErrInvSidecarChecksum = errors.New("inventory digest doesn't match expected value from sidecar file")
 	ErrDigestAlg          = errors.New("invalid digest algorithm")
@@ -44,7 +42,7 @@ func GetObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) {
 	}
 	if !root.HasInventory() {
 		// what is the best error to use here?
-		return nil, ErrInventoryOpen
+		return nil, ErrInventoryNotExist
 	}
 	obj := &Object{ObjectRoot: *root}
 	if err := obj.SyncInventory(ctx); err != nil {

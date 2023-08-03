@@ -190,7 +190,7 @@ func readInventorySidecar(ctx context.Context, fsys ocfl.FS, name string) (strin
 	defer file.Close()
 	cont, err := io.ReadAll(file)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s", ErrInvSidecarOpen, err.Error())
+		return "", err
 	}
 	matches := invSidecarContentsRexp.FindSubmatch(cont)
 	if len(matches) != 2 {

@@ -119,8 +119,8 @@ func GetStore(ctx context.Context, fsys ocfl.FS, root string) (*Store, error) {
 	var ocflVer ocfl.Spec
 	for _, s := range []ocfl.Spec{ocflv1_1, ocflv1_0} {
 		decl := ocfl.Declaration{Type: ocfl.DeclStore, Version: s}.Name()
-		if err := ocfl.ValidateDeclaration(ctx, fsys, path.Join(root, decl)); err != nil {
-			if errors.Is(err, ocfl.ErrDeclOpen) {
+		if err := ocfl.ReadDeclaration(ctx, fsys, path.Join(root, decl)); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
 			return nil, fmt.Errorf("reading storage root delaration: %w", err)
@@ -129,7 +129,7 @@ func GetStore(ctx context.Context, fsys ocfl.FS, root string) (*Store, error) {
 		break
 	}
 	if ocflVer.Empty() {
-		return nil, fmt.Errorf("not an OCFL v1.x storage root: %s", ocfl.ErrDeclOpen)
+		return nil, fmt.Errorf("missing storage root declaration: %w", ocfl.ErrDeclNotExist)
 	}
 	str := &Store{
 		fsys:    fsys,
