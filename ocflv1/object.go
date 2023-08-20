@@ -51,9 +51,10 @@ func GetObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) {
 	return obj, nil
 }
 
-// State initializes a new ocfl.ObjectState for the object version with the
-// given index. If the index is 0, the most recent version (HEAD) is used.
-func (obj Object) State(i int) (*ocfl.ObjectStateFS, error) {
+// StateFS returns an ocfl.FS for accessing the logical contents
+// of the object at the version with index i. If i is zero, the
+// most recent version is used.
+func (obj Object) StateFS(i int) (*ocfl.ObjectStateFS, error) {
 	state, err := obj.Inventory.objectState(i)
 	if err != nil {
 		return nil, err
@@ -65,6 +66,12 @@ func (obj Object) State(i int) (*ocfl.ObjectStateFS, error) {
 		ObjectState:     *state,
 		OpenContentFile: openFn,
 	}, nil
+}
+
+// State initializes a new ocfl.ObjectState for the object version with the
+// given index. If the index is 0, the most recent version (HEAD) is used.
+func (obj Object) State(i int) (*ocfl.ObjectState, error) {
+	return obj.Inventory.objectState(i)
 }
 
 // SyncInventory downloads and validates the object's root inventory. If

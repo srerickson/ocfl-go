@@ -110,13 +110,13 @@ func TestObjecState(t *testing.T) {
 			}
 			// test all version states
 			for vnum := range obj.Inventory.Versions {
-				state, err := obj.State(vnum.Num())
+				statefs, err := obj.StateFS(vnum.Num())
 				if err != nil {
 					return err
 				}
 				name := obj.Path + `/` + vnum.String()
 				t.Run(name, func(t *testing.T) {
-					testObjectState(ctx, state, t)
+					testObjectState(ctx, statefs, t)
 				})
 			}
 			return nil
