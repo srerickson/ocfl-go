@@ -15,7 +15,9 @@ import (
 	"github.com/srerickson/ocfl/logging"
 	"github.com/srerickson/ocfl/ocflv1"
 	"gocloud.dev/blob"
-	_ "gocloud.dev/blob/azureblob"
+
+	// FIXME -- this import appears to be broken?
+	// _ "gocloud.dev/blob/azureblob"
 	"golang.org/x/exp/slog"
 	"golang.org/x/sync/errgroup"
 )
