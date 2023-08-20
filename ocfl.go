@@ -7,7 +7,7 @@ import "github.com/srerickson/ocfl/digest"
 
 const (
 	// package version
-	Version       = "0.0.16"
+	Version       = "0.0.17"
 	ExtensionsDir = "extensions"
 )
 
