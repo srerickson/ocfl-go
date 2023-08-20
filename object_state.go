@@ -27,6 +27,8 @@ type ObjectState struct {
 	User       *User      // user who created object state
 	Created    time.Time  // object state created at
 	Message    string     // message associated with object state
+	VNum       VNum       // number for the object version for the state
+	Spec       Spec       // OCFL spec for the object version for the state
 }
 
 // User is a generic user information struct

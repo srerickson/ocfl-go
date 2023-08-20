@@ -340,5 +340,7 @@ func (inv Inventory) objectState(v int) (*ocfl.ObjectState, error) {
 		Message:  ver.Message,
 		Created:  ver.Created,
 		Alg:      alg,
+		VNum:     inv.Head,
+		Spec:     inv.Type.Spec,
 	}, nil
 }
