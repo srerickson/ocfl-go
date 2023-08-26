@@ -167,11 +167,11 @@ func (stage *Stage) RenamePath(src, dst string) error {
 }
 
 // State returns a digest map representing the Stage's logical state.
-func (stage Stage) State() *digest.Map {
+func (stage Stage) State() digest.Map {
 	if stage.state == nil {
-		return &digest.Map{}
+		return digest.Map{}
 	}
-	maker := &digest.MapMaker{}
+	maker := digest.MapMaker{}
 	walkFn := func(p string, n *pathtree.Node[string]) error {
 		if n.IsDir() {
 			return nil
@@ -194,9 +194,9 @@ func (stage Stage) State() *digest.Map {
 // state (if present in the stage manifest). Because manifest paths are not
 // checked when they are added to the stage, it's possible for the manifest to
 // be invalid, which is why this method can return an error.
-func (stage Stage) Manifest() (*digest.Map, error) {
+func (stage Stage) Manifest() (digest.Map, error) {
 	if stage.state == nil || stage.manifest == nil {
-		return &digest.Map{}, nil
+		return digest.Map{}, nil
 	}
 	maker := &digest.MapMaker{}
 	walkFn := func(p string, n *pathtree.Node[string]) error {
@@ -213,7 +213,7 @@ func (stage Stage) Manifest() (*digest.Map, error) {
 	if err := pathtree.Walk(stage.state, walkFn); err != nil {
 		// an error here represents a bug and
 		// it should be addressed in testing.
-		return nil, fmt.Errorf("building stage manifest: %w", err)
+		return digest.Map{}, fmt.Errorf("building stage manifest: %w", err)
 	}
 	return maker.Map(), nil
 }
@@ -305,7 +305,7 @@ func (stage *Stage) UnsafeAddPathAs(content string, logical string, digests dige
 
 // UnsafeSetManifestFixty replaces the stage's existing content paths and fixity
 // values to match manifest and fixity.
-func (stage *Stage) UnsafeSetManifestFixty(manifest digest.Map, fixity map[string]*digest.Map) error {
+func (stage *Stage) UnsafeSetManifestFixty(manifest digest.Map, fixity map[string]digest.Map) error {
 	newContents := stageManifest{}
 	err := manifest.EachPath(func(name, dig string) error {
 		altDigests := digest.Set{}

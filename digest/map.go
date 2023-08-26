@@ -22,10 +22,7 @@ type Map struct {
 	// strings don't match exactly. Normalizing digests in map keys here would
 	// cause invalid inventories to pass validation. Normalization needs to be
 	// checked separately during validation.
-	digests   map[string][]string
-	files     map[string]string // inverse of digests for quick access
-	validated bool
-	err       error // validation error
+	digests map[string][]string
 }
 
 // AllDigests returns a slice of all digest keys in the Map. Digest strings are
@@ -43,15 +40,12 @@ func (m Map) AllDigests() []string {
 // AllPaths returns a mapping between all files and their digests from Map.
 // AllPaths will panic if the same path appears twice in the Map or if there is
 // an invalid path name in the Map.
-func (m *Map) AllPaths() map[string]string {
-	if m.files == nil {
-		files, err := m.allPathDigests()
-		if err != nil {
-			panic(err)
-		}
-		m.files = files
+func (m Map) AllPaths() map[string]string {
+	files, err := m.allPathDigests()
+	if err != nil {
+		panic(err)
 	}
-	return m.files
+	return files
 }
 
 // allPathDigests returns a lookup table of all paths. It checks that all paths are valid
@@ -68,7 +62,7 @@ func (m Map) allPathDigests() (map[string]string, error) {
 			if !validPath(p) {
 				return nil, &MapPathInvalidErr{p}
 			}
-			if _, exists := m.files[p]; exists {
+			if _, exists := files[p]; exists {
 				return nil, &MapPathConflictErr{Path: p}
 			}
 			files[p] = d
@@ -200,10 +194,7 @@ func (m Map) EachPath(fn func(name, digest string) error) error {
 
 // GetDigest returns the digest for path p
 func (m Map) GetDigest(p string) string {
-	if m.files == nil {
-		m.files = m.AllPaths()
-	}
-	return m.files[p]
+	return m.AllPaths()[p]
 }
 
 func (m Map) MarshalJSON() ([]byte, error) {
@@ -231,16 +222,12 @@ func NewMapUnsafe(d map[string][]string) *Map {
 }
 
 // Valid returns a non-nil error if m is invalid.
-func (m *Map) Valid() error {
-	if !m.validated {
-		m.err = m.validation()
-		m.validated = true
-	}
-	return m.err
+func (m Map) Valid() error {
+	return m.validation()
 }
 
 func (m *Map) validation() error {
-	m.files = map[string]string{}
+	files := map[string]string{}
 	dirs := map[string]struct{}{}
 	norms := map[string]struct{}{}
 	for d, paths := range m.digests {
@@ -256,18 +243,18 @@ func (m *Map) validation() error {
 			if !validPath(p) {
 				return &MapPathInvalidErr{p}
 			}
-			if _, exists := m.files[p]; exists {
+			if _, exists := files[p]; exists {
 				// path appears more than once
 				return &MapPathConflictErr{Path: p}
 			}
-			m.files[p] = d
+			files[p] = d
 			if _, exist := dirs[p]; exist {
 				// path previously treated as directory
 				return &MapPathConflictErr{p}
 			}
 			for _, parent := range parentDirs(p) {
 				// parent previously treated as file
-				if _, exists := m.files[parent]; exists {
+				if _, exists := files[parent]; exists {
 					return &MapPathConflictErr{parent}
 				}
 				dirs[parent] = struct{}{}
@@ -305,7 +292,7 @@ func MapMakerFrom(m Map) (*MapMaker, error) {
 	if err := m.validation(); err != nil {
 		return nil, fmt.Errorf("digest map has errors: %w", err)
 	}
-	for pth, dig := range m.files {
+	for pth, dig := range m.AllPaths() {
 		norm := normalizeDigest(dig)
 		if err := mm.tree.SetFile(pth, norm); err != nil {
 			// if the digest map is valid, there should be no errors here.
@@ -352,8 +339,8 @@ func (mm *MapMaker) AddPaths(d string, paths ...string) error {
 }
 
 // Map returns a point to a new [Map] as constructed or modified by the MapMaker.
-func (mm *MapMaker) Map() *Map {
-	m := &Map{digests: map[string][]string{}}
+func (mm *MapMaker) Map() Map {
+	m := Map{digests: map[string][]string{}}
 	if mm.tree == nil {
 		return m
 	}

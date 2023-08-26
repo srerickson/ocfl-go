@@ -103,7 +103,7 @@ func (inv decodeInventory) asInventory() (*Inventory, *validation.Result) {
 		Head:             *inv.Head,
 		ContentDirectory: inv.contentDirectory(),
 		DigestAlgorithm:  *inv.DigestAlgorithm,
-		Manifest:         &inv.Manifest.Map,
+		Manifest:         inv.Manifest.Map,
 		Fixity:           inv.Fixity,
 		digest:           inv.digest,
 	}
@@ -210,10 +210,10 @@ func (m *manifest) UnmarshalJSON(b []byte) error {
 }
 
 // fixity is an internal type that implements json.Unmarshaler
-type fixity map[string]*digest.Map
+type fixity map[string]digest.Map
 
 func (f *fixity) UnmarshalJSON(b []byte) error {
-	var newF map[string]*digest.Map
+	var newF map[string]digest.Map
 	err := json.Unmarshal(b, &newF)
 	if err != nil {
 		return &InvDecodeError{Field: `fixity`, error: err}
@@ -233,7 +233,7 @@ type version struct {
 func (v version) Version() *Version {
 	newVer := &Version{
 		Created: *v.Created,
-		State:   v.State,
+		State:   *v.State,
 	}
 	if v.Message != nil {
 		newVer.Message = *v.Message

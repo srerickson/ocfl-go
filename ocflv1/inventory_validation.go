@@ -149,9 +149,6 @@ func (inv *Inventory) Validate() *validation.Result {
 	for _, digest := range inv.Manifest.AllDigests() {
 		var found bool
 		for _, version := range inv.Versions {
-			if version.State == nil {
-				continue
-			}
 			if version.State.HasDigest(digest) {
 				found = true
 				break
