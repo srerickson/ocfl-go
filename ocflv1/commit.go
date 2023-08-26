@@ -52,7 +52,7 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, id string, s
 			err := fmt.Errorf("can't create object state with existing inventory (this is a bug): %w", err)
 			return &CommitError{Err: err}
 		}
-		if !opts.allowUnchanged && invState.Eq(*stage.State()) {
+		if !opts.allowUnchanged && invState.Eq(stage.State()) {
 			err := fmt.Errorf("new version would have same state as existing version")
 			return &CommitError{Err: err}
 		}

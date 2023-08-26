@@ -30,9 +30,9 @@ type Inventory struct {
 	DigestAlgorithm  string                 `json:"digestAlgorithm"`
 	Head             ocfl.VNum              `json:"head"`
 	ContentDirectory string                 `json:"contentDirectory,omitempty"`
-	Manifest         *digest.Map            `json:"manifest"`
+	Manifest         digest.Map             `json:"manifest"`
 	Versions         map[ocfl.VNum]*Version `json:"versions"`
-	Fixity           map[string]*digest.Map `json:"fixity,omitempty"`
+	Fixity           map[string]digest.Map  `json:"fixity,omitempty"`
 
 	digest string     // inventory digest using alg
 	alg    digest.Alg // resolved digest algorithm
@@ -40,10 +40,10 @@ type Inventory struct {
 
 // Version represents object version state and metadata
 type Version struct {
-	Created time.Time   `json:"created"`
-	State   *digest.Map `json:"state"`
-	Message string      `json:"message,omitempty"`
-	User    *User       `json:"user,omitempty"`
+	Created time.Time  `json:"created"`
+	State   digest.Map `json:"state"`
+	Message string     `json:"message,omitempty"`
+	User    *User      `json:"user,omitempty"`
 }
 
 // User represent a Version's user entry
@@ -124,11 +124,8 @@ func (inv Inventory) GetVersion(v int) *Version {
 // number v is present in the inventory, an error is returned.
 func (inv Inventory) EachStatePath(v int, fn func(f string, digest string, conts []string) error) error {
 	ver := inv.GetVersion(v)
-	if ver == nil || ver.State == nil {
+	if ver == nil {
 		return fmt.Errorf("%w: with index %d", ErrVersionNotFound, v)
-	}
-	if inv.Manifest == nil {
-		return errors.New("inventory has no manifest")
 	}
 	return ver.State.EachPath(func(lpath string, digest string) error {
 		if digest == "" {
@@ -202,20 +199,13 @@ func readInventorySidecar(ctx context.Context, fsys ocfl.FS, name string) (strin
 func (inv *Inventory) normalizeDigests() error {
 	// manifest + all version state + all fixity
 	invMaps := make([]*digest.Map, 0, 1+len(inv.Versions)+len(inv.Fixity))
-	if inv.Manifest != nil {
-		invMaps = append(invMaps, inv.Manifest)
-	}
+	invMaps = append(invMaps, &inv.Manifest)
+
 	for _, v := range inv.Versions {
-		if v.State == nil {
-			continue
-		}
-		invMaps = append(invMaps, v.State)
+		invMaps = append(invMaps, &v.State)
 	}
 	for _, f := range inv.Fixity {
-		if f == nil {
-			continue
-		}
-		invMaps = append(invMaps, f)
+		invMaps = append(invMaps, &f)
 	}
 	for _, m := range invMaps {
 		if m.HasUppercaseDigests() {
@@ -264,9 +254,6 @@ func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *User, crea
 	if inv.ContentDirectory == "" {
 		inv.ContentDirectory = contentDir
 	}
-	if inv.Manifest == nil {
-		inv.Manifest = &digest.Map{}
-	}
 	// pathTransformation applied to stage export's manifest and fixity
 	// to generate inventory's manifest and fixity
 	pathTransform := func(digest string, paths []string) []string {
@@ -282,13 +269,13 @@ func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *User, crea
 		return paths
 	}
 	// generate new manifest and fixity entries
-	manifestMaker, err := digest.MapMakerFrom(*inv.Manifest)
+	manifestMaker, err := digest.MapMakerFrom(inv.Manifest)
 	if err != nil {
 		return fmt.Errorf("existing inventory's manifest has errors: %w", err)
 	}
 	fixityMakers := make(map[string]*digest.MapMaker, len(inv.Fixity))
 	for alg, fix := range inv.Fixity {
-		fixityMakers[alg], err = digest.MapMakerFrom(*fix)
+		fixityMakers[alg], err = digest.MapMakerFrom(fix)
 		if err != nil {
 			return fmt.Errorf("existing inventory's fixity has errors: %w", err)
 		}
@@ -314,7 +301,7 @@ func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *User, crea
 		}
 	}
 	inv.Manifest = manifestMaker.Map()
-	inv.Fixity = map[string]*digest.Map{}
+	inv.Fixity = map[string]digest.Map{}
 	for alg, fixmaker := range fixityMakers {
 		inv.Fixity[alg] = fixmaker.Map()
 	}
@@ -335,8 +322,8 @@ func (inv Inventory) objectState(v int) (*ocfl.ObjectState, error) {
 	}
 
 	return &ocfl.ObjectState{
-		Manifest: *inv.Manifest,
-		Map:      *ver.State,
+		Manifest: inv.Manifest,
+		Map:      ver.State,
 		Message:  ver.Message,
 		Created:  ver.Created,
 		Alg:      alg,

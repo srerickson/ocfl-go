@@ -124,7 +124,7 @@ func ExampleCommit_copyobject() {
 		log.Fatal(err)
 	}
 	stage.SetFS(sourceObject.FS, sourceObject.Path)
-	err = stage.UnsafeSetManifestFixty(*sourceObject.Inventory.Manifest, sourceObject.Inventory.Fixity)
+	err = stage.UnsafeSetManifestFixty(sourceObject.Inventory.Manifest, sourceObject.Inventory.Fixity)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 		}
 		// check that new inventory has new content in fixity
 		md5fixity := updatedObj.Inventory.Fixity[digest.MD5id]
-		if md5fixity == nil || len(md5fixity.AllDigests()) == 0 {
+		if len(md5fixity.AllDigests()) == 0 {
 			t.Fatal("inventory should have md5 block in fixity")
 		}
 		// expected state paths
