@@ -216,7 +216,7 @@ func TestStoreCommit(t *testing.T) {
 	if err := stage1.AddFS(ctx, storeFS, "stage1"); err != nil {
 		t.Fatal(err)
 	}
-	if stage1.GetStateDigest("tmp.txt") == "" {
+	if stage1.State.GetDigest("tmp.txt") == "" {
 		t.Fatal("missing expected digest")
 	}
 	if err = store.Commit(ctx, "object-1", stage1,
@@ -238,10 +238,8 @@ func TestStoreCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	stage2 := ocfl.NewStage(state.Alg)
-	if err := stage2.SetState(state.Map); err != nil {
-		t.Fatal(err)
-	}
-	if err := stage2.RemovePath("tmp.txt"); err != nil {
+	stage2.State, err = state.DigestMap.Remap(ocfl.Remove("tmp.txt"))
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Commit(ctx, "object-1", stage2,
@@ -260,7 +258,8 @@ func TestStoreCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	// rename one of the staged files
-	if err := stage3.RenamePath("a/tmp.txt", "tmp.txt"); err != nil {
+	stage3.State, err = stage3.State.Remap(ocfl.Rename("a/tmp.txt", "tmp.txt"))
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Commit(ctx, "object-1", stage3,
@@ -284,9 +283,7 @@ func TestStoreCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	stage4 := ocfl.NewStage(objState.Alg)
-	if err := stage4.SetState(objState.Map); err != nil {
-		t.Fatal(err)
-	}
+	stage4.State = objState.DigestMap
 	if err := stage4.AddFS(ctx, stage4fsys, "."); err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +337,7 @@ func TestStoreCommit(t *testing.T) {
 	if finalState.GetDigest("a/another.txt") == "" {
 		t.Fatal("missing expected file")
 	}
-	if len(finalState.AllPaths()) != 2 {
+	if finalState.LenPaths() != 2 {
 		t.Fatal("expected only two items")
 	}
 }

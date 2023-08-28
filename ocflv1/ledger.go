@@ -66,7 +66,7 @@ func (l *pathLedger) addInventory(inv *Inventory, isRoot bool) error {
 	}
 
 	// add root inventory manifest to ledger
-	for p, d := range inv.Manifest.AllPaths() {
+	for p, d := range inv.Manifest.PathMap() {
 		err := l.addPathDigest(p, alg, d, ver, flag|inManifest)
 		if err != nil {
 			return err
@@ -89,7 +89,7 @@ func (l *pathLedger) addInventory(inv *Inventory, isRoot bool) error {
 	// add any paths in inventory's fixity
 	if inv.Fixity != nil {
 		for alg, dm := range inv.Fixity {
-			for p, d := range dm.AllPaths() {
+			for p, d := range dm.PathMap() {
 				err := l.addPathDigest(p, alg, d, ver, flag|inFixity)
 				if err != nil {
 					return err
