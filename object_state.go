@@ -21,14 +21,14 @@ const (
 // ObjectState encapsulates a set of logical content (i.e., an object version
 // state) and its mapping to specific content paths in Manifest.
 type ObjectState struct {
-	digest.Map            // digests / logical paths
-	Manifest   digest.Map // digests / content paths
-	Alg        digest.Alg // algorith used for digests
-	User       *User      // user who created object state
-	Created    time.Time  // object state created at
-	Message    string     // message associated with object state
-	VNum       VNum       // number for the object version for the state
-	Spec       Spec       // OCFL spec for the object version for the state
+	DigestMap            // digests / logical paths
+	Manifest  DigestMap  // digests / content paths
+	Alg       digest.Alg // algorith used for digests
+	User      *User      // user who created object state
+	Created   time.Time  // object state created at
+	Message   string     // message associated with object state
+	VNum      VNum       // number for the object version for the state
+	Spec      Spec       // OCFL spec for the object version for the state
 }
 
 // User is a generic user information struct
@@ -192,12 +192,15 @@ func (state *ObjectStateFS) buildIndex() (err error) {
 	defer state.buildLock.Unlock()
 	if state.index == nil {
 		state.index = pathtree.NewDir[string]()
-		err = state.Map.EachPath(func(name, dig string) error {
+
+		state.DigestMap.EachPath(func(name, dig string) bool {
 			realPaths := state.Manifest.DigestPaths(dig)
 			if len(realPaths) == 0 {
-				return fmt.Errorf("missing content paths for digest '%s'", name)
+				err = fmt.Errorf("missing content paths for digest '%s'", name)
+				return false
 			}
-			return state.index.SetFile(name, realPaths[0])
+			err = state.index.SetFile(name, realPaths[0])
+			return err == nil
 		})
 	}
 	return

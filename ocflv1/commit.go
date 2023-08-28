@@ -52,7 +52,7 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, id string, s
 			err := fmt.Errorf("can't create object state with existing inventory (this is a bug): %w", err)
 			return &CommitError{Err: err}
 		}
-		if !opts.allowUnchanged && invState.Eq(stage.State()) {
+		if !opts.allowUnchanged && invState.Eq(stage.State) {
 			err := fmt.Errorf("new version would have same state as existing version")
 			return &CommitError{Err: err}
 		}
@@ -300,7 +300,7 @@ func commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, inv *Invento
 // storage root's FS
 func transferMap(stage *ocfl.Stage, inv *Inventory, objRoot string) (map[string]string, error) {
 	xfer := map[string]string{}
-	for dst, dig := range inv.Manifest.AllPaths() {
+	for dst, dig := range inv.Manifest.PathMap() {
 		// ignore manifest entries from previous versions
 		if !strings.HasPrefix(dst, inv.Head.String()+"/") {
 			continue

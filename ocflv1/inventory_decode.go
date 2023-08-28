@@ -103,7 +103,7 @@ func (inv decodeInventory) asInventory() (*Inventory, *validation.Result) {
 		Head:             *inv.Head,
 		ContentDirectory: inv.contentDirectory(),
 		DigestAlgorithm:  *inv.DigestAlgorithm,
-		Manifest:         inv.Manifest.Map,
+		Manifest:         inv.Manifest.DigestMap,
 		Fixity:           inv.Fixity,
 		digest:           inv.digest,
 	}
@@ -196,24 +196,24 @@ func (inv *decodeInventory) UnmarshalJSON(b []byte) error {
 
 // manifest is an internal type that implements json.Unmarshaler
 type manifest struct {
-	digest.Map
+	ocfl.DigestMap
 }
 
 func (m *manifest) UnmarshalJSON(b []byte) error {
-	var dm digest.Map
+	var dm ocfl.DigestMap
 	err := json.Unmarshal(b, &dm)
 	if err != nil {
 		return &InvDecodeError{Field: `manifest`, error: err}
 	}
-	m.Map = dm
+	m.DigestMap = dm
 	return nil
 }
 
 // fixity is an internal type that implements json.Unmarshaler
-type fixity map[string]digest.Map
+type fixity map[string]ocfl.DigestMap
 
 func (f *fixity) UnmarshalJSON(b []byte) error {
-	var newF map[string]digest.Map
+	var newF map[string]ocfl.DigestMap
 	err := json.Unmarshal(b, &newF)
 	if err != nil {
 		return &InvDecodeError{Field: `fixity`, error: err}
@@ -224,10 +224,10 @@ func (f *fixity) UnmarshalJSON(b []byte) error {
 
 // version is an internal type that implements json.Unmarshaler
 type version struct {
-	Created *time.Time  `json:"created"`
-	State   *digest.Map `json:"state"`
-	Message *string     `json:"message,omitempty"`
-	User    *user       `json:"user,omitempty"`
+	Created *time.Time      `json:"created"`
+	State   *ocfl.DigestMap `json:"state"`
+	Message *string         `json:"message,omitempty"`
+	User    *user           `json:"user,omitempty"`
 }
 
 func (v version) Version() *Version {

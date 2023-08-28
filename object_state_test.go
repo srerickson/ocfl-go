@@ -15,7 +15,7 @@ import (
 
 // full test of an object state
 func testObjectState(ctx context.Context, state *ocfl.ObjectStateFS, t *testing.T) {
-	state.EachPath(func(pathName, dig string) error {
+	state.EachPath(func(pathName, dig string) bool {
 		t.Run("OpenFile(): "+pathName, func(t *testing.T) {
 			t.Parallel()
 			f, err := state.OpenFile(ctx, pathName)
@@ -69,7 +69,7 @@ func testObjectState(ctx context.Context, state *ocfl.ObjectStateFS, t *testing.
 				})
 			}
 		})
-		return nil
+		return true
 	})
 }
 

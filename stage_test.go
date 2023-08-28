@@ -23,16 +23,15 @@ func TestStageAddFS(t *testing.T) {
 		if err := stage.AddFS(ctx, contentFS, "dir", digest.SHA1()); err != nil {
 			t.Fatal(err)
 		}
-		state := stage.State()
 		for name := range data {
 			if !strings.HasPrefix(name, "dir/") {
-				if state.GetDigest(name) != "" {
+				if stage.State.GetDigest(name) != "" {
 					t.Fatalf("stage state shouldn't include digest for '%s'", name)
 				}
 				continue
 			}
 			name = strings.TrimPrefix(name, "dir/") // remove prefix
-			dig := state.GetDigest(name)
+			dig := stage.State.GetDigest(name)
 			if dig == "" {
 				t.Fatalf("stage state does not included '%s' as expected", name)
 			}
@@ -82,16 +81,15 @@ func TestStageAddPath(t *testing.T) {
 		if err := stage.AddPath(ctx, "README.txt", digest.SHA1()); err != nil {
 			t.Fatal(err)
 		}
-		state := stage.State()
 		for name := range data {
 			if !strings.HasPrefix(name, "dir/") {
-				if state.GetDigest(name) != "" {
+				if stage.State.GetDigest(name) != "" {
 					t.Fatalf("stage state shouldn't include digest for '%s'", name)
 				}
 				continue
 			}
 			name = strings.TrimPrefix(name, "dir/") // remove prefix
-			dig := state.GetDigest(name)
+			dig := stage.State.GetDigest(name)
 			if dig == "" {
 				t.Fatalf("stage state does not included '%s' as expected", name)
 			}
@@ -172,7 +170,7 @@ func TestStageManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal("Manifest() error:", err)
 	}
-	paths := man.AllPaths()
+	paths := man.PathMap()
 	if l := len(paths); l != 1 {
 		t.Errorf("Manifest() has more files than expected, got=%d, expect=%d", l, 1)
 	}
