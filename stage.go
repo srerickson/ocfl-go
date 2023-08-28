@@ -13,7 +13,7 @@ import (
 
 	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/digest/checksum"
-	"github.com/srerickson/ocfl/internal/pathtree"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -28,15 +28,15 @@ var (
 // a logical, which may be exported with the State method. A stage also tracks an
 // internal manifest of new content added to the stage.
 type Stage struct {
-	FS              // FS for adding new content to the stage
-	Root string     // base directory for all content
-	Alg  digest.Alg // Primary digest algorith (sha512 or sha256)
+	State DigestMap  // StageState
+	FS               // FS for adding new content to the stage
+	Root  string     // base directory for all content
+	Alg   digest.Alg // Primary digest algorith (sha512 or sha256)
 
 	// Number of go routines to use for concurrent digest during AddFS
 	Concurrency int
 
 	manifest stageManifest
-	state    *pathtree.Node[string] // mutable directory structure
 }
 
 // NewStage creates a new stage with the given digest algorithm, which should be
@@ -48,7 +48,7 @@ func NewStage(alg digest.Alg) *Stage {
 	return &Stage{
 		Alg:      alg,
 		manifest: map[string]stageEntry{},
-		state:    pathtree.NewDir[string](),
+		State:    DigestMap{},
 	}
 }
 
@@ -58,21 +58,6 @@ func (stage *Stage) SetFS(fsys FS, dir string) {
 	stage.FS = fsys
 	stage.Root = path.Clean(dir)
 	stage.manifest = stageManifest{}
-}
-
-// SetState sets the stage's state, replacing any previous values.
-func (stage *Stage) SetState(state digest.Map) error {
-	if err := state.Valid(); err != nil {
-		return err
-	}
-	newState := pathtree.NewDir[string]()
-	if err := state.EachPath(func(n, d string) error {
-		return newState.SetFile(n, d)
-	}); err != nil {
-		return err
-	}
-	stage.state = newState
-	return nil
 }
 
 // AddFS calls SetFS with the given FS and root directory and adds all files in
@@ -145,107 +130,18 @@ func (stage *Stage) AddPath(ctx context.Context, name string, fixity ...digest.A
 	return stage.UnsafeAddPath(name, digester.Sums())
 }
 
-// RemovePath removes the logical path from the stage
-func (stage *Stage) RemovePath(n string) error {
-	if stage.state == nil {
-		stage.state = pathtree.NewDir[string]()
-	}
-	if _, err := stage.state.Remove(n); err != nil {
-		return err
-	}
-	stage.state.RemoveEmptyDirs()
-	return nil
-}
-
-// RenamePath renames path src to dst in the stage root. If dst exists, it is
-// over-written.
-func (stage *Stage) RenamePath(src, dst string) error {
-	if stage.state == nil {
-		stage.state = pathtree.NewDir[string]()
-	}
-	return stage.state.Rename(src, dst)
-}
-
-// State returns a digest map representing the Stage's logical state.
-func (stage Stage) State() digest.Map {
-	if stage.state == nil {
-		return digest.Map{}
-	}
-	maker := digest.MapMaker{}
-	walkFn := func(p string, n *pathtree.Node[string]) error {
-		if n.IsDir() {
-			return nil
-		}
-		if err := maker.Add(n.Val, p); err != nil {
-			return err
-		}
-		return nil
-	}
-	if err := pathtree.Walk(stage.state, walkFn); err != nil {
-		// an error here represents a bug and
-		// it should be addressed in testing.
-		err = fmt.Errorf("while exporting stage state: %w", err)
-		panic(err)
-	}
-	return maker.Map()
-}
-
-// Manifest returns a digest.Map with content paths for digests in the stage
+// Manifest returns a DigestMap with content paths for digests in the stage
 // state (if present in the stage manifest). Because manifest paths are not
 // checked when they are added to the stage, it's possible for the manifest to
 // be invalid, which is why this method can return an error.
-func (stage Stage) Manifest() (digest.Map, error) {
-	if stage.state == nil || stage.manifest == nil {
-		return digest.Map{}, nil
-	}
-	maker := &digest.MapMaker{}
-	walkFn := func(p string, n *pathtree.Node[string]) error {
-		if n.IsDir() {
-			return nil
+func (stage Stage) Manifest() (DigestMap, error) {
+	manifest := map[string][]string{}
+	for _, digest := range stage.State.Digests() {
+		if cont := stage.GetContent(digest); len(cont) > 0 {
+			manifest[digest] = cont
 		}
-		if cont := stage.GetContent(n.Val); len(cont) > 0 {
-			if err := maker.Add(n.Val, cont[0]); err != nil {
-				return err
-			}
-		}
-		return nil
 	}
-	if err := pathtree.Walk(stage.state, walkFn); err != nil {
-		// an error here represents a bug and
-		// it should be addressed in testing.
-		return digest.Map{}, fmt.Errorf("building stage manifest: %w", err)
-	}
-	return maker.Map(), nil
-}
-
-// GetStateDigest returns the digest associated with the the logical path in the
-// stage state. If the path isn't present as a file in the stage state, an empty
-// string is returned.
-func (stage Stage) GetStateDigest(lgcPath string) string {
-	if stage.state == nil {
-		return ""
-	}
-	node, _ := stage.state.Get(lgcPath)
-	if node == nil {
-		return ""
-	}
-	return node.Val
-}
-
-// SetStateDigest sets the digest for the logical path to dig replacing the
-// previous value if one exists. An error is returned if the logical path exists
-// in the state state as a directory or if a parent directory of the logical
-// path exists as a file.
-func (stage *Stage) SetStateDigest(lgcPath, dig string) error {
-	if stage.state == nil {
-		stage.state = pathtree.NewDir[string]()
-	}
-	node, err := stage.state.Get(lgcPath)
-	if err == nil && node.IsDir() {
-		// TODO: unified type for path conflict error
-		return fmt.Errorf("can't add '%s' because it was previously added as a directory", lgcPath)
-	}
-	return stage.state.SetFile(lgcPath, dig)
+	return NewDigestMap(manifest)
 }
 
 // GetContent returns the staged content paths for the given
@@ -254,7 +150,7 @@ func (stage Stage) GetContent(dig string) []string {
 	if stage.manifest == nil {
 		return nil
 	}
-	return append([]string{}, stage.manifest[dig].paths...)
+	return slices.Clone(stage.manifest[dig].paths)
 }
 
 // GetFixity returns altnerate digest values for the content with the primary
@@ -288,9 +184,15 @@ func (stage *Stage) UnsafeAddPathAs(content string, logical string, digests dige
 		return err
 	}
 	if logical != "" {
-		if err := stage.SetStateDigest(logical, dig); err != nil {
+		newFile, err := NewDigestMap(map[string][]string{dig: {logical}})
+		if err != nil {
 			return err
 		}
+		merged, err := stage.State.Merge(newFile, true)
+		if err != nil {
+			return err
+		}
+		stage.State = merged
 	}
 	if content != "" {
 		if stage.manifest == nil {
@@ -305,16 +207,18 @@ func (stage *Stage) UnsafeAddPathAs(content string, logical string, digests dige
 
 // UnsafeSetManifestFixty replaces the stage's existing content paths and fixity
 // values to match manifest and fixity.
-func (stage *Stage) UnsafeSetManifestFixty(manifest digest.Map, fixity map[string]digest.Map) error {
+func (stage *Stage) UnsafeSetManifestFixty(manifest DigestMap, fixity map[string]DigestMap) error {
 	newContents := stageManifest{}
-	err := manifest.EachPath(func(name, dig string) error {
+	var err error
+	manifest.EachPath(func(name, dig string) bool {
 		altDigests := digest.Set{}
 		for alg, dmap := range fixity {
 			if fixDig := dmap.GetDigest(name); fixDig != "" {
 				altDigests[alg] = fixDig
 			}
 		}
-		return newContents.add(dig, name, altDigests)
+		err = newContents.add(dig, name, altDigests)
+		return err == nil
 	})
 	if err != nil {
 		return err

@@ -16,6 +16,7 @@ import (
 	"github.com/srerickson/ocfl/backend/memfs"
 	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/ocflv1"
+	"golang.org/x/exp/maps"
 )
 
 func TestCommit(t *testing.T) {
@@ -120,9 +121,7 @@ func ExampleCommit_copyobject() {
 	}
 	// construct a stage using the object's state, manifest and fixity.
 	stage := ocfl.NewStage(state.Alg)
-	if err := stage.SetState(state.Map); err != nil {
-		log.Fatal(err)
-	}
+	stage.State = state.DigestMap
 	stage.SetFS(sourceObject.FS, sourceObject.Path)
 	err = stage.UnsafeSetManifestFixty(sourceObject.Inventory.Manifest, sourceObject.Inventory.Fixity)
 	if err != nil {
@@ -176,9 +175,7 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 			t.Fatal(err)
 		}
 		stage := ocfl.NewStage(originalState.Alg)
-		if err := stage.SetState(originalState.Map); err != nil {
-			t.Fatal(err)
-		}
+		stage.State = originalState.DigestMap
 		if err := stage.AddFS(ctx, newContentFS, ".", digest.MD5()); err != nil {
 			t.Fatal(err)
 		}
@@ -196,17 +193,11 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 		}
 		// check that new inventory has new content in fixity
 		md5fixity := updatedObj.Inventory.Fixity[digest.MD5id]
-		if len(md5fixity.AllDigests()) == 0 {
+		if len(md5fixity.Digests()) == 0 {
 			t.Fatal("inventory should have md5 block in fixity")
 		}
 		// expected state paths
-		var expectedPaths []string
-		for name := range newContent {
-			expectedPaths = append(expectedPaths, name)
-		}
-		for name := range originalState.AllPaths() {
-			expectedPaths = append(expectedPaths, name)
-		}
+		expectedPaths := append(originalState.Paths(), maps.Keys(newContent)...)
 		// check that expected paths exist
 		for _, name := range expectedPaths {
 			dig := updatedState.GetDigest(name)
@@ -239,16 +230,16 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 			t.Fatal(err)
 		}
 		stage := ocfl.NewStage(state.Alg)
-		if err := stage.SetState(state.Map); err != nil {
-			t.Fatal(err)
-		}
+		stage.State = state.DigestMap
 		if err := stage.AddFS(ctx, newContentFS, "."); err != nil {
 			t.Fatal(err)
 		}
-		if err := stage.RemovePath("testdata/delete.txt"); err != nil {
+		stage.State, err = stage.State.Remap(ocfl.Remove("testdata/delete.txt"))
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := stage.RenamePath("testdata/rename-src.txt", "testdata/rename-dst.txt"); err != nil {
+		stage.State, err = stage.State.Remap(ocfl.Rename("testdata/rename-src.txt", "testdata/rename-dst.txt"))
+		if err != nil {
 			t.Fatal(err)
 		}
 		if err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, stage); err != nil {

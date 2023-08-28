@@ -71,9 +71,9 @@ func (inv *Inventory) Validate() *validation.Result {
 		result.AddFatal(ec(err, codes.E017.Ref(inv.Type.Spec)))
 	}
 	if err := inv.Manifest.Valid(); err != nil {
-		var dcErr *digest.MapDigestConflictErr
-		var pcErr *digest.MapPathConflictErr
-		var piErr *digest.MapPathInvalidErr
+		var dcErr *ocfl.MapDigestConflictErr
+		var pcErr *ocfl.MapPathConflictErr
+		var piErr *ocfl.MapPathInvalidErr
 		if errors.As(err, &dcErr) {
 			err = ec(err, codes.E096.Ref(inv.Type.Spec))
 		} else if errors.As(err, &pcErr) {
@@ -106,9 +106,9 @@ func (inv *Inventory) Validate() *validation.Result {
 	for vname, ver := range inv.Versions {
 		err := ver.State.Valid()
 		if err != nil {
-			var dcErr *digest.MapDigestConflictErr
-			var pcErr *digest.MapPathConflictErr
-			var piErr *digest.MapPathInvalidErr
+			var dcErr *ocfl.MapDigestConflictErr
+			var pcErr *ocfl.MapPathConflictErr
+			var piErr *ocfl.MapPathInvalidErr
 			if errors.As(err, &dcErr) {
 				err = ec(err, codes.E050.Ref(inv.Type.Spec))
 			} else if errors.As(err, &pcErr) {
@@ -119,7 +119,7 @@ func (inv *Inventory) Validate() *validation.Result {
 			result.AddFatal(err)
 		}
 		// check that each state digest appears in manifest
-		for _, digest := range ver.State.AllDigests() {
+		for _, digest := range ver.State.Digests() {
 			if !inv.Manifest.HasDigest(digest) {
 				err := fmt.Errorf("digest in %s state not in manifest: %s", vname, digest)
 				result.AddFatal(ec(err, codes.E050.Ref(inv.Type.Spec)))
@@ -146,7 +146,7 @@ func (inv *Inventory) Validate() *validation.Result {
 		}
 	}
 	// check that each manifest entry is used in at least one state
-	for _, digest := range inv.Manifest.AllDigests() {
+	for _, digest := range inv.Manifest.Digests() {
 		var found bool
 		for _, version := range inv.Versions {
 			if version.State.HasDigest(digest) {
@@ -163,9 +163,9 @@ func (inv *Inventory) Validate() *validation.Result {
 	for _, fixity := range inv.Fixity {
 		err := fixity.Valid()
 		if err != nil {
-			var dcErr *digest.MapDigestConflictErr
-			var piErr *digest.MapPathInvalidErr
-			var pcErr *digest.MapPathConflictErr
+			var dcErr *ocfl.MapDigestConflictErr
+			var piErr *ocfl.MapPathInvalidErr
+			var pcErr *ocfl.MapPathConflictErr
 			if errors.As(err, &dcErr) {
 				err = ec(err, codes.E097.Ref(inv.Type.Spec))
 			} else if errors.As(err, &piErr) {
