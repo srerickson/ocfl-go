@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl-go"
 )
 
 const Ext0004 = "0004-hashed-n-tuple-storage-layout"

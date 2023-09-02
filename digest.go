@@ -13,7 +13,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/srerickson/ocfl/internal/pipeline"
+	"github.com/srerickson/ocfl-go/internal/pipeline"
 	"golang.org/x/crypto/blake2b"
 	"golang.org/x/exp/maps"
 )

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/srerickson/ocfl/internal/pathtree"
+	"github.com/srerickson/ocfl-go/internal/pathtree"
 )
 
 const (

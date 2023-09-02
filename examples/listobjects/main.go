@@ -10,10 +10,10 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/backend/cloud"
-	"github.com/srerickson/ocfl/logging"
-	"github.com/srerickson/ocfl/ocflv1"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/backend/cloud"
+	"github.com/srerickson/ocfl-go/logging"
+	"github.com/srerickson/ocfl-go/ocflv1"
 	"gocloud.dev/blob"
 
 	// FIXME -- this import appears to be broken?

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/srerickson/ocfl/internal/pipeline"
+	"github.com/srerickson/ocfl-go/internal/pipeline"
 )
 
 type job int

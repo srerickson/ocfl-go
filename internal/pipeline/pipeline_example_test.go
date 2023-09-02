@@ -6,8 +6,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/internal/pipeline"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/internal/pipeline"
 )
 
 func ExampleRun() {

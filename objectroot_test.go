@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/backend/cloud"
-	"github.com/srerickson/ocfl/backend/local"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/backend/cloud"
+	"github.com/srerickson/ocfl-go/backend/local"
 	"gocloud.dev/blob/fileblob"
 )
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/srerickson/ocfl/internal/ocfltest"
+	"github.com/srerickson/ocfl-go/internal/ocfltest"
 )
 
 func TestSeedFS(t *testing.T) {

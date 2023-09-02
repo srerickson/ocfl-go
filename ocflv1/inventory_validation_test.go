@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/matryer/is"
-	"github.com/srerickson/ocfl/ocflv1"
-	"github.com/srerickson/ocfl/validation"
+	"github.com/srerickson/ocfl-go/ocflv1"
+	"github.com/srerickson/ocfl-go/validation"
 )
 
 type testInventory struct {

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/srerickson/ocfl/internal/pathtree"
+	"github.com/srerickson/ocfl-go/internal/pathtree"
 )
 
 func newPathTree(paths map[string]string) (*pathtree.Node[string], error) {

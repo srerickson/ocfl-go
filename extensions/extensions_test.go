@@ -3,7 +3,7 @@ package extensions_test
 import (
 	"testing"
 
-	"github.com/srerickson/ocfl/extensions"
+	"github.com/srerickson/ocfl-go/extensions"
 )
 
 func testLayoutExt(t *testing.T, l extensions.Layout, in, out string) {

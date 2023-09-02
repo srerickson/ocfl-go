@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl-go"
 )
 
 func TestStageAddFS(t *testing.T) {

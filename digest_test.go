@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl-go"
 	"golang.org/x/crypto/blake2b"
 )
 

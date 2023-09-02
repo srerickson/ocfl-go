@@ -10,10 +10,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/extensions"
-	"github.com/srerickson/ocfl/ocflv1/codes"
-	"github.com/srerickson/ocfl/validation"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/extensions"
+	"github.com/srerickson/ocfl-go/ocflv1/codes"
+	"github.com/srerickson/ocfl-go/validation"
 )
 
 func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ValidationOption) (*Object, *validation.Result) {

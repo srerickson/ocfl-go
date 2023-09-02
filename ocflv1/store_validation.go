@@ -7,11 +7,11 @@ import (
 	"io/fs"
 	"path"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/extensions"
-	"github.com/srerickson/ocfl/internal/walkdirs"
-	"github.com/srerickson/ocfl/ocflv1/codes"
-	"github.com/srerickson/ocfl/validation"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/extensions"
+	"github.com/srerickson/ocfl-go/internal/walkdirs"
+	"github.com/srerickson/ocfl-go/ocflv1/codes"
+	"github.com/srerickson/ocfl-go/validation"
 )
 
 func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...ValidationOption) *validation.Result {

@@ -2,8 +2,8 @@
 package ocflv1
 
 import (
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/validation"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/validation"
 )
 
 const (

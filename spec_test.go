@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/matryer/is"
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/backend/memfs"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/backend/memfs"
 )
 
 type vNumTest struct {

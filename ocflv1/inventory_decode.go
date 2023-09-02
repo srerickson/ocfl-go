@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/ocflv1/codes"
-	"github.com/srerickson/ocfl/validation"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/ocflv1/codes"
+	"github.com/srerickson/ocfl-go/validation"
 )
 
 // decodeInventory is an internal type used exclusively for reading/decoding

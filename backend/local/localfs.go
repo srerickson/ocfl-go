@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl-go"
 )
 
 const (

@@ -1,4 +1,4 @@
-module github.com/srerickson/ocfl
+module github.com/srerickson/ocfl-go
 
 go 1.20
 

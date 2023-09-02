@@ -6,7 +6,7 @@ import (
 	"io/fs"
 	"strings"
 
-	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl-go"
 )
 
 const Ext0006 = "0006-flat-omit-prefix-storage-layout"

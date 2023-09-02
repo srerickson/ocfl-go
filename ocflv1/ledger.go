@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl-go"
 )
 
 const (

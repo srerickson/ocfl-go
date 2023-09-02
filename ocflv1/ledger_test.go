@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/matryer/is"
-	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl-go"
 )
 
 func TestLedger(t *testing.T) {

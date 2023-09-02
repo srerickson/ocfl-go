@@ -13,7 +13,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl-go"
 )
 
 var specs = map[string]string{

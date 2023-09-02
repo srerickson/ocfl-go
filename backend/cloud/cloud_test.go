@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/backend/cloud"
-	"github.com/srerickson/ocfl/ocflv1"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/backend/cloud"
+	"github.com/srerickson/ocfl-go/ocflv1"
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/fileblob"
 	"gocloud.dev/blob/memblob"

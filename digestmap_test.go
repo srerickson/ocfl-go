@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl-go"
 )
 
 var invalidPaths = []string{

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl-go"
 )
 
 var (

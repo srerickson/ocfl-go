@@ -9,9 +9,9 @@ import (
 	"io/fs"
 	"path"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/extensions"
-	"github.com/srerickson/ocfl/validation"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/extensions"
+	"github.com/srerickson/ocfl-go/validation"
 )
 
 var (

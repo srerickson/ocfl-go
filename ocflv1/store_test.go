@@ -10,10 +10,10 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/backend/memfs"
-	"github.com/srerickson/ocfl/extensions"
-	"github.com/srerickson/ocfl/ocflv1"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/backend/memfs"
+	"github.com/srerickson/ocfl-go/extensions"
+	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
 var storePath = filepath.Join(`..`, `testdata`, `store-fixtures`, `1.0`)

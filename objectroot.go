@@ -7,7 +7,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/srerickson/ocfl/internal/walkdirs"
+	"github.com/srerickson/ocfl-go/internal/walkdirs"
 )
 
 const (

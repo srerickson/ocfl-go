@@ -11,9 +11,9 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/ocflv1/codes"
-	"github.com/srerickson/ocfl/validation"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/ocflv1/codes"
+	"github.com/srerickson/ocfl-go/validation"
 	"golang.org/x/exp/maps"
 )
 

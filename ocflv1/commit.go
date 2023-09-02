@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/internal/xfer"
-	"github.com/srerickson/ocfl/validation"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/internal/xfer"
+	"github.com/srerickson/ocfl-go/validation"
 	"golang.org/x/exp/slog"
 )
 

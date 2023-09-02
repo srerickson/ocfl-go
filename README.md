@@ -1,11 +1,11 @@
 # An OCFL implementation for Go
 
 
-<a href="https://godoc.org/github.com/srerickson/ocfl">
-    <img src="https://godoc.org/github.com/srerickson/ocfl?status.svg" alt="godocs"/>
+<a href="https://godoc.org/github.com/srerickson/ocfl-go">
+    <img src="https://godoc.org/github.com/srerickson/ocfl-go?status.svg" alt="godocs"/>
 </a>
-<a href="https://goreportcard.com/report/github.com/srerickson/ocfl">
-    <img src="https://goreportcard.com/badge/github.com/srerickson/ocfl">
+<a href="https://goreportcard.com/report/github.com/srerickson/ocfl-go">
+    <img src="https://goreportcard.com/badge/github.com/srerickson/ocfl-go">
 </a>
 
 This is an implementation of the Oxford Common File Layout

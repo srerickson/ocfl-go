@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/ocflv1"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
 var fixturePath = filepath.Join(`..`, `testdata`, `object-fixtures`, `1.1`)

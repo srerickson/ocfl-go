@@ -3,7 +3,7 @@ package xfer
 import (
 	"context"
 
-	"github.com/srerickson/ocfl"
+	"github.com/srerickson/ocfl-go"
 	"golang.org/x/sync/errgroup"
 )
 

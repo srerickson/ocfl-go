@@ -8,9 +8,9 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/backend/memfs"
-	"github.com/srerickson/ocfl/internal/walkdirs"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/backend/memfs"
+	"github.com/srerickson/ocfl-go/internal/walkdirs"
 )
 
 func newTestFS(data map[string][]byte) ocfl.FS {

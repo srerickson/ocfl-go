@@ -7,9 +7,9 @@ import (
 	"io/fs"
 	"os"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/backend/local"
-	"github.com/srerickson/ocfl/ocflv1"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/backend/local"
+	"github.com/srerickson/ocfl-go/ocflv1"
 	"golang.org/x/exp/slog"
 )
 

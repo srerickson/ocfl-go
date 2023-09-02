@@ -3,7 +3,7 @@ package extensions_test
 import (
 	"testing"
 
-	"github.com/srerickson/ocfl/extensions"
+	"github.com/srerickson/ocfl-go/extensions"
 )
 
 var _ extensions.Layout = (*extensions.LayoutFlatOmitPrefix)(nil)

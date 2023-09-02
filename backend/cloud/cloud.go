@@ -9,8 +9,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/internal/walkdirs"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/internal/walkdirs"
 	"gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
 	"golang.org/x/exp/slog"

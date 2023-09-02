@@ -1,6 +1,6 @@
 package validation
 
-import "github.com/srerickson/ocfl"
+import "github.com/srerickson/ocfl-go"
 
 // Code represents an OCFL Validation code referencing a specification.
 // see https://ocfl.io/validation/validation-codes.html

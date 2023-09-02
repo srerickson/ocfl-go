@@ -6,9 +6,9 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/backend/memfs"
-	"github.com/srerickson/ocfl/internal/xfer"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/backend/memfs"
+	"github.com/srerickson/ocfl-go/internal/xfer"
 )
 
 func srcFS(files map[string]string) ocfl.FS {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/srerickson/ocfl/backend/cloud"
+	"github.com/srerickson/ocfl-go/backend/cloud"
 	"gocloud.dev/blob/memblob"
 )
 
