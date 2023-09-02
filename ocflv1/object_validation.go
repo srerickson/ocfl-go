@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"path"
 	"reflect"
@@ -12,8 +11,6 @@ import (
 	"strings"
 
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/digest/checksum"
 	"github.com/srerickson/ocfl/extensions"
 	"github.com/srerickson/ocfl/ocflv1/codes"
 	"github.com/srerickson/ocfl/validation"
@@ -122,9 +119,6 @@ func (vldr *objectValidator) validateRoot(ctx context.Context) error {
 	if !vldr.root.HasSidecar() {
 		err := fmt.Errorf(`inventory sidecar: %w`, fs.ErrNotExist)
 		vldr.LogFatal(lgr, ec(err, codes.E058.Ref(ocflV)))
-	} else if !algorithms[vldr.root.Algorithm] {
-		err := fmt.Errorf(`%w: %s`, ErrDigestAlg, vldr.root.Algorithm)
-		vldr.LogFatal(lgr, ec(err, codes.E025.Ref(ocflV)))
 	}
 	err := vldr.root.VersionDirs.Valid()
 	if err != nil {
@@ -163,12 +157,6 @@ func (vldr *objectValidator) validateRootInventory(ctx context.Context) error {
 	ocflV := vldr.root.Spec
 	lgr := vldr.opts.Logger
 	name := path.Join(vldr.Root, inventoryFile)
-	algID := vldr.root.Algorithm
-	alg, err := digest.Get(algID) // use default registry b/c must be sha512/256
-	if err != nil {
-		vldr.LogFatal(lgr, err)
-		return err
-	}
 	opts := []ValidationOption{
 		copyValidationOptions(vldr.opts),
 		appendResult(vldr.Result),
@@ -177,7 +165,7 @@ func (vldr *objectValidator) validateRootInventory(ctx context.Context) error {
 	if lgr != nil {
 		opts = append(opts, ValidationLogger(lgr.With("inventory_file", name)))
 	}
-	inv, _ := ValidateInventory(ctx, vldr.FS, name, alg, opts...)
+	inv, _ := ValidateInventory(ctx, vldr.FS, name, opts...)
 	if err := vldr.Err(); err != nil {
 		return err
 	}
@@ -240,17 +228,11 @@ func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum)
 		vldr.LogWarn(lgr, ec(err, codes.W002.Ref(ocflV)))
 	}
 	if info.hasInventory {
-		if !algorithms[info.algID] {
-			err := fmt.Errorf("%w: %s", ErrDigestAlg, info.algID)
-			vldr.LogFatal(lgr, ec(err, codes.E025.Ref(ocflV)))
-		}
-		// use default registry b/c must be sha512/256
-		alg, err := digest.Get(info.algID)
-		if err != nil {
-			vldr.LogFatal(lgr, err)
-			return err
-		}
-		if err := vldr.validateVersionInventory(ctx, ver, alg); err != nil {
+		// if !algorithms[info.] {
+		// 	err := fmt.Errorf("%w: %s", ErrDigestAlg, info.asidecarAlg
+		// 	vldr.LogFatal(lgr, ec(err, codes.E025.Ref(ocflV)))
+		// }
+		if err := vldr.validateVersionInventory(ctx, ver); err != nil {
 			return err
 		}
 	} else {
@@ -259,11 +241,10 @@ func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum)
 	return vldr.Err()
 }
 
-func (vldr *objectValidator) validateVersionInventory(ctx context.Context, vn ocfl.VNum, sidecarAlg digest.Alg) error {
+func (vldr *objectValidator) validateVersionInventory(ctx context.Context, vn ocfl.VNum) error {
 	lgr := vldr.opts.Logger
 	vDir := path.Join(vldr.Root, vn.String())
 	name := path.Join(vDir, inventoryFile)
-	alg := sidecarAlg
 	opts := []ValidationOption{
 		copyValidationOptions(vldr.opts),
 		appendResult(vldr.Result),
@@ -272,7 +253,7 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, vn oc
 	if lgr != nil {
 		opts = append(opts, ValidationLogger(lgr.With("inventory_file", name)))
 	}
-	inv, _ := ValidateInventory(ctx, vldr.FS, name, alg, opts...)
+	inv, _ := ValidateInventory(ctx, vldr.FS, name, opts...)
 	if err := vldr.Err(); err != nil {
 		return err
 	}
@@ -420,29 +401,25 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 		return nil
 	}
 	// digests
-	registry := vldr.opts.AlgRegistry
-	digestSetup := func(add func(name string, algs ...digest.Alg) error) error {
+	var setupErr error
+	digestSetup := func(add func(name string, algs ...ocfl.Alg) bool) {
 		for name, pInfo := range vldr.ledger.paths {
-			algs := make([]digest.Alg, 0, len(pInfo.digests))
-			for id := range pInfo.digests {
-				alg, err := registry.Get(id)
-				if err != nil {
-					return err
-				}
+			algs := make([]ocfl.Alg, 0, len(pInfo.digests))
+			for alg := range pInfo.digests {
 				algs = append(algs, alg)
 			}
 			if len(algs) == 0 {
 				// no digests associate with the path
 				err := fmt.Errorf("path not referenecd in manifest as expected: %s", name)
-				return ec(err, codes.E023.Ref(ocflV))
+				setupErr = ec(err, codes.E023.Ref(ocflV))
+				return
 			}
-			if err := add(path.Join(vldr.Root, name), algs...); err != nil {
-				return fmt.Errorf("checksum interupted near: %s: %w", name, err)
+			if !add(path.Join(vldr.Root, name), algs...) {
+				setupErr = errors.New("checksum interupted")
 			}
 		}
-		return nil
 	}
-	digestCallback := func(name string, result digest.Set, err error) error {
+	digestCallback := func(name string, result ocfl.DigestSet, err error) error {
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				err = ec(err, codes.E092.Ref(ocflV))
@@ -476,10 +453,8 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 		}
 		return nil
 	}
-	digestOpen := func(name string) (io.Reader, error) {
-		return vldr.FS.OpenFile(ctx, name)
-	}
-	err := checksum.Run(ctx, digestSetup, digestCallback, checksum.WithOpenFunc(digestOpen))
+	err := ocfl.DigestFS(ctx, vldr.FS, digestSetup, digestCallback)
+	err = errors.Join(setupErr, err)
 	if err != nil {
 		vldr.LogFatal(lgr, err)
 		return err
@@ -502,9 +477,9 @@ func (vldr *objectValidator) walkVersionContent(ctx context.Context, ver ocfl.VN
 
 type versionDirInfo struct {
 	hasInventory bool
-	algID        string
-	extraFiles   []string
-	dirs         []string
+	// sidecarAlg   string
+	extraFiles []string
+	dirs       []string
 }
 
 func newVersionDirInfo(entries []fs.DirEntry) versionDirInfo {
@@ -515,8 +490,7 @@ func newVersionDirInfo(entries []fs.DirEntry) versionDirInfo {
 				info.hasInventory = true
 				continue
 			}
-			if info.algID == "" && strings.HasPrefix(e.Name(), inventoryFile+".") {
-				info.algID = strings.TrimPrefix(e.Name(), inventoryFile+".")
+			if strings.HasPrefix(e.Name(), inventoryFile+".") {
 				continue
 			}
 			info.extraFiles = append(info.extraFiles, e.Name())

@@ -4,15 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"path"
-	"runtime"
 	"sort"
 	"strings"
 
-	"github.com/srerickson/ocfl/digest"
-	"github.com/srerickson/ocfl/digest/checksum"
 	"golang.org/x/exp/slices"
 )
 
@@ -28,13 +24,10 @@ var (
 // a logical, which may be exported with the State method. A stage also tracks an
 // internal manifest of new content added to the stage.
 type Stage struct {
-	State DigestMap  // StageState
-	FS               // FS for adding new content to the stage
-	Root  string     // base directory for all content
-	Alg   digest.Alg // Primary digest algorith (sha512 or sha256)
-
-	// Number of go routines to use for concurrent digest during AddFS
-	Concurrency int
+	State DigestMap // StageState
+	FS              // FS for adding new content to the stage
+	Root  string    // base directory for all content
+	Alg   Alg       // Primary digest algorith (sha512 or sha256)
 
 	manifest stageManifest
 }
@@ -44,7 +37,7 @@ type Stage struct {
 // algorithm should match the object's. The new stage has an empty state and
 // manifest and no backing FS. To add new content to the stage use AddFS or
 // SetFS.
-func NewStage(alg digest.Alg) *Stage {
+func NewStage(alg Alg) *Stage {
 	return &Stage{
 		Alg:      alg,
 		manifest: map[string]stageEntry{},
@@ -65,24 +58,22 @@ func (stage *Stage) SetFS(fsys FS, dir string) {
 // the stage's digest algorithm and optional fixity algorithms. Each file
 // is added to the stage using UnsafeAddPath with file's path relative to the root
 // directory and the calculated digest.
-func (stage *Stage) AddFS(ctx context.Context, fsys FS, root string, fixity ...digest.Alg) error {
+func (stage *Stage) AddFS(ctx context.Context, fsys FS, root string, fixity ...Alg) error {
 	stage.SetFS(fsys, root)
 	if err := stage.checkFSConfig(); err != nil {
 		return err
 	}
-	conc := stage.Concurrency
-	if conc < 1 {
-		conc = runtime.NumCPU()
-	}
-	algs := append([]digest.Alg{stage.Alg}, fixity...)
-	setup := func(addfn func(name string, algs ...digest.Alg) error) error {
+	algs := append([]Alg{stage.Alg}, fixity...)
+	var walkErr error
+	walkFS := func(addfn func(name string, algs ...Alg) bool) {
 		eachFileFn := func(name string) error {
-			return addfn(name)
+			addfn(name, algs...)
+			return nil
 		}
-		return Files(ctx, stage.FS, Dir(stage.Root), eachFileFn)
+		walkErr = Files(ctx, stage.FS, Dir(stage.Root), eachFileFn)
 	}
 	// digest result: add results to the stage
-	results := func(name string, result digest.Set, err error) error {
+	results := func(name string, result DigestSet, err error) error {
 		if err != nil {
 			return err
 		}
@@ -92,28 +83,18 @@ func (stage *Stage) AddFS(ctx context.Context, fsys FS, root string, fixity ...d
 		}
 		return stage.UnsafeAddPath(name, result)
 	}
-	// checksum file opener uses the stage FS
-	open := func(name string) (io.Reader, error) {
-		return stage.OpenFile(ctx, name)
-	}
-	// append required options
-	opts := []checksum.Option{
-		checksum.WithOpenFunc(open),
-		checksum.WithAlgs(algs...),
-		checksum.WithNumGos(conc),
-	}
 	// run checksum
-	if err := checksum.Run(ctx, setup, results, opts...); err != nil {
+	if err := DigestFS(ctx, stage, walkFS, results); err != nil {
 		return fmt.Errorf("while staging root '%s': %w ", root, err)
 	}
-	return nil
+	return walkErr
 }
 
 // AddPath digests the file identified with name and adds the path to the stage.
 // The path name and the associated digest are added to both the stage state and
 // its manifest. The file is digested using the stage's primary digest algorith
 // and any additional algorithms given by 'fixity'.
-func (stage *Stage) AddPath(ctx context.Context, name string, fixity ...digest.Alg) error {
+func (stage *Stage) AddPath(ctx context.Context, name string, fixity ...Alg) error {
 	if err := stage.checkFSConfig(); err != nil {
 		return err
 	}
@@ -123,7 +104,7 @@ func (stage *Stage) AddPath(ctx context.Context, name string, fixity ...digest.A
 		return err
 	}
 	defer f.Close()
-	digester := digest.NewDigester(append(fixity, stage.Alg)...)
+	digester := NewMultiDigester(append(fixity, stage.Alg)...)
 	if _, err := digester.ReadFrom(f); err != nil {
 		return fmt.Errorf("during digest of '%s': %w", fullName, err)
 	}
@@ -155,9 +136,9 @@ func (stage Stage) GetContent(dig string) []string {
 
 // GetFixity returns altnerate digest values for the content with the primary
 // digest value dig
-func (stage Stage) GetFixity(dig string) digest.Set {
+func (stage Stage) GetFixity(dig string) DigestSet {
 	fix := stage.manifest[dig].fixity
-	set := make(digest.Set, len(fix))
+	set := make(DigestSet, len(fix))
 	for k, v := range fix {
 		set[k] = v
 	}
@@ -165,10 +146,10 @@ func (stage Stage) GetFixity(dig string) digest.Set {
 }
 
 // UnsafeAddPath adds name to the stage as both a logical path and a content
-// path and associates name with the digests in the digest.Set. digests must
+// path and associates name with the digests in the DigestSet. digests must
 // include an entry with the stage's default digest algorithm. It is unsafe
 // because neither the digest or the existence of the file are confirmed.
-func (stage *Stage) UnsafeAddPath(name string, digests digest.Set) error {
+func (stage *Stage) UnsafeAddPath(name string, digests DigestSet) error {
 	return stage.UnsafeAddPathAs(name, name, digests)
 }
 
@@ -178,7 +159,7 @@ func (stage *Stage) UnsafeAddPath(name string, digests digest.Set) error {
 // updated; similarly, if the logical path is empty, the stage state is not
 // updated. This allows for selectively adding entries to either the stage
 // manifest or the stage state.
-func (stage *Stage) UnsafeAddPathAs(content string, logical string, digests digest.Set) error {
+func (stage *Stage) UnsafeAddPathAs(content string, logical string, digests DigestSet) error {
 	dig, fixity, err := splitDigests(digests, stage.Alg)
 	if err != nil {
 		return err
@@ -207,11 +188,11 @@ func (stage *Stage) UnsafeAddPathAs(content string, logical string, digests dige
 
 // UnsafeSetManifestFixty replaces the stage's existing content paths and fixity
 // values to match manifest and fixity.
-func (stage *Stage) UnsafeSetManifestFixty(manifest DigestMap, fixity map[string]DigestMap) error {
+func (stage *Stage) UnsafeSetManifestFixty(manifest DigestMap, fixity map[Alg]DigestMap) error {
 	newContents := stageManifest{}
 	var err error
 	manifest.EachPath(func(name, dig string) bool {
-		altDigests := digest.Set{}
+		altDigests := DigestSet{}
 		for alg, dmap := range fixity {
 			if fixDig := dmap.GetDigest(name); fixDig != "" {
 				altDigests[alg] = fixDig
@@ -234,16 +215,13 @@ func (stage *Stage) checkFSConfig() error {
 	if !fs.ValidPath(stage.Root) {
 		return fmt.Errorf("path '%s': %w", stage.Root, fs.ErrInvalid)
 	}
-	if stage.Alg == nil {
-		return errors.New("stage's digest algorithm is not set")
-	}
 	return nil
 }
 
 // stageManifest is a maps digest values to stageEntries.
 type stageManifest map[string]stageEntry
 
-func (man stageManifest) add(dig, name string, fixity digest.Set) error {
+func (man stageManifest) add(dig, name string, fixity DigestSet) error {
 	// path exists under a different digest?
 	for d, e := range man {
 		if d == dig {
@@ -263,8 +241,8 @@ func (man stageManifest) add(dig, name string, fixity digest.Set) error {
 }
 
 type stageEntry struct {
-	paths  []string   // content paths relative to Root in FS
-	fixity digest.Set // additional digests associate with paths
+	paths  []string  // content paths relative to Root in FS
+	fixity DigestSet // additional digests associate with paths
 }
 
 func (entry *stageEntry) addPath(stagePath string) {
@@ -277,7 +255,7 @@ func (entry *stageEntry) addPath(stagePath string) {
 	entry.paths[i] = stagePath
 }
 
-func (entry *stageEntry) addFixity(fixity digest.Set) {
+func (entry *stageEntry) addFixity(fixity DigestSet) {
 	if len(fixity) == 0 {
 		return
 	}
@@ -290,11 +268,11 @@ func (entry *stageEntry) addFixity(fixity digest.Set) {
 	}
 }
 
-func splitDigests(set digest.Set, alg digest.Alg) (string, digest.Set, error) {
-	newSet := digest.Set{}
+func splitDigests(set DigestSet, alg Alg) (string, DigestSet, error) {
+	newSet := DigestSet{}
 	dig := ""
 	for setAlg, setVal := range set {
-		if setAlg == alg.ID() {
+		if setAlg == alg {
 			dig = setVal
 			continue
 		}

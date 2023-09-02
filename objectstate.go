@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/internal/pathtree"
 )
 
@@ -21,14 +20,14 @@ const (
 // ObjectState encapsulates a set of logical content (i.e., an object version
 // state) and its mapping to specific content paths in Manifest.
 type ObjectState struct {
-	DigestMap            // digests / logical paths
-	Manifest  DigestMap  // digests / content paths
-	Alg       digest.Alg // algorith used for digests
-	User      *User      // user who created object state
-	Created   time.Time  // object state created at
-	Message   string     // message associated with object state
-	VNum      VNum       // number for the object version for the state
-	Spec      Spec       // OCFL spec for the object version for the state
+	DigestMap           // digests / logical paths
+	Manifest  DigestMap // digests / content paths
+	Alg       Alg       // algorith used for digests
+	User      *User     // user who created object state
+	Created   time.Time // object state created at
+	Message   string    // message associated with object state
+	VNum      VNum      // number for the object version for the state
+	Spec      Spec      // OCFL spec for the object version for the state
 }
 
 // User is a generic user information struct

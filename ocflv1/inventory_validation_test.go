@@ -555,7 +555,7 @@ func TestValidateInventory(t *testing.T) {
 		t.Run(test.description, func(t *testing.T) {
 			is := is.New(t)
 			reader := strings.NewReader(test.data)
-			_, result := ocflv1.ValidateInventoryReader(ctx, reader, nil)
+			_, result := ocflv1.ValidateInventoryReader(ctx, reader)
 			if test.valid {
 				is.NoErr(result.Err())
 			} else {
@@ -585,7 +585,7 @@ func FuzzValidateInventory(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		reader := bytes.NewReader(b)
-		_, result := ocflv1.ValidateInventoryReader(ctx, reader, nil)
+		_, result := ocflv1.ValidateInventoryReader(ctx, reader)
 		err := result.Err()
 		if err != nil {
 			var eCode validation.ErrorCode

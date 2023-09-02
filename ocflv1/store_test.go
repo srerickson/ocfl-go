@@ -12,7 +12,6 @@ import (
 
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/backend/memfs"
-	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/extensions"
 	"github.com/srerickson/ocfl/ocflv1"
 )
@@ -190,7 +189,7 @@ func TestStoreCommit(t *testing.T) {
 	}
 
 	t.Run("without options", func(t *testing.T) {
-		stage := &ocfl.Stage{Alg: digest.SHA256()} // empty stage
+		stage := &ocfl.Stage{Alg: ocfl.SHA256} // empty stage
 		if err = store.Commit(ctx, "object-0", stage); err != nil {
 			t.Fatal(err)
 		}
@@ -204,7 +203,7 @@ func TestStoreCommit(t *testing.T) {
 	})
 
 	t.Run("with invalid spec", func(t *testing.T) {
-		stage := &ocfl.Stage{Alg: digest.SHA256()} // empty stage
+		stage := &ocfl.Stage{Alg: ocfl.SHA256} // empty stage
 		err := store.Commit(ctx, "object-0", stage, ocflv1.WithOCFLSpec(ocfl.Spec{1, 1}))
 		if err == nil {
 			t.Fatal("expected an error")
@@ -212,7 +211,7 @@ func TestStoreCommit(t *testing.T) {
 	})
 
 	// v1 - add one file "tmp.txt"
-	stage1 := ocfl.NewStage(digest.SHA256())
+	stage1 := ocfl.NewStage(ocfl.SHA256)
 	if err := stage1.AddFS(ctx, storeFS, "stage1"); err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +252,7 @@ func TestStoreCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stage3 := ocfl.NewStage(digest.SHA256())
+	stage3 := ocfl.NewStage(ocfl.SHA256)
 	if err = stage3.AddFS(ctx, ocfl.NewFS(stageContent), "stage3"); err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +309,7 @@ func TestStoreCommit(t *testing.T) {
 	if inv.ContentDirectory != "foo" {
 		t.Fatal("expected foo")
 	}
-	if inv.DigestAlgorithm != digest.SHA256id {
+	if inv.DigestAlgorithm != ocfl.SHA256 {
 		t.Fatalf("expected sha256")
 	}
 	if inv.Head.Padding() != 2 {

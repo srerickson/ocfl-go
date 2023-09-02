@@ -3,9 +3,10 @@ package pipeline_test
 import (
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 
-	"github.com/srerickson/ocfl/digest"
+	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/internal/pipeline"
 )
 
@@ -18,10 +19,11 @@ func ExampleRun() {
 		name string
 		sum  string
 	}
-	setupFn := func(add func(job) error) error {
-		return fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+	var walkErr error
+	setupFn := func(add func(job) bool) {
+		walkErr = fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
 			if d.Type().IsRegular() {
-				return add(job{name: path})
+				add(job{name: path})
 			}
 			return err
 		})
@@ -33,11 +35,11 @@ func ExampleRun() {
 			return r, err
 		}
 		defer f.Close()
-		dig := digest.NewDigester(digest.SHA256())
+		dig := ocfl.NewMultiDigester(ocfl.SHA256)
 		if _, err := dig.ReadFrom(f); err != nil {
 			return r, err
 		}
-		r.sum = dig.Sums()[digest.SHA256id]
+		r.sum = dig.Sums()[ocfl.SHA256]
 		return r, nil
 	}
 	resultFn := func(in job, out result, err error) error {
@@ -48,6 +50,9 @@ func ExampleRun() {
 		return nil
 	}
 	if err := pipeline.Run(setupFn, workFn, resultFn, 0); err != nil {
-		panic(err)
+		log.Fatal(err)
+	}
+	if walkErr != nil {
+		log.Fatal(walkErr)
 	}
 }

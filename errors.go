@@ -5,21 +5,6 @@ import (
 	"fmt"
 )
 
-// DigestErr is returned when content's digest conflicts with an expected value
-type DigestErr struct {
-	Name     string // Content path
-	AlgID    string // Digest algorithm
-	Got      string // Calculated digest
-	Expected string // Expected digest
-}
-
-func (e DigestErr) Error() string {
-	if e.Name == "" {
-		return fmt.Sprintf("unexpected %s: %s, got: %s", e.AlgID, e.Got, e.Expected)
-	}
-	return fmt.Sprintf("unexpected %s for '%s': %s, got: %s", e.AlgID, e.Name, e.Got, e.Expected)
-}
-
 // MapDigestConflictErr indicates same digest found multiple times in the digest map
 // (i.e., with different cases)
 type MapDigestConflictErr struct {

@@ -2,13 +2,13 @@ package ocflv1
 
 import (
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/digest"
+	"github.com/srerickson/ocfl/logging"
 	"github.com/srerickson/ocfl/validation"
 	"golang.org/x/exp/slog"
 )
 
 type validationOptions struct {
-	// Validation errors/warnings logged here. Defaults to logr.Discard()
+	// Validation errors/warnings logged here. Loggin is disabled by default
 	Logger *slog.Logger
 
 	// MaxErrs sets the capacity (max size)s for the returned validation.Result.
@@ -18,15 +18,12 @@ type validationOptions struct {
 	// Skip object validation when validating a storage root
 	SkipObjects bool
 
-	// Digests will not be validated
-	SkipDigests bool // don't validate object digiests
+	// Skip digests validation when validating objects
+	SkipDigests bool
 
 	// if the OCFL version cannot be determined, validation errors will
-	// reference this version of the OCFL ocfl.
+	// reference this version of the OCFL spec.
 	FallbackOCFL ocfl.Spec
-
-	// Algorithm Registry
-	AlgRegistry *digest.Registry
 
 	// Validation should add errors to an existing result set.
 	result *validation.Result
@@ -34,9 +31,9 @@ type validationOptions struct {
 
 func defaultValidationOptions() *validationOptions {
 	return &validationOptions{
-		AlgRegistry:  ocfl.AlgRegistry(),
 		FallbackOCFL: ocflv1_0,
 		MaxErrs:      100,
+		Logger:       logging.DisabledLogger(),
 	}
 }
 
@@ -57,14 +54,6 @@ func ValidationLogger(l *slog.Logger) ValidationOption {
 func ValidationMaxErrs(max int) ValidationOption {
 	return func(opts *validationOptions) {
 		opts.MaxErrs = max
-	}
-}
-
-// ValidationAlgRegistry sets the registry of available algorithms
-// that can be used in an inventory fixity
-func ValidationAlgRegistry(r *digest.Registry) ValidationOption {
-	return func(opts *validationOptions) {
-		opts.AlgRegistry = r
 	}
 }
 

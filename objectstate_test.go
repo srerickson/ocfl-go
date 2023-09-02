@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/ocflv1"
 )
 
@@ -23,8 +22,7 @@ func testObjectState(ctx context.Context, state *ocfl.ObjectStateFS, t *testing.
 				t.Fatal(err)
 			}
 			defer f.Close()
-			alg := state.Alg.ID()
-			if err := (digest.Set{alg: dig}.Validate(f)); err != nil {
+			if err := (ocfl.DigestSet{state.Alg: dig}.Validate(f)); err != nil {
 				t.Errorf("unexpected content: %s", err)
 			}
 			stat, err := f.Stat()

@@ -1,18 +1,15 @@
 package pipeline
 
 import (
-	"errors"
 	"runtime"
 	"sync"
 )
-
-var ErrNotAdded = errors.New("task not added to pipeline")
 
 // pipeline is a parameterized type for processing generic Jobs
 // concurrently
 type pipeline[Tin, Tout any] struct {
 	numgos   int
-	setupFn  func(func(Tin) error) error
+	setupFn  func(func(Tin) bool)
 	workFn   func(Tin) (Tout, error)
 	resultFn func(Tin, Tout, error) error
 }
@@ -31,7 +28,7 @@ type result[Tin, Tout any] struct {
 // worker go routines (the default is runtime.NumCPU()).
 
 func Run[Tin, Tout any](
-	setupFn func(func(Tin) error) error,
+	setupFn func(func(Tin) bool),
 	workFn func(Tin) (Tout, error),
 	resultFn func(Tin, Tout, error) error, gos int) error {
 
@@ -47,27 +44,28 @@ func (p *pipeline[Tin, Tout]) run() error {
 	if p.numgos < 1 {
 		p.numgos = runtime.NumCPU()
 	}
+	// job input queue
 	workQ := make(chan Tin)
+	// close to prevent new jobs in workQ
+	workQcancel := make(chan struct{})
+	// completed work
 	resultQ := make(chan result[Tin, Tout], p.numgos)
-	term := make(chan struct{})
-	// jobs in
-	setupErr := make(chan error, 1)
 	go func() {
 		defer close(workQ)
-		defer close(setupErr)
 		if p.setupFn == nil {
-			setupErr <- nil
 			return
 		}
-		addWork := func(w Tin) error {
+		// addWork is the function passed back to setupFn for adding jobs to the
+		// workQ
+		addWork := func(w Tin) bool {
 			select {
 			case workQ <- w:
-				return nil
-			case <-term:
-				return ErrNotAdded
+				return true
+			case <-workQcancel:
+				return false
 			}
 		}
-		setupErr <- p.setupFn(addWork)
+		p.setupFn(addWork)
 	}()
 	// workers
 	wg := sync.WaitGroup{}
@@ -95,15 +93,19 @@ func (p *pipeline[Tin, Tout]) run() error {
 		if p.resultFn == nil {
 			continue
 		}
-		// if resultFn returns an error, it's not called again.
+		if resultErr != nil {
+			// if resultFn returns an error, it's not called again.
+			// continue to drain resultQ
+			continue
+		}
 		if err := p.resultFn(r.in, r.out, r.err); err != nil {
 			resultErr = err
-			break
+			close(workQcancel)
 		}
 	}
-	// at this point channels have either closed normally
-	// or they should be closed because of an error from
-	// resultFn. Prevent new tasks from setup.
-	close(term)
-	return errors.Join(resultErr, <-setupErr)
+	if resultErr == nil {
+		// term was only closed if err from resultQ
+		close(workQcancel)
+	}
+	return resultErr
 }

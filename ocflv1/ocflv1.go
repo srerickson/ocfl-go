@@ -3,7 +3,6 @@ package ocflv1
 
 import (
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/validation"
 )
 
@@ -32,14 +31,13 @@ var (
 	}
 
 	// algs set to true can be used as digestAlgorithms
-	algorithms = map[string]bool{
-		digest.SHA512id:  true,
-		digest.SHA256id:  true,
-		digest.SHA224id:  false,
-		digest.SHA1id:    false,
-		digest.MD5id:     false,
-		digest.BLAKE2Bid: false,
-	}
+	// algorithms = map[ocfl.Alg]bool{
+	// 	ocfl.SHA512:  true,
+	// 	ocfl.SHA256:  true,
+	// 	ocfl.SHA1:    false,
+	// 	ocfl.MD5:     false,
+	// 	ocfl.BLAKE2B: false,
+	// }
 
 	// shorthand
 	ec = validation.NewErrorCode

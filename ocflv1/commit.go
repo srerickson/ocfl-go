@@ -37,7 +37,7 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, id string, s
 		defer invFile.Close()
 		updating = true
 		var vErr *validation.Result
-		inv, vErr = ValidateInventoryReader(ctx, invFile, nil, ValidationLogger(opts.logger))
+		inv, vErr = ValidateInventoryReader(ctx, invFile, ValidationLogger(opts.logger))
 		if err := vErr.Err(); err != nil {
 			err = fmt.Errorf("existing inventory is invalid: %w", err)
 			return &CommitError{Err: err}
@@ -61,17 +61,12 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, id string, s
 		if !errors.Is(openErr, fs.ErrNotExist) {
 			return &CommitError{Err: openErr}
 		}
-		// creating new object
-		if stage.Alg == nil {
-			err := errors.New("stage algorith required for new objects")
-			return &CommitError{Err: err}
-		}
 		// create new inventory with '0' head version:
 		// the head is incremented later by inv.AddVersion
 		inv = &Inventory{
 			ID:               id,
 			Head:             ocfl.V(0, opts.padding),
-			DigestAlgorithm:  stage.Alg.ID(),
+			DigestAlgorithm:  stage.Alg,
 			ContentDirectory: opts.contentDir,
 		}
 	}

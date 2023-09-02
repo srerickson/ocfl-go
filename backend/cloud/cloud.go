@@ -352,7 +352,7 @@ func (fsys *FS) objectRootsList(ctx context.Context, sel ocfl.PathSelector, fn f
 			if obj != nil {
 				fsys.debugLog(ctx, "objectroots.complete",
 					"dir", obj.Path,
-					"alg", obj.Algorithm,
+					"alg", obj.SidecarAlg,
 					"has_declaration", obj.HasDeclaration(),
 					"has_inventory", obj.HasInventory(),
 					"has_sidecar", obj.HasSidecar(),
@@ -385,7 +385,7 @@ func (fsys *FS) objectRootsList(ctx context.Context, sel ocfl.PathSelector, fn f
 			}
 			// sidecar
 			if strings.HasPrefix(keyBase, "inventory.json.") {
-				obj.Algorithm = strings.TrimPrefix(keyBase, "inventory.json.")
+				obj.SidecarAlg = strings.TrimPrefix(keyBase, "inventory.json.")
 				obj.Flags |= ocfl.FoundSidecar
 				continue
 			}
