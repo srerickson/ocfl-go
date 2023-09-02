@@ -135,7 +135,7 @@ func (m DigestMap) EachPath(fn func(pth, digest string) bool) bool {
 	return true
 }
 
-// Each calls fn for each digest ßin m.  If fn returns false, iteration stops and
+// Each calls fn for each digest in m.  If fn returns false, iteration stops and
 // EachPath returns false.
 func (m DigestMap) EachDigest(fn func(digest string, paths []string) bool) bool {
 	for d, paths := range m.digests {

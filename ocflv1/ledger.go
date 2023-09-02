@@ -26,7 +26,7 @@ type pathLedger struct {
 
 type pathInfo struct {
 	existsIn ocfl.VNum
-	digests  map[string]*digestInfo // alg -> digestInfo
+	digests  map[ocfl.Alg]*digestInfo // alg -> digestInfo
 }
 
 func (pi *pathInfo) locations() map[ocfl.VNum]locFlag {
@@ -111,7 +111,7 @@ func (ledg *pathLedger) addPathExists(p string, ver ocfl.VNum) {
 	ledg.paths[p].existsIn = ver
 }
 
-func (ledg *pathLedger) addPathDigest(path string, alg string, dig string, ver ocfl.VNum, flags locFlag) error {
+func (ledg *pathLedger) addPathDigest(path string, alg ocfl.Alg, dig string, ver ocfl.VNum, flags locFlag) error {
 	if ledg.paths == nil {
 		ledg.paths = map[string]*pathInfo{}
 	}
@@ -119,7 +119,7 @@ func (ledg *pathLedger) addPathDigest(path string, alg string, dig string, ver o
 		ledg.paths[path] = &pathInfo{}
 	}
 	if ledg.paths[path].digests == nil {
-		ledg.paths[path].digests = map[string]*digestInfo{}
+		ledg.paths[path].digests = map[ocfl.Alg]*digestInfo{}
 	}
 	dinf := ledg.paths[path].digests[alg]
 	if dinf == nil {
@@ -140,7 +140,7 @@ func (ledg *pathLedger) addPathDigest(path string, alg string, dig string, ver o
 	return nil
 }
 
-func (ledg *pathLedger) getDigest(path string, alg string) (*digestInfo, bool) {
+func (ledg *pathLedger) getDigest(path string, alg ocfl.Alg) (*digestInfo, bool) {
 	if pInfo, exists := ledg.paths[path]; exists {
 		if dInfo, exists := pInfo.digests[alg]; exists {
 			return dInfo, true
@@ -174,7 +174,7 @@ func (l locFlag) String() string {
 // ChangedDigestErr: different digests for same content/alg in two locations
 type ChangedDigestErr struct {
 	Path string
-	Alg  string
+	Alg  ocfl.Alg
 }
 
 func (err ChangedDigestErr) Error() string {
@@ -184,7 +184,7 @@ func (err ChangedDigestErr) Error() string {
 // ContentDigestErr content digest doesn't match recorded digest
 type ContentDigestErr struct {
 	Path   string
-	Alg    string
+	Alg    ocfl.Alg
 	Entry  digestInfo
 	Digest string
 }

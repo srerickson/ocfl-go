@@ -1,22 +1,21 @@
 package extensions
 
 import (
-	"encoding/hex"
 	"fmt"
 	"strings"
 
-	"github.com/srerickson/ocfl/digest"
+	"github.com/srerickson/ocfl"
 )
 
 const Ext0004 = "0004-hashed-n-tuple-storage-layout"
 
 // Extension 0004-hashed-n-tuple-storage-layout
 type LayoutHashTuple struct {
-	ExtensionName   string `json:"extensionName"`
-	DigestAlgorithm string `json:"digestAlgorithm"`
-	TupleSize       int    `json:"tupleSize"`
-	TupleNum        int    `json:"numberOfTuples"`
-	Short           bool   `json:"shortObjectRoot"`
+	ExtensionName   string   `json:"extensionName"`
+	DigestAlgorithm ocfl.Alg `json:"digestAlgorithm"`
+	TupleSize       int      `json:"tupleSize"`
+	TupleNum        int      `json:"numberOfTuples"`
+	Short           bool     `json:"shortObjectRoot"`
 }
 
 var _ Layout = (*LayoutHashTuple)(nil)
@@ -26,7 +25,7 @@ func NewLayoutHashTuple() *LayoutHashTuple {
 
 	return &LayoutHashTuple{
 		ExtensionName:   Ext0004,
-		DigestAlgorithm: digest.SHA256id,
+		DigestAlgorithm: ocfl.SHA256,
 		TupleSize:       3,
 		TupleNum:        3,
 		Short:           false,
@@ -42,10 +41,6 @@ func (conf *LayoutHashTuple) NewFunc() (LayoutFunc, error) {
 	if conf.ExtensionName != conf.Name() {
 		return nil, fmt.Errorf("%s: unexpected extensionName %s", conf.Name(), conf.ExtensionName)
 	}
-	alg, err := digest.Get(conf.DigestAlgorithm)
-	if err != nil {
-		return nil, err
-	}
 	tupSize, tupNum := conf.TupleSize, conf.TupleNum
 	if tupSize == 0 && tupNum != 0 {
 		return nil, fmt.Errorf("%s: numberOfTuples must be 0", conf.Name())
@@ -54,9 +49,9 @@ func (conf *LayoutHashTuple) NewFunc() (LayoutFunc, error) {
 		return nil, fmt.Errorf("%s: tupleSize must be 0", conf.Name())
 	}
 	return func(id string) (string, error) {
-		h := alg.New()
+		h := conf.DigestAlgorithm.New()
 		h.Write([]byte(id))
-		hID := hex.EncodeToString(h.Sum(nil))
+		hID := h.String()
 		if tupSize*(tupNum) > len(hID) {
 			err := fmt.Errorf("%s: product of tupleSize and numberOfTuples is more then hash length", conf.Name())
 			return "", err

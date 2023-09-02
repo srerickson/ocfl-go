@@ -96,7 +96,7 @@ func NewObjectRoot(fsys FS, dir string, entries []fs.DirEntry) *ObjectRoot {
 			}
 			scPrefix := inventoryFile + "."
 			if strings.HasPrefix(name, scPrefix) {
-				obj.Algorithm = strings.TrimPrefix(name, scPrefix)
+				obj.SidecarAlg = strings.TrimPrefix(name, scPrefix)
 				obj.Flags |= FoundSidecar
 				continue
 			}
@@ -124,7 +124,7 @@ type ObjectRoot struct {
 	Path        string   // object path in FS
 	Spec        Spec     // the OCFL spec from the object's NAMASTE declaration
 	VersionDirs VNums    // versions directories found in the object directory
-	Algorithm   string   // digest algorithm declared by the inventory sidecar
+	SidecarAlg  string   // digest algorithm declared by the inventory sidecar
 	NonConform  []string // non-conforming entries found in the object root (max=8)
 	Flags       ObjectRootFlag
 }

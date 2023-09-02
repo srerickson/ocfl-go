@@ -9,7 +9,6 @@ import (
 
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/backend/local"
-	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/ocflv1"
 	"golang.org/x/exp/slog"
 )
@@ -89,9 +88,9 @@ func main() {
 
 func stage(ctx context.Context, dir string, algID string) (*ocfl.Stage, error) {
 	srcFS := ocfl.DirFS(srcDir)
-	alg, err := digest.Get(algID)
-	if err != nil {
-		return nil, err
+	alg, ok := ocfl.DigestAlgs[algID]
+	if !ok {
+		return nil, ocfl.ErrUnknownDigestAlg
 	}
 	stage := ocfl.NewStage(alg)
 	return stage, stage.AddFS(ctx, srcFS, ".")

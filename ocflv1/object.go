@@ -8,7 +8,6 @@ import (
 	"path"
 
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/logging"
 	"github.com/srerickson/ocfl/validation"
 )
@@ -78,12 +77,8 @@ func (obj Object) State(i int) (*ocfl.ObjectState, error) {
 // successful the object's Inventory value is updated.
 func (obj *Object) SyncInventory(ctx context.Context) error {
 	name := path.Join(obj.Path, inventoryFile)
-	alg, err := digest.Get(obj.Algorithm)
-	if err != nil {
-		return fmt.Errorf("reading inventory: %w", err)
-	}
 	nolog := ValidationLogger(logging.DisabledLogger())
-	inv, results := ValidateInventory(ctx, obj.FS, name, alg, nolog)
+	inv, results := ValidateInventory(ctx, obj.FS, name, nolog)
 	if err := results.Err(); err != nil {
 		return fmt.Errorf("reading inventory: %w", err)
 	}

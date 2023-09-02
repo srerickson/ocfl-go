@@ -74,7 +74,7 @@ func TestOpenFile(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer f.Close()
-		_, result := ocflv1.ValidateInventoryReader(context.Background(), f, nil)
+		_, result := ocflv1.ValidateInventoryReader(context.Background(), f)
 		if err := result.Err(); err != nil {
 			t.Fatal(err)
 		}
@@ -396,7 +396,7 @@ func TestObjectRoots(t *testing.T) {
 	numobjs := 0
 	fn := func(obj *ocfl.ObjectRoot) error {
 		numobjs++
-		if obj.Algorithm == "" {
+		if obj.SidecarAlg == "" {
 			t.Error("algorithm not set for", obj.Path)
 		}
 		if !obj.HasInventory() {

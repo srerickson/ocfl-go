@@ -3,7 +3,6 @@ package ocflv1
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/srerickson/ocfl"
-	"github.com/srerickson/ocfl/digest"
 )
 
 var (
@@ -25,17 +23,16 @@ var (
 
 // Inventory represents contents of an OCFL v1.x inventory.json file
 type Inventory struct {
-	ID               string                    `json:"id"`
-	Type             ocfl.InvType              `json:"type"`
-	DigestAlgorithm  string                    `json:"digestAlgorithm"`
-	Head             ocfl.VNum                 `json:"head"`
-	ContentDirectory string                    `json:"contentDirectory,omitempty"`
-	Manifest         ocfl.DigestMap            `json:"manifest"`
-	Versions         map[ocfl.VNum]*Version    `json:"versions"`
-	Fixity           map[string]ocfl.DigestMap `json:"fixity,omitempty"`
+	ID               string                      `json:"id"`
+	Type             ocfl.InvType                `json:"type"`
+	DigestAlgorithm  ocfl.Alg                    `json:"digestAlgorithm"`
+	Head             ocfl.VNum                   `json:"head"`
+	ContentDirectory string                      `json:"contentDirectory,omitempty"`
+	Manifest         ocfl.DigestMap              `json:"manifest"`
+	Versions         map[ocfl.VNum]*Version      `json:"versions"`
+	Fixity           map[ocfl.Alg]ocfl.DigestMap `json:"fixity,omitempty"`
 
-	digest string     // inventory digest using alg
-	alg    digest.Alg // resolved digest algorithm
+	digest string // inventory digest using alg
 }
 
 // Version represents object version state and metadata
@@ -51,7 +48,7 @@ type User ocfl.User
 
 // VNums returns a sorted slice of VNums corresponding to the keys in the
 // inventory's 'versions' block.
-func (inv *Inventory) VNums() []ocfl.VNum {
+func (inv Inventory) VNums() []ocfl.VNum {
 	vnums := make([]ocfl.VNum, len(inv.Versions))
 	i := 0
 	for v := range inv.Versions {
@@ -62,20 +59,9 @@ func (inv *Inventory) VNums() []ocfl.VNum {
 	return vnums
 }
 
-// Alg returns the inventory's digest algorithm as a digest.Alg. It panics if the
-// digest algorithm isn't set or is unrecognized.
-func (inv Inventory) Alg() digest.Alg {
-	if inv.alg == nil {
-		alg, err := digest.Get(inv.DigestAlgorithm)
-		if err != nil {
-			panic(err)
-		}
-		inv.alg = alg
-	}
-	return inv.alg
-}
-
-// Inventory digest from inventory read
+// Digest of Inventory's source json using the inventory digest. If the
+// Inventory wasn't decoded using ValidateInventory or ValidateInventoryReader,
+// an empty string is returned.
 func (inv Inventory) Digest() string {
 	return inv.digest
 }
@@ -111,39 +97,6 @@ func (inv Inventory) GetVersion(v int) *Version {
 	return inv.Versions[ocfl.V(v, inv.Head.Padding())]
 }
 
-// EachStatePath calls fn for each file in the state for the version with number
-// v. If v is 0, the inventory's head version is used. The function fn is called
-// with the logical file path from the version state, the file's digest as it
-// appears in the version state, and a slice of content paths associated with
-// the digest from the inventory manifest. The digest will always be a non-empty
-// string and the slice of content paths will always include at least one entry.
-// If the digest and content paths for a logical path are not found (i.e., the
-// inventory is invalid), fn is not called; instead EachStatePath return an
-// error. If any call to fn returns a non-nil error, no additional calls are
-// made and the error is returned by EachStatePath. If no version state with
-// number v is present in the inventory, an error is returned.
-func (inv Inventory) EachStatePath(v int, fn func(f string, digest string, conts []string) error) error {
-	ver := inv.GetVersion(v)
-	if ver == nil {
-		return fmt.Errorf("%w: with index %d", ErrVersionNotFound, v)
-	}
-	var err error
-	ver.State.EachPath(func(lpath string, digest string) bool {
-		if digest == "" {
-			err = fmt.Errorf("missing digest for %s", lpath)
-			return false
-		}
-		srcs := inv.Manifest.DigestPaths(digest)
-		if len(srcs) == 0 {
-			err = fmt.Errorf("missing manifest entry for %s", digest)
-			return false
-		}
-		err = fn(lpath, digest, srcs)
-		return err == nil
-	})
-	return err
-}
-
 // WriteInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
 // fsys. The digest is calculated using alg and the inventory sidecar is also written to
 // dir/inventory.alg
@@ -151,11 +104,7 @@ func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	alg, err := digest.Get(inv.DigestAlgorithm)
-	if err != nil {
-		return err
-	}
-	checksum := alg.New()
+	checksum := inv.DigestAlgorithm.New()
 	byt, err := json.MarshalIndent(inv, "", " ")
 	if err != nil {
 		return fmt.Errorf("encoding inventory: %w", err)
@@ -164,11 +113,11 @@ func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs
 	if err != nil {
 		return err
 	}
-	sum := hex.EncodeToString(checksum.Sum(nil))
+	sum := checksum.String()
 	// write inventory.json and sidecar
 	for _, dir := range dirs {
 		invFile := path.Join(dir, inventoryFile)
-		sideFile := invFile + "." + inv.DigestAlgorithm
+		sideFile := invFile + "." + inv.DigestAlgorithm.ID()
 		_, err = fsys.Write(ctx, invFile, bytes.NewBuffer(byt))
 		if err != nil {
 			return fmt.Errorf("write inventory failed: %w", err)
@@ -239,11 +188,7 @@ func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *User, crea
 	if inv.Versions == nil {
 		inv.Versions = map[ocfl.VNum]*Version{}
 	}
-	if inv.DigestAlgorithm == "" {
-		inv.DigestAlgorithm = stage.Alg.ID()
-		inv.alg = stage.Alg
-	}
-	if inv.DigestAlgorithm != stage.Alg.ID() {
+	if inv.DigestAlgorithm != stage.Alg {
 		return fmt.Errorf("inventory uses %s: can't update with stage using %s", inv.DigestAlgorithm, stage.Alg.ID())
 	}
 	inv.Versions[inv.Head] = &Version{
@@ -283,7 +228,7 @@ func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *User, crea
 		return err
 	}
 	// create new fixity entries and merge with existing fixity
-	newFixityDigests := map[string]map[string][]string{}
+	newFixityDigests := map[ocfl.Alg]map[string][]string{}
 	newManifestDigests.EachDigest(func(digest string, paths []string) bool {
 		for fixAlg, fixDigest := range stage.GetFixity(digest) {
 			if newFixityDigests[fixAlg] == nil {
@@ -294,7 +239,7 @@ func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *User, crea
 		return true
 	})
 	if len(newFixityDigests) > 0 && inv.Fixity == nil {
-		inv.Fixity = map[string]ocfl.DigestMap{}
+		inv.Fixity = map[ocfl.Alg]ocfl.DigestMap{}
 	}
 	for fixAlg, fixMap := range newFixityDigests {
 		newFixMap, err := ocfl.NewDigestMap(fixMap)
@@ -318,17 +263,12 @@ func (inv Inventory) objectState(v int) (*ocfl.ObjectState, error) {
 	if ver == nil {
 		return nil, fmt.Errorf("%w: with index %d", ErrVersionNotFound, v)
 	}
-	alg, err := digest.Get(inv.DigestAlgorithm)
-	if err != nil {
-		return nil, err
-	}
-
 	return &ocfl.ObjectState{
 		DigestMap: ver.State,
 		Manifest:  inv.Manifest,
 		Message:   ver.Message,
 		Created:   ver.Created,
-		Alg:       alg,
+		Alg:       inv.DigestAlgorithm,
 		VNum:      inv.Head,
 		Spec:      inv.Type.Spec,
 	}, nil

@@ -14,7 +14,6 @@ import (
 	"github.com/srerickson/ocfl"
 	"github.com/srerickson/ocfl/backend/local"
 	"github.com/srerickson/ocfl/backend/memfs"
-	"github.com/srerickson/ocfl/digest"
 	"github.com/srerickson/ocfl/ocflv1"
 	"golang.org/x/exp/maps"
 )
@@ -23,7 +22,7 @@ func TestCommit(t *testing.T) {
 	t.Run("minimal stage", func(t *testing.T) {
 		ctx := context.Background()
 		fsys := memfs.New()
-		alg := digest.SHA256()
+		alg := ocfl.SHA256
 		root := "object-root"
 		id := "001"
 		stage := ocfl.NewStage(alg)
@@ -34,7 +33,7 @@ func TestCommit(t *testing.T) {
 		if err := result.Err(); err != nil {
 			t.Fatal(err)
 		}
-		if alg.ID() != obj.Algorithm {
+		if alg.ID() != obj.SidecarAlg {
 			t.Fatal("expected digest to be", alg.ID())
 		}
 		if obj.Path != root {
@@ -55,7 +54,7 @@ func TestCommit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		alg := digest.SHA256()
+		alg := ocfl.SHA256
 		root := "object-root"
 		id := "001"
 		stage := ocfl.NewStage(alg)
@@ -176,7 +175,7 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 		}
 		stage := ocfl.NewStage(originalState.Alg)
 		stage.State = originalState.DigestMap
-		if err := stage.AddFS(ctx, newContentFS, ".", digest.MD5()); err != nil {
+		if err := stage.AddFS(ctx, newContentFS, ".", ocfl.MD5); err != nil {
 			t.Fatal(err)
 		}
 		if err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, stage); err != nil {
@@ -192,7 +191,7 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 			t.Fatal(err)
 		}
 		// check that new inventory has new content in fixity
-		md5fixity := updatedObj.Inventory.Fixity[digest.MD5id]
+		md5fixity := updatedObj.Inventory.Fixity[ocfl.MD5]
 		if len(md5fixity.Digests()) == 0 {
 			t.Fatal("inventory should have md5 block in fixity")
 		}
