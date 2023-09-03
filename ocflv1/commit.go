@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"runtime"
 	"strings"
 	"time"
 
@@ -242,8 +241,8 @@ func commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, inv *Invento
 		return &CommitError{Err: err}
 	}
 	if opts.logger != nil {
-		opts.logger.Info("starting commit", "object_id", id, "head", vnum)
-		defer opts.logger.Info("commit complete", "object_id", id, "head", vnum)
+		opts.logger.InfoCtx(ctx, "starting commit", "object_id", id, "head", vnum, "object_path", objRoot)
+		defer opts.logger.InfoCtx(ctx, "commit returned", "object_id", id, "head", vnum, "object_path", objRoot)
 	}
 	// init object root: it returns both obj and error if the object already exists.
 	obj, err := ocfl.InitObjectRoot(ctx, fsys, objRoot, inv.Type.Spec)
@@ -264,20 +263,18 @@ func commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, inv *Invento
 	}
 	// don't overwrite any existing content directories
 	if obj.HasVersionDir(inv.Head) {
-		err := fmt.Errorf("a directory for '%s' already exists", inv.Head.String())
+		err := fmt.Errorf("a directory for %q already exists", inv.Head)
 		return &CommitError{Err: err}
 	}
 	// tranfser files from stage to object
-	// TODO: set concurrency with commit option
 	if len(xfers) > 0 {
-		if err := xfer.Copy(ctx, stage.FS, fsys, xfers, runtime.NumCPU()); err != nil {
+		if err := xfer.Copy(ctx, stage.FS, fsys, xfers, ocfl.XferConcurrency(), opts.logger); err != nil {
 			return &CommitError{
 				Err:   fmt.Errorf("transfering new object contents: %w", err),
 				Dirty: true,
 			}
 		}
 	}
-
 	// write inventory to both object root and version directory
 	vDir := path.Join(objRoot, vnum.String())
 	if err := WriteInventory(ctx, fsys, inv, objRoot, vDir); err != nil {

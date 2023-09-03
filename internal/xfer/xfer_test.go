@@ -49,7 +49,7 @@ func TestCopy(t *testing.T) {
 		"file3.txt": "file3.txt",
 		"file4.txt": "file4.txt",
 	}
-	if err := xfer.Copy(ctx, src, dst, files, 2); err != nil {
+	if err := xfer.Copy(ctx, src, dst, files, 2, nil); err != nil {
 		t.Fatal(err)
 	}
 }

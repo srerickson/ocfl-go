@@ -5,6 +5,7 @@ package ocfl
 
 import (
 	"runtime"
+	"sync/atomic"
 )
 
 const (
@@ -17,21 +18,38 @@ var (
 	Spec1_0 = Spec{1, 0}
 	Spec1_1 = Spec{1, 1}
 
-	digestConcurrency = -1
+	digestConcurrency atomic.Int32
+	commitConcurrency atomic.Int32
 )
 
-func SetDigestConcurrency(i int) {
-	digestConcurrency = i
-}
-
+// DigestConcurrency is a global configuration for the number  of files to
+// digest concurrently.
 func DigestConcurrency() int {
-	if digestConcurrency < 1 {
+	i := digestConcurrency.Load()
+	if i < 1 {
 		return runtime.NumCPU()
 	}
-	return digestConcurrency
+	return int(i)
 }
 
-// // AlgRegistry returns the global digest algorithm registry
-// func AlgRegistry() *digest.Registry {
-// 	return digest.DefaultRegistry()
-// }
+// SetDigestConcurrency sets the max number of files to digest concurrently.
+func SetDigestConcurrency(i int) {
+	digestConcurrency.Store(int32(i))
+}
+
+// XferConcurrency is a global configuration for the maximum number of files
+// transferred concurrently during a commit operation. It defaults to
+// runtime.NumCPU().
+func XferConcurrency() int {
+	i := commitConcurrency.Load()
+	if i < 1 {
+		return runtime.NumCPU()
+	}
+	return int(i)
+}
+
+// SetXferConcurrency sets the maximum number of files transferred concurrently
+// during a commit operation.
+func SetXferConcurrency(i int) {
+	commitConcurrency.Store(int32(i))
+}
