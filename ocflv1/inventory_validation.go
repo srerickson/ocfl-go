@@ -47,14 +47,15 @@ func (inv *Inventory) Validate() *validation.Result {
 		err := fmt.Errorf(`object ID is not a URI: %s`, inv.ID)
 		result.AddWarn(ec(err, codes.W005.Ref(inv.Type.Spec)))
 	}
-	if alg := inv.DigestAlgorithm; alg != ocfl.SHA512 {
-		if alg != ocfl.SHA256 {
-			err := fmt.Errorf(`digestAlgorithm is not %s or %s`, ocfl.SHA512, ocfl.SHA256)
-			result.AddFatal(ec(err, codes.E025.Ref(inv.Type.Spec)))
-		} else {
-			err := fmt.Errorf(`digestAlgorithm is not %s`, ocfl.SHA512)
-			result.AddWarn(ec(err, codes.W004.Ref(inv.Type.Spec)))
-		}
+	switch inv.DigestAlgorithm {
+	case ocfl.SHA512:
+		break
+	case ocfl.SHA256:
+		err := fmt.Errorf(`'digestAlgorithm' is %q`, ocfl.SHA256)
+		result.AddWarn(ec(err, codes.W004.Ref(inv.Type.Spec)))
+	default:
+		err := fmt.Errorf(`'digestAlgorithm' is not %q or %q`, ocfl.SHA512, ocfl.SHA256)
+		result.AddFatal(ec(err, codes.E025.Ref(inv.Type.Spec)))
 	}
 	if err := inv.Head.Valid(); err != nil {
 		// this shouldn't ever trigger since the invalid condition is caught during unmarshal.

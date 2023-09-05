@@ -21,15 +21,18 @@ import (
 var ErrUnknownDigestAlg = errors.New("unknown digest algorithm")
 
 var (
-	SHA512  = Alg{}
+	// unspecified digest algorithm
+	NOALG = Alg{}
+
+	SHA512  = Alg{`sha512`}
 	SHA256  = Alg{`sha256`}
 	SHA1    = Alg{`sha1`}
 	MD5     = Alg{`md5`}
 	BLAKE2B = Alg{`blake2b-512`}
 
-	// Map of built-in
+	// Map of built-in Algs
 	DigestAlgs = map[string]Alg{
-		`sha512`:     SHA512,
+		SHA512.name:  SHA512,
 		SHA256.name:  SHA256,
 		SHA1.name:    SHA1,
 		MD5.name:     MD5,
@@ -37,8 +40,8 @@ var (
 	}
 )
 
-// Alg is a built-in digest algorithm. The zero-value Alg
-// implements sha512.
+// Alg is a built-in digest algorithm. The zero-value is NOALG, an un-specified
+// algorithm.
 type Alg struct {
 	name string
 }
@@ -68,15 +71,12 @@ func (a Alg) New() Digester {
 func (a Alg) ID() string { return a.String() }
 
 func (a Alg) String() string {
-	if a.name == "" {
-		return "sha512"
-	}
 	return string(a.name)
 }
 
 func (a Alg) MarshalText() ([]byte, error) {
-	if a.name == "" {
-		return []byte("sha512"), nil
+	if DigestAlgs[a.name] == NOALG {
+		return nil, fmt.Errorf("%q: %w", a.name, ErrUnknownDigestAlg)
 	}
 	return []byte(a.name), nil
 }
