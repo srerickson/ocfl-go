@@ -18,7 +18,7 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-var ErrUnknownDigestAlg = errors.New("unknown digest algorithm")
+var ErrUnknownAlg = errors.New("unknown digest algorithm")
 
 var (
 	// unspecified digest algorithm
@@ -76,7 +76,7 @@ func (a Alg) String() string {
 
 func (a Alg) MarshalText() ([]byte, error) {
 	if DigestAlgs[a.name] == NOALG {
-		return nil, fmt.Errorf("%q: %w", a.name, ErrUnknownDigestAlg)
+		return nil, fmt.Errorf("%q: %w", a.name, ErrUnknownAlg)
 	}
 	return []byte(a.name), nil
 }
@@ -86,7 +86,7 @@ func (a *Alg) UnmarshalText(t []byte) error {
 		a.name = match.name
 		return nil
 	}
-	return fmt.Errorf("%q: %w", string(t), ErrUnknownDigestAlg)
+	return fmt.Errorf("%q: %w", string(t), ErrUnknownAlg)
 }
 
 // Digester is an interface used for generating digest values.
