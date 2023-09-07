@@ -142,7 +142,16 @@ func (fsys *ioFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 			Err:  err,
 		}
 	}
-	return fsys.Open(name)
+	f, err := fsys.Open(name)
+	if err != nil {
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			// replace system path with name
+			pathErr.Path = name
+		}
+		return nil, err
+	}
+	return f, nil
 }
 func (fsys *ioFS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
 	if err := ctx.Err(); err != nil {
@@ -152,5 +161,16 @@ func (fsys *ioFS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, erro
 			Err:  err,
 		}
 	}
-	return fs.ReadDir(fsys.FS, name)
+	dirents, err := fs.ReadDir(fsys.FS, name)
+	if err != nil {
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			// pathErr's Path will be system path;
+			// change it to name
+			pathErr.Path = name
+		}
+		return nil, err
+	}
+	return dirents, nil
+
 }

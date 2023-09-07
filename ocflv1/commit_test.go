@@ -161,8 +161,59 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 1st Commit
-	{
+	originalAlg := originalState.Alg
+	t.Run("invalid-id", func(t *testing.T) {
+		stage := ocfl.NewStage(obj.Inventory.DigestAlgorithm)
+		badID := "wrong"
+		err := ocflv1.Commit(ctx, writeFS, obj.Path, badID, stage)
+		if err == nil {
+			t.Error("Commit() didn't return error for invalid object id")
+		}
+	})
+	t.Run("invalid-objpath-existing", func(t *testing.T) {
+		stage := ocfl.NewStage(obj.Inventory.DigestAlgorithm)
+		badPath := path.Dir(obj.Path)
+		err := ocflv1.Commit(ctx, writeFS, badPath, obj.Inventory.ID, stage)
+		if err == nil {
+			t.Error("Commit() didn't return error for invalid object path")
+		}
+	})
+	t.Run("invalid-objpath-isfile", func(t *testing.T) {
+		stage := ocfl.NewStage(obj.Inventory.DigestAlgorithm)
+		badPath := path.Join(obj.Path, "inventory.json")
+		err := ocflv1.Commit(ctx, writeFS, badPath, obj.Inventory.ID, stage)
+		if err == nil {
+			t.Error("Commit() didn't return error for invalid object path")
+		}
+	})
+	t.Run("invalid-head", func(t *testing.T) {
+		stage := ocfl.NewStage(obj.Inventory.DigestAlgorithm)
+		badHead := obj.Inventory.Head.Num()
+		err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, stage, ocflv1.WithHEAD(badHead))
+		if err == nil {
+			t.Error("Commit() didn't return error for invalid option WithHEAD value")
+		}
+	})
+	t.Run("invalid-spec", func(t *testing.T) {
+		stage := ocfl.NewStage(obj.Inventory.DigestAlgorithm)
+		// test fixture use ocfl v1.1
+		err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, stage, ocflv1.WithOCFLSpec(ocfl.Spec1_0))
+		if err == nil {
+			t.Error("Commit() didn't return error for invalid option WithOCFLSpec value")
+		}
+	})
+	t.Run("invalid-alg", func(t *testing.T) {
+		alg := ocfl.SHA256
+		if originalAlg == ocfl.SHA256 {
+			alg = ocfl.SHA512
+		}
+		// test fixture use ocfl v1.1
+		err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, ocfl.NewStage(alg))
+		if err == nil {
+			t.Error("Commit() didn't return error for stage with different alg")
+		}
+	})
+	t.Run("update-1", func(t *testing.T) {
 		newContent := map[string]io.Reader{
 			"testdata/delete.txt":     strings.NewReader("This file will be deleted"),
 			"testdata/rename-src.txt": strings.NewReader("This file will be renamed"),
@@ -173,7 +224,7 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 		if err != nil {
 			t.Fatal(err)
 		}
-		stage := ocfl.NewStage(originalState.Alg)
+		stage := ocfl.NewStage(originalAlg)
 		stage.State = originalState.DigestMap
 		if err := stage.AddFS(ctx, newContentFS, ".", ocfl.MD5); err != nil {
 			t.Fatal(err)
@@ -212,9 +263,9 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 				}
 			}
 		}
-	}
-	// 2nd Commit
-	{
+	})
+
+	t.Run("update-2", func(t *testing.T) {
 		if err := obj.SyncInventory(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -271,7 +322,8 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 		if prevDigest == updatedState.GetDigest(updatedPath) {
 			t.Fatalf("expected '%s' to have changed", updatedPath)
 		}
-	}
+	})
+
 }
 
 // creates a temporary directory and copies all files in the object into the

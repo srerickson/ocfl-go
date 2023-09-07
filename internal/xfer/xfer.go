@@ -38,7 +38,15 @@ func copy(ctx context.Context, dstFS ocfl.WriteFS, dst string, srcFS ocfl.FS, sr
 		xferMode = modeCopy
 	}
 	if logger != nil {
-		logger.DebugCtx(ctx, "file xfer", "mode", xferMode, "src", src, "dst", dst)
+		logger = logger.With("mode", xferMode, "src", src, "dst", dst)
+		logger.DebugCtx(ctx, "starting file transfer")
+		defer func() {
+			if err != nil {
+				logger.ErrorCtx(ctx, "file transfer failed", "err", err.Error())
+				return
+			}
+			logger.DebugCtx(ctx, "file transfer complete")
+		}()
 	}
 	if xferMode == modeCopy {
 		err = cpFS.Copy(ctx, dst, src)
