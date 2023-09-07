@@ -150,55 +150,78 @@ func readInventorySidecar(ctx context.Context, fsys ocfl.FS, name string) (strin
 	return string(matches[1]), nil
 }
 
-func (inv *Inventory) normalizeDigests() error {
-	// manifest + all version state + all fixity
-	invMaps := make([]*ocfl.DigestMap, 0, 1+len(inv.Versions)+len(inv.Fixity))
-	invMaps = append(invMaps, &inv.Manifest)
-	for _, v := range inv.Versions {
-		invMaps = append(invMaps, &v.State)
+// NormalizedCopy returns a copy of the inventory with all digests
+// normalized.
+func (inv Inventory) NormalizedCopy() (*Inventory, error) {
+	newInv := inv
+	newInv.digest = "" // don't copy digest value (read from sidecar)
+	var err error
+	newInv.Manifest, err = inv.Manifest.Normalize()
+	if err != nil {
+		return nil, fmt.Errorf("in manifest: %w", err)
 	}
-	for _, f := range inv.Fixity {
-		invMaps = append(invMaps, &f)
-	}
-	for _, m := range invMaps {
-		newMap, err := m.Normalize()
-		if err != nil {
-			return err
+	newInv.Versions = make(map[ocfl.VNum]*Version, len(inv.Versions))
+	for v, ver := range inv.Versions {
+		newInv.Versions[v] = &Version{
+			Created: ver.Created,
+			Message: ver.Message,
 		}
-		*m = newMap
+		newInv.Versions[v].State, err = ver.State.Normalize()
+		if err != nil {
+			return nil, fmt.Errorf("in version %s state: %w", v, err)
+		}
+		if ver.User != nil {
+			newInv.Versions[v].User = &User{
+				Name:    ver.User.Name,
+				Address: ver.User.Address,
+			}
+		}
 	}
-	return nil
+	newInv.Fixity = make(map[ocfl.Alg]ocfl.DigestMap, len(inv.Fixity))
+	for alg, m := range inv.Fixity {
+		newInv.Fixity[alg], err = m.Normalize()
+		if err != nil {
+			return nil, fmt.Errorf("in %s fixity: %w", alg, err)
+		}
+	}
+	return &newInv, nil
 }
 
 // AddVersion builds a new version and updates the inventory using state and
 // manifest from the provided stage. The new version will have have the given
-// message, user, and created timestamp. The function pathfn, is used The
-// inventories head is incremented. The function pathfn is optional and is is
-// used to customize content paths for new manifest entries.
-func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *User, created time.Time, pathfn func(string, []string) []string) (err error) {
-	if inv.Head, err = inv.Head.Next(); err != nil {
+// message, user, and created timestamp. The optional function pathfn is used to
+// customize content paths for new manifest entries. The inventory's head is
+// incremented or an error is returned if the version scheme doesn't allow
+// additional version.
+func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *User, created time.Time, contentMap ocfl.RemapFunc) (err error) {
+	nextHead, err := inv.Head.Next()
+	if err != nil {
 		return fmt.Errorf("inventory's version scheme doesn't allow additional versions: %w", err)
 	}
+	inv.Head = nextHead
 	// normalize all digests in the inventory. If we don't do this
 	// non-normalized digests in previous version states might cause problems
 	// since the updated manifest/fixity will be normalized.
 	if err = inv.normalizeDigests(); err != nil {
 		return fmt.Errorf("while normalizing inventory digests: %w", err)
 	}
-	if inv.Versions == nil {
-		inv.Versions = map[ocfl.VNum]*Version{}
+	if inv.ContentDirectory == "" {
+		inv.ContentDirectory = contentDir
+	}
+	if inv.DigestAlgorithm == ocfl.NOALG {
+		inv.DigestAlgorithm = stage.Alg
 	}
 	if inv.DigestAlgorithm != stage.Alg {
 		return fmt.Errorf("inventory uses %s: can't update with stage using %s", inv.DigestAlgorithm, stage.Alg.ID())
+	}
+	if inv.Versions == nil {
+		inv.Versions = map[ocfl.VNum]*Version{}
 	}
 	inv.Versions[inv.Head] = &Version{
 		State:   stage.State,
 		Message: msg,
 		Created: created,
 		User:    user,
-	}
-	if inv.ContentDirectory == "" {
-		inv.ContentDirectory = contentDir
 	}
 	// newContentRemap is applied to the stage state to generate a DigestMap
 	// with new manifest/fixity entries
@@ -208,8 +231,8 @@ func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *User, crea
 			return nil
 		}
 		// apply user-specified path transform first
-		if pathfn != nil {
-			paths = pathfn(digest, paths)
+		if contentMap != nil {
+			paths = contentMap(digest, paths)
 		}
 		// prefix paths with "{vnum}/content"
 		for i, p := range paths {
@@ -253,7 +276,30 @@ func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *User, crea
 	}
 	// check that resulting inventory is valid
 	if err := inv.Validate().Err(); err != nil {
-		return fmt.Errorf("generated inventory is not valid (this is probably a bug): %w", err)
+		return fmt.Errorf("generated inventory is not valid: %w", err)
+	}
+	return nil
+}
+
+func (inv *Inventory) normalizeDigests() error {
+	// manifest + all version state + all fixity
+	invMaps := make([]*ocfl.DigestMap, 1+len(inv.Versions)+len(inv.Fixity))
+	invMaps[0] = &inv.Manifest
+	i := 1
+	for _, v := range inv.Versions {
+		invMaps[i] = &v.State
+		i++
+	}
+	for _, f := range inv.Fixity {
+		invMaps[i] = &f
+		i++
+	}
+	for _, m := range invMaps {
+		newMap, err := m.Normalize()
+		if err != nil {
+			return err
+		}
+		*m = newMap
 	}
 	return nil
 }

@@ -11,96 +11,168 @@ import (
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/internal/xfer"
-	"github.com/srerickson/ocfl-go/validation"
+	"github.com/srerickson/ocfl-go/logging"
+	"golang.org/x/exp/slices"
 	"golang.org/x/exp/slog"
 )
 
-// Commit creates or updates an object in fsys using the provided stage state
-// and content.
-func Commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, id string, stage *ocfl.Stage, optFuncs ...CommitOption) error {
+// Commit creates or updates the OCFL v1.x object objectID at objPath using the
+// content from stage. If an object exists at objPath, the object will be
+// updated; if objPath does not exist, a new object will be created. If objPath
+// exists but it is not the root of a valid OCFL object, an error is returned.
+// The digest algorithm for the object version is taken from the stage. For
+// object updates, the stage's algorithm must match the existing object's digest
+// algorithm. The error returned by commit is always a CommitError.
+func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string, stage *ocfl.Stage, optFuncs ...CommitOption) (err error) {
 	// default commit options
 	opts := &commitOpt{
-		created:    time.Now().UTC().Truncate(time.Second),
+		created:    time.Now().UTC(),
 		contentDir: contentDir,
+		logger:     logging.DisabledLogger(),
 	}
-	// load options
 	for _, optFunc := range optFuncs {
 		optFunc(opts)
 	}
-	updating := false  // update or creating?
-	var inv *Inventory // new inventory
-	// read existing inventory
-	invFile, openErr := fsys.OpenFile(ctx, path.Join(objRoot, inventoryFile))
-	if openErr == nil {
-		// updating existing object
-		defer invFile.Close()
-		updating = true
-		var vErr *validation.Result
-		inv, vErr = ValidateInventoryReader(ctx, invFile, ValidationLogger(opts.logger))
-		if err := vErr.Err(); err != nil {
-			err = fmt.Errorf("existing inventory is invalid: %w", err)
+	opts.created = opts.created.Truncate(time.Second)
+	opts.logger = opts.logger.With("object_path", objPath, "object_id", objID)
+
+	// Start by generating the new inventory: from existing or from scratch.
+
+	var newInv *Inventory                             // new inventory
+	existing, objErr := GetObject(ctx, fsys, objPath) // existing object
+
+	// Handle existing object: new inventory is based on normalized copy of
+	// the existing inventory.
+	if objErr == nil {
+		opts.logger.DebugCtx(ctx, "updating an existing object")
+
+		if foundID := existing.Inventory.ID; foundID != objID {
+			err = fmt.Errorf("object at %q has id %q, not the id given to commit: %q", objPath, foundID, objID)
 			return &CommitError{Err: err}
 		}
-		if inv.ID != id {
-			err := fmt.Errorf("existing Object ID (%q) doesn't match ID given to Commit (%q)", inv.ID, id)
-			return &CommitError{Err: err}
-		}
-		invState, err := inv.objectState(0)
+		invState, err := existing.Inventory.objectState(0)
 		if err != nil {
-			// inventory should be valid
-			err := fmt.Errorf("can't create object state with existing inventory (this is a bug): %w", err)
+			// an error here indicates a bug in the inventory's validation during GetObject()
+			err = fmt.Errorf("creating object state from existing inventory (this is probably a bug): %w", err)
 			return &CommitError{Err: err}
 		}
 		if !opts.allowUnchanged && invState.Eq(stage.State) {
-			err := fmt.Errorf("new version would have same state as existing version")
+			err = fmt.Errorf("new version would have same state as existing version")
+			return &CommitError{Err: err}
+		}
+		newInv, err = existing.Inventory.NormalizedCopy()
+		if err != nil {
+			// an error here indicates a bug in the inventory's validation during GetObject()
+			err = fmt.Errorf("building normalized copy of existing inventory: %w", err)
 			return &CommitError{Err: err}
 		}
 	}
-	if openErr != nil {
-		if !errors.Is(openErr, fs.ErrNotExist) {
-			return &CommitError{Err: openErr}
+
+	// Handle possible error from GetObject() if the object doesn't exist. For a
+	// new object, the object path must not exist. The only acceptable error
+	// here is ErrNotExist for the object path.
+	if objErr != nil {
+		opts.logger.DebugCtx(ctx, "commiting new object")
+
+		var pathErr *fs.PathError
+		if errors.Is(objErr, fs.ErrNotExist) && errors.As(objErr, &pathErr) && pathErr.Path == objPath {
+			objErr = nil
+		}
+		if objErr != nil {
+			err = fmt.Errorf("path %q exists but it is not a valid object: %w", objPath, objErr)
+			return &CommitError{Err: err}
 		}
 		// create new inventory with '0' head version:
 		// the head is incremented later by inv.AddVersion
-		inv = &Inventory{
-			ID:               id,
+		newInv = &Inventory{
+			ID:               objID,
 			Head:             ocfl.V(0, opts.padding),
 			DigestAlgorithm:  stage.Alg,
 			ContentDirectory: opts.contentDir,
 		}
 	}
-	// Determine the spec to use for new inventory if no spec option was given.
-	var spec = opts.spec
-	if spec.Empty() {
+	// Determine the OCFL spec to use for the new inventory if none given.
+	var newSpec = opts.spec
+	if newSpec.Empty() {
 		switch {
-		// use  the storage root's spec, if available
+		// use the storage root's spec, if available.
 		case !opts.storeSpec.Empty():
-			spec = opts.storeSpec
+			newSpec = opts.storeSpec
 		// use the existing object's spec, if available.
-		case updating:
-			spec = inv.Type.Spec
+		case existing != nil:
+			newSpec = existing.Spec
 		// otherwise, default spec
 		default:
-			spec = defaultSpec
+			newSpec = defaultSpec
 		}
 	}
-	// check that the spec valid:
+	// check that the ocfl spec is valid:
 	// - storage root's spec is a max
 	// - existing object spec is a min
-	if !opts.storeSpec.Empty() && spec.Cmp(opts.storeSpec) > 0 {
-		err := fmt.Errorf("object's OCFL spec can't be set higher than the storage root's (%s)", opts.storeSpec)
+	if !opts.storeSpec.Empty() && newSpec.Cmp(opts.storeSpec) > 0 {
+		err = fmt.Errorf("new object version's OCFL spec can't be higher than the storage root's (%s)", opts.storeSpec)
 		return &CommitError{Err: err}
 	}
-	if updating && spec.Cmp(inv.Type.Spec) < 0 {
-		err := fmt.Errorf("object's OCFL spec can't be set lower than the existing value (%s)", inv.Type.Spec)
+	if existing != nil && newSpec.Cmp(existing.Spec) < 0 {
+		err = fmt.Errorf("new object version's OCFL spec can't be lower than the current version (%s)", existing.Spec)
 		return &CommitError{Err: err}
 	}
-	inv.Type = spec.AsInvType()
-	// update inventory with state from stage
-	if err := inv.AddVersion(stage, opts.message, opts.user, opts.created, opts.pathFn); err != nil {
+	newInv.Type = newSpec.AsInvType()
+
+	// build new inventory from state
+	err = newInv.AddVersion(stage, opts.message, opts.user, opts.created, opts.pathFn)
+	if err != nil {
 		return &CommitError{Err: err}
 	}
-	return commit(ctx, fsys, objRoot, inv, stage, opts)
+
+	// check commit's required head constraint
+	if n := newInv.Head.Num(); opts.requireHEAD > 0 && n != opts.requireHEAD {
+		err = fmt.Errorf("commit is constrained to version number %d, but the object's next version should have number %d",
+			opts.requireHEAD, n)
+		return &CommitError{Err: err}
+	}
+	// this check is reduntant given previous validations, but we don't want to
+	// over-write an existing version directory.
+	if existing != nil && slices.Contains(existing.ObjectRoot.VersionDirs, newInv.Head) {
+		err = fmt.Errorf("version directory %q already exists in %q", newInv.Head, objPath)
+		return &CommitError{Err: err}
+	}
+	opts.logger = opts.logger.With("head", newInv.Head, "ocfl_spec", newInv.Type.Spec, "alg", newInv.DigestAlgorithm)
+	// map of files to transfer
+	xfers, err := xferMap(stage, newInv, objPath)
+	if err != nil {
+		return &CommitError{Err: err}
+	}
+
+	// File changes start here
+	// TODO: replace existing object declaration if spec is changing
+
+	// Mutate object: new object declaration if necessary
+	if existing == nil {
+		opts.logger.DebugCtx(ctx, "initializing new OCFL object")
+		decl := ocfl.Declaration{Type: ocfl.DeclObject, Version: newInv.Type.Spec}
+		if err = ocfl.WriteDeclaration(ctx, fsys, objPath, decl); err != nil {
+			return &CommitError{Err: err, Dirty: true}
+		}
+	}
+
+	// Mutate object: tranfser files from stage to object
+	if len(xfers) > 0 {
+		if err = xfer.Copy(ctx, stage.FS, fsys, xfers, ocfl.XferConcurrency(), opts.logger.WithGroup("xfer")); err != nil {
+			err = fmt.Errorf("transfering new object contents: %w", err)
+			return &CommitError{Err: err, Dirty: true}
+		}
+	}
+
+	opts.logger.DebugCtx(ctx, "writing inventories for new object version")
+
+	// Mutate object: write inventory to both object root and version directory
+	newVDir := path.Join(objPath, newInv.Head.String())
+	if err = WriteInventory(ctx, fsys, newInv, objPath, newVDir); err != nil {
+		err = fmt.Errorf("writing new inventories or inventory sidecars: %w", err)
+		return &CommitError{Err: err, Dirty: true}
+	}
+	return nil
 }
 
 // Commit error wraps an error from a commit.
@@ -141,31 +213,35 @@ type commitOpt struct {
 type CommitOption func(*commitOpt)
 
 // WithOCFLSpec is used to set the OCFL specification for the new object
-// version.
+// version. The spec version cannot be higher than the object's storage root
+// and it cannot be lower the existing object version (if updating).
 func WithOCFLSpec(spec ocfl.Spec) CommitOption {
 	return func(comm *commitOpt) {
 		comm.spec = spec
 	}
 }
 
-// WithContentDir is used to set the ContentDirectory value for the first
-// version of an object. It is ignored for subsequent versions.
+// WithContentDir is used to set the contentDirectory when creating objects.
+// This option is ignored for object updates.
 func WithContentDir(cd string) CommitOption {
 	return func(comm *commitOpt) {
 		comm.contentDir = cd
 	}
 }
 
-// WithVersionPadding is used to set the version number padding for the first
-// version of an object. It is ignored for subsequent versions.
+// WithVersionPadding is used to set the version number padding when creating
+// objects. The padding is the maximum number of numeric digits the version
+// number can include (a padding of 0 is no maximum). This option is ignored for
+// object updates.
 func WithVersionPadding(p int) CommitOption {
 	return func(comm *commitOpt) {
 		comm.padding = p
 	}
 }
 
-// WithHEAD is used to enforce a particul version number for the commit.
-// The default is to increment the existing verion if possible.
+// WithHEAD is used to constrain the version number for the commit. For example,
+// WithHEAD(1) can be used to cause a commit to fail if the object already
+// exits.
 func WithHEAD(v int) CommitOption {
 	return func(comm *commitOpt) {
 		comm.requireHEAD = v
@@ -179,7 +255,7 @@ func WithMessage(msg string) CommitOption {
 	}
 }
 
-// WithUser sets the user for the new object version
+// WithUser sets the user for the new object version.
 func WithUser(user User) CommitOption {
 	return func(comm *commitOpt) {
 		comm.user = &user
@@ -228,69 +304,11 @@ func withStoreSpec(spec ocfl.Spec) CommitOption {
 	}
 }
 
-// commit performs the commit
-func commit(ctx context.Context, fsys ocfl.WriteFS, objRoot string, inv *Inventory, stage *ocfl.Stage, opts *commitOpt) error {
-	id := inv.ID
-	vnum := inv.Head
-	if opts.requireHEAD > 0 && inv.Head.Num() != opts.requireHEAD {
-		err := fmt.Errorf("cannot commit HEAD=%d (next HEAD=%d)", opts.requireHEAD, inv.Head.Num())
-		return &CommitError{Err: err}
-	}
-	xfers, err := transferMap(stage, inv, objRoot)
-	if err != nil {
-		return &CommitError{Err: err}
-	}
-	if opts.logger != nil {
-		opts.logger.InfoCtx(ctx, "starting commit", "object_id", id, "head", vnum, "object_path", objRoot)
-		defer opts.logger.InfoCtx(ctx, "commit returned", "object_id", id, "head", vnum, "object_path", objRoot)
-	}
-	// init object root: it returns both obj and error if the object already exists.
-	obj, err := ocfl.InitObjectRoot(ctx, fsys, objRoot, inv.Type.Spec)
-	if err != nil {
-		if !errors.Is(err, ocfl.ErrObjectExists) {
-			return &CommitError{Err: fmt.Errorf("initializing object root: %w", err), Dirty: true}
-		}
-		// existing object root
-		if obj != nil && obj.Spec.Cmp(inv.Type.Spec) > 0 {
-			err := fmt.Errorf("existing object declaration has higher OCFL spec than inventory (v%s > v%s)", obj.Spec, inv.Type.Spec)
-			return &CommitError{Err: err}
-		}
-		// TODO: upgrade object declaration.
-		if obj != nil && obj.Spec.Cmp(inv.Type.Spec) < 0 {
-			err := fmt.Errorf("upgrading existing object declaration from OCFL v%s to %s is not yet supported", obj.Spec, inv.Type.Spec)
-			return &CommitError{Err: err}
-		}
-	}
-	// don't overwrite any existing content directories
-	if obj.HasVersionDir(inv.Head) {
-		err := fmt.Errorf("a directory for %q already exists", inv.Head)
-		return &CommitError{Err: err}
-	}
-	// tranfser files from stage to object
-	if len(xfers) > 0 {
-		if err := xfer.Copy(ctx, stage.FS, fsys, xfers, ocfl.XferConcurrency(), opts.logger); err != nil {
-			return &CommitError{
-				Err:   fmt.Errorf("transfering new object contents: %w", err),
-				Dirty: true,
-			}
-		}
-	}
-	// write inventory to both object root and version directory
-	vDir := path.Join(objRoot, vnum.String())
-	if err := WriteInventory(ctx, fsys, inv, objRoot, vDir); err != nil {
-		return &CommitError{
-			Err:   fmt.Errorf("writing new inventories or inventory sidecars: %w", err),
-			Dirty: true,
-		}
-	}
-	return nil
-}
-
-// transferMap builds a map of destination/source paths representing
+// xferMap builds a map of destination/source paths representing
 // file to copy from the stage to the object root. Source paths
 // are relative to the stage's FS. Destination paths are relative to
 // storage root's FS
-func transferMap(stage *ocfl.Stage, inv *Inventory, objRoot string) (map[string]string, error) {
+func xferMap(stage *ocfl.Stage, inv *Inventory, objRoot string) (map[string]string, error) {
 	xfer := map[string]string{}
 	for dst, dig := range inv.Manifest.PathMap() {
 		// ignore manifest entries from previous versions

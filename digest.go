@@ -106,8 +106,8 @@ func newHashDigester(h hash.Hash) hashDigester {
 
 func (h hashDigester) String() string { return hex.EncodeToString(h.Sum(nil)) }
 
-// MultiDigester is used to generate digests for multiple digest algorithms at the same
-// time.
+// MultiDigester is used to generate digests for multiple digest algorithms at
+// the same time.
 type MultiDigester map[Alg]Digester
 
 func NewMultiDigester(algs ...Alg) MultiDigester {

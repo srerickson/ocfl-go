@@ -2,7 +2,7 @@ package ocfl
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"io/fs"
 	"path"
 	"strings"
@@ -16,7 +16,7 @@ const (
 )
 
 var (
-	ErrObjectExists = errors.New("OCFL object declaration already exists")
+	ErrObjectExists = fmt.Errorf("existing OCFL object declaration: %w", fs.ErrExist)
 )
 
 // GetObjectRoot reads the contents of directory dir in fsys, confirms that an
@@ -35,35 +35,6 @@ func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error
 	if !obj.HasDeclaration() {
 		return nil, ErrDeclNotExist
 	}
-	return obj, nil
-}
-
-// InitObjectRoot creates an OCFL object declaration file in the directory dir
-// if one does not exist and the directory's contents do not include any
-// non-conforming entries. If the directory does not exist, it is created along
-// with all parent directories. If a declaration file exists, a fully
-// initialized ObjectRoot is returned (same as GetObjectRoot) along with
-// ErrObjectExists. In the latter case, the returned ObjectRoot's Spec value may
-// not match the spec argument. If the directory includes any files or
-// directories that do not conform to an OCFL object, an error is returned.
-func InitObjectRoot(ctx context.Context, fsys WriteFS, dir string, spec Spec) (*ObjectRoot, error) {
-	entries, err := fsys.ReadDir(ctx, dir)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
-	}
-	obj := NewObjectRoot(fsys, dir, entries)
-	if obj.HasDeclaration() {
-		return obj, ErrObjectExists
-	}
-	if len(obj.NonConform) > 0 {
-		return nil, errors.New("directory includes non-conforming entries")
-	}
-	decl := Declaration{Type: DeclObject, Version: spec}
-	if err := WriteDeclaration(ctx, fsys, dir, decl); err != nil {
-		return nil, err
-	}
-	obj.Spec = spec
-	obj.Flags |= FoundDeclaration
 	return obj, nil
 }
 

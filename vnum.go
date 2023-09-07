@@ -22,7 +22,9 @@ var (
 
 // VNum represents an OCFL object version number (e.g., "v1", "v02"). A VNum has
 // a sequence number (1,2,3...) and a padding number, which defaults to zero.
-// The padding value constraints the maximum valid sequence number.
+// The padding is the maximum number of numeric digits the version number can
+// include (a padding of 0 is no maximum). The padding value constrains the
+// maximum valid sequence number.
 type VNum struct {
 	num     int // positive integers 1,2,3..
 	padding int // should be zero, but can be 2,3,4
