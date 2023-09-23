@@ -307,7 +307,7 @@ func (inv *Inventory) normalizeDigests() error {
 func (inv Inventory) objectState(v int) (*ocfl.ObjectState, error) {
 	ver := inv.GetVersion(v)
 	if ver == nil {
-		return nil, fmt.Errorf("%w: with index %d", ErrVersionNotFound, v)
+		return nil, fmt.Errorf("version index %d: %w", v, ErrVersionNotFound)
 	}
 	return &ocfl.ObjectState{
 		DigestMap: ver.State,
@@ -315,7 +315,8 @@ func (inv Inventory) objectState(v int) (*ocfl.ObjectState, error) {
 		Message:   ver.Message,
 		Created:   ver.Created,
 		Alg:       inv.DigestAlgorithm,
-		VNum:      inv.Head,
+		VNum:      ocfl.V(v, inv.Head.Padding()),
+		Head:      inv.Head,
 		Spec:      inv.Type.Spec,
 	}, nil
 }

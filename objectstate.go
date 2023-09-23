@@ -26,7 +26,8 @@ type ObjectState struct {
 	User      *User     // user who created object state
 	Created   time.Time // object state created at
 	Message   string    // message associated with object state
-	VNum      VNum      // number for the object version for the state
+	VNum      VNum      // version represented by the object state
+	Head      VNum      // object's head version
 	Spec      Spec      // OCFL spec for the object version for the state
 }
 
