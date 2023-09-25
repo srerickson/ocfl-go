@@ -309,6 +309,9 @@ func (inv Inventory) objectState(v int) (*ocfl.ObjectState, error) {
 	if ver == nil {
 		return nil, fmt.Errorf("version index %d: %w", v, ErrVersionNotFound)
 	}
+	if v == 0 {
+		v = inv.Head.Num()
+	}
 	return &ocfl.ObjectState{
 		DigestMap: ver.State,
 		Manifest:  inv.Manifest,
