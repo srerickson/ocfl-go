@@ -20,7 +20,7 @@ var (
 )
 
 // Node is the primary type for pathtree: it includes a value, Val, of generic
-// type T and map of named references to direct descendats, Children. Descendant
+// type T and map of named references to direct descendants, Children. Descendant
 // nodes are mapped by their name, which cannot include '/'. If Children is nil,
 // the node is considered a directory node. Otherwise, it is considered a file
 // node.

@@ -1,4 +1,4 @@
-// SeedFS is based on `testing/fstest/mapfs.go` from the go standard libary,
+// SeedFS is based on `testing/fstest/mapfs.go` from the go standard library,
 // which is distributed with the following license:
 //
 //

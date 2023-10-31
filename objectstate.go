@@ -160,7 +160,7 @@ func (entry *objStateDirEntry) Info() (fs.FileInfo, error) {
 	}, nil
 }
 
-// objStateFileInfo implementes fs.FileInfo
+// objStateFileInfo implements fs.FileInfo
 type objStateFileInfo struct {
 	name     string // logical name from OpenFile/OpenDir
 	modtime  time.Time

@@ -78,7 +78,7 @@ func (m DigestMap) PathMap() map[string]string {
 	return paths
 }
 
-// PathMapValid is like PathMap, except it retuns an error if it encounters
+// PathMapValid is like PathMap, except it returns an error if it encounters
 // invalid path names or if the same path appears multiple times.
 func (m DigestMap) PathMapValid() (map[string]string, error) {
 	paths := make(map[string]string, m.LenPaths())

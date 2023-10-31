@@ -159,7 +159,7 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string
 	// Mutate object: tranfser files from stage to object
 	if len(xfers) > 0 {
 		if err = xfer.Copy(ctx, stage.FS, fsys, xfers, ocfl.XferConcurrency(), opts.logger.WithGroup("xfer")); err != nil {
-			err = fmt.Errorf("transfering new object contents: %w", err)
+			err = fmt.Errorf("transferring new object contents: %w", err)
 			return &CommitError{Err: err, Dirty: true}
 		}
 	}

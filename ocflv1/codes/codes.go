@@ -2,8 +2,10 @@ package codes
 
 // This is generated code. Do not modify. See gen folder.
 
-import "github.com/srerickson/ocfl-go/validation"
-import "github.com/srerickson/ocfl-go"
+import (
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/validation"
+)
 
 // E001: The OCFL Object Root must not contain files or directories other than those specified in the following sections.
 var E001 = validation.NewCode("E001",
@@ -1141,11 +1143,11 @@ var E089 = validation.NewCode("E089",
 		},
 	})
 
-// E090: Hard and soft (symbolic) links are not portable and MUST NOT be used within OCFL Storage hierachies.
+// E090: Hard and soft (symbolic) links are not portable and MUST NOT be used within OCFL Storage hierarchies.
 var E090 = validation.NewCode("E090",
 	map[ocfl.Spec]*validation.Ref{
 		{1, 0}: {
-			Description: "Hard and soft (symbolic) links are not portable and MUST NOT be used within OCFL Storage hierachies.",
+			Description: "Hard and soft (symbolic) links are not portable and MUST NOT be used within OCFL Storage hierarchies.",
 			URL:         "https://ocfl.io/1.0/spec/#E090",
 		},
 		{1, 1}: {

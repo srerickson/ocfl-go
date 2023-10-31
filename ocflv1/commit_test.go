@@ -329,7 +329,7 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 // creates a temporary directory and copies all files in the object into the
 // directory, returning the tmp directory root. The object will be located at
 // obj.Path in the new tmp directory. The caller should remember to removeall
-// the temp directoy.
+// the temp directory.
 func mkObjectTemp(obj *ocfl.ObjectRoot) (string, error) {
 	ctx := context.Background()
 	tmpdir, err := os.MkdirTemp("", "test-ocfl-object-*")
