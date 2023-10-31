@@ -3,7 +3,6 @@ package ocflv1_test
 import (
 	"archive/zip"
 	"context"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +11,8 @@ import (
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/memfs"
-	"github.com/srerickson/ocfl-go/extensions"
+	"github.com/srerickson/ocfl-go/extension"
+	"github.com/srerickson/ocfl-go/internal/testutil"
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
@@ -21,25 +21,10 @@ var storePath = filepath.Join(`..`, `testdata`, `store-fixtures`, `1.0`)
 type storeTest struct {
 	name   string
 	size   int
-	layout extensions.Layout
+	layout extension.Layout
 }
 
-// layout used for fixture stores w/o layout file
-var testStoreLayout customLayout
-
-type customLayout struct{}
-
-var _ extensions.Layout = (*customLayout)(nil)
-
-func (l customLayout) Name() string {
-	return "uri-encode"
-}
-
-func (l customLayout) NewFunc() (extensions.LayoutFunc, error) {
-	return func(id string) (string, error) {
-		return url.QueryEscape(id), nil
-	}, nil
-}
+var testStoreLayout = testutil.CustomLayout{Prefix: ""}
 
 func TestGetStore(t *testing.T) {
 	ctx := context.Background()
@@ -76,10 +61,7 @@ func TestGetStore(t *testing.T) {
 			}
 			if store.LayoutName() == "" {
 				// set custom layout defined in test
-				err := store.SetLayout(sttest.layout)
-				if err != nil {
-					t.Fatal(err)
-				}
+				store.Layout = sttest.layout
 			} else {
 				// read extension from store's layout config
 				err := store.ReadLayout(ctx)
@@ -87,7 +69,7 @@ func TestGetStore(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if !store.LayoutOK() {
+			if store.Layout == nil {
 				t.Fatal("store should have set layout")
 			}
 			scanFn := func(obj *ocflv1.Object, err error) error {

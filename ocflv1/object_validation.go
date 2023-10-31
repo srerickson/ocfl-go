@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/extensions"
+	"github.com/srerickson/ocfl-go/extension"
 	"github.com/srerickson/ocfl-go/ocflv1/codes"
 	"github.com/srerickson/ocfl-go/validation"
 )
@@ -345,7 +345,7 @@ func (vldr *objectValidator) validateExtensionsDir(ctx context.Context) error {
 			vldr.LogFatal(lgr, ec(err, codes.E067.Ref(ocflV)))
 			continue
 		}
-		_, err := extensions.Get(i.Name())
+		_, err := extension.Get(i.Name())
 		if err != nil {
 			// unknow extension
 			vldr.LogWarn(lgr, ec(fmt.Errorf("%w: %s", err, i.Name()), codes.W013.Ref(ocflV)))
