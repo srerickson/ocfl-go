@@ -8,7 +8,7 @@ import (
 	"path"
 
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/extensions"
+	"github.com/srerickson/ocfl-go/extension"
 	"github.com/srerickson/ocfl-go/internal/walkdirs"
 	"github.com/srerickson/ocfl-go/ocflv1/codes"
 	"github.com/srerickson/ocfl-go/validation"
@@ -85,37 +85,28 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 	//E071: The value of the [ocfl_layout.json] extension key must be the
 	//registered extension name for the extension defining the arrangement under
 	//the storage root.
-	var layout storeConfig
-	var layoutFunc extensions.LayoutFunc
+	var layoutConfig storeConfig
+	var layout extension.Layout
 	if hasLayout {
-		err = readStoreConfig(ctx, fsys, root, &layout)
+		err = readStoreConfig(ctx, fsys, root, &layoutConfig)
 		if err != nil {
 			result.LogFatal(lgr, err)
 		}
-		if _, ok := layout[descriptionKey]; !ok {
+		if _, ok := layoutConfig[descriptionKey]; !ok {
 			err := errors.New(`storage root ocfl_layout.json missing key: "description"`)
 			result.LogFatal(lgr, ec(err, codes.E070.Ref(ocflV)))
 		}
-		_, ok := layout[extensionKey]
+		_, ok := layoutConfig[extensionKey]
 		if !ok {
 			err := errors.New(`storage root ocfl_layout.json missing key: "extension"`)
 			result.LogFatal(lgr, ec(err, codes.E070.Ref(ocflV)))
 		} else {
-			ext, err := extensions.Get(layout[extensionKey])
+			ext, err := extension.Get(layoutConfig[extensionKey])
 			if err != nil {
 				return result.LogFatal(lgr, ec(err, codes.E071.Ref(ocflV)))
 			}
-			if err := readExtensionConfig(ctx, fsys, root, ext); err != nil {
-				err := fmt.Errorf("storage root has misconfigured layout extension: %w", err)
-				return result.LogFatal(lgr, err)
-			}
-			lyt, ok := ext.(extensions.Layout)
-			if !ok {
-				return result.LogFatal(lgr, ec(extensions.ErrNotLayout, codes.E071.Ref(ocflV)))
-			}
-			layoutFunc, err = lyt.NewFunc()
+			layout, err = readLayout(ctx, fsys, root, ext.Name())
 			if err != nil {
-				err := fmt.Errorf("storage root has misconfigured layout extension: %w", err)
 				return result.LogFatal(lgr, err)
 			}
 		}
@@ -154,9 +145,9 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 		if err := obj.Validate(ctx, objValidOpts...).Err(); err != nil {
 			return nil // return nil to continue validating objects in the Scan
 		}
-		if layoutFunc != nil {
+		if layout != nil {
 			id := obj.Inventory.ID
-			p, err := layoutFunc(id)
+			p, err := layout.Resolve(id)
 			if err != nil {
 				err := fmt.Errorf("object id '%s' is not compatible with the storage root layout: %w", id, err)
 				result.LogWarn(objLgr, err)

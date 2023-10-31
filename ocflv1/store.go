@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/extensions"
+	"github.com/srerickson/ocfl-go/extension"
 	"github.com/srerickson/ocfl-go/validation"
 )
 
@@ -23,12 +24,13 @@ var (
 
 // Store represents an existing OCFL v1.x Storage Root.
 type Store struct {
-	fsys       ocfl.FS
-	rootDir    string // storage root directory
-	config     storeConfig
-	spec       ocfl.Spec
-	layoutFunc extensions.LayoutFunc
-	layoutErr  error // error from ReadLayout()
+	Layout extension.Layout
+
+	fsys      ocfl.FS
+	rootDir   string // storage root directory
+	config    storeConfig
+	spec      ocfl.Spec
+	layoutErr error // error from ReadLayout()
 }
 
 // store layout represent ocfl_layout.json file
@@ -37,8 +39,8 @@ type storeConfig map[string]string
 type InitStoreConf struct {
 	Spec        ocfl.Spec
 	Description string
-	Layout      extensions.Layout
-	Extensions  []extensions.Extension
+	Layout      extension.Layout
+	Extensions  []extension.Extension
 }
 
 // InitStore initializes a new OCFL v1.x storage root on fsys at root.
@@ -54,7 +56,7 @@ func InitStore(ctx context.Context, fsys ocfl.WriteFS, root string, conf *InitSt
 	}
 	// default to 0002-flat-direct layout
 	if conf.Layout == nil {
-		conf.Layout = extensions.NewLayoutFlatDirect()
+		conf.Layout = &extension.LayoutFlatDirect{}
 	}
 	decl := ocfl.Declaration{
 		Type:    ocfl.DeclStore,
@@ -79,10 +81,7 @@ func InitStore(ctx context.Context, fsys ocfl.WriteFS, root string, conf *InitSt
 	if err := writeStoreConfig(ctx, fsys, root, layt); err != nil {
 		return err
 	}
-	if err := writeExtensionConfig(ctx, fsys, root, conf.Layout); err != nil {
-		return err
-	}
-	for _, e := range conf.Extensions {
+	for _, e := range append(conf.Extensions, conf.Layout) {
 		if err := writeExtensionConfig(ctx, fsys, root, e); err != nil {
 			return err
 		}
@@ -97,11 +96,11 @@ func (s Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts ..
 	if !ok {
 		return &CommitError{Err: fmt.Errorf("storage root backend is read-only")}
 	}
-	if s.layoutFunc == nil {
+	if s.Layout == nil {
 		err := fmt.Errorf("commit requires a storage root layout: %w", ErrLayoutUndefined)
 		return &CommitError{Err: err}
 	}
-	objPath, err := s.layoutFunc(id)
+	objPath, err := s.Layout.Resolve(id)
 	if err != nil {
 		return &CommitError{Err: fmt.Errorf("cannot commit id '%s': %w", id, err)}
 	}
@@ -201,10 +200,10 @@ func (s *Store) ResolveID(id string) (string, error) {
 	if s.layoutErr != nil {
 		return "", s.layoutErr
 	}
-	if s.layoutFunc == nil {
+	if s.Layout == nil {
 		return "", ErrLayoutUndefined
 	}
-	return s.layoutFunc(id)
+	return s.Layout.Resolve(id)
 }
 
 // GetObjectPath returns an Object for the given path relative to the storage root.
@@ -236,22 +235,6 @@ func (s *Store) ObjectExists(ctx context.Context, id string) (bool, error) {
 	return true, nil
 }
 
-// SetLayout sets the store's active layout. If no error is returned, subsequent
-// calls to ResolveID() will resolve object ids using the new layout.
-func (s *Store) SetLayout(layout extensions.Layout) error {
-	getPath, err := layout.NewFunc()
-	if err != nil {
-		return err
-	}
-	s.layoutFunc = getPath
-	return nil
-}
-
-// LayoutSet returns boolean indicating if the store's layout function is set
-func (s *Store) LayoutOK() bool {
-	return s.layoutFunc != nil
-}
-
 // ReadLayout resolves the layout extension defined in ocfl_layout.json and
 // loads its configuration file (if present) from the store's extensions
 // directory. The store's active layout is set to the new layout. If no error is
@@ -264,75 +247,63 @@ func (s *Store) ReadLayout(ctx context.Context) error {
 		s.layoutErr = ErrLayoutUndefined
 		return s.layoutErr
 	}
-	ext, err := s.readExtensionConfig(ctx, name)
+	layout, err := readLayout(ctx, s.fsys, s.rootDir, name)
 	if err != nil {
 		s.layoutErr = err
 		return s.layoutErr
 	}
-	layoutExt, ok := ext.(extensions.Layout)
-	if !ok {
-		err := fmt.Errorf("%s: %w", name, extensions.ErrNotLayout)
-		s.layoutErr = err
-		return s.layoutErr
-	}
-	if err := s.SetLayout(layoutExt); err != nil {
-		s.layoutErr = err
-		return s.layoutErr
-	}
+	s.Layout = layout
 	return nil
 }
 
-// readExtensionConfig resolves the named extension and loads the extensions'
-// configuration (if present) from the storage root extensions directory. If the
-// extension's config file does not exist, no error is returned.
-func (s *Store) readExtensionConfig(ctx context.Context, name string) (extensions.Extension, error) {
-	ext, err := extensions.Get(name)
+func readLayout(ctx context.Context, fsys ocfl.FS, root string, name string) (extension.Layout, error) {
+	ext, err := readExtensionConfig(ctx, fsys, root, name)
 	if err != nil {
 		return nil, err
 	}
-	err = readExtensionConfig(ctx, s.fsys, s.rootDir, ext)
-	if err != nil {
-		return nil, err
+	layout, ok := ext.(extension.Layout)
+	if !ok {
+		return nil, extension.ErrNotLayout
 	}
-	return ext, nil
+	return layout, nil
 }
 
 // readExtensionConfig reads the extension config file for ext in the storage root's
 // extensions directory. The value is unmarshalled into the value pointed to by
 // ext. If the extension config does not exist, nil is returned.
-func readExtensionConfig(ctx context.Context, fsys ocfl.FS, root string, ext extensions.Extension) error {
-	confPath := path.Join(root, extensionsDir, ext.Name(), extensionConfigFile)
+func readExtensionConfig(ctx context.Context, fsys ocfl.FS, root string, name string) (extension.Extension, error) {
+	confPath := path.Join(root, extensionsDir, name, extensionConfigFile)
 	f, err := fsys.OpenFile(ctx, confPath)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("reading config for extension %s: %w", ext.Name(), err)
+			return nil, fmt.Errorf("openning config for extension %s: %w", name, err)
 		}
-		return nil
+		return nil, nil
 	}
 	defer f.Close()
-	err = json.NewDecoder(f).Decode(ext)
+	b, err := io.ReadAll(f)
 	if err != nil {
-		return fmt.Errorf("decoding config for extension %s: %w", ext.Name(), err)
+		return nil, fmt.Errorf("reading config for extension %s: %w", name, err)
 	}
-	return nil
+	return extension.Unmarshal(b)
 }
 
 // writeExtensionConfig writes the configuration files for the ext to the
 // extensions directory in the storage root with at root.
-func writeExtensionConfig(ctx context.Context, fsys ocfl.WriteFS, root string, ext extensions.Extension) error {
-	confPath := path.Join(root, extensionsDir, ext.Name(), extensionConfigFile)
-	b, err := json.Marshal(ext)
+func writeExtensionConfig(ctx context.Context, fsys ocfl.WriteFS, root string, config extension.Extension) error {
+	confPath := path.Join(root, extensionsDir, config.Name(), extensionConfigFile)
+	b, err := json.Marshal(config)
 	if err != nil {
-		return fmt.Errorf("encoding config for extension %s: %w", ext.Name(), err)
+		return fmt.Errorf("encoding config for extension %s: %w", config.Name(), err)
 	}
 	_, err = fsys.Write(ctx, confPath, bytes.NewBuffer(b))
 	if err != nil {
-		return fmt.Errorf("writing config for extension %s: %w", ext.Name(), err)
+		return fmt.Errorf("writing config for extension %s: %w", config.Name(), err)
 	}
 	return nil
 }
 
-func newStoreConfig(description string, layout extensions.Layout) storeConfig {
+func newStoreConfig(description string, layout extension.Layout) storeConfig {
 	return map[string]string{
 		descriptionKey: description,
 		extensionKey:   layout.Name(),
