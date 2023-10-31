@@ -12,7 +12,6 @@ require (
 )
 
 require (
-	cloud.google.com/go/compute v1.23.0 // indirect
 	github.com/aws/aws-sdk-go v1.44.292 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.11.71 // indirect
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.36.0 // indirect
