@@ -40,11 +40,8 @@ type Version struct {
 	Created time.Time      `json:"created"`
 	State   ocfl.DigestMap `json:"state"`
 	Message string         `json:"message,omitempty"`
-	User    *User          `json:"user,omitempty"`
+	User    *ocfl.User     `json:"user,omitempty"`
 }
-
-// User represent a Version's user entry
-type User ocfl.User
 
 // VNums returns a sorted slice of VNums corresponding to the keys in the
 // inventory's 'versions' block.
@@ -171,7 +168,7 @@ func (inv Inventory) NormalizedCopy() (*Inventory, error) {
 			return nil, fmt.Errorf("in version %s state: %w", v, err)
 		}
 		if ver.User != nil {
-			newInv.Versions[v].User = &User{
+			newInv.Versions[v].User = &ocfl.User{
 				Name:    ver.User.Name,
 				Address: ver.User.Address,
 			}
@@ -193,7 +190,7 @@ func (inv Inventory) NormalizedCopy() (*Inventory, error) {
 // customize content paths for new manifest entries. The inventory's head is
 // incremented or an error is returned if the version scheme doesn't allow
 // additional version.
-func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *User, created time.Time, contentMap ocfl.RemapFunc) (err error) {
+func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *ocfl.User, created time.Time, contentMap ocfl.RemapFunc) (err error) {
 	nextHead, err := inv.Head.Next()
 	if err != nil {
 		return fmt.Errorf("inventory's version scheme doesn't allow additional versions: %w", err)

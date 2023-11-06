@@ -20,7 +20,7 @@ var (
 	msg      string // message for new version
 	alg      string // digest algorith (sha512 or sha256)
 	newObj   bool   // flag indicating new object
-	user     ocflv1.User
+	user     ocfl.User
 
 	logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{}))
 )

@@ -195,15 +195,15 @@ func (c CommitError) Unwrap() error {
 // commitOpt is the internal struct for commit options configured
 // using one of the CommitOptions
 type commitOpt struct {
-	requireHEAD    int       // new inventory must have this version number (if non-zero)
-	spec           ocfl.Spec // OCFL spec for new version
-	storeSpec      ocfl.Spec // OCFL spec from storage root (used internally)
-	user           *User     // inventory's version state user
-	message        string    // inventory's version state message
-	created        time.Time // inventory's version state created value
-	allowUnchanged bool      // allow new versions with same state as previous version
-	contentDir     string    // inventory's content directory setting (new objects only)
-	padding        int       // padding (new objects only)
+	requireHEAD    int        // new inventory must have this version number (if non-zero)
+	spec           ocfl.Spec  // OCFL spec for new version
+	storeSpec      ocfl.Spec  // OCFL spec from storage root (used internally)
+	user           *ocfl.User // inventory's version state user
+	message        string     // inventory's version state message
+	created        time.Time  // inventory's version state created value
+	allowUnchanged bool       // allow new versions with same state as previous version
+	contentDir     string     // inventory's content directory setting (new objects only)
+	padding        int        // padding (new objects only)
 
 	pathFn func(string, []string) []string // function to transform paths in stage state
 	logger *slog.Logger
@@ -256,7 +256,7 @@ func WithMessage(msg string) CommitOption {
 }
 
 // WithUser sets the user for the new object version.
-func WithUser(user User) CommitOption {
+func WithUser(user ocfl.User) CommitOption {
 	return func(comm *commitOpt) {
 		comm.user = &user
 	}
