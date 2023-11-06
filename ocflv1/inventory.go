@@ -312,6 +312,7 @@ func (inv Inventory) objectState(v int) (*ocfl.ObjectState, error) {
 	return &ocfl.ObjectState{
 		DigestMap: ver.State,
 		Manifest:  inv.Manifest,
+		User:      ver.User,
 		Message:   ver.Message,
 		Created:   ver.Created,
 		Alg:       inv.DigestAlgorithm,
