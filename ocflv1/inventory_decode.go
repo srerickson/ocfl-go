@@ -236,7 +236,7 @@ func (v version) Version() *Version {
 		newVer.Message = *v.Message
 	}
 	if v.User != nil {
-		newVer.User = &User{Name: *v.User.Name}
+		newVer.User = &ocfl.User{Name: *v.User.Name}
 		if v.User.Address != nil {
 			newVer.User.Address = *v.User.Address
 		}
