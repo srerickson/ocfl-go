@@ -256,6 +256,9 @@ func readDigestInventory(ctx context.Context, reader io.Reader, inv *decodeInven
 		return "", err
 	}
 	digester := inv.DigestAlgorithm.New()
+	if digester == nil {
+		return "", fmt.Errorf("%w: %q", ocfl.ErrUnknownAlg, inv.DigestAlgorithm)
+	}
 	if _, err := io.Copy(digester, bytes.NewReader(byt)); err != nil {
 		return "", err
 	}

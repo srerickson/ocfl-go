@@ -88,10 +88,7 @@ func main() {
 
 func stage(ctx context.Context, dir string, algID string) (*ocfl.Stage, error) {
 	srcFS := ocfl.DirFS(srcDir)
-	alg, ok := ocfl.DigestAlgs[algID]
-	if !ok {
-		return nil, ocfl.ErrUnknownAlg
-	}
+	alg := ocfl.Alg(algID)
 	stage := ocfl.NewStage(alg)
 	return stage, stage.AddFS(ctx, srcFS, ".")
 }

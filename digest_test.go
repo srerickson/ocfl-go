@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
@@ -20,41 +19,10 @@ import (
 )
 
 func TestDigestAlg(t *testing.T) {
-	if len(ocfl.DigestAlgs) == 0 {
-		t.Fatal("ocfl.DigestAlg shouldn't be empty")
-	}
-	for _, alg := range ocfl.DigestAlgs {
+	for _, alg := range ocfl.DefaultAlgs() {
 		if _, err := testAlg(alg, []byte("test data")); err != nil {
 			t.Error(err)
 		}
-	}
-}
-
-func TestDigestAlgMarshal(t *testing.T) {
-	type algList struct {
-		Algs []ocfl.Alg `json:"algs"`
-	}
-	var list algList
-	jsonIn := []byte(`{"algs":["sha512","sha256","sha1","md5","blake2b-512"]}`)
-	if err := json.Unmarshal(jsonIn, &list); err != nil {
-		t.Fatal("json.Unmarshal() for test value:", err)
-	}
-	if len(list.Algs) != len(ocfl.DigestAlgs) {
-		t.Errorf("Unmarshalled list doesn't have expected length: got=%d, expected=%d",
-			len(list.Algs), len(ocfl.DigestAlgs))
-	}
-	for _, alg := range list.Algs {
-		if _, ok := ocfl.DigestAlgs[alg.ID()]; !ok {
-			t.Error("Unmarshalled alg has unexpected ID:", alg.ID())
-		}
-	}
-	jsonOut, err := json.Marshal(list)
-	if err != nil {
-		t.Error("json.Marshal() for test value:", err)
-	}
-	if !bytes.Equal(jsonIn, jsonOut) {
-		t.Errorf("json.Marshall() didn't return expected value, got=%q, expected=%q",
-			string(jsonOut), string(jsonIn))
 	}
 }
 
@@ -133,7 +101,7 @@ func testAlg(alg ocfl.Alg, val []byte) (string, error) {
 	exp := hex.EncodeToString(h.Sum(nil))
 	got := d.String()
 	if exp != got {
-		return exp, fmt.Errorf("%s value: got=%q, expected=%q", alg.ID(), got, exp)
+		return exp, fmt.Errorf("%s value: got=%q, expected=%q", alg, got, exp)
 	}
 	return exp, nil
 }
