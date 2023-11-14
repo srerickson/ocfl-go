@@ -101,16 +101,19 @@ func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	checksum := inv.DigestAlgorithm.New()
+	digester := inv.DigestAlgorithm.New()
+	if digester == nil {
+		return fmt.Errorf("%w: %q", ocfl.ErrUnknownAlg, inv.DigestAlgorithm)
+	}
 	byt, err := json.MarshalIndent(inv, "", " ")
 	if err != nil {
 		return fmt.Errorf("encoding inventory: %w", err)
 	}
-	_, err = io.Copy(checksum, bytes.NewBuffer(byt))
+	_, err = io.Copy(digester, bytes.NewBuffer(byt))
 	if err != nil {
 		return err
 	}
-	sum := checksum.String()
+	sum := digester.String()
 	// write inventory.json and sidecar
 	for _, dir := range dirs {
 		invFile := path.Join(dir, inventoryFile)
@@ -209,7 +212,7 @@ func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *ocfl.User,
 		inv.DigestAlgorithm = stage.Alg
 	}
 	if inv.DigestAlgorithm != stage.Alg {
-		return fmt.Errorf("inventory uses %s: can't update with stage using %s", inv.DigestAlgorithm, stage.Alg.ID())
+		return fmt.Errorf("inventory uses %s: can't update with stage using %s", inv.DigestAlgorithm, stage.Alg)
 	}
 	if inv.Versions == nil {
 		inv.Versions = map[ocfl.VNum]*Version{}

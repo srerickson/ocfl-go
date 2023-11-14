@@ -12,6 +12,7 @@ import (
 	"hash"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/srerickson/ocfl-go/internal/pipeline"
 	"golang.org/x/crypto/blake2b"
@@ -20,74 +21,65 @@ import (
 
 var ErrUnknownAlg = errors.New("unknown digest algorithm")
 
-var (
-	// unspecified digest algorithm
-	NOALG = Alg{}
+const (
+	NOALG = Alg("") // unspecified digest algorithm
 
-	SHA512  = Alg{`sha512`}
-	SHA256  = Alg{`sha256`}
-	SHA1    = Alg{`sha1`}
-	MD5     = Alg{`md5`}
-	BLAKE2B = Alg{`blake2b-512`}
-
-	// Map of built-in Algs
-	DigestAlgs = map[string]Alg{
-		SHA512.name:  SHA512,
-		SHA256.name:  SHA256,
-		SHA1.name:    SHA1,
-		MD5.name:     MD5,
-		BLAKE2B.name: BLAKE2B,
-	}
+	SHA512  = Alg(`sha512`)
+	SHA256  = Alg(`sha256`)
+	SHA1    = Alg(`sha1`)
+	MD5     = Alg(`md5`)
+	BLAKE2B = Alg(`blake2b-512`)
 )
+
+var (
+	// global alg register
+	register = map[Alg]func() Digester{
+		SHA512:  func() Digester { return newHashDigester(sha512.New()) },
+		SHA256:  func() Digester { return newHashDigester(sha256.New()) },
+		SHA1:    func() Digester { return newHashDigester(sha1.New()) },
+		MD5:     func() Digester { return newHashDigester(md5.New()) },
+		BLAKE2B: func() Digester { return newHashDigester(mustBlake2bNew512()) },
+	}
+	registerMx = sync.RWMutex{}
+)
+
+// DefaultAlgs returns slice of built-in Algs.
+func DefaultAlgs() []Alg {
+	return []Alg{SHA512, SHA256, SHA1, MD5, BLAKE2B}
+}
+
+// RegisterAlg registers the Digester constructor for alg, so that alg.New() can
+// be used.
+func RegisterAlg(alg Alg, newDigester func() Digester) {
+	registerMx.Lock()
+	defer registerMx.Unlock()
+	if register[alg] != nil {
+		return
+	}
+	register[alg] = newDigester
+}
 
 // Alg is a built-in digest algorithm. The zero-value is NOALG, an un-specified
 // algorithm.
-type Alg struct {
-	name string
-}
+type Alg string
 
-// New returns a new Digester for generated digest values.
+// New returns a new Digester for generated digest values. If a Digester
+// constructor was not registered for a, nil is returne.
 func (a Alg) New() Digester {
-	switch string(a.name) {
-	case SHA512.name:
-		return newHashDigester(sha512.New())
-	case SHA256.name:
-		return newHashDigester(sha256.New())
-	case SHA1.name:
-		return newHashDigester(sha1.New())
-	case MD5.name:
-		return newHashDigester(md5.New())
-	case BLAKE2B.name:
-		h, err := blake2b.New512(nil)
-		if err != nil {
-			panic("creating new blake2b hash")
-		}
-		return newHashDigester(h)
-	default:
-		return nil
+	registerMx.RLock()
+	defer registerMx.RUnlock()
+	if newDigester := register[a]; newDigester != nil {
+		return newDigester()
 	}
+	return nil
 }
 
-func (a Alg) ID() string { return a.String() }
+// ID returns the Alg's name
+func (a Alg) ID() string { return string(a) }
 
-func (a Alg) String() string {
-	return string(a.name)
-}
-
-func (a Alg) MarshalText() ([]byte, error) {
-	if DigestAlgs[a.name] == NOALG {
-		return nil, fmt.Errorf("%q: %w", a.name, ErrUnknownAlg)
-	}
-	return []byte(a.name), nil
-}
-
-func (a *Alg) UnmarshalText(t []byte) error {
-	if match, ok := DigestAlgs[string(t)]; ok {
-		a.name = match.name
-		return nil
-	}
-	return fmt.Errorf("%q: %w", string(t), ErrUnknownAlg)
-}
+// String() implements the stringer interface for Alg. It returns the Alg's
+// name.
+func (a Alg) String() string { return string(a) }
 
 // Digester is an interface used for generating digest values.
 type Digester interface {
@@ -113,7 +105,9 @@ type MultiDigester map[Alg]Digester
 func NewMultiDigester(algs ...Alg) MultiDigester {
 	md := make(MultiDigester, len(algs))
 	for _, alg := range algs {
-		md[alg] = alg.New()
+		if digester := alg.New(); digester != nil {
+			md[alg] = digester
+		}
 	}
 	return md
 }
@@ -123,6 +117,9 @@ func (md MultiDigester) ReadFrom(r io.Reader) (int64, error) {
 	writers := make([]io.Writer, len(md))
 	i := 0
 	for _, digester := range md {
+		if digester == nil {
+			continue
+		}
 		writers[i] = digester
 		i++
 	}
@@ -223,4 +220,12 @@ func DigestFS(ctx context.Context, fsys FS, setupFunc func(addFile func(string, 
 type digestJob struct {
 	path string
 	algs []Alg
+}
+
+func mustBlake2bNew512() hash.Hash {
+	h, err := blake2b.New512(nil)
+	if err != nil {
+		panic("creating new blake2b hash")
+	}
+	return h
 }

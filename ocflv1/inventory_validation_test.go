@@ -107,6 +107,24 @@ var testInventories = []testInventory{
 			  }
 			}
 		  }`,
+	}, {
+		valid:       false,
+		description: `bad_digestAlgorithm`,
+		data: `{
+			"digestAlgorithm": "sha51",
+			"head": "v1",
+			"id": "http://example.org/minimal_no_content",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
 	},
 	{
 		valid:       false,

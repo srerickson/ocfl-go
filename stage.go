@@ -279,7 +279,7 @@ func splitDigests(set DigestSet, alg Alg) (string, DigestSet, error) {
 		newSet[setAlg] = setVal
 	}
 	if dig == "" {
-		return "", nil, fmt.Errorf("missing %s value", alg.ID())
+		return "", nil, fmt.Errorf("missing %s value", alg)
 	}
 	return dig, newSet, nil
 }
