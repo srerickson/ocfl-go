@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"encoding/json"
 	"net/url"
 	"path"
 
@@ -20,13 +21,20 @@ func NewCustomLayout() extension.Extension {
 
 // CustomLayout implements extension.Layout
 type CustomLayout struct {
-	Prefix string
+	Prefix string `json:"prefix"`
 }
 
 var _ extension.Layout = (*CustomLayout)(nil)
 
 func (l CustomLayout) Resolve(id string) (string, error) {
 	return path.Join(l.Prefix, url.QueryEscape(id)), nil
+}
+
+func (l CustomLayout) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]string{
+		"extensionName": customExtensionName,
+		"prefix":        l.Prefix,
+	})
 }
 
 func (l CustomLayout) Name() string { return customExtensionName }

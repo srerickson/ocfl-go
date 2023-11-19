@@ -2,6 +2,7 @@ package pipeline_test
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/internal/pipeline"
 )
+
+var alg = `sha256`
 
 func ExampleRun() {
 	fsys := os.DirFS(".")
@@ -35,11 +38,11 @@ func ExampleRun() {
 			return r, err
 		}
 		defer f.Close()
-		dig := ocfl.NewMultiDigester(ocfl.SHA256)
-		if _, err := dig.ReadFrom(f); err != nil {
+		dig := ocfl.NewMultiDigester(alg)
+		if _, err := io.Copy(dig, f); err != nil {
 			return r, err
 		}
-		r.sum = dig.Sums()[ocfl.SHA256]
+		r.sum = dig.Sums()[alg]
 		return r, nil
 	}
 	resultFn := func(in job, out result, err error) error {

@@ -23,14 +23,14 @@ var (
 
 // Inventory represents contents of an OCFL v1.x inventory.json file
 type Inventory struct {
-	ID               string                      `json:"id"`
-	Type             ocfl.InvType                `json:"type"`
-	DigestAlgorithm  ocfl.Alg                    `json:"digestAlgorithm"`
-	Head             ocfl.VNum                   `json:"head"`
-	ContentDirectory string                      `json:"contentDirectory,omitempty"`
-	Manifest         ocfl.DigestMap              `json:"manifest"`
-	Versions         map[ocfl.VNum]*Version      `json:"versions"`
-	Fixity           map[ocfl.Alg]ocfl.DigestMap `json:"fixity,omitempty"`
+	ID               string                    `json:"id"`
+	Type             ocfl.InvType              `json:"type"`
+	DigestAlgorithm  string                    `json:"digestAlgorithm"`
+	Head             ocfl.VNum                 `json:"head"`
+	ContentDirectory string                    `json:"contentDirectory,omitempty"`
+	Manifest         ocfl.DigestMap            `json:"manifest"`
+	Versions         map[ocfl.VNum]*Version    `json:"versions"`
+	Fixity           map[string]ocfl.DigestMap `json:"fixity,omitempty"`
 
 	digest string // inventory digest using alg
 }
@@ -101,7 +101,7 @@ func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	digester := inv.DigestAlgorithm.New()
+	digester := ocfl.NewDigester(inv.DigestAlgorithm)
 	if digester == nil {
 		return fmt.Errorf("%w: %q", ocfl.ErrUnknownAlg, inv.DigestAlgorithm)
 	}
@@ -117,7 +117,7 @@ func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs
 	// write inventory.json and sidecar
 	for _, dir := range dirs {
 		invFile := path.Join(dir, inventoryFile)
-		sideFile := invFile + "." + inv.DigestAlgorithm.ID()
+		sideFile := invFile + "." + inv.DigestAlgorithm
 		_, err = fsys.Write(ctx, invFile, bytes.NewBuffer(byt))
 		if err != nil {
 			return fmt.Errorf("write inventory failed: %w", err)
@@ -177,7 +177,7 @@ func (inv Inventory) NormalizedCopy() (*Inventory, error) {
 			}
 		}
 	}
-	newInv.Fixity = make(map[ocfl.Alg]ocfl.DigestMap, len(inv.Fixity))
+	newInv.Fixity = make(map[string]ocfl.DigestMap, len(inv.Fixity))
 	for alg, m := range inv.Fixity {
 		newInv.Fixity[alg], err = m.Normalize()
 		if err != nil {
@@ -208,7 +208,7 @@ func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *ocfl.User,
 	if inv.ContentDirectory == "" {
 		inv.ContentDirectory = contentDir
 	}
-	if inv.DigestAlgorithm == ocfl.NOALG {
+	if inv.DigestAlgorithm == "" {
 		inv.DigestAlgorithm = stage.Alg
 	}
 	if inv.DigestAlgorithm != stage.Alg {
@@ -251,7 +251,7 @@ func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *ocfl.User,
 		return err
 	}
 	// create new fixity entries and merge with existing fixity
-	newFixityDigests := map[ocfl.Alg]map[string][]string{}
+	newFixityDigests := map[string]map[string][]string{}
 	newManifestDigests.EachDigest(func(digest string, paths []string) bool {
 		for fixAlg, fixDigest := range stage.GetFixity(digest) {
 			if newFixityDigests[fixAlg] == nil {
@@ -262,7 +262,7 @@ func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *ocfl.User,
 		return true
 	})
 	if len(newFixityDigests) > 0 && inv.Fixity == nil {
-		inv.Fixity = map[ocfl.Alg]ocfl.DigestMap{}
+		inv.Fixity = map[string]ocfl.DigestMap{}
 	}
 	for fixAlg, fixMap := range newFixityDigests {
 		newFixMap, err := ocfl.NewDigestMap(fixMap)

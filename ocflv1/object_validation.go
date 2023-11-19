@@ -402,9 +402,9 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 	}
 	// digests
 	var setupErr error
-	digestSetup := func(add func(name string, algs ...ocfl.Alg) bool) {
+	digestSetup := func(add func(name string, algs ...string) bool) {
 		for name, pInfo := range vldr.ledger.paths {
-			algs := make([]ocfl.Alg, 0, len(pInfo.digests))
+			algs := make([]string, 0, len(pInfo.digests))
 			for alg := range pInfo.digests {
 				algs = append(algs, alg)
 			}

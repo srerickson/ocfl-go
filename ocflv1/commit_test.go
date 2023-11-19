@@ -22,7 +22,7 @@ func TestCommit(t *testing.T) {
 	t.Run("minimal stage", func(t *testing.T) {
 		ctx := context.Background()
 		fsys := memfs.New()
-		alg := ocfl.SHA256
+		alg := `sha256`
 		root := "object-root"
 		id := "001"
 		stage := ocfl.NewStage(alg)
@@ -33,8 +33,8 @@ func TestCommit(t *testing.T) {
 		if err := result.Err(); err != nil {
 			t.Fatal(err)
 		}
-		if alg.ID() != obj.SidecarAlg {
-			t.Fatal("expected digest to be", alg.ID())
+		if alg != obj.SidecarAlg {
+			t.Fatal("expected digest to be", alg)
 		}
 		if obj.Path != root {
 			t.Fatal("expected object path to be", root)
@@ -54,7 +54,7 @@ func TestCommit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		alg := ocfl.SHA256
+		alg := `sha256`
 		root := "object-root"
 		id := "001"
 		stage := ocfl.NewStage(alg)
@@ -203,7 +203,7 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 		}
 	})
 	t.Run("invalid-alg", func(t *testing.T) {
-		alg := ocfl.SHA256
+		alg := `sha256`
 		if originalAlg == ocfl.SHA256 {
 			alg = ocfl.SHA512
 		}
@@ -226,7 +226,7 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 		}
 		stage := ocfl.NewStage(originalAlg)
 		stage.State = originalState.DigestMap
-		if err := stage.AddFS(ctx, newContentFS, ".", ocfl.MD5); err != nil {
+		if err := stage.AddFS(ctx, newContentFS, ".", "md5"); err != nil {
 			t.Fatal(err)
 		}
 		if err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, stage); err != nil {
