@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"io"
 	"path/filepath"
 	"testing"
 
@@ -19,7 +20,7 @@ import (
 )
 
 func TestDigestAlg(t *testing.T) {
-	for _, alg := range ocfl.DefaultAlgs() {
+	for _, alg := range ocfl.RegisteredAlgs() {
 		if _, err := testAlg(alg, []byte("test data")); err != nil {
 			t.Error(err)
 		}
@@ -27,13 +28,12 @@ func TestDigestAlg(t *testing.T) {
 }
 
 func TestDigester(t *testing.T) {
-	testDigester := func(t *testing.T, algs []ocfl.Alg) {
+	testDigester := func(t *testing.T, algs []string) {
 		data := []byte("content")
 		t.Helper()
 		dig := ocfl.NewMultiDigester(algs...)
 		// readfrom
-		_, err := dig.ReadFrom(bytes.NewReader(data))
-		if err != nil {
+		if _, err := io.Copy(dig, bytes.NewReader(data)); err != nil {
 			t.Fatal(err)
 		}
 		result := dig.Sums()
@@ -42,12 +42,13 @@ func TestDigester(t *testing.T) {
 		}
 		expect := ocfl.DigestSet{}
 		for alg := range result {
+			var err error
 			expect[alg], err = testAlg(alg, data)
 			if err != nil {
 				t.Error(err)
 			}
 			if expect[alg] != result[alg] {
-				t.Errorf("ReadFrom() has unexpected result for %s: got=%q, expect=%q", alg, dig[alg], expect[alg])
+				t.Errorf("ReadFrom() has unexpected result for %s: got=%q, expect=%q", alg, dig.Sum(alg), expect[alg])
 			}
 		}
 		if err := result.Validate(bytes.NewReader(data)); err != nil {
@@ -55,7 +56,7 @@ func TestDigester(t *testing.T) {
 		}
 		// add invalid entry
 		result[ocfl.SHA1] = "invalid"
-		err = result.Validate(bytes.NewReader(data))
+		err := result.Validate(bytes.NewReader(data))
 		if err == nil {
 			t.Error("Validate() didn't return an error for an invalid DigestSet")
 		}
@@ -74,14 +75,14 @@ func TestDigester(t *testing.T) {
 		testDigester(t, nil)
 	})
 	t.Run("1 alg", func(t *testing.T) {
-		testDigester(t, []ocfl.Alg{ocfl.MD5})
+		testDigester(t, []string{ocfl.MD5})
 	})
 	t.Run("2 algs", func(t *testing.T) {
-		testDigester(t, []ocfl.Alg{ocfl.MD5, ocfl.BLAKE2B})
+		testDigester(t, []string{ocfl.MD5, ocfl.BLAKE2B})
 	})
 }
 
-func testAlg(alg ocfl.Alg, val []byte) (string, error) {
+func testAlg(alg string, val []byte) (string, error) {
 	var h hash.Hash
 	switch alg {
 	case ocfl.SHA512:
@@ -95,7 +96,7 @@ func testAlg(alg ocfl.Alg, val []byte) (string, error) {
 	case ocfl.BLAKE2B:
 		h, _ = blake2b.New512(nil)
 	}
-	d := alg.New()
+	d := ocfl.NewDigester(alg)
 	d.Write(val)
 	h.Write(val)
 	exp := hex.EncodeToString(h.Sum(nil))
@@ -112,9 +113,9 @@ func TestDigestFS(t *testing.T) {
 	}
 	fsys := ocfl.DirFS(filepath.Join("testdata", "content-fixture"))
 	ctx := context.Background()
-	algsMD5SHA1 := []ocfl.Alg{ocfl.MD5, ocfl.SHA1}
+	algsMD5SHA1 := []string{ocfl.MD5, ocfl.SHA1}
 	t.Run("minimal", func(t *testing.T) {
-		setup := func(add func(name string, algs ...ocfl.Alg) bool) {
+		setup := func(add func(name string, algs ...string) bool) {
 		}
 		cb := func(name string, results ocfl.DigestSet, err error) error {
 			return err
@@ -124,7 +125,7 @@ func TestDigestFS(t *testing.T) {
 		}
 	})
 	t.Run("callback err", func(t *testing.T) {
-		setup := func(add func(name string, algs ...ocfl.Alg) bool) {
+		setup := func(add func(name string, algs ...string) bool) {
 			add(filepath.Join("missingfile"))
 		}
 		cb := func(name string, results ocfl.DigestSet, err error) error {
@@ -135,7 +136,7 @@ func TestDigestFS(t *testing.T) {
 		}
 	})
 	t.Run("minimal, one existing file, md5", func(t *testing.T) {
-		setup := func(add func(name string, algs ...ocfl.Alg) bool) {
+		setup := func(add func(name string, algs ...string) bool) {
 			add("hello.csv", ocfl.MD5)
 		}
 		cb := func(name string, results ocfl.DigestSet, err error) error {
@@ -152,7 +153,7 @@ func TestDigestFS(t *testing.T) {
 		}
 	})
 	t.Run("minimal, one existing file, md5,sha1", func(t *testing.T) {
-		setup := func(add func(name string, algs ...ocfl.Alg) bool) {
+		setup := func(add func(name string, algs ...string) bool) {
 			add("hello.csv", algsMD5SHA1...)
 		}
 		cb := func(name string, results ocfl.DigestSet, err error) error {
@@ -175,7 +176,7 @@ func TestDigestFS(t *testing.T) {
 		}
 	})
 	t.Run("minimal, one existing file, no algs", func(t *testing.T) {
-		setup := func(add func(name string, algs ...ocfl.Alg) bool) {
+		setup := func(add func(name string, algs ...string) bool) {
 			add("hello.csv")
 		}
 		cb := func(name string, results ocfl.DigestSet, err error) error {
@@ -192,7 +193,7 @@ func TestDigestFS(t *testing.T) {
 		}
 	})
 	t.Run("minimal, non-existing file, no algs", func(t *testing.T) {
-		setup := func(add func(name string, algs ...ocfl.Alg) bool) {
+		setup := func(add func(name string, algs ...string) bool) {
 			add("missingfile")
 		}
 		cb := func(name string, results ocfl.DigestSet, err error) error {
@@ -203,7 +204,7 @@ func TestDigestFS(t *testing.T) {
 		}
 	})
 	t.Run("minimal, non-existing file, md5", func(t *testing.T) {
-		setup := func(add func(name string, algs ...ocfl.Alg) bool) {
+		setup := func(add func(name string, algs ...string) bool) {
 			add("missingfile.txt", ocfl.MD5)
 		}
 		cb := func(name string, results ocfl.DigestSet, err error) error {

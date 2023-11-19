@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"sort"
@@ -27,7 +28,7 @@ type Stage struct {
 	State DigestMap // StageState
 	FS              // FS for adding new content to the stage
 	Root  string    // base directory for all content
-	Alg   Alg       // Primary digest algorith (sha512 or sha256)
+	Alg   string    // Primary digest algorith (sha512 or sha256)
 
 	manifest stageManifest
 }
@@ -37,7 +38,7 @@ type Stage struct {
 // algorithm should match the object's. The new stage has an empty state and
 // manifest and no backing FS. To add new content to the stage use AddFS or
 // SetFS.
-func NewStage(alg Alg) *Stage {
+func NewStage(alg string) *Stage {
 	return &Stage{
 		Alg:      alg,
 		manifest: map[string]stageEntry{},
@@ -58,14 +59,14 @@ func (stage *Stage) SetFS(fsys FS, dir string) {
 // the stage's digest algorithm and optional fixity algorithms. Each file
 // is added to the stage using UnsafeAddPath with file's path relative to the root
 // directory and the calculated digest.
-func (stage *Stage) AddFS(ctx context.Context, fsys FS, root string, fixity ...Alg) error {
+func (stage *Stage) AddFS(ctx context.Context, fsys FS, root string, fixity ...string) error {
 	stage.SetFS(fsys, root)
 	if err := stage.checkFSConfig(); err != nil {
 		return err
 	}
-	algs := append([]Alg{stage.Alg}, fixity...)
+	algs := append([]string{stage.Alg}, fixity...)
 	var walkErr error
-	walkFS := func(addfn func(name string, algs ...Alg) bool) {
+	walkFS := func(addfn func(name string, algs ...string) bool) {
 		eachFileFn := func(name string) error {
 			addfn(name, algs...)
 			return nil
@@ -94,7 +95,7 @@ func (stage *Stage) AddFS(ctx context.Context, fsys FS, root string, fixity ...A
 // The path name and the associated digest are added to both the stage state and
 // its manifest. The file is digested using the stage's primary digest algorith
 // and any additional algorithms given by 'fixity'.
-func (stage *Stage) AddPath(ctx context.Context, name string, fixity ...Alg) error {
+func (stage *Stage) AddPath(ctx context.Context, name string, fixity ...string) error {
 	if err := stage.checkFSConfig(); err != nil {
 		return err
 	}
@@ -105,7 +106,7 @@ func (stage *Stage) AddPath(ctx context.Context, name string, fixity ...Alg) err
 	}
 	defer f.Close()
 	digester := NewMultiDigester(append(fixity, stage.Alg)...)
-	if _, err := digester.ReadFrom(f); err != nil {
+	if _, err := io.Copy(digester, f); err != nil {
 		return fmt.Errorf("during digest of '%s': %w", fullName, err)
 	}
 	return stage.UnsafeAddPath(name, digester.Sums())
@@ -188,7 +189,7 @@ func (stage *Stage) UnsafeAddPathAs(content string, logical string, digests Dige
 
 // UnsafeSetManifestFixty replaces the stage's existing content paths and fixity
 // values to match manifest and fixity.
-func (stage *Stage) UnsafeSetManifestFixty(manifest DigestMap, fixity map[Alg]DigestMap) error {
+func (stage *Stage) UnsafeSetManifestFixty(manifest DigestMap, fixity map[string]DigestMap) error {
 	newContents := stageManifest{}
 	var err error
 	manifest.EachPath(func(name, dig string) bool {
@@ -268,7 +269,7 @@ func (entry *stageEntry) addFixity(fixity DigestSet) {
 	}
 }
 
-func splitDigests(set DigestSet, alg Alg) (string, DigestSet, error) {
+func splitDigests(set DigestSet, alg string) (string, DigestSet, error) {
 	newSet := DigestSet{}
 	dig := ""
 	for setAlg, setVal := range set {

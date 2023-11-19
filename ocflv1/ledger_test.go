@@ -8,9 +8,10 @@ import (
 )
 
 func TestLedger(t *testing.T) {
+	alg := "sha512"
 	var ledg pathLedger
 	is := is.New(t)
-	err := ledg.addPathDigest("tmp.txt", ocfl.SHA512, "abdc", ocfl.V(1), inFixity|inRootInv)
+	err := ledg.addPathDigest("tmp.txt", alg, "abdc", ocfl.V(1), inFixity|inRootInv)
 	is.NoErr(err)
 	info, exists := ledg.paths["tmp.txt"]
 	is.True(exists)
@@ -21,7 +22,7 @@ func TestLedger(t *testing.T) {
 	is.True(!info.referencedIn(ocfl.V(1), inVerInv))
 	is.True(!info.referencedIn(ocfl.V(1), inManifest))
 	is.True(!info.referencedIn(ocfl.V(1), inManifest|inVerInv))
-	dInfo, exists := info.digests[ocfl.SHA512]
+	dInfo, exists := info.digests[alg]
 	is.True(exists)
 	dInfo.digest = "abdc"
 	is.True(dInfo.locs[ocfl.V(1)].InFixity())

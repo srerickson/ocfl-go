@@ -195,7 +195,7 @@ func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, vops ...V
 		return nil, invResult
 	}
 	ocflV = inv.Type.Spec
-	side := name + "." + inv.DigestAlgorithm.ID()
+	side := name + "." + inv.DigestAlgorithm
 	expSum, err := readInventorySidecar(ctx, fsys, side)
 	if err != nil {
 		if errors.Is(err, ErrInvSidecarContents) {
@@ -255,9 +255,12 @@ func readDigestInventory(ctx context.Context, reader io.Reader, inv *decodeInven
 	if err := json.Unmarshal(byt, inv); err != nil {
 		return "", err
 	}
-	digester := inv.DigestAlgorithm.New()
+	if inv.DigestAlgorithm == nil {
+		return "", errors.New("missing digest algorithm")
+	}
+	digester := ocfl.NewDigester(*inv.DigestAlgorithm)
 	if digester == nil {
-		return "", fmt.Errorf("%w: %q", ocfl.ErrUnknownAlg, inv.DigestAlgorithm)
+		return "", fmt.Errorf("%w: %q", ocfl.ErrUnknownAlg, *inv.DigestAlgorithm)
 	}
 	if _, err := io.Copy(digester, bytes.NewReader(byt)); err != nil {
 		return "", err

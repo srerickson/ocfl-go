@@ -22,7 +22,7 @@ const (
 type ObjectState struct {
 	DigestMap           // digests / logical paths
 	Manifest  DigestMap // digests / content paths
-	Alg       Alg       // algorith used for digests
+	Alg       string    // algorith used for digests
 	User      *User     // user who created object state
 	Created   time.Time // object state created at
 	Message   string    // message associated with object state

@@ -19,7 +19,7 @@ import (
 type decodeInventory struct {
 	ID               *string                `json:"id"`
 	Type             *ocfl.InvType          `json:"type"`
-	DigestAlgorithm  *ocfl.Alg              `json:"digestAlgorithm"`
+	DigestAlgorithm  *string                `json:"digestAlgorithm"`
 	Head             *ocfl.VNum             `json:"head"`
 	ContentDirectory *string                `json:"contentDirectory,omitempty"`
 	Manifest         *manifest              `json:"manifest"`
@@ -207,10 +207,10 @@ func (m *manifest) UnmarshalJSON(b []byte) error {
 }
 
 // fixity is an internal type that implements json.Unmarshaler
-type fixity map[ocfl.Alg]ocfl.DigestMap
+type fixity map[string]ocfl.DigestMap
 
 func (f *fixity) UnmarshalJSON(b []byte) error {
-	var newF map[ocfl.Alg]ocfl.DigestMap
+	var newF map[string]ocfl.DigestMap
 	err := json.Unmarshal(b, &newF)
 	if err != nil {
 		return &InvDecodeError{Field: `fixity`, error: err}
