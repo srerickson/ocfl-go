@@ -37,4 +37,4 @@ Here is a high-level overview of what's working and what's not:
 
 ## Development
 
-Requires go >= 1.20.
+Requires go >= 1.21.
