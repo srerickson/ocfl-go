@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"log/slog"
 
 	"github.com/srerickson/ocfl-go"
-	"golang.org/x/exp/slog"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -39,13 +39,13 @@ func copy(ctx context.Context, dstFS ocfl.WriteFS, dst string, srcFS ocfl.FS, sr
 	}
 	if logger != nil {
 		logger = logger.With("mode", xferMode, "src", src, "dst", dst)
-		logger.DebugCtx(ctx, "starting file transfer")
+		logger.DebugContext(ctx, "starting file transfer")
 		defer func() {
 			if err != nil {
-				logger.ErrorCtx(ctx, "file transfer failed", "err", err.Error())
+				logger.ErrorContext(ctx, "file transfer failed", "err", err.Error())
 				return
 			}
-			logger.DebugCtx(ctx, "file transfer complete")
+			logger.DebugContext(ctx, "file transfer complete")
 		}()
 	}
 	if xferMode == modeCopy {

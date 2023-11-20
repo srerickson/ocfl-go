@@ -1,10 +1,11 @@
 package ocflv1
 
 import (
+	"log/slog"
+
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/logging"
 	"github.com/srerickson/ocfl-go/validation"
-	"golang.org/x/exp/slog"
 )
 
 type validationOptions struct {

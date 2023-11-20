@@ -5,12 +5,12 @@ import (
 	"errors"
 	"flag"
 	"io/fs"
+	"log/slog"
 	"os"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/local"
 	"github.com/srerickson/ocfl-go/ocflv1"
-	"golang.org/x/exp/slog"
 )
 
 var (

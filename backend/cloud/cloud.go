@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"path"
 	"strings"
 
@@ -13,7 +14,6 @@ import (
 	"github.com/srerickson/ocfl-go/internal/walkdirs"
 	"gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
-	"golang.org/x/exp/slog"
 )
 
 var ErrNotDir = fmt.Errorf("not a directory")
@@ -426,5 +426,5 @@ func (fsys *FS) debugLog(ctx context.Context, method string, args ...any) {
 	if fsys.log == nil {
 		return
 	}
-	fsys.log.DebugCtx(ctx, method, args...)
+	fsys.log.DebugContext(ctx, method, args...)
 }

@@ -4,11 +4,11 @@ package main
 import (
 	"context"
 	"flag"
+	"log/slog"
 	"os"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/ocflv1"
-	"golang.org/x/exp/slog"
 )
 
 var (

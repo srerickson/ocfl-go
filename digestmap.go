@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
 
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 )
 
 // DigestMap is a data structure for digest/path mapping used in OCFL inventory

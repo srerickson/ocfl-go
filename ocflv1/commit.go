@@ -5,15 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/internal/xfer"
 	"github.com/srerickson/ocfl-go/logging"
-	"golang.org/x/exp/slices"
-	"golang.org/x/exp/slog"
 )
 
 // Commit creates or updates the OCFL v1.x object objectID at objPath using the
@@ -44,7 +44,7 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string
 	// Handle existing object: new inventory is based on normalized copy of
 	// the existing inventory.
 	if objErr == nil {
-		opts.logger.DebugCtx(ctx, "updating an existing object")
+		opts.logger.DebugContext(ctx, "updating an existing object")
 
 		if foundID := existing.Inventory.ID; foundID != objID {
 			err = fmt.Errorf("object at %q has id %q, not the id given to commit: %q", objPath, foundID, objID)
@@ -72,7 +72,7 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string
 	// new object, the object path must not exist. The only acceptable error
 	// here is ErrNotExist for the object path.
 	if objErr != nil {
-		opts.logger.DebugCtx(ctx, "commiting new object")
+		opts.logger.DebugContext(ctx, "commiting new object")
 
 		var pathErr *fs.PathError
 		if errors.Is(objErr, fs.ErrNotExist) && errors.As(objErr, &pathErr) && pathErr.Path == objPath {
@@ -149,7 +149,7 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string
 
 	// Mutate object: new object declaration if necessary
 	if existing == nil {
-		opts.logger.DebugCtx(ctx, "initializing new OCFL object")
+		opts.logger.DebugContext(ctx, "initializing new OCFL object")
 		decl := ocfl.Declaration{Type: ocfl.DeclObject, Version: newInv.Type.Spec}
 		if err = ocfl.WriteDeclaration(ctx, fsys, objPath, decl); err != nil {
 			return &CommitError{Err: err, Dirty: true}
@@ -164,7 +164,7 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string
 		}
 	}
 
-	opts.logger.DebugCtx(ctx, "writing inventories for new object version")
+	opts.logger.DebugContext(ctx, "writing inventories for new object version")
 
 	// Mutate object: write inventory to both object root and version directory
 	newVDir := path.Join(objPath, newInv.Head.String())
