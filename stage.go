@@ -7,10 +7,9 @@ import (
 	"io"
 	"io/fs"
 	"path"
+	"slices"
 	"sort"
 	"strings"
-
-	"golang.org/x/exp/slices"
 )
 
 var (

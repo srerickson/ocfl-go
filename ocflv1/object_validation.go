@@ -329,7 +329,7 @@ func (vldr *objectValidator) validateExtensionsDir(ctx context.Context) error {
 	extDir := path.Join(vldr.Root, extensionsDir)
 	items, err := vldr.FS.ReadDir(ctx, extDir)
 	if lgr != nil {
-		lgr = lgr.With(extensionsDir)
+		lgr = lgr.With("dir", extensionsDir)
 	}
 	ocflV := vldr.root.Spec
 	if err != nil {

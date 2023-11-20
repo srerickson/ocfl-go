@@ -1,9 +1,8 @@
 package validation
 
 import (
+	"log/slog"
 	"sync"
-
-	"golang.org/x/exp/slog"
 )
 
 const (

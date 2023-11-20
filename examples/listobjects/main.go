@@ -18,7 +18,8 @@ import (
 
 	// FIXME -- this import appears to be broken?
 	// _ "gocloud.dev/blob/azureblob"
-	"golang.org/x/exp/slog"
+	"log/slog"
+
 	"golang.org/x/sync/errgroup"
 )
 

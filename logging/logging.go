@@ -2,9 +2,8 @@ package logging
 
 import (
 	"context"
+	"log/slog"
 	"os"
-
-	"golang.org/x/exp/slog"
 )
 
 var (

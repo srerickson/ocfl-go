@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,7 +18,6 @@ import (
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/fileblob"
 	"gocloud.dev/blob/memblob"
-	"golang.org/x/exp/slog"
 )
 
 var _ ocfl.ObjectRootIterator = (*cloud.FS)(nil)
