@@ -116,13 +116,16 @@ func (stage *Stage) AddPath(ctx context.Context, name string, fixity ...string) 
 // checked when they are added to the stage, it's possible for the manifest to
 // be invalid, which is why this method can return an error.
 func (stage Stage) Manifest() (DigestMap, error) {
-	manifest := map[string][]string{}
+	manifest := DigestMap{}
 	for _, digest := range stage.State.Digests() {
 		if cont := stage.GetContent(digest); len(cont) > 0 {
 			manifest[digest] = cont
 		}
 	}
-	return NewDigestMap(manifest)
+	if err := manifest.Valid(); err != nil {
+		return nil, err
+	}
+	return manifest, nil
 }
 
 // GetContent returns the staged content paths for the given
@@ -165,10 +168,7 @@ func (stage *Stage) UnsafeAddPathAs(content string, logical string, digests Dige
 		return err
 	}
 	if logical != "" {
-		newFile, err := NewDigestMap(map[string][]string{dig: {logical}})
-		if err != nil {
-			return err
-		}
+		newFile := DigestMap{dig: {logical}}
 		merged, err := stage.State.Merge(newFile, true)
 		if err != nil {
 			return err

@@ -194,7 +194,7 @@ func (state *ObjectStateFS) buildIndex() (err error) {
 		state.index = pathtree.NewDir[string]()
 
 		state.DigestMap.EachPath(func(name, dig string) bool {
-			realPaths := state.Manifest.DigestPaths(dig)
+			realPaths := state.Manifest[dig]
 			if len(realPaths) == 0 {
 				err = fmt.Errorf("missing content paths for digest '%s'", name)
 				return false

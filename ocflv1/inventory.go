@@ -75,7 +75,7 @@ func (inv Inventory) ContentPath(v int, logical string) (string, error) {
 	if sum == "" {
 		return "", fmt.Errorf("no path: %s", logical)
 	}
-	paths := inv.Manifest.DigestPaths(sum)
+	paths := inv.Manifest[sum]
 	if len(paths) == 0 {
 		return "", fmt.Errorf("missing manifest entry for: %s", sum)
 	}
@@ -189,11 +189,11 @@ func (inv Inventory) NormalizedCopy() (*Inventory, error) {
 
 // AddVersion builds a new version and updates the inventory using state and
 // manifest from the provided stage. The new version will have have the given
-// message, user, and created timestamp. The optional function pathfn is used to
-// customize content paths for new manifest entries. The inventory's head is
-// incremented or an error is returned if the version scheme doesn't allow
-// additional version.
-func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *ocfl.User, created time.Time, contentMap ocfl.RemapFunc) (err error) {
+// message, user, and created timestamp. The optional function contentPathFn is
+// used to customize content paths for new manifest entries. The inventory's
+// head is incremented or an error is returned if the version scheme doesn't
+// allow additional version.
+func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *ocfl.User, created time.Time, contentPathFn ocfl.RemapFunc) (err error) {
 	nextHead, err := inv.Head.Next()
 	if err != nil {
 		return fmt.Errorf("inventory's version scheme doesn't allow additional versions: %w", err)
@@ -217,22 +217,27 @@ func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *ocfl.User,
 	if inv.Versions == nil {
 		inv.Versions = map[ocfl.VNum]*Version{}
 	}
-	inv.Versions[inv.Head] = &Version{
+	newVersion := &Version{
 		State:   stage.State,
 		Message: msg,
 		Created: created,
 		User:    user,
 	}
-	// newContentRemap is applied to the stage state to generate a DigestMap
+	if newVersion.State == nil {
+		newVersion.State = ocfl.DigestMap{}
+	}
+	inv.Versions[inv.Head] = newVersion
+
+	// newContentFunc is applied to the stage state to generate a DigestMap
 	// with new manifest/fixity entries
-	newContentRemap := func(digest string, paths []string) []string {
-		// if digest is in existing manifest, ignore this digest
-		if inv.Manifest.HasDigest(digest) {
+	newContentFunc := func(digest string, paths []string) []string {
+		// ignore digests in the existing manifest
+		if len(inv.Manifest[digest]) > 0 {
 			return nil
 		}
 		// apply user-specified path transform first
-		if contentMap != nil {
-			paths = contentMap(digest, paths)
+		if contentPathFn != nil {
+			paths = contentPathFn(digest, paths)
 		}
 		// prefix paths with "{vnum}/content"
 		for i, p := range paths {
@@ -242,7 +247,7 @@ func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *ocfl.User,
 		return paths
 	}
 	// create new manifest entries and merge with existing manifest
-	newManifestDigests, err := stage.State.Remap(newContentRemap)
+	newManifestDigests, err := stage.State.Remap(newContentFunc)
 	if err != nil {
 		return err
 	}
@@ -251,25 +256,23 @@ func (inv *Inventory) AddVersion(stage *ocfl.Stage, msg string, user *ocfl.User,
 		return err
 	}
 	// create new fixity entries and merge with existing fixity
-	newFixityDigests := map[string]map[string][]string{}
-	newManifestDigests.EachDigest(func(digest string, paths []string) bool {
+	newFixityDigests := map[string]ocfl.DigestMap{}
+	for digest, paths := range newManifestDigests {
 		for fixAlg, fixDigest := range stage.GetFixity(digest) {
 			if newFixityDigests[fixAlg] == nil {
-				newFixityDigests[fixAlg] = map[string][]string{}
+				newFixityDigests[fixAlg] = ocfl.DigestMap{}
 			}
 			newFixityDigests[fixAlg][fixDigest] = paths
 		}
-		return true
-	})
+	}
 	if len(newFixityDigests) > 0 && inv.Fixity == nil {
 		inv.Fixity = map[string]ocfl.DigestMap{}
 	}
 	for fixAlg, fixMap := range newFixityDigests {
-		newFixMap, err := ocfl.NewDigestMap(fixMap)
-		if err != nil {
+		if err := fixMap.Valid(); err != nil {
 			return err
 		}
-		inv.Fixity[fixAlg], err = inv.Fixity[fixAlg].Merge(newFixMap, false)
+		inv.Fixity[fixAlg], err = inv.Fixity[fixAlg].Merge(fixMap, false)
 		if err != nil {
 			return err
 		}

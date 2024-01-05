@@ -511,8 +511,8 @@ func sameObjectVersionState(stateA, stateB *ocfl.ObjectState) bool {
 		if otherDigest == "" {
 			return false
 		}
-		contentPaths := stateA.Manifest.DigestPaths(d)
-		otherPaths := stateB.Manifest.DigestPaths(otherDigest)
+		contentPaths := stateA.Manifest[d]
+		otherPaths := stateB.Manifest[otherDigest]
 		if len(contentPaths) != len(otherPaths) {
 			return false
 		}

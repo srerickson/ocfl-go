@@ -257,7 +257,7 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 			if _, ok := newContent[name]; !ok {
 				continue
 			}
-			for _, p := range updatedState.Manifest.DigestPaths(dig) {
+			for _, p := range updatedState.Manifest[dig] {
 				if md5fixity.GetDigest(p) == "" {
 					t.Fatal("missing path in updated fixity", name)
 				}
