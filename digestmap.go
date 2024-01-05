@@ -1,7 +1,6 @@
 package ocfl
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"path"
@@ -13,31 +12,13 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-// DigestMap is a data structure for digest/path mapping used in OCFL inventory
-// manifests, version states, and fixity. DigestMaps are immutable.
-type DigestMap struct {
-	digests map[string][]string // digest -> []paths
-}
+// DigestMap maps digests to file paths.
+type DigestMap map[string][]string
 
-// NewDigestMap returns a NewDigestMap. The validity of the digests values is
-// not checked, so the resulting DigestMap may be invalid.
-func NewDigestMap(digests map[string][]string) (DigestMap, error) {
-	m := DigestMap{digests: digests}
-	if err := m.Valid(); err != nil {
-		return DigestMap{}, err
-	}
-	return m, nil
-}
-
-// LenDigests returns the number of digests in the DigestMap
-func (m DigestMap) LenDigests() int {
-	return len(m.digests)
-}
-
-// Lenpaths returns the number of paths in the DigestMap
-func (m DigestMap) LenPaths() int {
+// NumPaths returns the number of paths in the m
+func (m DigestMap) NumPaths() int {
 	var l int
-	for _, paths := range m.digests {
+	for _, paths := range m {
 		l += len(paths)
 	}
 	return l
@@ -46,9 +27,9 @@ func (m DigestMap) LenPaths() int {
 // Digests returns a slice of the digest values in the DigestMap. Digest strings
 // are not normalized; they may be uppercase, lowercase, or mixed.
 func (m DigestMap) Digests() []string {
-	ret := make([]string, len(m.digests))
+	ret := make([]string, len(m))
 	i := 0
-	for d := range m.digests {
+	for d := range m {
 		ret[i] = d
 		i++
 	}
@@ -57,8 +38,8 @@ func (m DigestMap) Digests() []string {
 
 // Paths returns a sorted slice of all path names in the DigestMap.
 func (m DigestMap) Paths() []string {
-	pths := make([]string, 0, m.LenPaths())
-	for _, paths := range m.digests {
+	pths := make([]string, 0, m.NumPaths())
+	for _, paths := range m {
 		pths = append(pths, paths...)
 	}
 	sort.Strings(pths)
@@ -68,9 +49,9 @@ func (m DigestMap) Paths() []string {
 // PathMap returns the DigestMap's contents as a map with path names for keys
 // and digests for values. PathMap doesn't check if the same path appears
 // twice in the DigestMap.
-func (m DigestMap) PathMap() map[string]string {
-	paths := make(map[string]string, m.LenPaths())
-	for d, ps := range m.digests {
+func (m DigestMap) PathMap() PathMap {
+	paths := make(PathMap, m.NumPaths())
+	for d, ps := range m {
 		for _, p := range ps {
 			paths[p] = d
 		}
@@ -80,9 +61,9 @@ func (m DigestMap) PathMap() map[string]string {
 
 // PathMapValid is like PathMap, except it returns an error if it encounters
 // invalid path names or if the same path appears multiple times.
-func (m DigestMap) PathMapValid() (map[string]string, error) {
-	paths := make(map[string]string, m.LenPaths())
-	for d, ps := range m.digests {
+func (m DigestMap) PathMapValid() (PathMap, error) {
+	paths := make(PathMap, m.NumPaths())
+	for d, ps := range m {
 		for _, p := range ps {
 			if !validPath(p) {
 				return nil, &MapPathInvalidErr{p}
@@ -96,36 +77,21 @@ func (m DigestMap) PathMapValid() (map[string]string, error) {
 	return paths, nil
 }
 
-// HasDigest returns true if d is present in the DigestMap. The digest
-// is not normalized, so uppercase and lowercase versions of the
-// same digest will not count as equivalent.
-func (m DigestMap) HasDigest(dig string) bool {
-	return len(m.digests[dig]) > 0
-}
-
-// DigestPaths returns the slice of paths associated with digest dig
-func (m DigestMap) DigestPaths(dig string) []string {
-	return slices.Clone(m.digests[dig])
-}
-
 // GetDigest returns the digest for path p or an empty string if the digest is
-// not present.ß
+// not present.
 func (m DigestMap) GetDigest(p string) string {
-	var found string
-	m.EachPath(func(pth, dig string) bool {
-		if pth == p {
-			found = dig
-			return false
+	for d, pths := range m {
+		if slices.Contains(pths, p) {
+			return d
 		}
-		return true
-	})
-	return found
+	}
+	return ""
 }
 
 // EachPath calls fn for each path in the Map. If fn returns false, iteration
 // stops and EachPath returns false.
 func (m DigestMap) EachPath(fn func(pth, digest string) bool) bool {
-	for d, paths := range m.digests {
+	for d, paths := range m {
 		for _, p := range paths {
 			if !fn(p, d) {
 				return false
@@ -135,41 +101,23 @@ func (m DigestMap) EachPath(fn func(pth, digest string) bool) bool {
 	return true
 }
 
-// Each calls fn for each digest in m.  If fn returns false, iteration stops and
-// EachPath returns false.
-func (m DigestMap) EachDigest(fn func(digest string, paths []string) bool) bool {
-	for d, paths := range m.digests {
-		if !fn(d, slices.Clone(paths)) {
-			return false
-		}
-	}
-	return true
-}
-
-// HasUpperCaseDigest returns true if m includes digest values
-// with uppercase characters.
-func (m DigestMap) HasUppercaseDigest() bool {
-	for digest := range m.digests {
+// HasDigestCase returns two booleans indicating whether m's digests use
+// lowercase and uppercase characters.
+func (m DigestMap) HasDigestCase() (hasLower bool, hasUpper bool) {
+	for digest := range m {
 		for _, r := range digest {
-			if unicode.IsUpper(r) {
-				return true
+			switch {
+			case unicode.IsLower(r):
+				hasLower = true
+			case unicode.IsUpper(r):
+				hasUpper = true
+			}
+			if hasLower && hasUpper {
+				return
 			}
 		}
 	}
-	return false
-}
-
-// HasLowercaseDigest returns true if m includes a digest value
-// with lowercase characters.
-func (m DigestMap) HasLowercaseDigest() bool {
-	for digest := range m.digests {
-		for _, r := range digest {
-			if unicode.IsLower(r) {
-				return true
-			}
-		}
-	}
-	return false
+	return
 }
 
 // Eq returns true if m and the other have the same content: they have the
@@ -177,27 +125,21 @@ func (m DigestMap) HasLowercaseDigest() bool {
 // map has a digest conflict (same digest appears twice with different case), Eq
 // returns false.
 func (m DigestMap) Eq(other DigestMap) bool {
-	mlen := len(m.digests)
-	if mlen != len(other.digests) {
+	if len(m) != len(other) {
 		return false
 	}
-	if mlen == 0 {
+	if len(m) == 0 {
 		return true
 	}
-	var err error
-	m, err = m.Normalize()
+	otherNorm, err := other.Normalize()
 	if err != nil {
 		return false
 	}
-	other, err = other.Normalize()
-	if err != nil {
-		return false
-	}
-	for dig, paths := range m.digests {
+	for dig, paths := range m {
 		if len(paths) == 0 {
 			return false
 		}
-		otherPaths := other.digests[dig]
+		otherPaths := otherNorm[normalizeDigest(dig)]
 		if len(paths) != len(otherPaths) {
 			return false
 		}
@@ -210,20 +152,17 @@ func (m DigestMap) Eq(other DigestMap) bool {
 	return true
 }
 
-// Normalize returns a normalized version on m (with lowercase digests). An
+// Normalize returns a normalized copy on m (with lowercase digests). An
 // error is returned if m has a digest conflict.
 func (m DigestMap) Normalize() (norm DigestMap, err error) {
-	if !m.HasUppercaseDigest() {
-		return m, nil
-	}
-	norm.digests = make(map[string][]string, len(m.digests))
-	for digest, paths := range m.digests {
+	norm = make(DigestMap, len(m))
+	for digest, paths := range m {
 		normDig := normalizeDigest(digest)
-		if _, exists := norm.digests[normDig]; exists {
+		if _, exists := norm[normDig]; exists {
 			err = &MapDigestConflictErr{Digest: normDig}
 			return
 		}
-		norm.digests[normDig] = paths
+		norm[normDig] = slices.Clone(paths)
 	}
 	return
 }
@@ -235,7 +174,7 @@ func (m DigestMap) Normalize() (norm DigestMap, err error) {
 // DigestMap. If the transformation functions result in an invalid DigestMap, an
 // error is returned.
 func (m DigestMap) Remap(fns ...RemapFunc) (DigestMap, error) {
-	digests := maps.Clone(m.digests)
+	digests := maps.Clone(m)
 	for _, fn := range fns {
 		for digest, origPaths := range digests {
 			// don't pass m's internal path slice to the function
@@ -247,7 +186,7 @@ func (m DigestMap) Remap(fns ...RemapFunc) (DigestMap, error) {
 			digests[digest] = newPaths
 		}
 	}
-	newMap := DigestMap{digests: digests}
+	newMap := DigestMap(digests)
 	if err := newMap.Valid(); err != nil {
 		return DigestMap{}, err
 	}
@@ -255,84 +194,62 @@ func (m DigestMap) Remap(fns ...RemapFunc) (DigestMap, error) {
 }
 
 // Merge returns a new DigestMap constructed by normalizing and merging m1 and
-// m2. If a paths has different digests in m1 and m2, the value from m2 is used
-// if replace is true, otherwise the value from m1 is kept.
-func (m1 DigestMap) Merge(m2 DigestMap, replace bool) (merged DigestMap, err error) {
-	m1, err = m1.Normalize()
+// m2. If a paths has different digests in m1 and m2, an error returned unless
+// replace is true, in which case the value from m2 is used.
+func (m1 DigestMap) Merge(m2 DigestMap, replace bool) (DigestMap, error) {
+	m1Norm, err := m1.Normalize()
 	if err != nil {
-		return
+		return nil, err
 	}
-	m2, err = m2.Normalize()
+	m2Norm, err := m2.Normalize()
 	if err != nil {
-		return
+		return nil, err
 	}
-	m1PathMap, err := m1.PathMapValid()
+	m1PathMap, err := m1Norm.PathMapValid()
 	if err != nil {
-		return
+		return nil, err
 	}
-	m2PathMap, err := m2.PathMapValid()
+	m2PathMap, err := m2Norm.PathMapValid()
 	if err != nil {
-		return
+		return nil, err
 	}
-	merged.digests = map[string][]string{}
+	merged := DigestMap{}
 	for pth, dig := range m1PathMap {
 		if dig2, ok := m2PathMap[pth]; ok && dig != dig2 {
-			if replace {
-				continue // use path's digest from m2
+			// same path in m1 and m2, but different digests
+			if !replace {
+				return nil, &MapPathConflictErr{Path: pth}
 			}
+			// use digest from m2
+			dig = dig2
 		}
-		if !slices.Contains(merged.digests[dig], pth) {
-			merged.digests[dig] = append(merged.digests[dig], pth)
+		if !slices.Contains(merged[dig], pth) {
+			merged[dig] = append(merged[dig], pth)
 		}
 	}
 	for pth, dig := range m2PathMap {
-		if dig2, ok := m1PathMap[pth]; ok && dig != dig2 {
-			if !replace {
-				continue // use path's digest from m1
-			}
+		if _, exists := m1PathMap[pth]; exists {
+			// already merged
+			continue
 		}
-		if !slices.Contains(merged.digests[dig], pth) {
-			merged.digests[dig] = append(merged.digests[dig], pth)
+		if !slices.Contains(merged[dig], pth) {
+			merged[dig] = append(merged[dig], pth)
 		}
 	}
 	// check that paths are consistent
-	if err = validPaths(merged.Paths()); err != nil {
-		merged.digests = nil
-	}
-	return
-}
-
-func (m DigestMap) MarshalJSON() ([]byte, error) {
-	if m.digests == nil {
-		return json.Marshal(map[string][]string{})
-	}
-	if err := m.Valid(); err != nil {
+	if err := validPaths(merged.Paths()); err != nil {
 		return nil, err
 	}
-	return json.Marshal(m.digests)
-}
-
-func (m *DigestMap) UnmarshalJSON(b []byte) error {
-	if m.digests == nil {
-		m.digests = map[string][]string{}
-	}
-	err := json.Unmarshal(b, &m.digests)
-	if err != nil {
-		return err
-	}
-	return nil
+	return merged, nil
 }
 
 // Valid returns a non-nil error if m is invalid.
 func (m DigestMap) Valid() error {
-	if m.digests == nil {
-		return nil
-	}
 	if err := m.validDigests(); err != nil {
 		return err
 	}
 	// empty path slices?
-	for d, paths := range m.digests {
+	for d, paths := range m {
 		if len(paths) == 0 {
 			return fmt.Errorf("no paths for digest %q", d)
 		}
@@ -341,17 +258,17 @@ func (m DigestMap) Valid() error {
 }
 
 func (m DigestMap) validDigests() error {
-	if m.HasLowercaseDigest() && m.HasUppercaseDigest() {
-		digests := maps.Keys(m.digests)
-		for i, d := range digests {
-			digests[i] = normalizeDigest(d)
+	hasLower, hasUpper := m.HasDigestCase()
+	if !(hasLower && hasUpper) {
+		return nil
+	}
+	norms := make(map[string]struct{}, len(m))
+	for d := range m {
+		norm := normalizeDigest(d)
+		if _, exists := norms[norm]; exists {
+			return &MapDigestConflictErr{Digest: d}
 		}
-		sort.Strings(digests)
-		for i := 0; i < len(digests)-1; i++ {
-			if digests[i] == digests[i+1] {
-				return &MapDigestConflictErr{Digest: digests[i]}
-			}
-		}
+		norms[norm] = struct{}{}
 	}
 	return nil
 }
@@ -407,6 +324,29 @@ func parentDirs(p string) []string {
 
 func normalizeDigest(d string) string {
 	return strings.ToLower(d)
+}
+
+// PathMap maps filenames to digest strings.
+type PathMap map[string]string
+
+// DigestMap returns a new DigestMap using the pathnames and digests in pm. The
+// resulting DigestMap may be invalid if pm includes invalid paths or digests.
+func (pm PathMap) DigestMap() DigestMap {
+	dm := DigestMap{}
+	for pth, dig := range pm {
+		dm[dig] = append(dm[dig], pth)
+	}
+	return dm
+}
+
+// DigestMap returns a new DigestMap using the pathnames and digests in pm. If
+// the resulting DigestMap is invalid, an error is returned.
+func (pm PathMap) DigestMapValid() (DigestMap, error) {
+	dm := pm.DigestMap()
+	if err := dm.Valid(); err != nil {
+		return nil, err
+	}
+	return dm, nil
 }
 
 // RemapFunc is a function used to transform a DigestMap

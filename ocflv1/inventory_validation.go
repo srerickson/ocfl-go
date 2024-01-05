@@ -117,7 +117,7 @@ func (inv *Inventory) Validate() *validation.Result {
 		}
 		// check that each state digest appears in manifest
 		for _, digest := range ver.State.Digests() {
-			if !inv.Manifest.HasDigest(digest) {
+			if len(inv.Manifest[digest]) == 0 {
 				err := fmt.Errorf("digest in %s state not in manifest: %s", vname, digest)
 				result.AddFatal(ec(err, codes.E050.Ref(inv.Type.Spec)))
 			}
@@ -146,7 +146,7 @@ func (inv *Inventory) Validate() *validation.Result {
 	for _, digest := range inv.Manifest.Digests() {
 		var found bool
 		for _, version := range inv.Versions {
-			if version.State.HasDigest(digest) {
+			if len(version.State[digest]) > 0 {
 				found = true
 				break
 			}
