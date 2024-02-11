@@ -17,6 +17,10 @@ var goodObjPath = filepath.Join(fixturePath, `good-objects`)
 //var warnObjPath = filepath.Join(fixturePath, `warn-objects`)
 //var badObjPath = filepath.Join(fixturePath, `bad-objects`)
 
+// object implements ocfl.ContentProvider and ocfl.FixityProvider
+var _ ocfl.ContentSource = (*ocflv1.Object)(nil)
+var _ ocfl.FixitySource = (*ocflv1.Object)(nil)
+
 func TestReadObject(t *testing.T) {
 	fsys := ocfl.NewFS(os.DirFS(goodObjPath))
 	obj, err := ocflv1.GetObject(context.Background(), fsys, "spec-ex-full")

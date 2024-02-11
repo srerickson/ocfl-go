@@ -50,29 +50,6 @@ func GetObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) {
 	return obj, nil
 }
 
-// StateFS returns an ocfl.FS for accessing the logical contents
-// of the object at the version with index i. If i is zero, the
-// most recent version is used.
-func (obj Object) StateFS(i int) (*ocfl.ObjectStateFS, error) {
-	state, err := obj.Inventory.objectState(i)
-	if err != nil {
-		return nil, err
-	}
-	openFn := func(ctx context.Context, name string) (fs.File, error) {
-		return obj.FS.OpenFile(ctx, path.Join(obj.Path, name))
-	}
-	return &ocfl.ObjectStateFS{
-		ObjectState:     *state,
-		OpenContentFile: openFn,
-	}, nil
-}
-
-// State initializes a new ocfl.ObjectState for the object version with the
-// given index. If the index is 0, the most recent version (HEAD) is used.
-func (obj Object) State(i int) (*ocfl.ObjectState, error) {
-	return obj.Inventory.objectState(i)
-}
-
 // SyncInventory downloads and validates the object's root inventory. If
 // successful the object's Inventory value is updated.
 func (obj *Object) SyncInventory(ctx context.Context) error {
@@ -94,6 +71,40 @@ func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) *vali
 		obj.Inventory = newObj.Inventory
 	}
 	return r
+}
+
+func (obj *Object) Stage(i int) (*ocfl.Stage, error) {
+	version := obj.Inventory.Version(i)
+	if version == nil {
+		return nil, ErrVersionNotFound
+	}
+	state, err := version.State.Normalize()
+	if err != nil {
+		return nil, err
+	}
+	return &ocfl.Stage{
+		State:           state,
+		DigestAlgorithm: obj.Inventory.DigestAlgorithm,
+		ContentSource:   obj,
+		FixitySource:    obj,
+	}, nil
+}
+
+// GetContent implements ocfl.ContentSource for Object
+func (obj *Object) GetContent(digest string) (ocfl.FS, string) {
+	if obj.Inventory.Manifest == nil {
+		return nil, ""
+	}
+	paths := obj.Inventory.Manifest[digest]
+	if len(paths) < 1 {
+		return nil, ""
+	}
+	return obj.FS, path.Join(obj.ObjectRoot.Path, paths[0])
+}
+
+// Fixity implements ocfl.FixitySource for Object
+func (obj *Object) GetFixity(digest string) ocfl.DigestSet {
+	return obj.Inventory.GetFixity(digest)
 }
 
 // Objects iterates over the OCFL Object in fsys with the given path selector

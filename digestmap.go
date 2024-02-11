@@ -8,8 +8,6 @@ import (
 	"sort"
 	"strings"
 	"unicode"
-
-	"golang.org/x/exp/maps"
 )
 
 // DigestMap maps digests to file paths.
@@ -152,6 +150,14 @@ func (m DigestMap) Eq(other DigestMap) bool {
 	return true
 }
 
+func (m DigestMap) Clone() DigestMap {
+	newM := make(DigestMap, len(m))
+	for d, paths := range m {
+		newM[d] = slices.Clone(paths)
+	}
+	return newM
+}
+
 // Normalize returns a normalized copy on m (with lowercase digests). An
 // error is returned if m has a digest conflict.
 func (m DigestMap) Normalize() (norm DigestMap, err error) {
@@ -167,30 +173,15 @@ func (m DigestMap) Normalize() (norm DigestMap, err error) {
 	return
 }
 
-// Remap builds a new DigestMap from m by applying one or more transorfmation
-// functions. The transformation function is called for each digest in m and
-// returns a new slice of path names to associate with the digest. If the
-// returned slices is empty, the digest will not be included in the resulting
-// DigestMap. If the transformation functions result in an invalid DigestMap, an
-// error is returned.
-func (m DigestMap) Remap(fns ...RemapFunc) (DigestMap, error) {
-	digests := maps.Clone(m)
-	for _, fn := range fns {
-		for digest, origPaths := range digests {
-			// don't pass m's internal path slice to the function
-			newPaths := fn(digest, slices.Clone(origPaths))
-			if len(newPaths) == 0 {
-				delete(digests, digest)
-				continue
-			}
-			digests[digest] = newPaths
+func (m DigestMap) Remap(fns ...RemapFunc) {
+	for digest := range m {
+		for _, fn := range fns {
+			m[digest] = fn(m[digest])
+		}
+		if len(m[digest]) == 0 {
+			delete(m, digest)
 		}
 	}
-	newMap := DigestMap(digests)
-	if err := newMap.Valid(); err != nil {
-		return DigestMap{}, err
-	}
-	return newMap, nil
 }
 
 // Merge returns a new DigestMap constructed by normalizing and merging m1 and
@@ -350,18 +341,23 @@ func (pm PathMap) DigestMapValid() (DigestMap, error) {
 }
 
 // RemapFunc is a function used to transform a DigestMap
-type RemapFunc func(digest string, oldPaths []string) (newPaths []string)
+type RemapFunc func(oldPaths []string) (newPaths []string)
 
 // Rename returns a RemapFunc that renames from to to.
 func Rename(from, to string) RemapFunc {
-	return func(digest string, paths []string) []string {
+	return func(paths []string) []string {
 		for i, p := range paths {
 			if p == from {
 				paths[i] = to
+				break
 			}
-			after, found := strings.CutPrefix(p, from+"/")
+			if from == "." {
+				paths[i] = path.Join(to, p)
+				continue
+			}
+			suffix, found := strings.CutPrefix(p, from+"/")
 			if found {
-				paths[i] = to + "/" + after
+				paths[i] = path.Join(to, suffix)
 			}
 		}
 		return paths
@@ -370,7 +366,7 @@ func Rename(from, to string) RemapFunc {
 
 // Remove returns a RemapFunc that removes name.
 func Remove(name string) RemapFunc {
-	return func(digest string, paths []string) []string {
+	return func(paths []string) []string {
 		idx := slices.Index(paths, name)
 		if idx >= 0 {
 			return slices.Delete(paths, idx, idx+1)

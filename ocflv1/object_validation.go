@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"path"
 	"reflect"
-	"sort"
 	"strings"
 
 	"github.com/srerickson/ocfl-go"
@@ -253,72 +252,64 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, vn oc
 	if lgr != nil {
 		opts = append(opts, ValidationLogger(lgr.With("inventory_file", name)))
 	}
-	inv, _ := ValidateInventory(ctx, vldr.FS, name, opts...)
+	dirInv, _ := ValidateInventory(ctx, vldr.FS, name, opts...)
 	if err := vldr.Err(); err != nil {
 		return err
 	}
 	// add the version inventory's OCFL version to validations state (E103)
-	vldr.verSpecs[vn] = inv.Type.Spec
-	if err := vldr.ledger.addInventory(inv, false); err != nil {
+	vldr.verSpecs[vn] = dirInv.Type.Spec
+	if err := vldr.ledger.addInventory(dirInv, false); err != nil {
 		// err indicates inventory reports different digest from a previous inventory
-		vldr.LogFatal(lgr, ec(err, codes.E066.Ref(inv.Type.Spec)))
+		vldr.LogFatal(lgr, ec(err, codes.E066.Ref(dirInv.Type.Spec)))
 	}
 	// Is this the HEAD version directory?
 	if vn == vldr.rootInv.Head {
-		if inv.digest == vldr.rootInv.digest {
+		if dirInv.digest == vldr.rootInv.digest {
 			return nil // don't need to validate any further
 		}
 		err := fmt.Errorf("inventory in last version (%s) is not same as root inventory", vn)
-		vldr.LogFatal(lgr, ec(err, codes.E064.Ref(inv.Type.Spec)))
+		vldr.LogFatal(lgr, ec(err, codes.E064.Ref(dirInv.Type.Spec)))
 	}
 	//
 	// remaining validations should check consistency between version inventory
 	// and root inventory
 	//
 	// check expected values specified in conf
-	if vldr.rootInv.ID != inv.ID {
-		err := fmt.Errorf("unexpected id: %s", inv.ID)
-		vldr.LogFatal(lgr, ec(err, codes.E037.Ref(inv.Type.Spec)))
+	if vldr.rootInv.ID != dirInv.ID {
+		err := fmt.Errorf("unexpected id: %s", dirInv.ID)
+		vldr.LogFatal(lgr, ec(err, codes.E037.Ref(dirInv.Type.Spec)))
 	}
-	if vldr.rootInv.ContentDirectory != inv.ContentDirectory {
-		err := fmt.Errorf("contentDirectory is '%s', but expected '%s'", inv.ContentDirectory, vldr.rootInv.ContentDirectory)
-		vldr.LogFatal(lgr, ec(err, codes.E019.Ref(inv.Type.Spec)))
+	if vldr.rootInv.ContentDirectory != dirInv.ContentDirectory {
+		err := fmt.Errorf("contentDirectory is '%s', but expected '%s'", dirInv.ContentDirectory, vldr.rootInv.ContentDirectory)
+		vldr.LogFatal(lgr, ec(err, codes.E019.Ref(dirInv.Type.Spec)))
 	}
-	if vn != inv.Head {
-		err := fmt.Errorf("inventory head is %s, expected %s", inv.Head, vn)
-		vldr.LogFatal(lgr, ec(err, codes.E040.Ref(inv.Type.Spec)))
+	if vn != dirInv.Head {
+		err := fmt.Errorf("inventory head is %s, expected %s", dirInv.Head, vn)
+		vldr.LogFatal(lgr, ec(err, codes.E040.Ref(dirInv.Type.Spec)))
 	}
 	// confirm that each version's logical state in the version directory
 	// inventory matches the corresponding logical state in the root inventory.
 	// Because the digest algorithm can change between versions, we're comparing
 	// the set of logical paths, and their correspondance to
-	for v, ver := range inv.Versions {
+	for v, ver := range dirInv.Versions {
 		rootVer := vldr.rootInv.Versions[v]
-		rootState, err := vldr.rootInv.objectState(v.Num())
-		if err != nil {
-			vldr.LogFatal(lgr, err)
-			return err
-		}
-		verState, err := inv.objectState(v.Num())
-		if err != nil {
-			vldr.LogFatal(lgr, err)
-			return err
-		}
-		if !sameObjectVersionState(rootState, verState) {
+		rootLogicalState := vldr.rootInv.logicalState(v.Num())
+		dirLogicalState := dirInv.logicalState(v.Num())
+		if !dirLogicalState.Eq(rootLogicalState) {
 			err := fmt.Errorf("logical state for version %d in root inventory doesn't match that in %s/%s", v.Num(), vn, inventoryFile)
-			vldr.LogFatal(lgr, ec(err, codes.E066.Ref(inv.Type.Spec)))
+			vldr.LogFatal(lgr, ec(err, codes.E066.Ref(dirInv.Type.Spec)))
 		}
 		if ver.Message != rootVer.Message {
 			err := fmt.Errorf(`message for version %s differs from root inventory`, v)
-			vldr.LogWarn(lgr, ec(err, codes.W011.Ref(inv.Type.Spec)))
+			vldr.LogWarn(lgr, ec(err, codes.W011.Ref(dirInv.Type.Spec)))
 		}
 		if !reflect.DeepEqual(ver.User, rootVer.User) {
 			err := fmt.Errorf(`user information for version %s differs from root inventory`, v)
-			vldr.LogWarn(lgr, ec(err, codes.W011.Ref(inv.Type.Spec)))
+			vldr.LogWarn(lgr, ec(err, codes.W011.Ref(dirInv.Type.Spec)))
 		}
 		if ver.Created != rootVer.Created {
 			err := fmt.Errorf(`timestamp for version %s differs from root inventory`, v)
-			vldr.LogWarn(lgr, ec(err, codes.W011.Ref(inv.Type.Spec)))
+			vldr.LogWarn(lgr, ec(err, codes.W011.Ref(dirInv.Type.Spec)))
 		}
 	}
 	return vldr.Err()
@@ -499,36 +490,4 @@ func newVersionDirInfo(entries []fs.DirEntry) versionDirInfo {
 		info.dirs = append(info.dirs, e.Name())
 	}
 	return info
-}
-
-// SameObjectVersionState is used to test whether two objects states are the
-// same (in the context of the same object). Both objects States must share the
-// the same FS and Root. It returns true if both states have the same logical
-// paths corresponding to the same content paths.
-func sameObjectVersionState(stateA, stateB *ocfl.ObjectState) bool {
-	if !stateA.EachPath(func(name string, d string) bool {
-		otherDigest := stateB.GetDigest(name)
-		if otherDigest == "" {
-			return false
-		}
-		contentPaths := stateA.Manifest[d]
-		otherPaths := stateB.Manifest[otherDigest]
-		if len(contentPaths) != len(otherPaths) {
-			return false
-		}
-		sort.Strings(contentPaths)
-		sort.Strings(otherPaths)
-		for i, p := range contentPaths {
-			if otherPaths[i] != p {
-				return false
-			}
-		}
-		return true
-	}) {
-		return false
-	}
-	// make sure all logical paths in other state are also in state
-	return stateB.EachPath(func(otherName string, _ string) bool {
-		return stateA.GetDigest(otherName) != ""
-	})
 }

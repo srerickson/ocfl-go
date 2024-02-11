@@ -2,12 +2,14 @@ package ocflv1_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -15,17 +17,16 @@ import (
 	"github.com/srerickson/ocfl-go/backend/local"
 	"github.com/srerickson/ocfl-go/backend/memfs"
 	"github.com/srerickson/ocfl-go/ocflv1"
-	"golang.org/x/exp/maps"
 )
 
 func TestCommit(t *testing.T) {
 	t.Run("minimal stage", func(t *testing.T) {
 		ctx := context.Background()
 		fsys := memfs.New()
-		alg := `sha256`
+		alg := ocfl.SHA256
 		root := "object-root"
 		id := "001"
-		stage := ocfl.NewStage(alg)
+		stage := &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: alg}
 		if err := ocflv1.Commit(ctx, fsys, root, id, stage); err != nil {
 			t.Fatal(err)
 		}
@@ -57,8 +58,8 @@ func TestCommit(t *testing.T) {
 		alg := `sha256`
 		root := "object-root"
 		id := "001"
-		stage := ocfl.NewStage(alg)
-		if err := stage.AddFS(ctx, fsys, "."); err != nil {
+		stage, err := ocfl.StageDir(ctx, fsys, ".", alg)
+		if err != nil {
 			t.Fatal("Commit() test setup:", err)
 		}
 		if err := ocflv1.Commit(ctx, fsys, root, id, stage); err != nil {
@@ -70,7 +71,7 @@ func TestCommit(t *testing.T) {
 		}
 		err = ocflv1.Commit(ctx, fsys, root, id, stage, ocflv1.WithAllowUnchanged())
 		if err != nil {
-			t.Error("Commit() didn't allow unchanged version with WithAllowUnchange", err)
+			t.Error("Commit() didn't allow unchanged version with WithAllowUnchange:", err)
 		}
 	})
 	t.Run("update fixture", func(t *testing.T) {
@@ -103,10 +104,7 @@ func ExampleCommit_copyobject() {
 	if err != nil {
 		log.Fatal("couldn't open source object:", err.Error())
 	}
-	state, err := sourceObject.State(0)
-	if err != nil {
-		log.Fatal("couldn't retrieve logical state")
-	}
+	ver := sourceObject.Inventory.Version(0)
 	// prepare a place to write the new object
 	dstPath, err := os.MkdirTemp("", "ocfl-commit-test-*")
 	if err != nil {
@@ -119,12 +117,11 @@ func ExampleCommit_copyobject() {
 		log.Fatal(err)
 	}
 	// construct a stage using the object's state, manifest and fixity.
-	stage := ocfl.NewStage(state.Alg)
-	stage.State = state.DigestMap
-	stage.SetFS(sourceObject.FS, sourceObject.Path)
-	err = stage.UnsafeSetManifestFixty(sourceObject.Inventory.Manifest, sourceObject.Inventory.Fixity)
-	if err != nil {
-		log.Fatal(err)
+	stage := &ocfl.Stage{
+		DigestAlgorithm: sourceObject.Inventory.DigestAlgorithm,
+		State:           ver.State,
+		ContentSource:   sourceObject,
+		FixitySource:    sourceObject,
 	}
 	err = ocflv1.Commit(ctx, writeFS, "object-copy", "object-001", stage)
 	if err != nil {
@@ -143,13 +140,9 @@ func ExampleCommit_copyobject() {
 }
 
 func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testing.T) {
-	tmpdir, err := mkObjectTemp(fixtureObj)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpdir)
+	objRoot := tempObject(t, fixtureObj)
 	// writable FS for tmpdir
-	writeFS, err := local.NewFS(tmpdir)
+	writeFS, err := local.NewFS(objRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,79 +150,99 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	originalState, err := obj.State(0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	originalAlg := originalState.Alg
+	alg := obj.Inventory.DigestAlgorithm
+	objID := obj.Inventory.ID
+	// update with invalid id
 	t.Run("invalid-id", func(t *testing.T) {
-		stage := ocfl.NewStage(obj.Inventory.DigestAlgorithm)
+		stage := &ocfl.Stage{DigestAlgorithm: alg}
 		badID := "wrong"
 		err := ocflv1.Commit(ctx, writeFS, obj.Path, badID, stage)
 		if err == nil {
 			t.Error("Commit() didn't return error for invalid object id")
 		}
 	})
+	// committing into directory with existing files should fail
 	t.Run("invalid-objpath-existing", func(t *testing.T) {
-		stage := ocfl.NewStage(obj.Inventory.DigestAlgorithm)
-		badPath := path.Dir(obj.Path)
-		err := ocflv1.Commit(ctx, writeFS, badPath, obj.Inventory.ID, stage)
+		stage := &ocfl.Stage{DigestAlgorithm: obj.Inventory.DigestAlgorithm}
+		parentDir := path.Dir(obj.Path)
+		err := ocflv1.Commit(ctx, writeFS, parentDir, objID, stage)
 		if err == nil {
 			t.Error("Commit() didn't return error for invalid object path")
 		}
 	})
 	t.Run("invalid-objpath-isfile", func(t *testing.T) {
-		stage := ocfl.NewStage(obj.Inventory.DigestAlgorithm)
+		stage := &ocfl.Stage{DigestAlgorithm: obj.Inventory.DigestAlgorithm}
 		badPath := path.Join(obj.Path, "inventory.json")
-		err := ocflv1.Commit(ctx, writeFS, badPath, obj.Inventory.ID, stage)
+		err := ocflv1.Commit(ctx, writeFS, badPath, objID, stage)
 		if err == nil {
 			t.Error("Commit() didn't return error for invalid object path")
 		}
 	})
 	t.Run("invalid-head", func(t *testing.T) {
-		stage := ocfl.NewStage(obj.Inventory.DigestAlgorithm)
+		stage := &ocfl.Stage{DigestAlgorithm: obj.Inventory.DigestAlgorithm}
 		badHead := obj.Inventory.Head.Num()
-		err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, stage, ocflv1.WithHEAD(badHead))
+		err := ocflv1.Commit(ctx, writeFS, obj.Path, objID, stage, ocflv1.WithHEAD(badHead))
 		if err == nil {
 			t.Error("Commit() didn't return error for invalid option WithHEAD value")
 		}
 	})
 	t.Run("invalid-spec", func(t *testing.T) {
-		stage := ocfl.NewStage(obj.Inventory.DigestAlgorithm)
+		stage := &ocfl.Stage{DigestAlgorithm: obj.Inventory.DigestAlgorithm}
 		// test fixture use ocfl v1.1
-		err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, stage, ocflv1.WithOCFLSpec(ocfl.Spec1_0))
+		err := ocflv1.Commit(ctx, writeFS, obj.Path, objID, stage, ocflv1.WithOCFLSpec(ocfl.Spec1_0))
 		if err == nil {
 			t.Error("Commit() didn't return error for invalid option WithOCFLSpec value")
 		}
 	})
 	t.Run("invalid-alg", func(t *testing.T) {
-		alg := `sha256`
-		if originalAlg == ocfl.SHA256 {
-			alg = ocfl.SHA512
+		commitAlg := `sha256`
+		if alg == ocfl.SHA256 {
+			commitAlg = ocfl.SHA512
 		}
 		// test fixture use ocfl v1.1
-		err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, ocfl.NewStage(alg))
+		stage := &ocfl.Stage{DigestAlgorithm: commitAlg}
+		err := ocflv1.Commit(ctx, writeFS, obj.Path, objID, stage)
 		if err == nil {
 			t.Error("Commit() didn't return error for stage with different alg")
 		}
 	})
-	t.Run("update-1", func(t *testing.T) {
-		newContent := map[string]io.Reader{
-			"testdata/delete.txt":     strings.NewReader("This file will be deleted"),
-			"testdata/rename-src.txt": strings.NewReader("This file will be renamed"),
-			"testdata/updated.txt":    strings.NewReader("This file will be updated"),
-			"testdata/unchanged.txt":  strings.NewReader("This file will be unchanged"),
+	t.Run("incomplete-stage", func(t *testing.T) {
+		// stage state not provided by content
+		stage := &ocfl.Stage{
+			DigestAlgorithm: alg,
+			State:           ocfl.DigestMap{"abc": []string{"file.txt"}},
 		}
-		newContentFS, err := memfs.NewWith(newContent)
+		err := ocflv1.Commit(ctx, writeFS, obj.Path, objID, stage)
+		if err == nil {
+			t.Fatal("Commit() didn't return error for incomplete stage")
+		}
+		var commitErr *ocflv1.CommitError
+		if !errors.As(err, &commitErr) {
+			t.Fatal("invalid Commit() didn't return CommitError")
+		}
+		if commitErr.Dirty {
+			t.Error("Commit() with incomplete stage returned 'dirty' error")
+		}
+	})
+	t.Run("update-1", func(t *testing.T) {
+		stage, err := obj.Stage(0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		stage := ocfl.NewStage(originalAlg)
-		stage.State = originalState.DigestMap
-		if err := stage.AddFS(ctx, newContentFS, ".", "md5"); err != nil {
+		testContent := map[string][]byte{
+			"delete.txt":     []byte("This file will be deleted"),
+			"rename-src.txt": []byte("This file will be renamed"),
+			"updated.txt":    []byte("This file will be updated"),
+			"unchanged.txt":  []byte("This file will be unchanged"),
+		}
+		updates, err := ocfl.StageBytes(testContent, alg, ocfl.MD5)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, stage); err != nil {
+		if err := stage.Overlay(updates); err != nil {
+			t.Fatal(err)
+		}
+		if err := ocflv1.Commit(ctx, writeFS, obj.Path, objID, stage); err != nil {
 			t.Fatal(err)
 		}
 		// validite
@@ -237,61 +250,49 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 		if err := result.Err(); err != nil {
 			t.Fatal(err)
 		}
-		updatedState, err := updatedObj.State(0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		newInv := updatedObj.Inventory
 		// check that new inventory has new content in fixity
-		md5fixity := updatedObj.Inventory.Fixity[ocfl.MD5]
+		md5fixity := newInv.Fixity[ocfl.MD5]
 		if len(md5fixity.Digests()) == 0 {
 			t.Fatal("inventory should have md5 block in fixity")
 		}
-		// expected state paths
-		expectedPaths := append(originalState.Paths(), maps.Keys(newContent)...)
 		// check that expected paths exist
-		for _, name := range expectedPaths {
-			dig := updatedState.GetDigest(name)
-			if dig == "" {
-				t.Fatal("missing path in updated state:", name)
-			}
-			if _, ok := newContent[name]; !ok {
-				continue
-			}
-			for _, p := range updatedState.Manifest[dig] {
-				if md5fixity.GetDigest(p) == "" {
-					t.Fatal("missing path in updated fixity", name)
-				}
+		if !stage.State.Eq(newInv.Version(0).State) {
+			t.Fatal("new version doesn't have expected state")
+		}
+		// md5 fixity should include entries for all new content
+		md5paths := newInv.Fixity[ocfl.MD5].Paths()
+		for name := range testContent {
+			expectPath := path.Join(newInv.Head.String(), newInv.ContentDirectory, name)
+			if !slices.Contains(md5paths, expectPath) {
+				t.Fatalf("new inventory fixity doesn't include md5 doesn't include: %q", expectPath)
 			}
 		}
+
 	})
 
 	t.Run("update-2", func(t *testing.T) {
 		if err := obj.SyncInventory(ctx); err != nil {
 			t.Fatal(err)
 		}
-		state, err := obj.State(0)
+		stage, err := obj.Stage(0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		newContentFS, err := memfs.NewWith(map[string]io.Reader{
-			"testdata/updated.txt": strings.NewReader("This is updated content"),
-		})
+		testContent := map[string][]byte{
+			"updated.txt": []byte("This file has been updated"),
+		}
+		updates, err := ocfl.StageBytes(testContent, alg, ocfl.MD5)
 		if err != nil {
 			t.Fatal(err)
 		}
-		stage := ocfl.NewStage(state.Alg)
-		stage.State = state.DigestMap
-		if err := stage.AddFS(ctx, newContentFS, "."); err != nil {
+		if err := stage.Overlay(updates); err != nil {
 			t.Fatal(err)
 		}
-		stage.State, err = stage.State.Remap(ocfl.Remove("testdata/delete.txt"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		stage.State, err = stage.State.Remap(ocfl.Rename("testdata/rename-src.txt", "testdata/rename-dst.txt"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		stage.State.Remap(
+			ocfl.Rename("rename-src.txt", "rename-dst.txt"),
+			ocfl.Remove("delete.txt"),
+		)
 		if err := ocflv1.Commit(ctx, writeFS, obj.Path, obj.Inventory.ID, stage); err != nil {
 			t.Fatal(err)
 		}
@@ -299,27 +300,22 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 		if err := result.Err(); err != nil {
 			t.Fatal(err)
 		}
-		updatedState, err := updatedObj.State(0)
-		if err != nil {
-			t.Fatal(err)
+		newState := updatedObj.Inventory.Version(0).State
+		if newState.GetDigest("delete.txt") != "" {
+			t.Fatal("expected 'delete.txt' to be removed")
 		}
-		if updatedState.GetDigest("testdata/delete.txt") != "" {
-			t.Fatal("expected 'testdata/delete.txt' to be removed")
+		if newState.GetDigest("rename-src.txt") != "" {
+			t.Fatal("expected 'rename-src.txt' to be removed")
 		}
-		if updatedState.GetDigest("testdata/rename-src.txt") != "" {
-			t.Fatal("expected 'testdata/rename-src.txt' to be removed")
-		}
-		if updatedState.GetDigest("testdata/rename-dst.txt") == "" {
-			t.Fatal("expected 'testdata/rename-dst.txt' to exist")
+		if newState.GetDigest("rename-dst.txt") == "" {
+			t.Fatal("expected 'rename-dst.txt' to exist")
 		}
 		// check updated path
-		prevState, err := updatedObj.State(updatedObj.Inventory.Head.Num() - 1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		updatedPath := "testdata/updated.txt"
+		prevState := updatedObj.Inventory.Version(updatedObj.Inventory.Head.Num() - 1).State
+		updatedPath := "updated.txt"
 		prevDigest := prevState.GetDigest(updatedPath)
-		if prevDigest == updatedState.GetDigest(updatedPath) {
+		newDigest := newState.GetDigest(updatedPath)
+		if prevDigest == "" || prevDigest == newDigest {
 			t.Fatalf("expected '%s' to have changed", updatedPath)
 		}
 	})
@@ -330,13 +326,11 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 // directory, returning the tmp directory root. The object will be located at
 // obj.Path in the new tmp directory. The caller should remember to removeall
 // the temp directory.
-func mkObjectTemp(obj *ocfl.ObjectRoot) (string, error) {
+func tempObject(t *testing.T, obj *ocfl.ObjectRoot) string {
+	t.Helper()
 	ctx := context.Background()
-	tmpdir, err := os.MkdirTemp("", "test-ocfl-object-*")
-	if err != nil {
-		return "", err
-	}
-	err = ocfl.Files(ctx, obj.FS, ocfl.Dir(obj.Path), func(name string) error {
+	tmpdir := t.TempDir()
+	err := ocfl.Files(ctx, obj.FS, ocfl.Dir(obj.Path), func(name string) error {
 		dir := path.Dir(name)
 		if err := os.MkdirAll(filepath.Join(tmpdir, filepath.FromSlash(dir)), 0777); err != nil {
 			return err
@@ -356,7 +350,7 @@ func mkObjectTemp(obj *ocfl.ObjectRoot) (string, error) {
 		return w.Sync()
 	})
 	if err != nil {
-		return "", err
+		t.Fatal(err)
 	}
-	return tmpdir, nil
+	return tmpdir
 }

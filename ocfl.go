@@ -53,3 +53,9 @@ func XferConcurrency() int {
 func SetXferConcurrency(i int) {
 	commitConcurrency.Store(int32(i))
 }
+
+// User is a generic user information struct
+type User struct {
+	Name    string `json:"name"`
+	Address string `json:"address,omitempty"`
+}

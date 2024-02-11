@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/internal/xfer"
 	"github.com/srerickson/ocfl-go/logging"
+	"golang.org/x/sync/errgroup"
 )
 
 // Commit creates or updates the OCFL v1.x object objectID at objPath using the
@@ -24,70 +24,73 @@ import (
 // object updates, the stage's algorithm must match the existing object's digest
 // algorithm. The error returned by commit is always a CommitError.
 func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string, stage *ocfl.Stage, optFuncs ...CommitOption) (err error) {
-	// default commit options
-	opts := &commitOpt{
-		created:    time.Now().UTC(),
-		contentDir: contentDir,
-		logger:     logging.DisabledLogger(),
-	}
+	var (
+		newHead  = 1           // new version num (no padding)
+		baseInv  *Inventory    // existing/based inventory
+		existObj *Object       // existing object
+		opts     = &commitOpt{ // default opts
+			created:    time.Now().UTC(),
+			contentDir: contentDir,
+			logger:     logging.DisabledLogger(),
+		}
+	)
+
 	for _, optFunc := range optFuncs {
 		optFunc(opts)
 	}
 	opts.created = opts.created.Truncate(time.Second)
 	opts.logger = opts.logger.With("object_path", objPath, "object_id", objID)
 
-	// Start by generating the new inventory: from existing or from scratch.
+	if stage.State == nil {
+		stage.State = ocfl.DigestMap{}
+	}
 
-	var newInv *Inventory                             // new inventory
-	existing, objErr := GetObject(ctx, fsys, objPath) // existing object
-
-	// Handle existing object: new inventory is based on normalized copy of
-	// the existing inventory.
-	if objErr == nil {
-		opts.logger.DebugContext(ctx, "updating an existing object")
-
-		if foundID := existing.Inventory.ID; foundID != objID {
-			err = fmt.Errorf("object at %q has id %q, not the id given to commit: %q", objPath, foundID, objID)
-			return &CommitError{Err: err}
+	existObj, err = GetObject(ctx, fsys, objPath)
+	if err != nil {
+		// Handle acceptable error from GetObject() if the object doesn't exist. For a
+		// new object, the object path must not exist. The only acceptable error
+		// here is ErrNotExist for the object path.
+		var pathErr *fs.PathError
+		if errors.Is(err, fs.ErrNotExist) && errors.As(err, &pathErr) && pathErr.Path == objPath {
+			err = nil
 		}
-		invState, err := existing.Inventory.objectState(0)
 		if err != nil {
-			// an error here indicates a bug in the inventory's validation during GetObject()
-			err = fmt.Errorf("creating object state from existing inventory (this is probably a bug): %w", err)
-			return &CommitError{Err: err}
-		}
-		if !opts.allowUnchanged && invState.Eq(stage.State) {
-			err = fmt.Errorf("new version would have same state as existing version")
-			return &CommitError{Err: err}
-		}
-		newInv, err = existing.Inventory.NormalizedCopy()
-		if err != nil {
-			// an error here indicates a bug in the inventory's validation during GetObject()
-			err = fmt.Errorf("building normalized copy of existing inventory: %w", err)
 			return &CommitError{Err: err}
 		}
 	}
-
-	// Handle possible error from GetObject() if the object doesn't exist. For a
-	// new object, the object path must not exist. The only acceptable error
-	// here is ErrNotExist for the object path.
-	if objErr != nil {
-		opts.logger.DebugContext(ctx, "commiting new object")
-
-		var pathErr *fs.PathError
-		if errors.Is(objErr, fs.ErrNotExist) && errors.As(objErr, &pathErr) && pathErr.Path == objPath {
-			objErr = nil
-		}
-		if objErr != nil {
-			err = fmt.Errorf("path %q exists but it is not a valid object: %w", objPath, objErr)
+	switch {
+	case existObj != nil:
+		// Handle existing object
+		opts.logger.DebugContext(ctx, "updating an existing object")
+		baseInv = &existObj.Inventory
+		newHead = baseInv.Head.Num() + 1
+		if baseInv.ID != objID {
+			err = fmt.Errorf("object at %q has id %q, not the id given to commit: %q", objPath, baseInv.ID, objID)
 			return &CommitError{Err: err}
 		}
-		// create new inventory with '0' head version:
-		// the head is incremented later by inv.AddVersion
-		newInv = &Inventory{
+		// changing digests algorithms isn't supported
+		if baseInv.DigestAlgorithm != stage.DigestAlgorithm {
+			err := fmt.Errorf("object's digest algorithm (%s) doesn't match stage's (%s)", baseInv.DigestAlgorithm, stage.DigestAlgorithm)
+			return &CommitError{Err: err}
+		}
+		lastVersion := baseInv.Version(0)
+		if lastVersion == nil || lastVersion.State == nil {
+			// an error here indicates a bug in the inventory's validation during GetObject()
+			err = errors.New("existing object inventory doesn't include a valid version state")
+			return &CommitError{Err: err}
+		}
+		if !opts.allowUnchanged && lastVersion.State.Eq(stage.State) {
+			err = fmt.Errorf("new version would have same state as existing version")
+			return &CommitError{Err: err}
+		}
+	case existObj == nil:
+		opts.logger.DebugContext(ctx, "commiting new object")
+		// create base inventory with '0' head version:
+		// the head is incremented later by inv.NextInventory
+		baseInv = &Inventory{
 			ID:               objID,
 			Head:             ocfl.V(0, opts.padding),
-			DigestAlgorithm:  stage.Alg,
+			DigestAlgorithm:  stage.DigestAlgorithm,
 			ContentDirectory: opts.contentDir,
 		}
 	}
@@ -99,8 +102,8 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string
 		case !opts.storeSpec.Empty():
 			newSpec = opts.storeSpec
 		// use the existing object's spec, if available.
-		case existing != nil:
-			newSpec = existing.Spec
+		case existObj != nil:
+			newSpec = existObj.Spec
 		// otherwise, default spec
 		default:
 			newSpec = defaultSpec
@@ -113,42 +116,62 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string
 		err = fmt.Errorf("new object version's OCFL spec can't be higher than the storage root's (%s)", opts.storeSpec)
 		return &CommitError{Err: err}
 	}
-	if existing != nil && newSpec.Cmp(existing.Spec) < 0 {
-		err = fmt.Errorf("new object version's OCFL spec can't be lower than the current version (%s)", existing.Spec)
+	if existObj != nil && newSpec.Cmp(existObj.Spec) < 0 {
+		err = fmt.Errorf("new object version's OCFL spec can't be lower than the current version (%s)", existObj.Spec)
 		return &CommitError{Err: err}
 	}
-	newInv.Type = newSpec.AsInvType()
+	baseInv.Type = newSpec.AsInvType()
 
-	// build new inventory from state
-	err = newInv.AddVersion(stage, opts.message, opts.user, opts.created, opts.pathFn)
-	if err != nil {
-		return &CommitError{Err: err}
-	}
-
-	// check commit's required head constraint
-	if n := newInv.Head.Num(); opts.requireHEAD > 0 && n != opts.requireHEAD {
+	// check requiredHEAD constraint
+	if opts.requireHEAD > 0 && newHead != opts.requireHEAD {
 		err = fmt.Errorf("commit is constrained to version number %d, but the object's next version should have number %d",
-			opts.requireHEAD, n)
+			opts.requireHEAD, newHead)
 		return &CommitError{Err: err}
 	}
+
+	// build new inventory
+	newVersion := &Version{
+		State:   stage.State,
+		Message: opts.message,
+		User:    opts.user,
+		Created: opts.created,
+	}
+	newInv, err := NewInventory(baseInv, newVersion, stage.FixitySource, opts.pathFn)
+	if err != nil {
+		err := fmt.Errorf("building new inventory: %w", err)
+		return &CommitError{Err: err}
+	}
+
 	// this check is reduntant given previous validations, but we don't want to
 	// over-write an existing version directory.
-	if existing != nil && slices.Contains(existing.ObjectRoot.VersionDirs, newInv.Head) {
+	if existObj != nil && slices.Contains(existObj.ObjectRoot.VersionDirs, newInv.Head) {
 		err = fmt.Errorf("version directory %q already exists in %q", newInv.Head, objPath)
 		return &CommitError{Err: err}
 	}
 	opts.logger = opts.logger.With("head", newInv.Head, "ocfl_spec", newInv.Type.Spec, "alg", newInv.DigestAlgorithm)
-	// map of files to transfer
-	xfers, err := xferMap(stage, newInv, objPath)
+
+	// xfers is a subeset of the manifest with new content to add
+	xfers, err := xferMap(newInv)
 	if err != nil {
 		return &CommitError{Err: err}
+	}
+	if len(xfers) > 0 && stage.ContentSource == nil {
+		err := errors.New("stage is missing a source for new content")
+		return &CommitError{Err: err}
+	}
+	// check that the stage's content source provides all new content
+	for digest := range xfers {
+		if !stage.HasContent(digest) {
+			err := fmt.Errorf("stage's content source can't provide digest: %s", digest)
+			return &CommitError{Err: err}
+		}
 	}
 
 	// File changes start here
 	// TODO: replace existing object declaration if spec is changing
 
 	// Mutate object: new object declaration if necessary
-	if existing == nil {
+	if existObj == nil {
 		opts.logger.DebugContext(ctx, "initializing new OCFL object")
 		decl := ocfl.Declaration{Type: ocfl.DeclObject, Version: newInv.Type.Spec}
 		if err = ocfl.WriteDeclaration(ctx, fsys, objPath, decl); err != nil {
@@ -158,7 +181,13 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string
 
 	// Mutate object: tranfser files from stage to object
 	if len(xfers) > 0 {
-		if err = xfer.Copy(ctx, stage.FS, fsys, xfers, ocfl.XferConcurrency(), opts.logger.WithGroup("xfer")); err != nil {
+		xferOpts := &commitCopyOpts{
+			Source:   stage,
+			DestFS:   fsys,
+			DestRoot: objPath,
+			Manifest: xfers,
+		}
+		if err = commitCopy(ctx, xferOpts); err != nil {
 			err = fmt.Errorf("transferring new object contents: %w", err)
 			return &CommitError{Err: err, Dirty: true}
 		}
@@ -205,7 +234,7 @@ type commitOpt struct {
 	contentDir     string     // inventory's content directory setting (new objects only)
 	padding        int        // padding (new objects only)
 
-	pathFn func(string, []string) []string // function to transform paths in stage state
+	pathFn func([]string) []string // function to transform paths in stage state
 	logger *slog.Logger
 }
 
@@ -275,7 +304,7 @@ func WithCreated(c time.Time) CommitOption {
 // new manifest entry (digest/path list); The function should
 // return a slice of paths indicating where the content should be saved
 // (relative) object version's content directory.
-func WithManifestPathFunc(fn func(digest string, paths []string) []string) CommitOption {
+func WithManifestPathFunc(fn func(paths []string) []string) CommitOption {
 	return func(comm *commitOpt) {
 		comm.pathFn = fn
 	}
@@ -304,29 +333,61 @@ func withStoreSpec(spec ocfl.Spec) CommitOption {
 	}
 }
 
-// xferMap builds a map of destination/source paths representing
-// file to copy from the stage to the object root. Source paths
-// are relative to the stage's FS. Destination paths are relative to
-// storage root's FS
-func xferMap(stage *ocfl.Stage, inv *Inventory, objRoot string) (map[string]string, error) {
-	xfer := map[string]string{}
-	for dst, dig := range inv.Manifest.PathMap() {
+// xferMap returns a DigestMap that is a subset of the inventory
+// manifest for the digests and paths of new content
+func xferMap(inv *Inventory) (ocfl.DigestMap, error) {
+	pm := ocfl.PathMap{}
+	var err error
+	inv.Manifest.EachPath(func(pth, dig string) bool {
 		// ignore manifest entries from previous versions
-		if !strings.HasPrefix(dst, inv.Head.String()+"/") {
-			continue
+		if !strings.HasPrefix(pth, inv.Head.String()+"/") {
+			return true
 		}
-		if stage.FS == nil {
-			return nil, errors.New("missing staged content FS")
+		if _, exists := pm[pth]; exists {
+			err = fmt.Errorf("path duplicate in manifest: %q", pth)
+			return false
 		}
-		sources := stage.GetContent(dig)
-		if len(sources) == 0 {
-			return nil, fmt.Errorf("no source file provided for digest: %s", dig)
-		}
-		// prefix src with stage's root directory
-		src := path.Join(stage.Root, sources[0])
-		// prefix dst with object's root directory
-		dst = path.Join(objRoot, dst)
-		xfer[dst] = src
+		pm[pth] = dig
+		return true
+	})
+	if err != nil {
+		return nil, err
 	}
-	return xfer, nil
+	return pm.DigestMapValid()
+}
+
+type commitCopyOpts struct {
+	Source      ocfl.ContentSource
+	DestFS      ocfl.WriteFS
+	DestRoot    string
+	Manifest    ocfl.DigestMap
+	Concurrency int
+}
+
+// transfer dst/src names in files from srcFS to dstFS
+func commitCopy(ctx context.Context, c *commitCopyOpts) error {
+	if c.Source == nil {
+		return errors.New("missing countent source")
+	}
+	conc := c.Concurrency
+	if conc < 1 {
+		conc = 1
+	}
+	grp, ctx := errgroup.WithContext(ctx)
+	grp.SetLimit(conc)
+	for dig, dstNames := range c.Manifest {
+		srcFS, srcPath := c.Source.GetContent(dig)
+		if srcFS == nil {
+			return fmt.Errorf("content source doesn't provide %q", dig)
+		}
+		for _, dstName := range dstNames {
+			srcPath := srcPath
+			dstPath := path.Join(c.DestRoot, dstName)
+			grp.Go(func() error {
+				return ocfl.Copy(ctx, c.DestFS, dstPath, srcFS, srcPath)
+			})
+
+		}
+	}
+	return grp.Wait()
 }
