@@ -3,6 +3,7 @@ package ocfl
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -173,4 +174,32 @@ func (fsys *ioFS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, erro
 	}
 	return dirents, nil
 
+}
+
+// Copy copies src in srcFS to dst in dstFS. If srcFS and dstFS are the same refererence
+// and it implements CopyFS, then Copy uses the fs's Copy() method.
+func Copy(ctx context.Context, dstFS WriteFS, dst string, srcFS FS, src string) (err error) {
+	cpFS, ok := dstFS.(CopyFS)
+	if ok && dstFS == srcFS {
+		if err = cpFS.Copy(ctx, dst, src); err != nil {
+			err = fmt.Errorf("during copy: %w", err)
+		}
+		return
+	}
+	// otherwise, manual copy
+	var srcF fs.File
+	srcF, err = srcFS.OpenFile(ctx, src)
+	if err != nil {
+		err = fmt.Errorf("opening for copy: %w", err)
+		return
+	}
+	defer func() {
+		if closeErr := srcF.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if _, err = dstFS.Write(ctx, dst, srcF); err != nil {
+		err = fmt.Errorf("writing during copy: %w", err)
+	}
+	return
 }

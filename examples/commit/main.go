@@ -74,7 +74,7 @@ func main() {
 		err := errors.New("object exists and 'new' flag is set")
 		quit(err)
 	}
-	stage, err := stage(ctx, srcDir, alg)
+	stage, err := ocfl.StageDir(ctx, ocfl.DirFS(srcDir), ".", alg)
 	if err != nil {
 		quit(err)
 	}
@@ -84,13 +84,6 @@ func main() {
 	if err != nil {
 		quit(err)
 	}
-}
-
-func stage(ctx context.Context, dir string, algID string) (*ocfl.Stage, error) {
-	srcFS := ocfl.DirFS(srcDir)
-	alg := algID
-	stage := ocfl.NewStage(alg)
-	return stage, stage.AddFS(ctx, srcFS, ".")
 }
 
 func quit(err error) {

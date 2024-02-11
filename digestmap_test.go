@@ -2,6 +2,7 @@ package ocfl_test
 
 import (
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/srerickson/ocfl-go"
@@ -216,9 +217,29 @@ func TestDigestMapMerge(t *testing.T) {
 }
 
 func TestDigestMapRemap(t *testing.T) {
+
+	t.Run("Rename", func(t *testing.T) {
+		dm := ocfl.DigestMap{
+			"abc1": {"dir/file.txt", "delete.txt"},
+			"abc2": {"file.txt"},
+		}
+		dm.Remap(
+			ocfl.Rename("dir", "new"),
+			ocfl.Rename("file.txt", "file2.txt"),
+			ocfl.Remove("delete.txt"),
+			ocfl.Rename(".", "root"),
+		)
+		paths := dm.Paths()
+		sort.Strings(paths)
+		expect := []string{"root/file2.txt", "root/new/file.txt"}
+		if !reflect.DeepEqual(expect, paths) {
+			t.Fatalf("got %v, expected %v", paths, expect)
+		}
+	})
+
 	t.Run("Remove", func(t *testing.T) {
 		// Remove on its own
-		out := ocfl.Remove("delete.txt")("abc", []string{"delete.txt", "keep.txt"})
+		out := ocfl.Remove("delete.txt")([]string{"delete.txt", "keep.txt"})
 		if len(out) != 1 || out[0] != "keep.txt" {
 			t.Error("Remove() didn't remove the expected file")
 		}
@@ -227,14 +248,11 @@ func TestDigestMapRemap(t *testing.T) {
 			"abc1": {"keep.txt", "delete.txt"},
 			"abc2": {"save.txt"},
 		}
-		result, err := dm.Remap(ocfl.Remove("delete.txt"))
-		if err != nil {
-			t.Fatal("Remap() with Remove() unexpected error:", err)
-		}
-		if result.GetDigest("delete.txt") != "" {
+		dm.Remap(ocfl.Remove("delete.txt"))
+		if dm.GetDigest("delete.txt") != "" {
 			t.Error("Remap() with Remove() file not removed")
 		}
-		if result.GetDigest("keep.txt") == "" || result.GetDigest("save.txt") == "" {
+		if dm.GetDigest("keep.txt") == "" || dm.GetDigest("save.txt") == "" {
 			t.Error("Remap() with Remove() removed a file it shouldn't have")
 		}
 	})
