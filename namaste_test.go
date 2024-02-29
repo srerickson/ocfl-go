@@ -12,10 +12,10 @@ import (
 
 func TestParseName(t *testing.T) {
 	table := map[string]ocfl.Declaration{
-		`0=ocfl_1.0`: {`ocfl`, ocfl.Spec{1, 0}},
-		`0=oc_1.1`:   {`oc`, ocfl.Spec{1, 1}},
-		`1=ocfl_1.0`: {``, ocfl.Spec{}},
-		`0=AB_1`:     {``, ocfl.Spec{}},
+		`0=ocfl_1.0`: {`ocfl`, ocfl.Spec1_0},
+		`0=oc_1.1`:   {`oc`, ocfl.Spec1_1},
+		`1=ocfl_1.0`: {``, ocfl.Spec("")},
+		`0=AB_1`:     {``, ocfl.Spec("")},
 	}
 	for in, exp := range table {
 		t.Run(in, func(t *testing.T) {
@@ -55,7 +55,7 @@ func TestWriteDeclaration(t *testing.T) {
 	is := is.New(t)
 	fsys := memfs.New()
 	ctx := context.Background()
-	v := ocfl.Spec{12, 1}
+	v := ocfl.Spec("12.1")
 	dec := &ocfl.Declaration{"ocfl", v}
 	err := ocfl.WriteDeclaration(ctx, fsys, ".", *dec)
 	is.NoErr(err)

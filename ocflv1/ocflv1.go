@@ -20,8 +20,8 @@ const (
 )
 
 var (
-	ocflv1_0    = ocfl.Spec{1, 0}
-	ocflv1_1    = ocfl.Spec{1, 1}
+	ocflv1_0    = ocfl.Spec1_0
+	ocflv1_1    = ocfl.Spec1_1
 	defaultSpec = ocflv1_1
 
 	// supported versions

@@ -76,7 +76,8 @@ func ParseDeclaration(name string, dec *Declaration) error {
 		return ErrDeclNotExist
 	}
 	dec.Type = m[1]
-	err := ParseSpec(m[2], &dec.Version)
+	var err error
+	dec.Version, err = ParseSpec(m[2])
 	if err != nil {
 		return ErrDeclNotExist
 	}

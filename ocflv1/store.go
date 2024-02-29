@@ -48,7 +48,7 @@ func InitStore(ctx context.Context, fsys ocfl.WriteFS, root string, conf *InitSt
 	if conf == nil {
 		conf = &InitStoreConf{}
 	}
-	if conf.Spec == (ocfl.Spec{}) {
+	if conf.Spec.Empty() {
 		conf.Spec = defaultSpec
 	}
 	if !ocflVerSupported[conf.Spec] {

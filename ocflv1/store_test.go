@@ -141,7 +141,7 @@ func TestStoreCommit(t *testing.T) {
 	storeFS := memfs.New() // store
 	// initialize store
 	if err := ocflv1.InitStore(ctx, storeFS, storePath, &ocflv1.InitStoreConf{
-		Spec: ocfl.Spec{1, 0},
+		Spec: ocfl.Spec1_0,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestStoreCommit(t *testing.T) {
 
 	t.Run("with invalid spec", func(t *testing.T) {
 		stage := &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: "sha256"}
-		err := store.Commit(ctx, "object-0", stage, ocflv1.WithOCFLSpec(ocfl.Spec{1, 1}))
+		err := store.Commit(ctx, "object-0", stage, ocflv1.WithOCFLSpec(ocfl.Spec1_1))
 		if err == nil {
 			t.Fatal("expected an error")
 		}

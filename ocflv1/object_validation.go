@@ -57,9 +57,9 @@ func (vldr *objectValidator) validate(ctx context.Context) *validation.Result {
 	vldr.root = obj
 	ocflV := vldr.root.Spec
 	switch ocflV {
-	case ocfl.Spec{1, 0}:
+	case ocfl.Spec1_0:
 		fallthrough
-	case ocfl.Spec{1, 1}:
+	case ocfl.Spec1_1:
 		if err := vldr.validateRoot(ctx); err != nil {
 			return vldr.Result
 		}
