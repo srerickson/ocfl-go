@@ -72,7 +72,7 @@ func NewObjectRoot(fsys FS, dir string, entries []fs.DirEntry) *ObjectRoot {
 				continue
 			}
 			if decl, err := ParseNamaste(name); err == nil {
-				if decl.Type == DeclObject && !obj.HasDeclaration() {
+				if decl.Type == NamasteTypeObject && !obj.HasDeclaration() {
 					obj.Spec = decl.Version
 					obj.Flags |= FoundDeclaration
 					continue
@@ -123,7 +123,7 @@ func (obj ObjectRoot) ValidateDeclaration(ctx context.Context) error {
 	if !obj.HasDeclaration() {
 		return ErrNoNamaste
 	}
-	pth := path.Join(obj.Path, Namaste{Type: DeclObject, Version: obj.Spec}.Name())
+	pth := path.Join(obj.Path, Namaste{Type: NamasteTypeObject, Version: obj.Spec}.Name())
 	return ReadNamaste(ctx, obj.FS, pth)
 }
 

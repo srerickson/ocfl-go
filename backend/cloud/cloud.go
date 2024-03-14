@@ -346,7 +346,7 @@ func (fsys *FS) objectRootsList(ctx context.Context, sel ocfl.PathSelector, fn f
 		}
 		keyBase := path.Base(item.Key)
 		decl, err := ocfl.ParseNamaste(keyBase)
-		if err == nil && decl.Type == ocfl.DeclObject {
+		if err == nil && decl.Type == ocfl.NamasteTypeObject {
 			// new object declaration: apply fn to existing obj and reset
 			if obj != nil {
 				fsys.debugLog(ctx, "objectroots.complete",

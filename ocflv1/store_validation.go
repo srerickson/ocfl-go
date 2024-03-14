@@ -167,11 +167,11 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 		}
 		decl, _ := ocfl.FindNamaste(entries)
 		switch decl.Type {
-		case ocfl.DeclObject:
+		case ocfl.NamasteTypeObject:
 			objRoot := ocfl.NewObjectRoot(fsys, name, entries)
 			validateObjectRoot(objRoot)
 			return walkdirs.ErrSkipDirs // don't continue scan further into the object
-		case ocfl.DeclStore:
+		case ocfl.NamasteTypeStore:
 			// store within a store is an error
 			if name != root {
 				err := fmt.Errorf("%w: %s", ErrNonObject, name)

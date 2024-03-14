@@ -21,12 +21,11 @@ const (
 )
 
 var (
-	// specs lists known OCFL specification in the
-	// order they were published
-	specs = []Spec{Spec1_0, Spec1_1}
-
 	ErrSpecInvalid  = errors.New("invalid OCFL spec version")
 	ErrSpecNotFound = errors.New("OCFL spec file not found")
+
+	// specs lists known OCFL specifications in the  order they were published
+	specs = []Spec{Spec1_0, Spec1_1}
 )
 
 //go:embed specs/*

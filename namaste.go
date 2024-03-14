@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	DeclObject = "ocfl_object" // type string for OCFL Object declaration
-	DeclStore  = "ocfl"        // type string for OCFL Storage Root declaration
+	NamasteTypeObject = "ocfl_object" // type string for OCFL Object declaration
+	NamasteTypeStore  = "ocfl"        // type string for OCFL Storage Root declaration
 )
 
 var (

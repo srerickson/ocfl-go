@@ -59,7 +59,7 @@ func InitStore(ctx context.Context, fsys ocfl.WriteFS, root string, conf *InitSt
 		conf.Layout = &extension.LayoutFlatDirect{}
 	}
 	decl := ocfl.Namaste{
-		Type:    ocfl.DeclStore,
+		Type:    ocfl.NamasteTypeStore,
 		Version: conf.Spec,
 	}
 	entries, err := fsys.ReadDir(ctx, root)
@@ -117,7 +117,7 @@ func GetStore(ctx context.Context, fsys ocfl.FS, root string) (*Store, error) {
 	// root declarations until we find one (or return error)
 	var ocflVer ocfl.Spec
 	for _, s := range []ocfl.Spec{ocflv1_1, ocflv1_0} {
-		decl := ocfl.Namaste{Type: ocfl.DeclStore, Version: s}.Name()
+		decl := ocfl.Namaste{Type: ocfl.NamasteTypeStore, Version: s}.Name()
 		if err := ocfl.ReadNamaste(ctx, fsys, path.Join(root, decl)); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
