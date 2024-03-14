@@ -336,19 +336,19 @@ func TestCopy(t *testing.T) {
 		"a/b/c.txt": []byte("sample data"),
 		"a/b.txt":   []byte("more sample data"),
 	}
-	type removeTest struct {
+	type copyTest struct {
 		src       string
 		dst       string
 		expectErr bool
 	}
-	testTable := map[string]removeTest{
-		"basic":                {src: "a/b.txt", dst: "a/b2.txt", expectErr: false},
-		"overwrite dst":        {src: "a/b.txt", dst: "a/b/c.txt", expectErr: false},
-		"src is doesn't exist": {src: "none", dst: "c.txt", expectErr: true},
-		"src is empty":         {src: "", dst: "c.txt", expectErr: true},
-		"src is invalid":       {src: ".", dst: "c.txt", expectErr: true},
-		"dst is empty":         {src: "a/b.txt", dst: "", expectErr: true},
-		"dst is invalid":       {src: "a/b.txt", dst: ".", expectErr: true},
+	testTable := map[string]copyTest{
+		"basic":             {src: "a/b.txt", dst: "a/b2.txt", expectErr: false},
+		"overwrite dst":     {src: "a/b.txt", dst: "a/b/c.txt", expectErr: false},
+		"src doesn't exist": {src: "none", dst: "c.txt", expectErr: true},
+		"src is empty":      {src: "", dst: "c.txt", expectErr: true},
+		"src is invalid":    {src: ".", dst: "c.txt", expectErr: true},
+		"dst is empty":      {src: "a/b.txt", dst: "", expectErr: true},
+		"dst is invalid":    {src: "a/b.txt", dst: ".", expectErr: true},
 	}
 	for testName, test := range testTable {
 		t.Run(testName, func(t *testing.T) {
