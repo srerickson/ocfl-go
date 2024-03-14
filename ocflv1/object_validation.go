@@ -103,7 +103,7 @@ func (vldr *objectValidator) validate(ctx context.Context) *validation.Result {
 func (vldr *objectValidator) validateRoot(ctx context.Context) error {
 	ocflV := vldr.root.Spec
 	lgr := vldr.opts.Logger
-	if err := vldr.root.ValidateDeclaration(ctx); err != nil {
+	if err := vldr.root.ValidateNamaste(ctx); err != nil {
 		err = ec(err, codes.E007.Ref(ocflV))
 		vldr.LogFatal(lgr, err)
 	}

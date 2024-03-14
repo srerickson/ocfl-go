@@ -416,7 +416,7 @@ func TestObjectRoots(t *testing.T) {
 		}
 		extFixture := "W013_unregistered_extension"
 		if strings.HasSuffix(obj.Path, extFixture) {
-			if obj.Flags&ocfl.FoundExtensions == 0 {
+			if obj.Flags&ocfl.HasExtensions == 0 {
 				t.Errorf(obj.Path, "should have extensions flag")
 			}
 		}
