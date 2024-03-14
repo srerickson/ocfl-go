@@ -93,7 +93,7 @@ func (vldr *objectValidator) validate(ctx context.Context) *validation.Result {
 			return vldr.Result
 		}
 	default:
-		err := fmt.Errorf("%w: %s", ErrOCFLVersion, ocflV.String())
+		err := fmt.Errorf("%w: %s", ErrOCFLVersion, ocflV)
 		return vldr.LogFatal(lgr, err)
 	}
 	return vldr.Result

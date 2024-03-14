@@ -33,7 +33,7 @@ func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error
 	}
 	obj := NewObjectRoot(fsys, dir, entries)
 	if !obj.HasDeclaration() {
-		return nil, ErrDeclNotExist
+		return nil, ErrNoNamaste
 	}
 	return obj, nil
 }
@@ -71,8 +71,7 @@ func NewObjectRoot(fsys FS, dir string, entries []fs.DirEntry) *ObjectRoot {
 				obj.Flags |= FoundSidecar
 				continue
 			}
-			var decl Declaration
-			if err := ParseDeclaration(name, &decl); err == nil {
+			if decl, err := ParseNamaste(name); err == nil {
 				if decl.Type == DeclObject && !obj.HasDeclaration() {
 					obj.Spec = decl.Version
 					obj.Flags |= FoundDeclaration
@@ -122,10 +121,10 @@ const (
 // declaration in the object root.
 func (obj ObjectRoot) ValidateDeclaration(ctx context.Context) error {
 	if !obj.HasDeclaration() {
-		return ErrDeclNotExist
+		return ErrNoNamaste
 	}
-	pth := path.Join(obj.Path, Declaration{Type: DeclObject, Version: obj.Spec}.Name())
-	return ReadDeclaration(ctx, obj.FS, pth)
+	pth := path.Join(obj.Path, Namaste{Type: DeclObject, Version: obj.Spec}.Name())
+	return ReadNamaste(ctx, obj.FS, pth)
 }
 
 // HasDeclaration returns true if the object's FoundDeclaration flag is set

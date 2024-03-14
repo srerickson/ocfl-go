@@ -21,6 +21,8 @@ const (
 )
 
 var (
+	// specs lists known OCFL specification in the
+	// order they were published
 	specs = []Spec{Spec1_0, Spec1_1}
 
 	ErrSpecInvalid  = errors.New("invalid OCFL spec version")
@@ -33,36 +35,12 @@ var specFS embed.FS
 // Spec represent an OCFL specification number
 type Spec string
 
-func (s *Spec) UnmarshalText(text []byte) error {
-	newS, err := ParseSpec(string(text))
-	if err != nil {
-		return err
+func (s Spec) Valid() error {
+	if slices.Index(specs, s) < 0 {
+		return ErrSpecInvalid
 	}
-	*s = newS
 	return nil
 }
-
-func (num Spec) MarshalText() ([]byte, error) {
-	return []byte(num.String()), nil
-}
-
-func ParseSpec(v string) (Spec, error) {
-	s := Spec(v)
-	if slices.Index(specs, s) < 0 {
-		return Spec(""), ErrSpecInvalid
-	}
-	return s, nil
-}
-
-func MustParseSpec(v string) Spec {
-	s, err := ParseSpec(v)
-	if err != nil {
-		panic(err)
-	}
-	return s
-}
-
-func (s Spec) String() string { return string(s) }
 
 // Cmp compares Spec v1 to another v2.
 // - If v1 is less than v2, returns -1.
@@ -82,7 +60,10 @@ func (n Spec) AsInvType() InvType {
 }
 
 func WriteSpecFile(ctx context.Context, fsys WriteFS, dir string, n Spec) (string, error) {
-	glob := specsDir + "/" + "ocfl_" + n.String() + ".*"
+	if err := n.Valid(); err != nil {
+		return "", err
+	}
+	glob := specsDir + "/" + "ocfl_" + string(n) + ".*"
 	files, err := fs.Glob(specFS, glob)
 	if err != nil || len(files) != 1 {
 		return "", ErrSpecNotFound
@@ -112,17 +93,16 @@ type InvType struct {
 }
 
 func (inv InvType) String() string {
-	return invTypePrefix + inv.Spec.String() + invTypeSuffix
+	return invTypePrefix + string(inv.Spec) + invTypeSuffix
 }
 
 func (invT *InvType) UnmarshalText(t []byte) error {
 	cut := strings.TrimPrefix(string(t), invTypePrefix)
 	cut = strings.TrimSuffix(cut, invTypeSuffix)
-	s, err := ParseSpec(cut)
-	if err != nil {
+	if err := Spec(cut).Valid(); err != nil {
 		return err
 	}
-	invT.Spec = s
+	invT.Spec = Spec(cut)
 	return nil
 }
 

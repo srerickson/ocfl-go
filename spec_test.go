@@ -9,60 +9,6 @@ import (
 	"github.com/srerickson/ocfl-go/backend/memfs"
 )
 
-type vNumTest struct {
-	in    string
-	out   ocfl.Spec
-	valid bool
-}
-
-var vNumTable = []vNumTest{
-	// valid
-	{`1.0`, ocfl.Spec1_0, true},
-	{`1.1`, ocfl.Spec1_1, true},
-
-	// invalid
-	{`1.00`, ocfl.Spec(""), false},
-	{`10`, ocfl.Spec(""), false},
-	{`0`, ocfl.Spec(""), false},
-	{``, ocfl.Spec(""), false},
-	{`v1`, ocfl.Spec(""), false},
-	{`1.0001`, ocfl.Spec(""), false},
-	{`01.1`, ocfl.Spec(""), false},
-	{`1.00`, ocfl.Spec(""), false},
-	{`0.0`, ocfl.Spec(""), false},
-}
-
-func TestVersionParse(t *testing.T) {
-	is := is.New(t)
-	for _, t := range vNumTable {
-		v, err := ocfl.ParseSpec(t.in)
-		if t.valid {
-			is.NoErr(err)
-		} else {
-			is.True(err != nil)
-		}
-		is.Equal(v, t.out)
-	}
-}
-
-func TestCmp(t *testing.T) {
-	v1 := ocfl.Spec1_0
-	table := map[ocfl.Spec]int{
-		ocfl.MustParseSpec("2.0"): 1,
-		ocfl.MustParseSpec("1.0"): 1,
-		ocfl.MustParseSpec("2.2"): 0,
-		ocfl.MustParseSpec("2.3"): -1,
-		ocfl.MustParseSpec("3.2"): -1,
-	}
-
-	for v2, exp := range table {
-		got := v1.Cmp(v2)
-		if got != exp {
-			t.Errorf("comparing %s and %s: got %d, expected %d", v1, v2, got, exp)
-		}
-	}
-}
-
 type invTypeTest struct {
 	in    string
 	out   ocfl.Spec

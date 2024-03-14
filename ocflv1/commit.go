@@ -173,7 +173,7 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string
 	// Mutate object: new object declaration if necessary
 	if existObj == nil {
 		opts.logger.DebugContext(ctx, "initializing new OCFL object")
-		decl := ocfl.Declaration{Type: ocfl.DeclObject, Version: newInv.Type.Spec}
+		decl := ocfl.Namaste{Type: ocfl.DeclObject, Version: newInv.Type.Spec}
 		if err = ocfl.WriteDeclaration(ctx, fsys, objPath, decl); err != nil {
 			return &CommitError{Err: err, Dirty: true}
 		}
