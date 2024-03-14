@@ -57,9 +57,9 @@ func (vldr *objectValidator) validate(ctx context.Context) *validation.Result {
 	vldr.root = obj
 	ocflV := vldr.root.Spec
 	switch ocflV {
-	case ocfl.Spec{1, 0}:
+	case ocfl.Spec1_0:
 		fallthrough
-	case ocfl.Spec{1, 1}:
+	case ocfl.Spec1_1:
 		if err := vldr.validateRoot(ctx); err != nil {
 			return vldr.Result
 		}
@@ -93,7 +93,7 @@ func (vldr *objectValidator) validate(ctx context.Context) *validation.Result {
 			return vldr.Result
 		}
 	default:
-		err := fmt.Errorf("%w: %s", ErrOCFLVersion, ocflV.String())
+		err := fmt.Errorf("%w: %s", ErrOCFLVersion, ocflV)
 		return vldr.LogFatal(lgr, err)
 	}
 	return vldr.Result
@@ -103,7 +103,7 @@ func (vldr *objectValidator) validate(ctx context.Context) *validation.Result {
 func (vldr *objectValidator) validateRoot(ctx context.Context) error {
 	ocflV := vldr.root.Spec
 	lgr := vldr.opts.Logger
-	if err := vldr.root.ValidateDeclaration(ctx); err != nil {
+	if err := vldr.root.ValidateNamaste(ctx); err != nil {
 		err = ec(err, codes.E007.Ref(ocflV))
 		vldr.LogFatal(lgr, err)
 	}

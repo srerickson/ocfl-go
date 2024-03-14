@@ -12,84 +12,79 @@ import (
 )
 
 const (
-	DeclObject = "ocfl_object" // type string for OCFL Object declaration
-	DeclStore  = "ocfl"        // type string for OCFL Storage Root declaration
+	NamasteTypeObject = "ocfl_object" // type string for OCFL Object declaration
+	NamasteTypeStore  = "ocfl"        // type string for OCFL Storage Root declaration
 )
 
 var (
-	ErrDeclNotExist = fmt.Errorf("missing declaration: %w", fs.ErrNotExist)
-	ErrDeclInvalid  = errors.New("invalid NAMASTE declaration contents")
-	ErrDeclMultiple = errors.New("multiple NAMASTE declarations found")
-	namasteRE       = regexp.MustCompile(`^0=([a-z_]+)_([0-9]+\.[0-9]+)$`)
+	ErrNoNamaste       = fmt.Errorf("missing NAMASTE declaration: %w", fs.ErrNotExist)
+	ErrNamasteInvalid  = errors.New("invalid NAMASTE declaration contents")
+	ErrNamasteMultiple = errors.New("multiple NAMASTE declarations found")
+	namasteRE          = regexp.MustCompile(`^0=([a-z_]+)_([0-9]+\.[0-9]+)$`)
 )
 
-// Declaration represents a NAMASTE Declaration
-type Declaration struct {
+// Namaste represents a NAMASTE declaration
+type Namaste struct {
 	Type    string
 	Version Spec
 }
 
-// FindDeclaration returns the declaration from a fs.DirEntry slice. An
+// FindNamaste returns the Namasted declaration from a fs.DirEntry slice. An
 // error is returned if the number of declarations is not one.
-func FindDeclaration(items []fs.DirEntry) (Declaration, error) {
-	var found []Declaration
+func FindNamaste(items []fs.DirEntry) (Namaste, error) {
+	var found []Namaste
 	for _, e := range items {
 		if !e.Type().IsRegular() {
 			continue
 		}
-		dec := Declaration{}
-		if err := ParseDeclaration(e.Name(), &dec); err != nil {
-			continue
+		if dec, err := ParseNamaste(e.Name()); err == nil {
+			found = append(found, dec)
 		}
-		found = append(found, dec)
 	}
 	switch len(found) {
 	case 0:
-		return Declaration{}, ErrDeclNotExist
+		return Namaste{}, ErrNoNamaste
 	case 1:
 		return found[0], nil
 	}
-	return Declaration{}, ErrDeclMultiple
+	return Namaste{}, ErrNamasteMultiple
 }
 
 // Name returns the filename for d (0=TYPE_VERSION) or an empty string if d is
 // empty
-func (d Declaration) Name() string {
-	if d.Type == "" || d.Version.Empty() {
+func (n Namaste) Name() string {
+	if n.Type == "" || n.Version.Empty() {
 		return ""
 	}
-	return "0=" + d.Type + `_` + d.Version.String()
+	return "0=" + n.Type + `_` + string(n.Version)
 }
 
-// Contents returns the file contents of the declaration or an empty string if d
-// is empty
-func (d Declaration) Contents() string {
-	if d.Type == "" || d.Version.Empty() {
+// Body returns the expected file contents of the namaste declaration
+func (n Namaste) Body() string {
+	if n.Type == "" || n.Version.Empty() {
 		return ""
 	}
-	return d.Type + `_` + d.Version.String() + "\n"
+	return n.Type + `_` + string(n.Version) + "\n"
 }
 
-func ParseDeclaration(name string, dec *Declaration) error {
+func ParseNamaste(name string) (Namaste, error) {
+	var d Namaste
 	m := namasteRE.FindStringSubmatch(name)
 	if len(m) != 3 {
-		return ErrDeclNotExist
+		return d, ErrNoNamaste
 	}
-	dec.Type = m[1]
-	err := ParseSpec(m[2], &dec.Version)
-	if err != nil {
-		return ErrDeclNotExist
-	}
-	return nil
+	d.Type = m[1]
+	d.Version = Spec(m[2])
+	return d, nil
 }
 
-// ReadDeclaration validates a namaste declaration
-func ReadDeclaration(ctx context.Context, fsys FS, filePath string) error {
-	var d Declaration
-	if err := ParseDeclaration(path.Base(filePath), &d); err != nil {
+// ReadNamaste validates a namaste declaration
+func ReadNamaste(ctx context.Context, fsys FS, name string) error {
+	d, err := ParseNamaste(path.Base(name))
+	if err != nil {
 		return err
 	}
-	f, err := fsys.OpenFile(ctx, filePath)
+	f, err := fsys.OpenFile(ctx, name)
 	if err != nil {
 		return fmt.Errorf("opening declaration: %w", err)
 	}
@@ -98,14 +93,14 @@ func ReadDeclaration(ctx context.Context, fsys FS, filePath string) error {
 	if err != nil {
 		return fmt.Errorf("reading declaration: %w", err)
 	}
-	if string(decl) != d.Contents() {
-		return ErrDeclInvalid
+	if string(decl) != d.Body() {
+		return ErrNamasteInvalid
 	}
 	return nil
 }
 
-func WriteDeclaration(ctx context.Context, root WriteFS, dir string, d Declaration) error {
-	cont := strings.NewReader(d.Contents())
+func WriteDeclaration(ctx context.Context, root WriteFS, dir string, d Namaste) error {
+	cont := strings.NewReader(d.Body())
 	_, err := root.Write(ctx, path.Join(dir, d.Name()), cont)
 	if err != nil {
 		return fmt.Errorf(`writing declaration: %w`, err)

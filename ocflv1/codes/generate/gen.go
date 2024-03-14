@@ -54,9 +54,8 @@ func main() {
 			desc := row[1]
 			url := row[2]
 			comment := fmt.Sprintf("%s: %s", row[0], row[1])
-			v := ocfl.MustParseSpec(specnum)
 			if code := codes[num]; code != nil {
-				code.Specs[v] = Spec{
+				code.Specs[ocfl.Spec(specnum)] = Spec{
 					Description: desc,
 					URL:         url,
 				}
@@ -66,7 +65,7 @@ func main() {
 				Num:     num,
 				Comment: comment,
 				Specs: map[ocfl.Spec]Spec{
-					v: {
+					ocfl.Spec(specnum): {
 						Description: desc,
 						URL:         url,
 					},

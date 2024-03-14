@@ -15,9 +15,6 @@ const (
 )
 
 var (
-	Spec1_0 = Spec{1, 0}
-	Spec1_1 = Spec{1, 1}
-
 	digestConcurrency atomic.Int32
 	commitConcurrency atomic.Int32
 )

@@ -7,68 +7,38 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"strconv"
+	"slices"
 	"strings"
 )
 
 const (
+	Spec1_0 = Spec("1.0")
+	Spec1_1 = Spec("1.1")
+
 	invTypePrefix = "https://ocfl.io/"
 	invTypeSuffix = "/spec/#inventory"
 	specsDir      = "specs"
 )
 
-var ErrSpecInvalid = errors.New("invalid OCFL spec version")
-var ErrSpecNotFound = errors.New("OCFL spec file not found")
+var (
+	ErrSpecInvalid  = errors.New("invalid OCFL spec version")
+	ErrSpecNotFound = errors.New("OCFL spec file not found")
+
+	// specs lists known OCFL specifications in the  order they were published
+	specs = []Spec{Spec1_0, Spec1_1}
+)
 
 //go:embed specs/*
 var specFS embed.FS
 
 // Spec represent an OCFL specification number
-type Spec [2]int
+type Spec string
 
-func (num *Spec) UnmarshalText(text []byte) error {
-	return ParseSpec(string(text), num)
-}
-
-func (num Spec) MarshalText() ([]byte, error) {
-	return []byte(num.String()), nil
-}
-
-func ParseSpec(v string, n *Spec) error {
-	if len(v) < 3 {
-		return fmt.Errorf("%w: %s", ErrSpecInvalid, v)
+func (s Spec) Valid() error {
+	if slices.Index(specs, s) < 0 {
+		return ErrSpecInvalid
 	}
-	a, b, found := strings.Cut(v, `.`)
-	if !found {
-		return fmt.Errorf("%w: %s", ErrSpecInvalid, v)
-	}
-	if len(a) < 1 || a[0] == '0' || len(b) < 1 || (len(b) > 1 && b[0] == '0') {
-		return fmt.Errorf("%w: %s", ErrSpecInvalid, v)
-	}
-	maj, err := strconv.Atoi(a)
-	if err != nil {
-		return fmt.Errorf("%w: %s", ErrSpecInvalid, v)
-	}
-	min, err := strconv.Atoi(b)
-	if err != nil {
-		return fmt.Errorf("%w: %s", ErrSpecInvalid, v)
-	}
-	n[0] = maj
-	n[1] = min
 	return nil
-}
-
-func MustParseSpec(v string) Spec {
-	var n Spec
-	err := ParseSpec(v, &n)
-	if err != nil {
-		panic(err)
-	}
-	return n
-}
-
-func (n Spec) String() string {
-	return fmt.Sprintf("%d.%d", n[0], n[1])
 }
 
 // Cmp compares Spec v1 to another v2.
@@ -76,22 +46,11 @@ func (n Spec) String() string {
 // - If v1 is the same as v2, returns 0
 // - If v1 is greater than v2, returns 1
 func (v1 Spec) Cmp(v2 Spec) int {
-	var diff int
-	if v1[0] == v2[0] {
-		diff = v1[1] - v2[1]
-	} else {
-		diff = v1[0] - v2[0]
-	}
-	if diff > 0 {
-		return 1
-	} else if diff < 0 {
-		return -1
-	}
-	return 0
+	return slices.Index(specs, v1) - slices.Index(specs, v2)
 }
 
 func (n Spec) Empty() bool {
-	return n == Spec{}
+	return n == Spec("")
 }
 
 // AsInvType returns n as an InventoryType
@@ -100,7 +59,10 @@ func (n Spec) AsInvType() InvType {
 }
 
 func WriteSpecFile(ctx context.Context, fsys WriteFS, dir string, n Spec) (string, error) {
-	glob := specsDir + "/" + "ocfl_" + n.String() + ".*"
+	if err := n.Valid(); err != nil {
+		return "", err
+	}
+	glob := specsDir + "/" + "ocfl_" + string(n) + ".*"
 	files, err := fs.Glob(specFS, glob)
 	if err != nil || len(files) != 1 {
 		return "", ErrSpecNotFound
@@ -130,13 +92,17 @@ type InvType struct {
 }
 
 func (inv InvType) String() string {
-	return invTypePrefix + inv.Spec.String() + invTypeSuffix
+	return invTypePrefix + string(inv.Spec) + invTypeSuffix
 }
 
 func (invT *InvType) UnmarshalText(t []byte) error {
 	cut := strings.TrimPrefix(string(t), invTypePrefix)
 	cut = strings.TrimSuffix(cut, invTypeSuffix)
-	return ParseSpec(cut, &invT.Spec)
+	if err := Spec(cut).Valid(); err != nil {
+		return err
+	}
+	invT.Spec = Spec(cut)
+	return nil
 }
 
 func (invT InvType) MarshalText() ([]byte, error) {

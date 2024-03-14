@@ -303,7 +303,7 @@ func (fsys *FS) objectRootsWalkDirs(ctx context.Context, sel ocfl.PathSelector, 
 			return err
 		}
 		objRoot := ocfl.NewObjectRoot(fsys, name, entries)
-		if objRoot.HasDeclaration() {
+		if objRoot.HasNamaste() {
 			if err := fn(objRoot); err != nil {
 				return err
 			}
@@ -345,15 +345,14 @@ func (fsys *FS) objectRootsList(ctx context.Context, sel ocfl.PathSelector, fn f
 			continue
 		}
 		keyBase := path.Base(item.Key)
-		// key is a declaration file?
-		var decl ocfl.Declaration
-		if ocfl.ParseDeclaration(keyBase, &decl); decl.Type == ocfl.DeclObject {
+		decl, err := ocfl.ParseNamaste(keyBase)
+		if err == nil && decl.Type == ocfl.NamasteTypeObject {
 			// new object declaration: apply fn to existing obj and reset
 			if obj != nil {
 				fsys.debugLog(ctx, "objectroots.complete",
 					"dir", obj.Path,
 					"alg", obj.SidecarAlg,
-					"has_declaration", obj.HasDeclaration(),
+					"has_declaration", obj.HasNamaste(),
 					"has_inventory", obj.HasInventory(),
 					"has_sidecar", obj.HasSidecar(),
 					"versions", obj.VersionDirs,
@@ -366,7 +365,7 @@ func (fsys *FS) objectRootsList(ctx context.Context, sel ocfl.PathSelector, fn f
 				FS:    fsys,
 				Path:  keyDir,
 				Spec:  decl.Version,
-				Flags: ocfl.FoundDeclaration,
+				Flags: ocfl.HasNamaste,
 			}
 			continue
 		}
@@ -380,21 +379,21 @@ func (fsys *FS) objectRootsList(ctx context.Context, sel ocfl.PathSelector, fn f
 		if keyDir == obj.Path {
 			// inventory.json
 			if keyBase == "inventory.json" {
-				obj.Flags = obj.Flags | ocfl.FoundInventory
+				obj.Flags = obj.Flags | ocfl.HasInventory
 				continue
 			}
 			// sidecar
 			if strings.HasPrefix(keyBase, "inventory.json.") {
 				obj.SidecarAlg = strings.TrimPrefix(keyBase, "inventory.json.")
-				obj.Flags |= ocfl.FoundSidecar
+				obj.Flags |= ocfl.HasSidecar
 				continue
 			}
 
 		}
 		// directories in object root: versions and extensions
 		child, _, _ := strings.Cut(strings.TrimPrefix(item.Key, obj.Path+"/"), "/")
-		if child == "extensions" && (obj.Flags&ocfl.FoundExtensions) == 0 {
-			obj.Flags |= ocfl.FoundExtensions
+		if child == "extensions" && (obj.Flags&ocfl.HasExtensions) == 0 {
+			obj.Flags |= ocfl.HasExtensions
 			continue
 		}
 		var v ocfl.VNum

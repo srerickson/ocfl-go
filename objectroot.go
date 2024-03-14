@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/srerickson/ocfl-go/internal/walkdirs"
@@ -16,15 +17,16 @@ const (
 )
 
 var (
-	ErrObjectExists = fmt.Errorf("existing OCFL object declaration: %w", fs.ErrExist)
+	ErrObjectNotFound = fmt.Errorf("missing object declaration: %w", ErrNoNamaste)
+	ErrObjectExists   = fmt.Errorf("existing OCFL object declaration: %w", fs.ErrExist)
 )
 
 // GetObjectRoot reads the contents of directory dir in fsys, confirms that an
 // OCFL Object declaration is present, and returns a new ObjectRoot reference
-// based on the directory contents. If the directory cannot be ready or a
+// based on the directory contents. If the directory cannot be read or a
 // declaration is not found, ErrObjectNotFound is returned. Note, the object
 // declaration is not read or fully validated. The returned ObjectRoot will have
-// the FoundDeclaration flag set, but other flags expected for a complete object
+// the FoundNamaste flag set, but other flags expected for a complete object
 // root may not be set (e.g., if the inventory is missing).
 func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error) {
 	entries, err := fsys.ReadDir(ctx, dir)
@@ -32,8 +34,8 @@ func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error
 		return nil, err
 	}
 	obj := NewObjectRoot(fsys, dir, entries)
-	if !obj.HasDeclaration() {
-		return nil, ErrDeclNotExist
+	if !obj.HasNamaste() {
+		return nil, fmt.Errorf("missing object declaration: %w", ErrNoNamaste)
 	}
 	return obj, nil
 }
@@ -51,7 +53,7 @@ func NewObjectRoot(fsys FS, dir string, entries []fs.DirEntry) *ObjectRoot {
 		name := e.Name()
 		if e.IsDir() {
 			if name == ExtensionsDir {
-				obj.Flags |= FoundExtensions
+				obj.Flags |= HasExtensions
 				continue
 			}
 			var v VNum
@@ -62,20 +64,19 @@ func NewObjectRoot(fsys FS, dir string, entries []fs.DirEntry) *ObjectRoot {
 		}
 		if e.Type().IsRegular() { // regular file
 			if name == inventoryFile {
-				obj.Flags |= FoundInventory
+				obj.Flags |= HasInventory
 				continue
 			}
 			scPrefix := inventoryFile + "."
 			if strings.HasPrefix(name, scPrefix) {
 				obj.SidecarAlg = strings.TrimPrefix(name, scPrefix)
-				obj.Flags |= FoundSidecar
+				obj.Flags |= HasSidecar
 				continue
 			}
-			var decl Declaration
-			if err := ParseDeclaration(name, &decl); err == nil {
-				if decl.Type == DeclObject && !obj.HasDeclaration() {
+			if decl, err := ParseNamaste(name); err == nil {
+				if decl.Type == NamasteTypeObject && !obj.HasNamaste() {
 					obj.Spec = decl.Version
-					obj.Flags |= FoundDeclaration
+					obj.Flags |= HasNamaste
 					continue
 				}
 			}
@@ -103,53 +104,48 @@ type ObjectRoot struct {
 type ObjectRootFlag int
 
 const (
-	// FoundDeclaration indicates that an ObjectRoot has been initialized
+	// HasNamaste indicates that an ObjectRoot has been initialized
 	// and an object declaration file is confirmed to exist in the object's root
 	// directory
-	FoundDeclaration ObjectRootFlag = 1 << iota
-	// FoundInventory indicates that an ObjectRoot includes an "inventory.json"
+	HasNamaste ObjectRootFlag = 1 << iota
+	// HasInventory indicates that an ObjectRoot includes an "inventory.json"
 	// file
-	FoundInventory
-	// FoundSidecar indicates that an ObjectRoot includes an "inventory.json.*"
+	HasInventory
+	// HasSidecar indicates that an ObjectRoot includes an "inventory.json.*"
 	// file (the inventory sidecar).
-	FoundSidecar
-	// FoundExtensions indicates that an ObjectRoot includes a directory
+	HasSidecar
+	// HasExtensions indicates that an ObjectRoot includes a directory
 	// named "extensions"
-	FoundExtensions
+	HasExtensions
 )
 
-// ValidateDeclaration reads and validates the contents of the OCFL object
+// ValidateNamaste reads and validates the contents of the OCFL object
 // declaration in the object root.
-func (obj ObjectRoot) ValidateDeclaration(ctx context.Context) error {
-	if !obj.HasDeclaration() {
-		return ErrDeclNotExist
+func (obj ObjectRoot) ValidateNamaste(ctx context.Context) error {
+	if !obj.HasNamaste() {
+		return ErrNoNamaste
 	}
-	pth := path.Join(obj.Path, Declaration{Type: DeclObject, Version: obj.Spec}.Name())
-	return ReadDeclaration(ctx, obj.FS, pth)
+	pth := path.Join(obj.Path, Namaste{Type: NamasteTypeObject, Version: obj.Spec}.Name())
+	return ReadNamaste(ctx, obj.FS, pth)
 }
 
-// HasDeclaration returns true if the object's FoundDeclaration flag is set
-func (obj ObjectRoot) HasDeclaration() bool {
-	return obj.Flags&FoundDeclaration > 0
+// HasNamaste returns true if the object's FoundDeclaration flag is set
+func (obj ObjectRoot) HasNamaste() bool {
+	return obj.Flags&HasNamaste > 0
 }
 
 // HasInventory returns true if the object's FoundInventory flag is set
 func (obj ObjectRoot) HasInventory() bool {
-	return obj.Flags&FoundInventory > 0
+	return obj.Flags&HasInventory > 0
 }
 
 // HasSidecar returns true if the object's FoundSidecar flag is set
 func (obj ObjectRoot) HasSidecar() bool {
-	return obj.Flags&FoundSidecar > 0
+	return obj.Flags&HasSidecar > 0
 }
 
 func (obj ObjectRoot) HasVersionDir(dir VNum) bool {
-	for _, v := range obj.VersionDirs {
-		if v == dir {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(obj.VersionDirs, dir)
 }
 
 // ObjectRootIterator is used to iterate over object roots
@@ -174,7 +170,7 @@ func ObjectRoots(ctx context.Context, fsys FS, sel PathSelector, fn func(*Object
 			return err
 		}
 		objRoot := NewObjectRoot(fsys, name, entries)
-		if objRoot.HasDeclaration() {
+		if objRoot.HasNamaste() {
 			if err := fn(objRoot); err != nil {
 				return err
 			}

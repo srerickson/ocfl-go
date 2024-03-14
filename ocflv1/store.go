@@ -48,7 +48,7 @@ func InitStore(ctx context.Context, fsys ocfl.WriteFS, root string, conf *InitSt
 	if conf == nil {
 		conf = &InitStoreConf{}
 	}
-	if conf.Spec == (ocfl.Spec{}) {
+	if conf.Spec.Empty() {
 		conf.Spec = defaultSpec
 	}
 	if !ocflVerSupported[conf.Spec] {
@@ -58,8 +58,8 @@ func InitStore(ctx context.Context, fsys ocfl.WriteFS, root string, conf *InitSt
 	if conf.Layout == nil {
 		conf.Layout = &extension.LayoutFlatDirect{}
 	}
-	decl := ocfl.Declaration{
-		Type:    ocfl.DeclStore,
+	decl := ocfl.Namaste{
+		Type:    ocfl.NamasteTypeStore,
 		Version: conf.Spec,
 	}
 	entries, err := fsys.ReadDir(ctx, root)
@@ -117,8 +117,8 @@ func GetStore(ctx context.Context, fsys ocfl.FS, root string) (*Store, error) {
 	// root declarations until we find one (or return error)
 	var ocflVer ocfl.Spec
 	for _, s := range []ocfl.Spec{ocflv1_1, ocflv1_0} {
-		decl := ocfl.Declaration{Type: ocfl.DeclStore, Version: s}.Name()
-		if err := ocfl.ReadDeclaration(ctx, fsys, path.Join(root, decl)); err != nil {
+		decl := ocfl.Namaste{Type: ocfl.NamasteTypeStore, Version: s}.Name()
+		if err := ocfl.ReadNamaste(ctx, fsys, path.Join(root, decl)); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
 			}
@@ -128,7 +128,7 @@ func GetStore(ctx context.Context, fsys ocfl.FS, root string) (*Store, error) {
 		break
 	}
 	if ocflVer.Empty() {
-		return nil, fmt.Errorf("missing storage root declaration: %w", ocfl.ErrDeclNotExist)
+		return nil, fmt.Errorf("missing storage root declaration: %w", ocfl.ErrNoNamaste)
 	}
 	str := &Store{
 		fsys:    fsys,

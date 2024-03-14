@@ -13,15 +13,15 @@ const (
 	digestAlgorithm     = "sha512"
 	extensionsDir       = "extensions"
 	layoutName          = "ocfl_layout.json"
-	storeRoot           = ocfl.DeclStore
+	storeRoot           = ocfl.NamasteTypeStore
 	descriptionKey      = `description`
 	extensionKey        = `extension`
 	extensionConfigFile = "config.json"
 )
 
 var (
-	ocflv1_0    = ocfl.Spec{1, 0}
-	ocflv1_1    = ocfl.Spec{1, 1}
+	ocflv1_0    = ocfl.Spec1_0
+	ocflv1_1    = ocfl.Spec1_1
 	defaultSpec = ocflv1_1
 
 	// supported versions
@@ -29,15 +29,6 @@ var (
 		ocflv1_0: true,
 		ocflv1_1: true,
 	}
-
-	// algs set to true can be used as digestAlgorithms
-	// algorithms = map[ocfl.Alg]bool{
-	// 	ocfl.SHA512:  true,
-	// 	ocfl.SHA256:  true,
-	// 	ocfl.SHA1:    false,
-	// 	ocfl.MD5:     false,
-	// 	ocfl.BLAKE2B: false,
-	// }
 
 	// shorthand
 	ec = validation.NewErrorCode

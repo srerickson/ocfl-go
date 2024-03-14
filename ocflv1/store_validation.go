@@ -26,7 +26,7 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 	//E076: [The OCFL version declaration] MUST be a file in the base
 	//directory of the OCFL Storage Root giving the OCFL version in the
 	//filename.
-	decl, err := ocfl.FindDeclaration(inf)
+	decl, err := ocfl.FindNamaste(inf)
 	if err != nil {
 		err := fmt.Errorf("not an ocfl storage root: %w", err)
 		return result.LogFatal(lgr, ec(err, codes.E076.Ref(ocflv1_0)))
@@ -44,7 +44,7 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 	//NAMASTE specification.
 	//E080: The text contents of [the OCFL version declaration file] MUST be
 	//the same as dvalue, followed by a newline (\n).
-	err = ocfl.ReadDeclaration(ctx, fsys, path.Join(root, decl.Name()))
+	err = ocfl.ReadNamaste(ctx, fsys, path.Join(root, decl.Name()))
 	if err != nil {
 		result.LogFatal(lgr, ec(err, codes.E080.Ref(ocflV)))
 	}
@@ -165,13 +165,13 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 		if err != nil {
 			return err
 		}
-		decl, _ := ocfl.FindDeclaration(entries)
+		decl, _ := ocfl.FindNamaste(entries)
 		switch decl.Type {
-		case ocfl.DeclObject:
+		case ocfl.NamasteTypeObject:
 			objRoot := ocfl.NewObjectRoot(fsys, name, entries)
 			validateObjectRoot(objRoot)
 			return walkdirs.ErrSkipDirs // don't continue scan further into the object
-		case ocfl.DeclStore:
+		case ocfl.NamasteTypeStore:
 			// store within a store is an error
 			if name != root {
 				err := fmt.Errorf("%w: %s", ErrNonObject, name)
