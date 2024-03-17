@@ -269,14 +269,7 @@ func (fsys *FS) RemoveAll(ctx context.Context, name string) error {
 func (fsys *FS) Copy(ctx context.Context, dst, src string) error {
 	fsys.debugLog(ctx, "copy", "dst", dst, "src", src)
 	for _, p := range []string{src, dst} {
-		if !fs.ValidPath(p) {
-			return &fs.PathError{
-				Op:   "copy",
-				Path: p,
-				Err:  fs.ErrInvalid,
-			}
-		}
-		if p == "." {
+		if !fs.ValidPath(p) || p == "." {
 			return &fs.PathError{
 				Op:   "copy",
 				Path: p,
