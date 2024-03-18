@@ -1,1 +1,4 @@
 .tool-versions
+
+testdata/minio
+!testdata/minio/.gitkeep

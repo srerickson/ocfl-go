@@ -3,7 +3,6 @@ package s3
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"path"
@@ -19,7 +18,13 @@ import (
 	// "github.com/aws/smithy-go"
 )
 
-func New() {}
+func New(cfg aws.Config, bucket string) *S3Backend {
+	client := s3v2.NewFromConfig(cfg)
+	return &S3Backend{
+		bucket: bucket,
+		client: client,
+	}
+}
 
 type S3Backend struct {
 	bucket string
@@ -90,7 +95,7 @@ func (b *S3Backend) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, err
 			}
 		}
 		entries = append(entries, newEntries...)
-		if !*list.IsTruncated {
+		if list.IsTruncated == nil || !*list.IsTruncated {
 			break
 		}
 		params.ContinuationToken = list.NextContinuationToken
