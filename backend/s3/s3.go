@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"net/url"
 	"path"
 	"slices"
 	"time"
@@ -16,6 +17,11 @@ import (
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	// "github.com/aws/smithy-go"
+)
+
+var (
+	delim         = "/"
+	maxKeys int32 = 1000
 )
 
 func New(cfg aws.Config, bucket string) *S3Backend {
@@ -33,7 +39,7 @@ type S3Backend struct {
 
 func (b *S3Backend) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
+		return nil, pathErr("open", name, fs.ErrInvalid)
 	}
 	params := &s3v2.GetObjectInput{
 		Bucket: &b.bucket,
@@ -56,12 +62,12 @@ func (b *S3Backend) OpenFile(ctx context.Context, name string) (fs.File, error) 
 
 func (b *S3Backend) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, error) {
 	if !fs.ValidPath(dir) {
-		return nil, &fs.PathError{Op: "readdir", Path: dir, Err: fs.ErrInvalid}
+		return nil, pathErr("readdir", dir, fs.ErrInvalid)
 	}
 	params := &s3v2.ListObjectsV2Input{
 		Bucket:    &b.bucket,
-		Delimiter: aws.String("/"),
-		MaxKeys:   aws.Int32(1000),
+		Delimiter: &delim,
+		MaxKeys:   &maxKeys,
 	}
 	if dir != "." {
 		params.Prefix = aws.String(dir + "/")
@@ -70,11 +76,7 @@ func (b *S3Backend) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, err
 	for {
 		list, err := b.client.ListObjectsV2(ctx, params)
 		if err != nil {
-			return nil, &fs.PathError{
-				Op:   "readdir",
-				Path: dir,
-				Err:  err,
-			}
+			return nil, pathErr("readdir", dir, err)
 		}
 		numDirs := len(list.CommonPrefixes)
 		numFiles := len(list.Contents)
@@ -94,11 +96,10 @@ func (b *S3Backend) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, err
 				// sys:     &item,
 			}
 		}
-		entries = append(entries, newEntries...)
-		if list.IsTruncated == nil || !*list.IsTruncated {
+		params.ContinuationToken = list.NextContinuationToken
+		if params.ContinuationToken == nil {
 			break
 		}
-		params.ContinuationToken = list.NextContinuationToken
 	}
 	slices.SortFunc(entries, func(a, b fs.DirEntry) int {
 		aN, bN := a.Name(), b.Name()
@@ -115,6 +116,9 @@ func (b *S3Backend) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, err
 }
 
 func (b *S3Backend) Write(ctx context.Context, name string, r io.Reader) (int64, error) {
+	if !fs.ValidPath(name) || name == "." {
+		return 0, pathErr("write", name, fs.ErrInvalid)
+	}
 	uploader := s3mgr.NewUploader(b.client)
 	countReader := &countReader{Reader: r}
 	params := &s3v2.PutObjectInput{
@@ -124,9 +128,81 @@ func (b *S3Backend) Write(ctx context.Context, name string, r io.Reader) (int64,
 	}
 	_, err := uploader.Upload(ctx, params)
 	if err != nil {
-		return 0, err
+		return 0, &fs.PathError{Op: "write", Path: name, Err: err}
 	}
 	return countReader.size, nil
+}
+
+func (b *S3Backend) Remove(ctx context.Context, name string) error {
+	if !fs.ValidPath(name) {
+		return pathErr("remove", name, fs.ErrInvalid)
+	}
+	if name == "." {
+		return pathErr("remove", name, fs.ErrNotExist)
+	}
+	_, err := b.client.DeleteObject(ctx, &s3v2.DeleteObjectInput{
+		Bucket: &b.bucket,
+		Key:    aws.String(name),
+	})
+	if err != nil {
+		return pathErr("remove", name, err)
+	}
+	return nil
+}
+
+func (b *S3Backend) RemoveAll(ctx context.Context, name string) error {
+	if !fs.ValidPath(name) {
+		return pathErr("removeall", name, fs.ErrInvalid)
+	}
+	params := &s3v2.ListObjectsV2Input{
+		Bucket:  &b.bucket,
+		MaxKeys: &maxKeys,
+	}
+	if name != "." {
+		params.Prefix = aws.String(name + "/")
+	}
+	for {
+		list, err := b.client.ListObjectsV2(ctx, params)
+		if err != nil {
+			return pathErr("removeall", name, err)
+		}
+		for _, obj := range list.Contents {
+			_, err := b.client.DeleteObject(ctx, &s3v2.DeleteObjectInput{
+				Bucket: &b.bucket,
+				Key:    obj.Key,
+			})
+			if err != nil {
+				return pathErr("removeall", name, err)
+			}
+		}
+		params.ContinuationToken = list.NextContinuationToken
+		if params.ContinuationToken == nil {
+			break
+		}
+	}
+	return nil
+}
+
+func (b *S3Backend) Copy(ctx context.Context, dst, src string) error {
+	if !fs.ValidPath(src) || src == "." {
+		return pathErr("copy", src, fs.ErrInvalid)
+	}
+	if !fs.ValidPath(dst) || dst == "." {
+		return pathErr("copy", dst, fs.ErrInvalid)
+	}
+	escapedSrc := url.QueryEscape(src)
+	params := &s3v2.CopyObjectInput{
+		Bucket:     &b.bucket,
+		CopySource: &escapedSrc,
+		Key:        &dst,
+	}
+	_, err := b.client.CopyObject(ctx, params)
+	if err != nil {
+		// TODO: if copy fails because the src is > 5GB,
+		// fall back to multipart copy
+		return pathErr("copy", src, err)
+	}
+	return nil
 }
 
 type s3File struct {
@@ -185,4 +261,8 @@ func (r *countReader) Read(p []byte) (int, error) {
 	s, err := r.Reader.Read(p)
 	r.size += int64(s)
 	return s, err
+}
+
+func pathErr(op string, path string, err error) error {
+	return &fs.PathError{Op: op, Path: path, Err: err}
 }
