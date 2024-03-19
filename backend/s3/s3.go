@@ -102,7 +102,7 @@ func (b *S3Backend) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, err
 			break
 		}
 	}
-	slices.SortFunc(entries, func(a, b fs.DirEntry) int {
+	sortEntries := func(a, b fs.DirEntry) int {
 		aN, bN := a.Name(), b.Name()
 		switch {
 		case aN < bN:
@@ -112,7 +112,8 @@ func (b *S3Backend) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, err
 		default:
 			return 0
 		}
-	})
+	}
+	slices.SortFunc(entries, sortEntries)
 	return entries, nil
 }
 
@@ -120,7 +121,27 @@ func (b *S3Backend) Write(ctx context.Context, name string, r io.Reader) (int64,
 	if !fs.ValidPath(name) || name == "." {
 		return 0, pathErr("write", name, fs.ErrInvalid)
 	}
-	uploader := s3mgr.NewUploader(b.client)
+	var (
+		expectedSize int64 = -1
+		concurrency        = s3mgr.DefaultUploadConcurrency
+		partSize           = s3mgr.DefaultUploadPartSize
+		maxParts           = s3mgr.MaxUploadParts
+	)
+	switch r := r.(type) {
+	case *io.LimitedReader:
+		expectedSize = r.N
+	case *s3File:
+		expectedSize = *r.obj.ContentLength
+	}
+	if expectedSize > 0 && expectedSize > (int64(maxParts)*partSize) {
+		// increase part size
+
+	}
+	uploader := s3mgr.NewUploader(b.client, func(u *s3mgr.Uploader) {
+		u.Concurrency = concurrency
+		u.PartSize = partSize
+		u.MaxUploadParts = maxParts
+	})
 	countReader := &countReader{Reader: r}
 	params := &s3v2.PutObjectInput{
 		Bucket: &b.bucket,
@@ -207,8 +228,9 @@ func (b *S3Backend) Copy(ctx context.Context, dst, src string) error {
 }
 
 type s3File struct {
-	key string
-	obj *s3v2.GetObjectOutput
+	bucket string
+	key    string
+	obj    *s3v2.GetObjectOutput
 }
 
 func (f *s3File) Stat() (fs.FileInfo, error) {
