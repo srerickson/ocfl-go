@@ -21,7 +21,7 @@ import (
 
 var (
 	delim         = "/"
-	maxKeys int32 = 10000
+	maxKeys int32 = 1000
 )
 
 func New(cfg aws.Config, bucket string) *S3Backend {
