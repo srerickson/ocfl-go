@@ -231,7 +231,7 @@ func (b *S3Backend) Copy(ctx context.Context, dst, src string) error {
 	if !fs.ValidPath(dst) || dst == "." {
 		return pathErr("copy", dst, fs.ErrInvalid)
 	}
-	escapedSrc := url.QueryEscape(src)
+	escapedSrc := url.QueryEscape(b.bucket + "/" + src)
 	params := &s3v2.CopyObjectInput{
 		Bucket:     &b.bucket,
 		CopySource: &escapedSrc,
