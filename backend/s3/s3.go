@@ -16,6 +16,7 @@ import (
 	s3mgr "github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"golang.org/x/sync/errgroup"
 	// "github.com/aws/smithy-go"
 )
 
@@ -33,8 +34,12 @@ func New(cfg aws.Config, bucket string) *S3Backend {
 }
 
 type S3Backend struct {
-	bucket string
-	client *s3v2.Client
+	bucket                    string
+	client                    *s3v2.Client
+	UploadConcurrency         int
+	UploadPartCopyConcurrency int
+	MaxUploadParts            int32
+	DefaultUploadPartSize     int64
 }
 
 func (b *S3Backend) OpenFile(ctx context.Context, name string) (fs.File, error) {
@@ -57,7 +62,7 @@ func (b *S3Backend) OpenFile(ctx context.Context, name string) (fs.File, error) 
 		}
 		return nil, fsErr
 	}
-	return &s3File{key: name, obj: obj}, nil
+	return &s3File{bucket: b.bucket, key: name, obj: obj}, nil
 }
 
 func (b *S3Backend) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, error) {
@@ -122,20 +127,33 @@ func (b *S3Backend) Write(ctx context.Context, name string, r io.Reader) (int64,
 		return 0, pathErr("write", name, fs.ErrInvalid)
 	}
 	var (
-		expectedSize int64 = -1
-		concurrency        = s3mgr.DefaultUploadConcurrency
-		partSize           = s3mgr.DefaultUploadPartSize
-		maxParts           = s3mgr.MaxUploadParts
+		totalSize   = int64(-1)
+		concurrency = b.UploadConcurrency
+		partSize    = b.DefaultUploadPartSize
+		maxParts    = b.MaxUploadParts
 	)
+	if concurrency == 0 {
+		concurrency = s3mgr.DefaultUploadConcurrency
+	}
+	if partSize == 0 {
+		partSize = s3mgr.DefaultUploadPartSize
+	}
+	if maxParts == 0 {
+		maxParts = s3mgr.MaxUploadParts
+	}
+	// try to guess reader size: value used
+	// to adjust partSize
 	switch r := r.(type) {
 	case *io.LimitedReader:
-		expectedSize = r.N
-	case *s3File:
-		expectedSize = *r.obj.ContentLength
+		totalSize = r.N
+	case fs.File:
+		if info, err := r.Stat(); err == nil {
+			totalSize = info.Size()
+		}
 	}
-	if expectedSize > 0 && expectedSize > (int64(maxParts)*partSize) {
-		// increase part size
-
+	if totalSize > (int64(maxParts) * partSize) {
+		// this logic is taken from aws v2 sdk.
+		partSize = (totalSize / int64(maxParts)) + 1
 	}
 	uploader := s3mgr.NewUploader(b.client, func(u *s3mgr.Uploader) {
 		u.Concurrency = concurrency
@@ -147,6 +165,7 @@ func (b *S3Backend) Write(ctx context.Context, name string, r io.Reader) (int64,
 		Bucket: &b.bucket,
 		Key:    &name,
 		Body:   countReader,
+		// checksums?
 	}
 	_, err := uploader.Upload(ctx, params)
 	if err != nil {
@@ -224,7 +243,74 @@ func (b *S3Backend) Copy(ctx context.Context, dst, src string) error {
 		// fall back to multipart copy
 		return pathErr("copy", src, err)
 	}
+
 	return nil
+}
+
+func (b *S3Backend) multipartCopy(ctx context.Context, dst, src string) error {
+	headParams := &s3v2.HeadObjectInput{
+		Bucket:     &b.bucket,
+		Key:        &src,
+		PartNumber: aws.Int32(10_000),
+	}
+	srcObj, err := b.client.HeadObject(ctx, headParams)
+	if err != nil {
+		return pathErr("copy", src, err)
+	}
+	var partCount int32 = 1
+	if srcObj.PartsCount != nil {
+		partCount = *srcObj.PartsCount
+	}
+	uploadParams := &s3v2.CreateMultipartUploadInput{
+		Bucket: &b.bucket,
+		Key:    &dst,
+	}
+	newUp, err := b.client.CreateMultipartUpload(ctx, uploadParams)
+	if err != nil {
+		return pathErr("copy", dst, err)
+	}
+	completedParts := make([]types.CompletedPart, partCount)
+	escapedCopySource := url.QueryEscape(src)
+	grp, grpCtx := errgroup.WithContext(ctx)
+	grp.SetLimit(b.UploadPartCopyConcurrency)
+	for i := int32(0); i < partCount; i++ {
+		i := i
+		grp.Go(func() error {
+			partNum := aws.Int32(i)
+			params := &s3v2.UploadPartCopyInput{
+				Bucket:     &b.bucket,
+				CopySource: &escapedCopySource,
+				Key:        &dst,
+				UploadId:   newUp.UploadId,
+				PartNumber: partNum,
+			}
+			result, err := b.client.UploadPartCopy(grpCtx, params)
+			completedParts[i] = types.CompletedPart{
+				PartNumber: partNum,
+				ETag:       result.CopyPartResult.ETag,
+			}
+			return err
+		})
+	}
+	if err := grp.Wait(); err != nil {
+		params := &s3v2.AbortMultipartUploadInput{
+			Bucket:   &b.bucket,
+			Key:      &dst,
+			UploadId: newUp.UploadId,
+		}
+		_, abortErr := b.client.AbortMultipartUpload(ctx, params)
+		return errors.Join(err, abortErr)
+	}
+	finalParams := &s3v2.CompleteMultipartUploadInput{
+		Bucket:   &b.bucket,
+		Key:      &dst,
+		UploadId: newUp.UploadId,
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: completedParts,
+		},
+	}
+	_, err = b.client.CompleteMultipartUpload(ctx, finalParams)
+	return err
 }
 
 type s3File struct {
