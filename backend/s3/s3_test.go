@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"io"
+	"io/fs"
+	"slices"
 	"strings"
 	"testing"
 
@@ -30,6 +33,29 @@ func TestWrite(t *testing.T) {
 	got, err := io.ReadAll(f)
 	be.NilErr(t, err)
 	be.Equal(t, "hello", string(got))
+}
+
+func TestReadDir(t *testing.T) {
+	b := newBackend(t)
+	ctx := context.Background()
+	t.Run("large directory", func(t *testing.T) {
+		const num = 1_001
+		const dir = "large-dir"
+		for i := 0; i < num; i++ {
+			key := fmt.Sprintf("%s/file-%d.txt", dir, i)
+			_, err := b.Write(ctx, key, strings.NewReader(""))
+			be.NilErr(t, err)
+			key = fmt.Sprintf("%s/dir-%d/file.txt", dir, i)
+			_, err = b.Write(ctx, key, strings.NewReader(""))
+			be.NilErr(t, err)
+		}
+		entries, err := b.ReadDir(ctx, dir)
+		be.NilErr(t, err)
+		be.Equal(t, 2*num, len(entries))
+		be.True(t, slices.IsSortedFunc(entries, func(a, b fs.DirEntry) int {
+			return strings.Compare(a.Name(), b.Name())
+		}))
+	})
 }
 
 func newBackend(t *testing.T) *s3.S3Backend {

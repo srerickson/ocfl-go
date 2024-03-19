@@ -21,7 +21,7 @@ import (
 
 var (
 	delim         = "/"
-	maxKeys int32 = 1000
+	maxKeys int32 = 10000
 )
 
 func New(cfg aws.Config, bucket string) *S3Backend {
@@ -96,6 +96,7 @@ func (b *S3Backend) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, err
 				// sys:     &item,
 			}
 		}
+		entries = append(entries, newEntries...)
 		params.ContinuationToken = list.NextContinuationToken
 		if params.ContinuationToken == nil {
 			break
