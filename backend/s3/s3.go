@@ -3,8 +3,10 @@ package s3
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/url"
 	"path"
 	"slices"
@@ -20,20 +22,31 @@ import (
 	// "github.com/aws/smithy-go"
 )
 
+const (
+	megabyte int64 = 1024 * 1024
+	gigabyte int64 = 1024 * megabyte
+
+	minPartSize = s3mgr.MinUploadPartSize
+	maxParts    = s3mgr.MaxUploadParts
+
+	defaultCopyPartConcurrency = 12
+)
+
 var (
 	delim         = "/"
 	maxKeys int32 = 1000
 )
 
-func New(cfg aws.Config, bucket string) *S3Backend {
+func New(cfg aws.Config, bucket string) *FS {
 	client := s3v2.NewFromConfig(cfg)
-	return &S3Backend{
+	return &FS{
 		bucket: bucket,
 		client: client,
 	}
 }
 
-type S3Backend struct {
+// FS implements ocfl.FS, ocfl.WriteFS, and ocfl.CopyFS for an s3 bucket
+type FS struct {
 	bucket                    string
 	client                    *s3v2.Client
 	UploadConcurrency         int
@@ -42,7 +55,7 @@ type S3Backend struct {
 	DefaultUploadPartSize     int64
 }
 
-func (b *S3Backend) OpenFile(ctx context.Context, name string) (fs.File, error) {
+func (b *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	if !fs.ValidPath(name) {
 		return nil, pathErr("open", name, fs.ErrInvalid)
 	}
@@ -65,7 +78,7 @@ func (b *S3Backend) OpenFile(ctx context.Context, name string) (fs.File, error) 
 	return &s3File{bucket: b.bucket, key: name, obj: obj}, nil
 }
 
-func (b *S3Backend) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, error) {
+func (b *FS) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, error) {
 	if !fs.ValidPath(dir) {
 		return nil, pathErr("readdir", dir, fs.ErrInvalid)
 	}
@@ -122,7 +135,7 @@ func (b *S3Backend) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, err
 	return entries, nil
 }
 
-func (b *S3Backend) Write(ctx context.Context, name string, r io.Reader) (int64, error) {
+func (b *FS) Write(ctx context.Context, name string, r io.Reader) (int64, error) {
 	if !fs.ValidPath(name) || name == "." {
 		return 0, pathErr("write", name, fs.ErrInvalid)
 	}
@@ -151,9 +164,8 @@ func (b *S3Backend) Write(ctx context.Context, name string, r io.Reader) (int64,
 			totalSize = info.Size()
 		}
 	}
-	if totalSize > (int64(maxParts) * partSize) {
-		// this logic is taken from aws v2 sdk.
-		partSize = (totalSize / int64(maxParts)) + 1
+	if totalSize > 0 {
+		partSize, _ = adjustPartSize(totalSize, partSize, maxParts)
 	}
 	uploader := s3mgr.NewUploader(b.client, func(u *s3mgr.Uploader) {
 		u.Concurrency = concurrency
@@ -174,7 +186,7 @@ func (b *S3Backend) Write(ctx context.Context, name string, r io.Reader) (int64,
 	return countReader.size, nil
 }
 
-func (b *S3Backend) Remove(ctx context.Context, name string) error {
+func (b *FS) Remove(ctx context.Context, name string) error {
 	if !fs.ValidPath(name) {
 		return pathErr("remove", name, fs.ErrInvalid)
 	}
@@ -191,7 +203,7 @@ func (b *S3Backend) Remove(ctx context.Context, name string) error {
 	return nil
 }
 
-func (b *S3Backend) RemoveAll(ctx context.Context, name string) error {
+func (b *FS) RemoveAll(ctx context.Context, name string) error {
 	if !fs.ValidPath(name) {
 		return pathErr("removeall", name, fs.ErrInvalid)
 	}
@@ -224,7 +236,7 @@ func (b *S3Backend) RemoveAll(ctx context.Context, name string) error {
 	return nil
 }
 
-func (b *S3Backend) Copy(ctx context.Context, dst, src string) error {
+func (b *FS) Copy(ctx context.Context, dst, src string) error {
 	if !fs.ValidPath(src) || src == "." {
 		return pathErr("copy", src, fs.ErrInvalid)
 	}
@@ -247,19 +259,15 @@ func (b *S3Backend) Copy(ctx context.Context, dst, src string) error {
 	return nil
 }
 
-func (b *S3Backend) multipartCopy(ctx context.Context, dst, src string) error {
+func (b *FS) MultipartCopy(ctx context.Context, dst, src string) error {
 	headParams := &s3v2.HeadObjectInput{
-		Bucket:     &b.bucket,
-		Key:        &src,
-		PartNumber: aws.Int32(10_000),
+		Bucket: &b.bucket,
+		Key:    &src,
+		// PartNumber: aws.Int32(1),
 	}
 	srcObj, err := b.client.HeadObject(ctx, headParams)
 	if err != nil {
 		return pathErr("copy", src, err)
-	}
-	var partCount int32 = 1
-	if srcObj.PartsCount != nil {
-		partCount = *srcObj.PartsCount
 	}
 	uploadParams := &s3v2.CreateMultipartUploadInput{
 		Bucket: &b.bucket,
@@ -269,26 +277,37 @@ func (b *S3Backend) multipartCopy(ctx context.Context, dst, src string) error {
 	if err != nil {
 		return pathErr("copy", dst, err)
 	}
+	concurrency := b.UploadPartCopyConcurrency
+	if b.UploadPartCopyConcurrency == 0 {
+		concurrency = defaultCopyPartConcurrency
+	}
+	totalSize := *srcObj.ContentLength
+	partSize, partCount := adjustPartSize(totalSize, minPartSize, maxParts)
 	completedParts := make([]types.CompletedPart, partCount)
-	escapedCopySource := url.QueryEscape(src)
+	escapedCopySource := url.QueryEscape(b.bucket + "/" + src)
 	grp, grpCtx := errgroup.WithContext(ctx)
-	grp.SetLimit(b.UploadPartCopyConcurrency)
+	grp.SetLimit(concurrency)
 	for i := int32(0); i < partCount; i++ {
 		i := i
 		grp.Go(func() error {
-			partNum := aws.Int32(i)
+			partNum := i + 1
 			params := &s3v2.UploadPartCopyInput{
-				Bucket:     &b.bucket,
-				CopySource: &escapedCopySource,
-				Key:        &dst,
-				UploadId:   newUp.UploadId,
-				PartNumber: partNum,
+				Bucket:          &b.bucket,
+				CopySource:      &escapedCopySource,
+				Key:             &dst,
+				UploadId:        newUp.UploadId,
+				PartNumber:      &partNum,
+				CopySourceRange: aws.String(byteRange(partNum, partSize, totalSize)),
 			}
 			result, err := b.client.UploadPartCopy(grpCtx, params)
+			if err != nil {
+				return err
+			}
 			completedParts[i] = types.CompletedPart{
-				PartNumber: partNum,
+				PartNumber: &partNum,
 				ETag:       result.CopyPartResult.ETag,
 			}
+			log.Println("copied part", partNum)
 			return err
 		})
 	}
@@ -313,6 +332,7 @@ func (b *S3Backend) multipartCopy(ctx context.Context, dst, src string) error {
 	return err
 }
 
+// s3File implements fs.File
 type s3File struct {
 	bucket string
 	key    string
@@ -341,6 +361,7 @@ func (f *s3File) Name() string {
 	return path.Base(f.key)
 }
 
+// iofsInfo implements fs.FileInfo and fs.DirEntry
 type iofsInfo struct {
 	name    string
 	size    int64
@@ -361,6 +382,7 @@ func (i iofsInfo) Sys() any           { return i.sys }
 func (i iofsInfo) Info() (fs.FileInfo, error) { return i, nil }
 func (i iofsInfo) Type() fs.FileMode          { return i.mode.Type() }
 
+// countReader is a reader that updates a size counter with each read.
 type countReader struct {
 	io.Reader
 	size int64
@@ -372,6 +394,36 @@ func (r *countReader) Read(p []byte) (int, error) {
 	return s, err
 }
 
+// pathErr makes fs.PathError errors
 func pathErr(op string, path string, err error) error {
 	return &fs.PathError{Op: op, Path: path, Err: err}
+}
+
+func adjustPartSize(total, defaultPartSize int64, maxParts int32) (psize int64, pcount int32) {
+	psize = defaultPartSize
+	for {
+		pcount = int32(total / psize)
+		if pcount < maxParts {
+			break
+		}
+		psize += megabyte
+	}
+	if total%psize > 0 {
+		pcount++
+	}
+	return
+}
+
+func byteRange(partNum int32, partSize, totalSize int64) string {
+	// aws: The range of bytes to copy from the source object. The range value must
+	// use the form bytes=first-last, where the first and last are the zero-based byte
+	// offsets to copy. For example, bytes=0-9 indicates that you want to copy the
+	// first 10 bytes of the source. You can copy a range only if the source object is
+	// greater than 5 MB.
+	start := (int64(partNum) - 1) * partSize
+	end := int64(partNum)*partSize - 1
+	if max := totalSize - 1; end > max {
+		end = max
+	}
+	return fmt.Sprintf("bytes=%d-%d", start, end)
 }

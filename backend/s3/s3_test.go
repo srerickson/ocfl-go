@@ -80,7 +80,7 @@ func TestCopy(t *testing.T) {
 	})
 }
 
-func newBackend(t *testing.T) *s3.S3Backend {
+func newBackend(t *testing.T) *s3.FS {
 	ctx := context.Background()
 	// creds := credentials.NewStaticCredentialsProvider("", "", "")
 	customResolver := aws.EndpointResolverWithOptionsFunc(
