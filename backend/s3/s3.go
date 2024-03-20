@@ -30,6 +30,7 @@ const (
 	maxParts    = s3mgr.MaxUploadParts
 
 	defaultCopyPartConcurrency = 12
+	defaultCopyPartSize        = 64 * megabyte
 )
 
 var (
@@ -282,7 +283,7 @@ func (b *FS) MultipartCopy(ctx context.Context, dst, src string) error {
 		concurrency = defaultCopyPartConcurrency
 	}
 	totalSize := *srcObj.ContentLength
-	partSize, partCount := adjustPartSize(totalSize, minPartSize, maxParts)
+	partSize, partCount := adjustPartSize(totalSize, defaultCopyPartSize, maxParts)
 	completedParts := make([]types.CompletedPart, partCount)
 	escapedCopySource := url.QueryEscape(b.bucket + "/" + src)
 	grp, grpCtx := errgroup.WithContext(ctx)
