@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
+	// "github.com/aws/smithy-go"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/s3"
 )
@@ -25,17 +26,17 @@ const (
 var (
 	srcSize   = flag.Int("size", 16, "source file size (GiB)")
 	copyTests = []copyTest{
-		{conc: 10, psize: 5},
-		{conc: 10, psize: 50},
-		{conc: 10, psize: 500},
+		{conc: 15, psize: 5},
+		{conc: 15, psize: 50},
+		{conc: 15, psize: 500},
 
-		{conc: 20, psize: 5},
-		{conc: 20, psize: 50},
-		{conc: 20, psize: 500},
+		{conc: 25, psize: 5},
+		{conc: 25, psize: 50},
+		{conc: 25, psize: 500},
 
-		{conc: 30, psize: 5},
-		{conc: 30, psize: 50},
-		{conc: 30, psize: 500},
+		// {conc: 30, psize: 5},
+		// {conc: 30, psize: 50},
+		// {conc: 30, psize: 500},
 	}
 )
 
@@ -54,6 +55,7 @@ func main() {
 }
 
 func doTests(ctx context.Context, bucket string, size int64) error {
+	fmt.Println("source_size,part_concurrency,part_size,copy_time")
 	b, err := backend(ctx, bucket)
 	if err != nil {
 		return err
@@ -71,11 +73,15 @@ func doTests(ctx context.Context, bucket string, size int64) error {
 		if err := b.MultipartCopy(ctx, dst, src); err != nil {
 			return err
 		}
+
 		fmt.Printf("%d, %d, %d, %0.2f\n",
-			size,
+			size/gigabyte,
 			b.CopyPartConcurrency,
-			b.DefaultCopyPartSize,
+			b.DefaultCopyPartSize/megabyte,
 			time.Since(start).Seconds())
+		if err := b.Remove(ctx, dst); err != nil {
+			return err
+		}
 	}
 	return nil
 }
