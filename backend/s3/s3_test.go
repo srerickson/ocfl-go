@@ -64,12 +64,12 @@ func TestCopy(t *testing.T) {
 	t.Run("large file", func(t *testing.T) {
 		src := "large-file"
 		dst := "new-file"
-		size := int64(1024 * 1024 * 1024 * 50)
+		size := int64(1024 * 1024 * 1024 * 10)
 		t.Log("doing write")
 		_, err := b.Write(ctx, src, io.LimitReader(rand.Reader, size))
 		be.NilErr(t, err)
 		t.Log("doing copy")
-		be.NilErr(t, b.Copy(ctx, dst, src))
+		be.NilErr(t, b.MultipartCopy(ctx, dst, src))
 		f, err := b.OpenFile(ctx, dst)
 		be.NilErr(t, err)
 		defer f.Close()

@@ -2,47 +2,99 @@ package main
 
 import (
 	"context"
-	// "crypto/rand"
+	"crypto/rand"
+	"flag"
 	"fmt"
-	// "io"
+	"io"
 	"log"
+	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/s3"
 )
 
 const (
-	gigabyte int64 = 1024 * 1024 * 1024
+	megabyte int64 = 1024 * 1024
+	gigabyte       = 1024 * megabyte
 	bucket         = "ocfl-go-test"
 )
 
+var (
+	srcSize   = flag.Int("size", 16, "source file size (GiB)")
+	copyTests = []copyTest{
+		{conc: 10, psize: 5},
+		{conc: 10, psize: 50},
+		{conc: 10, psize: 500},
+
+		{conc: 20, psize: 5},
+		{conc: 20, psize: 50},
+		{conc: 20, psize: 500},
+
+		{conc: 30, psize: 5},
+		{conc: 30, psize: 50},
+		{conc: 30, psize: 500},
+	}
+)
+
+type copyTest struct {
+	conc  int
+	psize int
+}
+
 func main() {
+	flag.Parse()
 	ctx := context.Background()
-	if err := run(ctx, bucket); err != nil {
+	size := int64(*srcSize) * gigabyte
+	if err := doTests(ctx, bucket, size); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(ctx context.Context, bucket string) error {
+func doTests(ctx context.Context, bucket string, size int64) error {
 	b, err := backend(ctx, bucket)
 	if err != nil {
 		return err
 	}
-	src := "test"
-	dst := "new-file"
-	// body := io.LimitReader(rand.Reader, 7*gigabyte)
-	// fmt.Print("writing large file...")
-	// if _, err := b.Write(ctx, src, body); err != nil {
-	// 	return err
-	// }
-	// fmt.Println("done")
-	fmt.Print("copying large file...")
-	if err := b.MultipartCopy(ctx, dst, src); err != nil {
+	src := fmt.Sprintf("copy-source-%d", size/gigabyte)
+	if err := createSrcFile(ctx, b, src, size); err != nil {
 		return err
 	}
-	fmt.Println("done")
+	for _, t := range copyTests {
+		b.DefaultCopyPartSize = int64(t.psize) * megabyte
+		b.CopyPartConcurrency = t.conc
+		start := time.Now()
+		dst := fmt.Sprintf("copy-conc=%d-psize=%d", b.CopyPartConcurrency, b.DefaultCopyPartSize)
+		// fmt.Fprintln(os.Stderr, dst)
+		if err := b.MultipartCopy(ctx, dst, src); err != nil {
+			return err
+		}
+		fmt.Printf("%d, %d, %d, %0.2f\n",
+			size,
+			b.CopyPartConcurrency,
+			b.DefaultCopyPartSize,
+			time.Since(start).Seconds())
+	}
 	return nil
+}
+
+func createSrcFile(ctx context.Context, fsys ocfl.WriteFS, key string, size int64) error {
+	if f, err := fsys.OpenFile(ctx, key); err == nil {
+		info, err := f.Stat()
+		if err != nil {
+			return err
+		}
+		f.Close()
+		if info.Size() == size {
+			return nil
+		}
+	}
+	fmt.Fprintln(os.Stderr, "writing source file")
+	body := io.LimitReader(rand.Reader, size)
+	_, err := fsys.Write(ctx, key, body)
+	return err
 }
 
 func backend(ctx context.Context, bucket string) (*s3.FS, error) {
