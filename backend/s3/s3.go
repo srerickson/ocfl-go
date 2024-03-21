@@ -38,33 +38,30 @@ var (
 	maxKeys int32 = 1000
 )
 
-func New(cfg aws.Config, bucket string) *FS {
-	client := s3v2.NewFromConfig(cfg)
-	return &FS{
-		bucket: bucket,
-		client: client,
-	}
-}
-
-// FS implements ocfl.FS, ocfl.WriteFS, and ocfl.CopyFS for an s3 bucket
+// FS is an implementation of ocfl.FS, ocfl.WriteFS, and ocfl.CopyFS for an
+// s3 bucket.
 type FS struct {
-	bucket                    string
-	client                    *s3v2.Client
+	Client *s3v2.Client
+	Bucket string
+
+	// options
+
 	UploadConcurrency         int
 	UploadPartCopyConcurrency int
 	MaxUploadParts            int32
 	DefaultUploadPartSize     int64
 }
 
+// OpenFile impleme
 func (b *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	if !fs.ValidPath(name) {
 		return nil, pathErr("open", name, fs.ErrInvalid)
 	}
 	params := &s3v2.GetObjectInput{
-		Bucket: &b.bucket,
+		Bucket: &b.Bucket,
 		Key:    &name,
 	}
-	obj, err := b.client.GetObject(ctx, params)
+	obj, err := b.Client.GetObject(ctx, params)
 	if err != nil {
 		fsErr := &fs.PathError{Op: "open", Path: name}
 		var awsErr *types.NoSuchKey
@@ -76,7 +73,7 @@ func (b *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 		}
 		return nil, fsErr
 	}
-	return &s3File{bucket: b.bucket, key: name, obj: obj}, nil
+	return &s3File{bucket: b.Bucket, key: name, obj: obj}, nil
 }
 
 func (b *FS) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, error) {
@@ -84,7 +81,7 @@ func (b *FS) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, error) {
 		return nil, pathErr("readdir", dir, fs.ErrInvalid)
 	}
 	params := &s3v2.ListObjectsV2Input{
-		Bucket:    &b.bucket,
+		Bucket:    &b.Bucket,
 		Delimiter: &delim,
 		MaxKeys:   &maxKeys,
 	}
@@ -93,7 +90,7 @@ func (b *FS) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, error) {
 	}
 	entries := make([]fs.DirEntry, 0, 32)
 	for {
-		list, err := b.client.ListObjectsV2(ctx, params)
+		list, err := b.Client.ListObjectsV2(ctx, params)
 		if err != nil {
 			return nil, pathErr("readdir", dir, err)
 		}
@@ -168,17 +165,16 @@ func (b *FS) Write(ctx context.Context, name string, r io.Reader) (int64, error)
 	if totalSize > 0 {
 		partSize, _ = adjustPartSize(totalSize, partSize, maxParts)
 	}
-	uploader := s3mgr.NewUploader(b.client, func(u *s3mgr.Uploader) {
+	uploader := s3mgr.NewUploader(b.Client, func(u *s3mgr.Uploader) {
 		u.Concurrency = concurrency
 		u.PartSize = partSize
 		u.MaxUploadParts = maxParts
 	})
 	countReader := &countReader{Reader: r}
 	params := &s3v2.PutObjectInput{
-		Bucket: &b.bucket,
+		Bucket: &b.Bucket,
 		Key:    &name,
 		Body:   countReader,
-		// checksums?
 	}
 	_, err := uploader.Upload(ctx, params)
 	if err != nil {
@@ -194,8 +190,8 @@ func (b *FS) Remove(ctx context.Context, name string) error {
 	if name == "." {
 		return pathErr("remove", name, fs.ErrNotExist)
 	}
-	_, err := b.client.DeleteObject(ctx, &s3v2.DeleteObjectInput{
-		Bucket: &b.bucket,
+	_, err := b.Client.DeleteObject(ctx, &s3v2.DeleteObjectInput{
+		Bucket: &b.Bucket,
 		Key:    aws.String(name),
 	})
 	if err != nil {
@@ -209,20 +205,20 @@ func (b *FS) RemoveAll(ctx context.Context, name string) error {
 		return pathErr("removeall", name, fs.ErrInvalid)
 	}
 	params := &s3v2.ListObjectsV2Input{
-		Bucket:  &b.bucket,
+		Bucket:  &b.Bucket,
 		MaxKeys: &maxKeys,
 	}
 	if name != "." {
 		params.Prefix = aws.String(name + "/")
 	}
 	for {
-		list, err := b.client.ListObjectsV2(ctx, params)
+		list, err := b.Client.ListObjectsV2(ctx, params)
 		if err != nil {
 			return pathErr("removeall", name, err)
 		}
 		for _, obj := range list.Contents {
-			_, err := b.client.DeleteObject(ctx, &s3v2.DeleteObjectInput{
-				Bucket: &b.bucket,
+			_, err := b.Client.DeleteObject(ctx, &s3v2.DeleteObjectInput{
+				Bucket: &b.Bucket,
 				Key:    obj.Key,
 			})
 			if err != nil {
@@ -244,13 +240,13 @@ func (b *FS) Copy(ctx context.Context, dst, src string) error {
 	if !fs.ValidPath(dst) || dst == "." {
 		return pathErr("copy", dst, fs.ErrInvalid)
 	}
-	escapedSrc := url.QueryEscape(b.bucket + "/" + src)
+	escapedSrc := url.QueryEscape(b.Bucket + "/" + src)
 	params := &s3v2.CopyObjectInput{
-		Bucket:     &b.bucket,
+		Bucket:     &b.Bucket,
 		CopySource: &escapedSrc,
 		Key:        &dst,
 	}
-	_, err := b.client.CopyObject(ctx, params)
+	_, err := b.Client.CopyObject(ctx, params)
 	if err != nil {
 		// TODO: if copy fails because the src is > 5GB,
 		// fall back to multipart copy
@@ -262,19 +258,19 @@ func (b *FS) Copy(ctx context.Context, dst, src string) error {
 
 func (b *FS) MultipartCopy(ctx context.Context, dst, src string) error {
 	headParams := &s3v2.HeadObjectInput{
-		Bucket: &b.bucket,
+		Bucket: &b.Bucket,
 		Key:    &src,
 		// PartNumber: aws.Int32(1),
 	}
-	srcObj, err := b.client.HeadObject(ctx, headParams)
+	srcObj, err := b.Client.HeadObject(ctx, headParams)
 	if err != nil {
 		return pathErr("copy", src, err)
 	}
 	uploadParams := &s3v2.CreateMultipartUploadInput{
-		Bucket: &b.bucket,
+		Bucket: &b.Bucket,
 		Key:    &dst,
 	}
-	newUp, err := b.client.CreateMultipartUpload(ctx, uploadParams)
+	newUp, err := b.Client.CreateMultipartUpload(ctx, uploadParams)
 	if err != nil {
 		return pathErr("copy", dst, err)
 	}
@@ -285,7 +281,7 @@ func (b *FS) MultipartCopy(ctx context.Context, dst, src string) error {
 	totalSize := *srcObj.ContentLength
 	partSize, partCount := adjustPartSize(totalSize, defaultCopyPartSize, maxParts)
 	completedParts := make([]types.CompletedPart, partCount)
-	escapedCopySource := url.QueryEscape(b.bucket + "/" + src)
+	escapedCopySource := url.QueryEscape(b.Bucket + "/" + src)
 	grp, grpCtx := errgroup.WithContext(ctx)
 	grp.SetLimit(concurrency)
 	for i := int32(0); i < partCount; i++ {
@@ -293,14 +289,14 @@ func (b *FS) MultipartCopy(ctx context.Context, dst, src string) error {
 		grp.Go(func() error {
 			partNum := i + 1
 			params := &s3v2.UploadPartCopyInput{
-				Bucket:          &b.bucket,
+				Bucket:          &b.Bucket,
 				CopySource:      &escapedCopySource,
 				Key:             &dst,
 				UploadId:        newUp.UploadId,
 				PartNumber:      &partNum,
 				CopySourceRange: aws.String(byteRange(partNum, partSize, totalSize)),
 			}
-			result, err := b.client.UploadPartCopy(grpCtx, params)
+			result, err := b.Client.UploadPartCopy(grpCtx, params)
 			if err != nil {
 				return err
 			}
@@ -314,22 +310,22 @@ func (b *FS) MultipartCopy(ctx context.Context, dst, src string) error {
 	}
 	if err := grp.Wait(); err != nil {
 		params := &s3v2.AbortMultipartUploadInput{
-			Bucket:   &b.bucket,
+			Bucket:   &b.Bucket,
 			Key:      &dst,
 			UploadId: newUp.UploadId,
 		}
-		_, abortErr := b.client.AbortMultipartUpload(ctx, params)
+		_, abortErr := b.Client.AbortMultipartUpload(ctx, params)
 		return errors.Join(err, abortErr)
 	}
 	finalParams := &s3v2.CompleteMultipartUploadInput{
-		Bucket:   &b.bucket,
+		Bucket:   &b.Bucket,
 		Key:      &dst,
 		UploadId: newUp.UploadId,
 		MultipartUpload: &types.CompletedMultipartUpload{
 			Parts: completedParts,
 		},
 	}
-	_, err = b.client.CompleteMultipartUpload(ctx, finalParams)
+	_, err = b.Client.CompleteMultipartUpload(ctx, finalParams)
 	return err
 }
 

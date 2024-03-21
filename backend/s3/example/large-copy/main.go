@@ -8,6 +8,7 @@ import (
 	"log"
 
 	"github.com/aws/aws-sdk-go-v2/config"
+	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/srerickson/ocfl-go/backend/s3"
 )
 
@@ -49,5 +50,8 @@ func backend(ctx context.Context, bucket string) (*s3.FS, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s3.New(cfg, bucket), nil
+	return &s3.FS{
+		Client: s3v2.NewFromConfig(cfg),
+		Bucket: bucket,
+	}, nil
 }

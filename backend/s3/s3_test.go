@@ -106,13 +106,20 @@ func newBackend(t *testing.T) *s3.FS {
 	_, err = s3client.CreateBucket(ctx, &s3v2.CreateBucketInput{
 		Bucket: aws.String(testBucket),
 	})
-	be.NilErr(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Log("created test bucket", testBucket)
 	t.Cleanup(func() {
-		be.NilErr(t, destroyBucket(ctx, s3client, testBucket))
+		if err := destroyBucket(ctx, s3client, testBucket); err != nil {
+			t.Fatal(err)
+		}
 		t.Log("removed test bucket", testBucket)
 	})
-	return s3.New(cfg, testBucket)
+	return &s3.FS{
+		Client: s3client,
+		Bucket: testBucket,
+	}
 }
 
 func destroyBucket(ctx context.Context, s3cl *s3v2.Client, bucket string) error {
