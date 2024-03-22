@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path"
 	"slices"
+	"strings"
 	"time"
 
 	// awsv2 "github.com/aws/aws-sdk-go-v2/aws"
@@ -34,6 +35,8 @@ const (
 	defaultCopyPartConcurrency = 12
 	defaultCopyPartSize        = 64 * megabyte
 	partSizeIncrement          = 1 * megabyte
+
+	copySrcTooLarge = "copy source is larger than the maximum allowable size"
 )
 
 var (
@@ -44,7 +47,7 @@ var (
 // FS is an implementation of ocfl.FS, ocfl.WriteFS, and ocfl.CopyFS for an
 // s3 bucket.
 type FS struct {
-	Client *s3v2.Client
+	S3     S3API
 	Bucket string
 
 	// DefaultUploadPartSize is the size in bytes for object
@@ -68,6 +71,20 @@ type FS struct {
 	CopyPartConcurrency int
 }
 
+type S3API interface {
+	HeadObject(context.Context, *s3v2.HeadObjectInput, ...func(*s3v2.Options)) (*s3v2.HeadObjectOutput, error)
+	GetObject(context.Context, *s3v2.GetObjectInput, ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error)
+	ListObjectsV2(context.Context, *s3v2.ListObjectsV2Input, ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error)
+	PutObject(context.Context, *s3v2.PutObjectInput, ...func(*s3v2.Options)) (*s3v2.PutObjectOutput, error)
+	UploadPart(context.Context, *s3v2.UploadPartInput, ...func(*s3v2.Options)) (*s3v2.UploadPartOutput, error)
+	CreateMultipartUpload(context.Context, *s3v2.CreateMultipartUploadInput, ...func(*s3v2.Options)) (*s3v2.CreateMultipartUploadOutput, error)
+	CompleteMultipartUpload(context.Context, *s3v2.CompleteMultipartUploadInput, ...func(*s3v2.Options)) (*s3v2.CompleteMultipartUploadOutput, error)
+	AbortMultipartUpload(context.Context, *s3v2.AbortMultipartUploadInput, ...func(*s3v2.Options)) (*s3v2.AbortMultipartUploadOutput, error)
+	CopyObject(context.Context, *s3v2.CopyObjectInput, ...func(*s3v2.Options)) (*s3v2.CopyObjectOutput, error)
+	UploadPartCopy(context.Context, *s3v2.UploadPartCopyInput, ...func(*s3v2.Options)) (*s3v2.UploadPartCopyOutput, error)
+	DeleteObject(context.Context, *s3v2.DeleteObjectInput, ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error)
+}
+
 // OpenFile impleme
 func (b *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	if !fs.ValidPath(name) {
@@ -77,7 +94,7 @@ func (b *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 		Bucket: &b.Bucket,
 		Key:    &name,
 	}
-	obj, err := b.Client.GetObject(ctx, params)
+	obj, err := b.S3.GetObject(ctx, params)
 	if err != nil {
 		fsErr := &fs.PathError{Op: "open", Path: name}
 		var awsErr *types.NoSuchKey
@@ -106,7 +123,7 @@ func (b *FS) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, error) {
 	}
 	entries := make([]fs.DirEntry, 0, 32)
 	for {
-		list, err := b.Client.ListObjectsV2(ctx, params)
+		list, err := b.S3.ListObjectsV2(ctx, params)
 		if err != nil {
 			return nil, pathErr("readdir", dir, err)
 		}
@@ -159,7 +176,7 @@ func (b *FS) Write(ctx context.Context, name string, r io.Reader) (int64, error)
 		partSize    = b.DefaultUploadPartSize
 		numParts    = maxParts
 	)
-	if concurrency == 0 {
+	if concurrency < 1 {
 		concurrency = defaultUploadConcurrency
 	}
 	if partSize == 0 || partSize < minPartSize {
@@ -178,7 +195,7 @@ func (b *FS) Write(ctx context.Context, name string, r io.Reader) (int64, error)
 	if totalSize > 0 {
 		partSize, numParts = adjustPartSize(totalSize, partSize, numParts)
 	}
-	uploader := s3mgr.NewUploader(b.Client, func(u *s3mgr.Uploader) {
+	uploader := s3mgr.NewUploader(b.S3, func(u *s3mgr.Uploader) {
 		u.Concurrency = concurrency
 		u.PartSize = partSize
 		u.MaxUploadParts = numParts
@@ -203,7 +220,7 @@ func (b *FS) Remove(ctx context.Context, name string) error {
 	if name == "." {
 		return pathErr("remove", name, fs.ErrNotExist)
 	}
-	_, err := b.Client.DeleteObject(ctx, &s3v2.DeleteObjectInput{
+	_, err := b.S3.DeleteObject(ctx, &s3v2.DeleteObjectInput{
 		Bucket: &b.Bucket,
 		Key:    aws.String(name),
 	})
@@ -225,12 +242,12 @@ func (b *FS) RemoveAll(ctx context.Context, name string) error {
 		params.Prefix = aws.String(name + "/")
 	}
 	for {
-		list, err := b.Client.ListObjectsV2(ctx, params)
+		list, err := b.S3.ListObjectsV2(ctx, params)
 		if err != nil {
 			return pathErr("removeall", name, err)
 		}
 		for _, obj := range list.Contents {
-			_, err := b.Client.DeleteObject(ctx, &s3v2.DeleteObjectInput{
+			_, err := b.S3.DeleteObject(ctx, &s3v2.DeleteObjectInput{
 				Bucket: &b.Bucket,
 				Key:    obj.Key,
 			})
@@ -259,10 +276,14 @@ func (b *FS) Copy(ctx context.Context, dst, src string) error {
 		CopySource: &escapedSrc,
 		Key:        &dst,
 	}
-	_, err := b.Client.CopyObject(ctx, params)
+	_, err := b.S3.CopyObject(ctx, params)
 	if err != nil {
-		// TODO: if copy fails because the src is > 5GB,
-		// fall back to multipart copy
+		// if the source is too large, try multipart copy.
+		// this error doesn't seem to have a specific type
+		// associated with it.
+		if strings.Contains(err.Error(), copySrcTooLarge) {
+			return b.MultipartCopy(ctx, dst, src)
+		}
 		return pathErr("copy", src, err)
 	}
 	return nil
@@ -273,7 +294,7 @@ func (b *FS) MultipartCopy(ctx context.Context, dst, src string) (err error) {
 		Bucket: &b.Bucket,
 		Key:    &src,
 	}
-	srcObj, err := b.Client.HeadObject(ctx, headParams)
+	srcObj, err := b.S3.HeadObject(ctx, headParams)
 	if err != nil {
 		err = pathErr("copy", src, err)
 		return
@@ -293,13 +314,13 @@ func (b *FS) MultipartCopy(ctx context.Context, dst, src string) (err error) {
 		Bucket: &b.Bucket,
 		Key:    &dst,
 	}
-	newUp, err := b.Client.CreateMultipartUpload(ctx, uploadParams)
+	newUp, err := b.S3.CreateMultipartUpload(ctx, uploadParams)
 	if err != nil {
 		err = pathErr("copy", dst, err)
 		return
 	}
 	defer func() {
-		// cleanup or complete the multipart upload
+		// complete or abort the multipart upload
 		switch {
 		case err != nil:
 			params := &s3v2.AbortMultipartUploadInput{
@@ -307,7 +328,7 @@ func (b *FS) MultipartCopy(ctx context.Context, dst, src string) (err error) {
 				Key:      &dst,
 				UploadId: newUp.UploadId,
 			}
-			_, abortErr := b.Client.AbortMultipartUpload(ctx, params)
+			_, abortErr := b.S3.AbortMultipartUpload(ctx, params)
 			err = errors.Join(err, abortErr)
 		default:
 			upload := &types.CompletedMultipartUpload{
@@ -319,7 +340,7 @@ func (b *FS) MultipartCopy(ctx context.Context, dst, src string) (err error) {
 				UploadId:        newUp.UploadId,
 				MultipartUpload: upload,
 			}
-			_, err = b.Client.CompleteMultipartUpload(ctx, params)
+			_, err = b.S3.CompleteMultipartUpload(ctx, params)
 		}
 	}()
 	grp, grpCtx := errgroup.WithContext(ctx)
@@ -343,7 +364,7 @@ func (b *FS) MultipartCopy(ctx context.Context, dst, src string) (err error) {
 				PartNumber:      &partNum,
 				CopySourceRange: &srcRange,
 			}
-			result, err := b.Client.UploadPartCopy(grpCtx, params)
+			result, err := b.S3.UploadPartCopy(grpCtx, params)
 			if err != nil {
 				return err
 			}
