@@ -82,7 +82,7 @@ type RemoveAllAPI interface {
 }
 
 func OpenFile(ctx context.Context, api OpenFileAPI, buck string, name string) (fs.File, error) {
-	if !fs.ValidPath(name) {
+	if !fs.ValidPath(name) || name == "." {
 		return nil, pathErr("open", name, fs.ErrInvalid)
 	}
 	params := &s3svc.GetObjectInput{Bucket: &buck, Key: &name}

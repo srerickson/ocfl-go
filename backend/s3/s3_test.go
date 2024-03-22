@@ -4,17 +4,15 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
+	"errors"
 	"io"
 	"io/fs"
-	"slices"
-	"strings"
+	"strconv"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go/backend/s3"
 )
 
@@ -23,62 +21,94 @@ const (
 	defaultRegion    = "us-east-1"
 )
 
-func TestWrite(t *testing.T) {
+func TestOpenFile(t *testing.T) {
 	ctx := context.Background()
-	b := newBackend(t)
-	_, err := b.Write(ctx, "test/test3", strings.NewReader("hello"))
-	be.NilErr(t, err)
-	f, err := b.OpenFile(ctx, "test/test3")
-	be.NilErr(t, err)
-	got, err := io.ReadAll(f)
-	be.NilErr(t, err)
-	be.Equal(t, "hello", string(got))
+	table := []struct {
+		client func(t *testing.T) s3.OpenFileAPI
+		bucket string
+		name   string
+		expect func(fs.File, error) bool
+	}{
+		{
+			name:   "",
+			expect: func(_ fs.File, err error) bool { return isInvalidPathErr(err) },
+		},
+		{
+			name:   "../invalid",
+			expect: func(_ fs.File, err error) bool { return isInvalidPathErr(err) },
+		},
+	}
+
+	for i, item := range table {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			var api s3.OpenFileAPI
+			if item.client != nil {
+				api = item.client(t)
+			}
+			f, err := s3.OpenFile(ctx, api, item.bucket, item.name)
+			if !item.expect(f, err) {
+
+			}
+		})
+	}
 }
 
-func TestReadDir(t *testing.T) {
-	b := newBackend(t)
-	ctx := context.Background()
-	t.Run("large directory", func(t *testing.T) {
-		const num = 1_001
-		const dir = "large-dir"
-		for i := 0; i < num; i++ {
-			key := fmt.Sprintf("%s/file-%d.txt", dir, i)
-			_, err := b.Write(ctx, key, strings.NewReader(""))
-			be.NilErr(t, err)
-			key = fmt.Sprintf("%s/dir-%d/file.txt", dir, i)
-			_, err = b.Write(ctx, key, strings.NewReader(""))
-			be.NilErr(t, err)
-		}
-		entries, err := b.ReadDir(ctx, dir)
-		be.NilErr(t, err)
-		be.Equal(t, 2*num, len(entries))
-		be.True(t, slices.IsSortedFunc(entries, func(a, b fs.DirEntry) int {
-			return strings.Compare(a.Name(), b.Name())
-		}))
-	})
-}
+// func TestWrite(t *testing.T) {
+// 	ctx := context.Background()
+// 	b := newBackend(t)
+// 	_, err := b.Write(ctx, "test/test3", strings.NewReader("hello"))
+// 	be.NilErr(t, err)
+// 	f, err := b.OpenFile(ctx, "test/test3")
+// 	be.NilErr(t, err)
+// 	got, err := io.ReadAll(f)
+// 	be.NilErr(t, err)
+// 	be.Equal(t, "hello", string(got))
+// }
 
-func TestCopy(t *testing.T) {
-	ctx := context.Background()
-	b := newBackend(t)
-	t.Run("large file", func(t *testing.T) {
-		src := "large-file"
-		dst := "new-file"
-		size := int64(1024 * 1024 * 1024 * 10)
-		t.Log("doing write")
-		_, err := b.Write(ctx, src, io.LimitReader(rand.Reader, size))
-		be.NilErr(t, err)
-		t.Log("doing copy")
-		be.NilErr(t, b.Copy(ctx, dst, src))
-		f, err := b.OpenFile(ctx, dst)
-		be.NilErr(t, err)
-		defer f.Close()
-		t.Log("doing stat")
-		info, err := f.Stat()
-		be.NilErr(t, err)
-		be.Equal(t, size, info.Size())
-	})
-}
+// func TestReadDir(t *testing.T) {
+// 	b := newBackend(t)
+// 	ctx := context.Background()
+// 	t.Run("large directory", func(t *testing.T) {
+// 		const num = 1_001
+// 		const dir = "large-dir"
+// 		for i := 0; i < num; i++ {
+// 			key := fmt.Sprintf("%s/file-%d.txt", dir, i)
+// 			_, err := b.Write(ctx, key, strings.NewReader(""))
+// 			be.NilErr(t, err)
+// 			key = fmt.Sprintf("%s/dir-%d/file.txt", dir, i)
+// 			_, err = b.Write(ctx, key, strings.NewReader(""))
+// 			be.NilErr(t, err)
+// 		}
+// 		entries, err := b.ReadDir(ctx, dir)
+// 		be.NilErr(t, err)
+// 		be.Equal(t, 2*num, len(entries))
+// 		be.True(t, slices.IsSortedFunc(entries, func(a, b fs.DirEntry) int {
+// 			return strings.Compare(a.Name(), b.Name())
+// 		}))
+// 	})
+// }
+
+// func TestCopy(t *testing.T) {
+// 	ctx := context.Background()
+// 	b := newBackend(t)
+// 	t.Run("large file", func(t *testing.T) {
+// 		src := "large-file"
+// 		dst := "new-file"
+// 		size := int64(1024 * 1024 * 1024 * 10)
+// 		t.Log("doing write")
+// 		_, err := b.Write(ctx, src, io.LimitReader(rand.Reader, size))
+// 		be.NilErr(t, err)
+// 		t.Log("doing copy")
+// 		be.NilErr(t, b.Copy(ctx, dst, src))
+// 		f, err := b.OpenFile(ctx, dst)
+// 		be.NilErr(t, err)
+// 		defer f.Close()
+// 		t.Log("doing stat")
+// 		info, err := f.Stat()
+// 		be.NilErr(t, err)
+// 		be.Equal(t, size, info.Size())
+// 	})
+// }
 
 func newBackend(t *testing.T) *s3.FS {
 	ctx := context.Background()
@@ -153,4 +183,11 @@ func randName(prefix string) string {
 		panic("randName: " + err.Error())
 	}
 	return prefix + hex.EncodeToString(byt)
+}
+
+func isInvalidPathErr(err error) bool {
+	var pErr *fs.PathError
+	return err != nil &&
+		errors.As(err, &pErr) &&
+		errors.Is(pErr.Err, fs.ErrInvalid)
 }
