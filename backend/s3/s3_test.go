@@ -69,7 +69,7 @@ func TestCopy(t *testing.T) {
 		_, err := b.Write(ctx, src, io.LimitReader(rand.Reader, size))
 		be.NilErr(t, err)
 		t.Log("doing copy")
-		be.NilErr(t, b.MultipartCopy(ctx, dst, src))
+		be.NilErr(t, b.Copy(ctx, dst, src))
 		f, err := b.OpenFile(ctx, dst)
 		be.NilErr(t, err)
 		defer f.Close()
@@ -117,7 +117,7 @@ func newBackend(t *testing.T) *s3.FS {
 		t.Log("removed test bucket", testBucket)
 	})
 	return &s3.FS{
-		Client: s3client,
+		S3:     s3client,
 		Bucket: testBucket,
 	}
 }

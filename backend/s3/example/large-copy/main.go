@@ -70,7 +70,7 @@ func doTests(ctx context.Context, bucket string, size int64) error {
 		start := time.Now()
 		dst := fmt.Sprintf("copy-conc=%d-psize=%d", b.CopyPartConcurrency, b.DefaultCopyPartSize)
 		// fmt.Fprintln(os.Stderr, dst)
-		if err := b.MultipartCopy(ctx, dst, src); err != nil {
+		if err := b.Copy(ctx, dst, src); err != nil {
 			return err
 		}
 
@@ -109,7 +109,7 @@ func backend(ctx context.Context, bucket string) (*s3.FS, error) {
 		return nil, err
 	}
 	return &s3.FS{
-		Client: s3v2.NewFromConfig(cfg),
+		S3:     s3v2.NewFromConfig(cfg),
 		Bucket: bucket,
 	}, nil
 }
