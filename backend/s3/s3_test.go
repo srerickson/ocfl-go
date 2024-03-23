@@ -1,18 +1,23 @@
 package s3_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go/backend/s3"
 )
 
@@ -23,33 +28,111 @@ const (
 
 func TestOpenFile(t *testing.T) {
 	ctx := context.Background()
-	table := []struct {
-		client func(t *testing.T) s3.OpenFileAPI
+
+	// mock file info
+	mockFile := "dir/file.tiff"
+	mockBody := []byte("content")
+	mockBucket := "my-bucket"
+	mockModTime := time.Now()
+
+	cases := []struct {
+		desc   string
 		bucket string
-		name   string
-		expect func(fs.File, error) bool
+		key    string
+		mock   func(t *testing.T) s3.OpenFileAPI
+		expect func(*testing.T, fs.File, error)
 	}{
 		{
-			name:   "",
-			expect: func(_ fs.File, err error) bool { return isInvalidPathErr(err) },
+			desc:   "existing key",
+			key:    mockFile,
+			bucket: mockBucket,
+			mock: func(t *testing.T) s3.OpenFileAPI {
+				api := func(_ context.Context, p *s3v2.GetObjectInput, _ ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
+					be.Nonzero(t, p.Bucket)
+					be.Nonzero(t, p.Key)
+					be.Equal(t, mockBucket, *p.Bucket)
+					be.Equal(t, mockFile, *p.Key)
+					return &s3v2.GetObjectOutput{
+						Body:          io.NopCloser(bytes.NewBuffer(mockBody)),
+						ContentLength: aws.Int64(int64(len(mockBody))),
+						LastModified:  aws.Time(mockModTime),
+					}, nil
+				}
+				return mockOpenFileAPI(api)
+			},
+			expect: func(t *testing.T, f fs.File, err error) {
+				be.NilErr(t, err)
+				body, err := io.ReadAll(f)
+				be.NilErr(t, err)
+				be.DeepEqual(t, mockBody, body)
+				info, err := f.Stat()
+				be.NilErr(t, err)
+				be.Equal(t, int64(len(body)), info.Size())
+				be.Equal(t, mockModTime, info.ModTime())
+				be.Equal(t, fs.ModeIrregular, info.Mode())
+				be.Equal(t, false, info.IsDir())
+				be.Nonzero(t, info.Sys())
+			},
 		},
 		{
-			name:   "../invalid",
-			expect: func(_ fs.File, err error) bool { return isInvalidPathErr(err) },
+			desc:   "missing key return ErrNotExist",
+			key:    mockFile,
+			bucket: mockBucket,
+			mock: func(t *testing.T) s3.OpenFileAPI {
+				api := func(_ context.Context, _ *s3v2.GetObjectInput, _ ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
+					return nil, fmt.Errorf("somekey: %w", &types.NoSuchKey{})
+				}
+				return mockOpenFileAPI(api)
+			},
+			expect: func(t *testing.T, _ fs.File, err error) {
+				isPathError(t, err)
+				be.True(t, errors.Is(err, fs.ErrNotExist))
+			},
+		},
+		{
+			desc: "key '.' is invalid",
+			key:  ".",
+			expect: func(t *testing.T, _ fs.File, err error) {
+				isPathError(t, err)
+				be.True(t, errors.Is(err, fs.ErrInvalid))
+			},
+		},
+		{
+			desc: "key with .. is invalid",
+			key:  "../invalid",
+			expect: func(t *testing.T, _ fs.File, err error) {
+				isPathError(t, err)
+				be.True(t, errors.Is(err, fs.ErrInvalid))
+			},
 		},
 	}
 
-	for i, item := range table {
+	for i, item := range cases {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			var api s3.OpenFileAPI
-			if item.client != nil {
-				api = item.client(t)
+			if item.mock != nil {
+				api = item.mock(t)
 			}
-			f, err := s3.OpenFile(ctx, api, item.bucket, item.name)
-			if !item.expect(f, err) {
-
-			}
+			f, err := s3.OpenFile(ctx, api, item.bucket, item.key)
+			item.expect(t, f, err)
 		})
+	}
+}
+
+type mockOpenFileAPI func(context.Context, *s3v2.GetObjectInput, ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error)
+
+func (m mockOpenFileAPI) GetObject(ctx context.Context, param *s3v2.GetObjectInput, opts ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
+	return m(ctx, param, opts...)
+}
+
+func isPathError(t *testing.T, err error) {
+	if err == nil {
+		t.Error("expected non-nil error")
+		return
+	}
+	var pErr *fs.PathError
+	if !errors.As(err, &pErr) {
+		t.Error("error is not fs.PathError")
 	}
 }
 
@@ -183,11 +266,4 @@ func randName(prefix string) string {
 		panic("randName: " + err.Error())
 	}
 	return prefix + hex.EncodeToString(byt)
-}
-
-func isInvalidPathErr(err error) bool {
-	var pErr *fs.PathError
-	return err != nil &&
-		errors.As(err, &pErr) &&
-		errors.Is(pErr.Err, fs.ErrInvalid)
 }
