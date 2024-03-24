@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go/backend/s3"
+	"github.com/srerickson/ocfl-go/backend/s3/internal/mock"
 )
 
 const (
@@ -35,15 +36,17 @@ func TestOpenFile(t *testing.T) {
 	mockBucket := "my-bucket"
 	mockModTime := time.Now()
 
-	cases := []struct {
+	type testCase struct {
 		desc   string
 		bucket string
 		key    string
 		mock   func(t *testing.T) s3.OpenFileAPI
 		expect func(*testing.T, fs.File, error)
-	}{
+	}
+
+	cases := []testCase{
 		{
-			desc:   "existing key",
+			desc:   "valid input",
 			key:    mockFile,
 			bucket: mockBucket,
 			mock: func(t *testing.T) s3.OpenFileAPI {
@@ -58,7 +61,7 @@ func TestOpenFile(t *testing.T) {
 						LastModified:  aws.Time(mockModTime),
 					}, nil
 				}
-				return mockOpenFileAPI(api)
+				return mock.OpenFileAPI(api)
 			},
 			expect: func(t *testing.T, f fs.File, err error) {
 				be.NilErr(t, err)
@@ -82,7 +85,7 @@ func TestOpenFile(t *testing.T) {
 				api := func(_ context.Context, _ *s3v2.GetObjectInput, _ ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
 					return nil, fmt.Errorf("somekey: %w", &types.NoSuchKey{})
 				}
-				return mockOpenFileAPI(api)
+				return mock.OpenFileAPI(api)
 			},
 			expect: func(t *testing.T, _ fs.File, err error) {
 				isPathError(t, err)
@@ -107,25 +110,20 @@ func TestOpenFile(t *testing.T) {
 		},
 	}
 
-	for i, item := range cases {
+	for i, tcase := range cases {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			var api s3.OpenFileAPI
-			if item.mock != nil {
-				api = item.mock(t)
+			if tcase.mock != nil {
+				api = tcase.mock(t)
 			}
-			f, err := s3.OpenFile(ctx, api, item.bucket, item.key)
-			item.expect(t, f, err)
+			f, err := s3.OpenFile(ctx, api, tcase.bucket, tcase.key)
+			tcase.expect(t, f, err)
 		})
 	}
 }
 
-type mockOpenFileAPI func(context.Context, *s3v2.GetObjectInput, ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error)
-
-func (m mockOpenFileAPI) GetObject(ctx context.Context, param *s3v2.GetObjectInput, opts ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
-	return m(ctx, param, opts...)
-}
-
 func isPathError(t *testing.T, err error) {
+	t.Helper()
 	if err == nil {
 		t.Error("expected non-nil error")
 		return
