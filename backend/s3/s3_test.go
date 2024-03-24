@@ -1,12 +1,10 @@
 package s3_test
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"strconv"
@@ -16,7 +14,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go/backend/s3"
 	"github.com/srerickson/ocfl-go/backend/s3/internal/mock"
@@ -25,53 +22,40 @@ import (
 const (
 	testBucketPrefix = "ocfl-go-test-"
 	defaultRegion    = "us-east-1"
+	bucket           = "ocfl-go-test"
 )
 
 func TestOpenFile(t *testing.T) {
-	ctx := context.Background()
-
-	// mock file info
-	mockFile := "dir/file.tiff"
-	mockBody := []byte("content")
-	mockBucket := "my-bucket"
-	mockModTime := time.Now()
-
 	type testCase struct {
 		desc   string
 		bucket string
 		key    string
-		mock   func(t *testing.T) s3.OpenFileAPI
+		mock   func(*testing.T) s3.OpenFileAPI
 		expect func(*testing.T, fs.File, error)
 	}
-
+	ctx := context.Background()
+	obj := &mock.Object{
+		Key:          "dir/file.tiff",
+		Body:         []byte("content"),
+		LastModified: time.Now(),
+	}
 	cases := []testCase{
 		{
 			desc:   "valid input",
-			key:    mockFile,
-			bucket: mockBucket,
+			key:    obj.Key,
+			bucket: bucket,
 			mock: func(t *testing.T) s3.OpenFileAPI {
-				api := func(_ context.Context, p *s3v2.GetObjectInput, _ ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
-					be.Nonzero(t, p.Bucket)
-					be.Nonzero(t, p.Key)
-					be.Equal(t, mockBucket, *p.Bucket)
-					be.Equal(t, mockFile, *p.Key)
-					return &s3v2.GetObjectOutput{
-						Body:          io.NopCloser(bytes.NewBuffer(mockBody)),
-						ContentLength: aws.Int64(int64(len(mockBody))),
-						LastModified:  aws.Time(mockModTime),
-					}, nil
-				}
-				return mock.OpenFileAPI(api)
+				return mock.OpenFileAPI(t, bucket, obj)
 			},
 			expect: func(t *testing.T, f fs.File, err error) {
 				be.NilErr(t, err)
 				body, err := io.ReadAll(f)
 				be.NilErr(t, err)
-				be.DeepEqual(t, mockBody, body)
+				be.DeepEqual(t, obj.Body, body)
 				info, err := f.Stat()
 				be.NilErr(t, err)
 				be.Equal(t, int64(len(body)), info.Size())
-				be.Equal(t, mockModTime, info.ModTime())
+				be.Equal(t, obj.LastModified, info.ModTime())
 				be.Equal(t, fs.ModeIrregular, info.Mode())
 				be.Equal(t, false, info.IsDir())
 				be.Nonzero(t, info.Sys())
@@ -79,13 +63,10 @@ func TestOpenFile(t *testing.T) {
 		},
 		{
 			desc:   "missing key return ErrNotExist",
-			key:    mockFile,
-			bucket: mockBucket,
+			key:    "missing",
+			bucket: bucket,
 			mock: func(t *testing.T) s3.OpenFileAPI {
-				api := func(_ context.Context, _ *s3v2.GetObjectInput, _ ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
-					return nil, fmt.Errorf("somekey: %w", &types.NoSuchKey{})
-				}
-				return mock.OpenFileAPI(api)
+				return mock.OpenFileAPI(t, bucket)
 			},
 			expect: func(t *testing.T, _ fs.File, err error) {
 				isPathError(t, err)
