@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -94,7 +95,7 @@ func TestOpenFile(t *testing.T) {
 	}
 
 	for i, tcase := range cases {
-		t.Run(strconv.Itoa(i), func(t *testing.T) {
+		t.Run(strconv.Itoa(i)+"-"+tcase.desc, func(t *testing.T) {
 			var api s3.OpenFileAPI
 			if tcase.mock != nil {
 				api = tcase.mock(t)
@@ -106,10 +107,43 @@ func TestOpenFile(t *testing.T) {
 }
 
 func TestReadDir(t *testing.T) {
-	objects := mock.GenObjects(mockSeed, 291, ".", 2, 7*gigabyte)
-	for _, o := range objects {
-		t.Log(o.Key, o.ContentLength, o.LastModified)
+	ctx := context.Background()
+	type testCase struct {
+		desc   string
+		bucket string
+		dir    string
+		mock   func(*testing.T) s3.ReadDirAPI
+		expect func(*testing.T, []fs.DirEntry, error)
 	}
+	cases := []testCase{
+		{
+			desc:   "2k files",
+			bucket: bucket,
+			dir:    "tmp",
+			mock: func(t *testing.T) s3.ReadDirAPI {
+				return mock.ReadDirAPI(t, bucket, mock.GenObjects(mockSeed, 2001, "tmp", 1, 100)...)
+			},
+			expect: func(t *testing.T, entries []fs.DirEntry, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, 2001, len(entries))
+				be.True(t, !slices.ContainsFunc(entries, func(e fs.DirEntry) bool {
+					return e.IsDir()
+				}))
+			},
+		},
+	}
+	for i, tcase := range cases {
+		t.Run(strconv.Itoa(i)+"-"+tcase.desc, func(t *testing.T) {
+			var api s3.ReadDirAPI
+			if tcase.mock != nil {
+				api = tcase.mock(t)
+			}
+			entries, err := s3.ReadDir(ctx, api, tcase.bucket, tcase.dir)
+			tcase.expect(t, entries, err)
+		})
+
+	}
+
 }
 
 func isPathError(t *testing.T, err error) {
