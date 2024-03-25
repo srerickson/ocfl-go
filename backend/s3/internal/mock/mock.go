@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"path"
+	"sort"
 	"testing"
 	"time"
 
@@ -12,21 +14,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go/backend/s3"
+	"golang.org/x/exp/rand"
 )
-
-type Object struct {
-	Key          string
-	Body         []byte
-	LastModified time.Time
-}
-
-func objectMap(objs ...*Object) map[string]*Object {
-	mockObjects := make(map[string]*Object, len(objs))
-	for _, obj := range objs {
-		mockObjects[obj.Key] = obj
-	}
-	return mockObjects
-}
 
 func OpenFileAPI(t *testing.T, bucket string, objects ...*Object) s3.OpenFileAPI {
 	mockObjects := objectMap(objects...)
@@ -49,8 +38,29 @@ func OpenFileAPI(t *testing.T, bucket string, objects ...*Object) s3.OpenFileAPI
 	return &s3API{get: getObj}
 }
 
-func ReadDirAPI(t *testing.T, bucket string, objects ...*Object) s3.ReadDirAPI {
+// func ReadDirAPI(t *testing.T, bucket string, objects ...*Object) s3.ReadDirAPI {
 
+// }
+
+type Object struct {
+	Key           string
+	Body          []byte
+	LastModified  time.Time
+	ContentLength int64
+}
+
+func sortObjects(objects []*Object) {
+	sort.Slice(objects, func(i, j int) bool {
+		return objects[i].Key < objects[j].Key
+	})
+}
+
+func objectMap(objs ...*Object) map[string]*Object {
+	mockObjects := make(map[string]*Object, len(objs))
+	for _, obj := range objs {
+		mockObjects[obj.Key] = obj
+	}
+	return mockObjects
 }
 
 type s3fn[input any, output any] func(context.Context, input, ...func(*s3v2.Options)) (output, error)
@@ -111,3 +121,88 @@ func (m *s3API) DeleteObject(ctx context.Context, param *s3v2.DeleteObjectInput,
 }
 
 var _ s3.S3API = (*s3API)(nil)
+
+func GenObjects(seed uint64, objCount int, keyPrefix string, depth int, maxFileSize int64) []*Object {
+	if depth < 1 {
+		depth = 1
+	}
+	if objCount < 1 {
+		objCount = 1
+	}
+	if maxFileSize < 1 {
+		maxFileSize = 1
+	}
+	gen := rand.New(rand.NewSource(seed))
+	objects := make([]*Object, objCount)
+	keys := make(map[string]struct{}, objCount)
+	dirs := map[string]struct{}{".": {}}
+	genKey := func() string {
+		for {
+			// loop until unique key is generated
+			var key string
+			switch {
+			case depth == 1:
+				key = randPathPart(gen, 5, 12)
+			case gen.Intn(4) > 0:
+				// use an existing directory
+				var dir string
+				for dir = range dirs {
+					break
+				}
+				newPart := randPathPart(gen, 5, 12)
+				key = path.Join(dir, newPart)
+			default:
+				// create a new directory
+				dirParts := make([]string, gen.Intn(depth))
+				for j := range dirParts {
+					dirParts[j] = randPathPart(gen, 2, 8)
+				}
+				dir := path.Join(dirParts...)
+				key = path.Join(dir, randPathPart(gen, 5, 12))
+			}
+			if _, exists := keys[key]; !exists {
+				keys[key] = struct{}{}
+				dirs[path.Dir(key)] = struct{}{}
+				return key
+			}
+		}
+	}
+	for i := 0; i < objCount; i++ {
+		objects[i] = &Object{
+			Key:           path.Join(keyPrefix, genKey()),
+			ContentLength: gen.Int63n(maxFileSize + 1),
+			LastModified:  time.Unix(1711391789-int64(gen.Intn(31536000)), 0),
+		}
+	}
+	sortObjects(objects)
+	return objects
+}
+
+func randPathPart(src *rand.Rand, minSize, maxSize int) string {
+	const chars = `abcdefghijklmnopqrstuvwzyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-_.`
+	const lenChars = len(chars)
+	size := minSize
+	if size < 1 {
+		size = 1
+	}
+	if maxSize > size {
+		size += src.Intn(maxSize - size + 1)
+	}
+	out := ""
+	for i := 0; i < size; i++ {
+		var next byte
+		for {
+			next = chars[src.Intn(lenChars)]
+			if size == 2 && i > 0 && out[i-1] == '.' && next == '.' {
+				// dont allow '..'
+				continue // try again
+			}
+			if size == 1 && next == '.' {
+				continue
+			}
+			break
+		}
+		out += string(next)
+	}
+	return out
+}

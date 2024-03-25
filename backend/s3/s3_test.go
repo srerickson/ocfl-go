@@ -23,6 +23,8 @@ const (
 	testBucketPrefix = "ocfl-go-test-"
 	defaultRegion    = "us-east-1"
 	bucket           = "ocfl-go-test"
+	gigabyte         = 1024 * 1024 * 1024
+	mockSeed         = 1288108737
 )
 
 func TestOpenFile(t *testing.T) {
@@ -100,6 +102,13 @@ func TestOpenFile(t *testing.T) {
 			f, err := s3.OpenFile(ctx, api, tcase.bucket, tcase.key)
 			tcase.expect(t, f, err)
 		})
+	}
+}
+
+func TestReadDir(t *testing.T) {
+	objects := mock.GenObjects(mockSeed, 291, ".", 2, 7*gigabyte)
+	for _, o := range objects {
+		t.Log(o.Key, o.ContentLength, o.LastModified)
 	}
 }
 
