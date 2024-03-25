@@ -30,7 +30,7 @@ func objectMap(objs ...*Object) map[string]*Object {
 
 func OpenFileAPI(t *testing.T, bucket string, objects ...*Object) s3.OpenFileAPI {
 	mockObjects := objectMap(objects...)
-	fn := func(ctx context.Context, param *s3v2.GetObjectInput, opts ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
+	getObj := func(ctx context.Context, param *s3v2.GetObjectInput, opts ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
 		be.Nonzero(t, param.Bucket)
 		be.Nonzero(t, param.Key)
 		if *param.Bucket != bucket {
@@ -46,7 +46,7 @@ func OpenFileAPI(t *testing.T, bucket string, objects ...*Object) s3.OpenFileAPI
 			LastModified:  aws.Time(obj.LastModified),
 		}, nil
 	}
-	return &s3API{get: fn}
+	return &s3API{get: getObj}
 }
 
 func ReadDirAPI(t *testing.T, bucket string, objects ...*Object) s3.ReadDirAPI {
