@@ -20,12 +20,10 @@ import (
 )
 
 const (
-	testBucketPrefix = "ocfl-go-test-"
-	defaultRegion    = "us-east-1"
-	bucket           = "ocfl-go-test"
-	megabyte         = 1024 * 1024
-	gigabyte         = 1024 * megabyte
-	mockSeed         = 1288108737
+	bucket   = "ocfl-go-test"
+	megabyte = 1024 * 1024
+	gigabyte = 1024 * megabyte
+	mockSeed = 1288108737
 )
 
 func TestOpenFile(t *testing.T) {
@@ -48,7 +46,7 @@ func TestOpenFile(t *testing.T) {
 			key:    obj.Key,
 			bucket: bucket,
 			mock: func(t *testing.T) s3.OpenFileAPI {
-				return mock.OpenFileAPI(t, bucket, obj)
+				return mock.OpenFileAPI(bucket, obj)
 			},
 			expect: func(t *testing.T, f fs.File, err error) {
 				be.NilErr(t, err)
@@ -68,7 +66,7 @@ func TestOpenFile(t *testing.T) {
 			key:    "missing",
 			bucket: bucket,
 			mock: func(t *testing.T) s3.OpenFileAPI {
-				return mock.OpenFileAPI(t, bucket)
+				return mock.OpenFileAPI(bucket)
 			},
 			expect: func(t *testing.T, _ fs.File, err error) {
 				isPathError(t, err)
@@ -122,7 +120,7 @@ func TestReadDir(t *testing.T) {
 			bucket: bucket,
 			dir:    "tmp",
 			mock: func(t *testing.T) s3.ReadDirAPI {
-				return mock.ReadDirAPI(t, bucket, mock.GenObjects(mockSeed, 2001, "tmp", 1, 100)...)
+				return mock.ReadDirAPI(bucket, mock.GenObjects(mockSeed, 2001, "tmp", 1, 100)...)
 			},
 			expect: func(t *testing.T, entries []fs.DirEntry, err error) {
 				be.NilErr(t, err)
@@ -170,7 +168,7 @@ func TestWrite(t *testing.T) {
 			key:    "tmp",
 			body:   strings.NewReader("some content"),
 			mock: func(t *testing.T) s3.WriteAPI {
-				return mock.WriteAPI(t, bucket)
+				return mock.WriteAPI(bucket)
 			},
 			expect: func(t *testing.T, size int64, err error) {
 				be.NilErr(t, err)
@@ -182,7 +180,7 @@ func TestWrite(t *testing.T) {
 			psize:  5 * megabyte,
 			body:   io.LimitReader(rand.Reader, 500*megabyte),
 			mock: func(t *testing.T) s3.WriteAPI {
-				api := mock.WriteAPI(t, bucket)
+				api := mock.WriteAPI(bucket)
 				api.Put = func(_ context.Context, _ *s3v2.PutObjectInput, _ ...func(*s3v2.Options)) (*s3v2.PutObjectOutput, error) {
 					t.Error("PutObject shouldn't be called")
 					return nil, errors.New("fail")
@@ -190,8 +188,8 @@ func TestWrite(t *testing.T) {
 				return api
 			},
 			expect: func(t *testing.T, size int64, err error) {
-				be.Equal(t, 500*megabyte, size)
 				be.NilErr(t, err)
+				be.Equal(t, 500*megabyte, size)
 			},
 		},
 	}

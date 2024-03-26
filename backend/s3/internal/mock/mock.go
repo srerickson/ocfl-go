@@ -3,32 +3,32 @@ package mock
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"path"
 	"sort"
 	"strings"
 	"sync"
-	"testing"
 	"time"
 
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/s3"
 	"golang.org/x/exp/rand"
 )
 
-type S3Func[input any, output any] func(context.Context, input, ...func(*s3v2.Options)) (output, error)
+type S3Func[Tin any, Tout any] func(context.Context, Tin, ...func(*s3v2.Options)) (Tout, error)
 
 type S3API struct {
 	Head        S3Func[*s3v2.HeadObjectInput, *s3v2.HeadObjectOutput]
 	Get         S3Func[*s3v2.GetObjectInput, *s3v2.GetObjectOutput]
 	List        S3Func[*s3v2.ListObjectsV2Input, *s3v2.ListObjectsV2Output]
 	Put         S3Func[*s3v2.PutObjectInput, *s3v2.PutObjectOutput]
-	PutPart     S3Func[*s3v2.UploadPartInput, *s3v2.UploadPartOutput]
-	PutPartCopy S3Func[*s3v2.UploadPartCopyInput, *s3v2.UploadPartCopyOutput]
+	Upload      S3Func[*s3v2.UploadPartInput, *s3v2.UploadPartOutput]
+	UploadCopy  S3Func[*s3v2.UploadPartCopyInput, *s3v2.UploadPartCopyOutput]
 	Copy        S3Func[*s3v2.CopyObjectInput, *s3v2.CopyObjectOutput]
 	Delete      S3Func[*s3v2.DeleteObjectInput, *s3v2.DeleteObjectOutput]
 	CreateMPU   S3Func[*s3v2.CreateMultipartUploadInput, *s3v2.CreateMultipartUploadOutput]
@@ -36,11 +36,9 @@ type S3API struct {
 	AbortMPU    S3Func[*s3v2.AbortMultipartUploadInput, *s3v2.AbortMultipartUploadOutput]
 }
 
-func OpenFileAPI(t *testing.T, bucket string, objects ...*Object) *S3API {
-	mockObjects := objectMap(objects...)
+func OpenFileAPI(bucket string, objects ...*Object) *S3API {
+	mockObjects := objectMap(objects)
 	getObj := func(ctx context.Context, param *s3v2.GetObjectInput, opts ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
-		be.Nonzero(t, param.Bucket)
-		be.Nonzero(t, param.Key)
 		if *param.Bucket != bucket {
 			return nil, &types.NoSuchBucket{}
 		}
@@ -57,22 +55,15 @@ func OpenFileAPI(t *testing.T, bucket string, objects ...*Object) *S3API {
 	return &S3API{Get: getObj}
 }
 
-func ReadDirAPI(t *testing.T, bucket string, objects ...*Object) *S3API {
+func ReadDirAPI(bucket string, objects ...*Object) *S3API {
 	sortObjects(objects)
 	listObjs := func(ctx context.Context, in *s3v2.ListObjectsV2Input, opts ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
-		t.Helper()
-		be.Nonzero(t, in.Bucket)
-		be.Equal(t, bucket, *in.Bucket)
-		be.Nonzero(t, in.Delimiter)
-		be.Equal(t, "/", *in.Delimiter)
-		maxkeys := int32(1000)
+		maxkeys := 1000
 		if in.MaxKeys != nil {
-			maxkeys = *in.MaxKeys
+			maxkeys = int(*in.MaxKeys)
 		}
-		be.Equal(t, 1000, maxkeys)
 		prefix := ""
 		if in.Prefix != nil {
-			be.True(t, strings.HasSuffix(*in.Prefix, "/"))
 			prefix = *in.Prefix
 		}
 		out := &s3v2.ListObjectsV2Output{
@@ -120,7 +111,7 @@ func ReadDirAPI(t *testing.T, bucket string, objects ...*Object) *S3API {
 			}
 			out.KeyCount = aws.Int32(int32(keyCount))
 			haveMoreKeys := i < len(objects)-1
-			if haveMoreKeys && keyCount >= 1000 || numCommonPrefixes >= 1000 {
+			if haveMoreKeys && keyCount >= int(maxkeys) || numCommonPrefixes >= int(maxkeys) {
 				// that's all we can include,
 				out.IsTruncated = aws.Bool(true)
 				out.NextContinuationToken = aws.String(object.Key)
@@ -132,25 +123,20 @@ func ReadDirAPI(t *testing.T, bucket string, objects ...*Object) *S3API {
 	return &S3API{List: listObjs}
 }
 
-func WriteAPI(t *testing.T, bucket string) *S3API {
+func WriteAPI(bucket string) *S3API {
 	uploadID := "mock-upload-id"
 	parts := sync.Map{}
 	put := func(ctx context.Context, in *s3v2.PutObjectInput, opts ...func(*s3v2.Options)) (*s3v2.PutObjectOutput, error) {
-		be.Nonzero(t, in.Bucket)
-		be.Equal(t, bucket, *in.Bucket)
-		be.Nonzero(t, in.Key)
-		be.Nonzero(t, in.Body)
 		sum, err := etag(in.Body)
-		be.NilErr(t, err)
+		if err != nil {
+			return nil, err
+		}
 		out := &s3v2.PutObjectOutput{
 			ETag: &sum,
 		}
 		return out, nil
 	}
 	createMPU := func(ctx context.Context, in *s3v2.CreateMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CreateMultipartUploadOutput, error) {
-		be.Nonzero(t, in.Bucket)
-		be.Equal(t, bucket, *in.Bucket)
-		be.Nonzero(t, in.Key)
 		out := &s3v2.CreateMultipartUploadOutput{
 			Bucket:   in.Bucket,
 			Key:      in.Key,
@@ -158,34 +144,38 @@ func WriteAPI(t *testing.T, bucket string) *S3API {
 		}
 		return out, nil
 	}
-	putPart := func(ctx context.Context, in *s3v2.UploadPartInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartOutput, error) {
-		be.Nonzero(t, in.Bucket)
-		be.Equal(t, bucket, *in.Bucket)
-		be.Nonzero(t, in.Key)
-		be.Nonzero(t, in.UploadId)
-		be.Equal(t, uploadID, *in.UploadId)
-		be.Nonzero(t, in.PartNumber)
+	upload := func(ctx context.Context, in *s3v2.UploadPartInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartOutput, error) {
 		sum, err := etag(in.Body)
+		if err != nil {
+			return nil, err
+		}
 		parts.Store(*in.PartNumber, sum)
-		be.NilErr(t, err)
 		out := &s3v2.UploadPartOutput{
 			ETag: &sum,
 		}
 		return out, nil
 	}
 	completeMPU := func(ctx context.Context, in *s3v2.CompleteMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CompleteMultipartUploadOutput, error) {
-		be.Nonzero(t, in.Bucket)
-		be.Equal(t, bucket, *in.Bucket)
-		be.Nonzero(t, in.Key)
-		be.Nonzero(t, in.UploadId)
-		be.Equal(t, uploadID, *in.UploadId)
-		be.Nonzero(t, in.MultipartUpload)
+		if in.UploadId == nil || *in.UploadId != uploadID {
+			return nil, errors.New("invalid uploader id")
+		}
+		if in.MultipartUpload == nil {
+			return nil, errors.New("no uploads")
+		}
 		for _, p := range in.MultipartUpload.Parts {
-			be.Nonzero(t, p.PartNumber)
-			be.Nonzero(t, p.ETag)
+			if p.PartNumber == nil {
+				return nil, errors.New("nil partnumber")
+			}
+			if p.ETag == nil {
+				return nil, errors.New("nil etag in upload parts")
+			}
 			tag, exists := parts.Load(*p.PartNumber)
-			be.True(t, exists)
-			be.Equal(t, *p.ETag, tag.(string))
+			if !exists {
+				return nil, fmt.Errorf("unknown part number %d", *p.PartNumber)
+			}
+			if tag != *p.ETag {
+				return nil, fmt.Errorf("etags don't match for part number %d", *p.PartNumber)
+			}
 		}
 		out := &s3v2.CompleteMultipartUploadOutput{
 			Bucket: in.Bucket,
@@ -195,21 +185,84 @@ func WriteAPI(t *testing.T, bucket string) *S3API {
 		return out, nil
 	}
 	abortMPU := func(ctx context.Context, in *s3v2.AbortMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.AbortMultipartUploadOutput, error) {
-		be.Nonzero(t, in.Bucket)
-		be.Equal(t, bucket, *in.Bucket)
-		be.Nonzero(t, in.Key)
-		be.Nonzero(t, in.UploadId)
-		be.Equal(t, uploadID, *in.UploadId)
+		if in.UploadId == nil || *in.UploadId != uploadID {
+			return nil, errors.New("invalid uploader id")
+		}
 		out := &s3v2.AbortMultipartUploadOutput{}
 		return out, nil
 	}
 	return &S3API{
 		Put:         put,
-		PutPart:     putPart,
+		Upload:      upload,
 		CreateMPU:   createMPU,
 		CompleteMPU: completeMPU,
 		AbortMPU:    abortMPU,
 	}
+}
+
+func RemoveAllAPI(bucket string, objects ...*Object) *S3API {
+	sortObjects(objects)
+	toDelete := map[string]bool{}
+	objMap := objectMap(objects)
+	listObjs := func(ctx context.Context, in *s3v2.ListObjectsV2Input, opts ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
+		maxkeys := 1000
+		if in.MaxKeys != nil {
+			maxkeys = int(*in.MaxKeys)
+		}
+		prefix := ""
+		if in.Prefix != nil {
+			prefix = *in.Prefix
+		}
+		out := &s3v2.ListObjectsV2Output{
+			Name:              in.Bucket,
+			Prefix:            in.Prefix,
+			Delimiter:         in.Delimiter,
+			MaxKeys:           in.MaxKeys,
+			ContinuationToken: in.ContinuationToken,
+			IsTruncated:       aws.Bool(false),
+		}
+		for i, object := range objects {
+			if in.ContinuationToken != nil && object.Key <= *in.ContinuationToken {
+				continue
+			}
+			if !strings.HasPrefix(object.Key, prefix) {
+				continue
+			}
+			toDelete[object.Key] = false
+			cont := types.Object{
+				Key:          aws.String(object.Key),
+				Size:         aws.Int64(object.ContentLength),
+				LastModified: aws.Time(object.LastModified),
+			}
+			out.Contents = append(out.Contents, cont)
+			keyCount := len(out.Contents)
+			out.KeyCount = aws.Int32(int32(keyCount))
+			haveMoreKeys := i < len(objects)-1
+			if haveMoreKeys && keyCount >= int(maxkeys) {
+				// that's all we can include,
+				out.IsTruncated = aws.Bool(true)
+				out.NextContinuationToken = aws.String(object.Key)
+				break
+			}
+		}
+		return out, nil
+	}
+	delete := func(_ context.Context, in *s3v2.DeleteObjectInput, _ ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error) {
+		if _, ok := objMap[*in.Key]; !ok {
+			return nil, &types.NoSuchKey{}
+		}
+		// wasDeleted, shouldDelete := toDelete[*in.Key]
+		// if wasDeleted {
+		// 	t.Error("key already deleted", *in.Key)
+		// }
+		// if !shouldDelete {
+		// 	t.Error("deleting key that shouldn't be deleted", *in.Key)
+		// }
+		out := &s3v2.DeleteObjectOutput{}
+		return out, nil
+
+	}
+	return &S3API{List: listObjs, Delete: delete}
 }
 
 type Object struct {
@@ -225,7 +278,7 @@ func sortObjects(objects []*Object) {
 	})
 }
 
-func objectMap(objs ...*Object) map[string]*Object {
+func objectMap(objs []*Object) map[string]*Object {
 	mockObjects := make(map[string]*Object, len(objs))
 	for _, obj := range objs {
 		mockObjects[obj.Key] = obj
@@ -253,10 +306,10 @@ func (m *S3API) CreateMultipartUpload(ctx context.Context, param *s3v2.CreateMul
 }
 
 func (m *S3API) UploadPart(ctx context.Context, param *s3v2.UploadPartInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartOutput, error) {
-	return m.PutPart(ctx, param, opts...)
+	return m.Upload(ctx, param, opts...)
 }
 func (m *S3API) UploadPartCopy(ctx context.Context, param *s3v2.UploadPartCopyInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartCopyOutput, error) {
-	return m.PutPartCopy(ctx, param, opts...)
+	return m.UploadCopy(ctx, param, opts...)
 }
 func (m *S3API) CompleteMultipartUpload(ctx context.Context, param *s3v2.CompleteMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CompleteMultipartUploadOutput, error) {
 	return m.CompleteMPU(ctx, param, opts...)
