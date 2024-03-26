@@ -7,6 +7,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,11 +15,28 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/carlmjohnson/be"
+	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/s3"
 	"golang.org/x/exp/rand"
 )
 
-func OpenFileAPI(t *testing.T, bucket string, objects ...*Object) s3.OpenFileAPI {
+type S3Func[input any, output any] func(context.Context, input, ...func(*s3v2.Options)) (output, error)
+
+type S3API struct {
+	Head        S3Func[*s3v2.HeadObjectInput, *s3v2.HeadObjectOutput]
+	Get         S3Func[*s3v2.GetObjectInput, *s3v2.GetObjectOutput]
+	List        S3Func[*s3v2.ListObjectsV2Input, *s3v2.ListObjectsV2Output]
+	Put         S3Func[*s3v2.PutObjectInput, *s3v2.PutObjectOutput]
+	PutPart     S3Func[*s3v2.UploadPartInput, *s3v2.UploadPartOutput]
+	PutPartCopy S3Func[*s3v2.UploadPartCopyInput, *s3v2.UploadPartCopyOutput]
+	Copy        S3Func[*s3v2.CopyObjectInput, *s3v2.CopyObjectOutput]
+	Delete      S3Func[*s3v2.DeleteObjectInput, *s3v2.DeleteObjectOutput]
+	CreateMPU   S3Func[*s3v2.CreateMultipartUploadInput, *s3v2.CreateMultipartUploadOutput]
+	CompleteMPU S3Func[*s3v2.CompleteMultipartUploadInput, *s3v2.CompleteMultipartUploadOutput]
+	AbortMPU    S3Func[*s3v2.AbortMultipartUploadInput, *s3v2.AbortMultipartUploadOutput]
+}
+
+func OpenFileAPI(t *testing.T, bucket string, objects ...*Object) *S3API {
 	mockObjects := objectMap(objects...)
 	getObj := func(ctx context.Context, param *s3v2.GetObjectInput, opts ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
 		be.Nonzero(t, param.Bucket)
@@ -36,10 +54,10 @@ func OpenFileAPI(t *testing.T, bucket string, objects ...*Object) s3.OpenFileAPI
 			LastModified:  aws.Time(obj.LastModified),
 		}, nil
 	}
-	return &s3API{Get: getObj}
+	return &S3API{Get: getObj}
 }
 
-func ReadDirAPI(t *testing.T, bucket string, objects ...*Object) s3.ReadDirAPI {
+func ReadDirAPI(t *testing.T, bucket string, objects ...*Object) *S3API {
 	sortObjects(objects)
 	listObjs := func(ctx context.Context, in *s3v2.ListObjectsV2Input, opts ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
 		t.Helper()
@@ -111,7 +129,87 @@ func ReadDirAPI(t *testing.T, bucket string, objects ...*Object) s3.ReadDirAPI {
 		}
 		return out, nil
 	}
-	return &s3API{List: listObjs}
+	return &S3API{List: listObjs}
+}
+
+func WriteAPI(t *testing.T, bucket string) *S3API {
+	uploadID := "mock-upload-id"
+	parts := sync.Map{}
+	put := func(ctx context.Context, in *s3v2.PutObjectInput, opts ...func(*s3v2.Options)) (*s3v2.PutObjectOutput, error) {
+		be.Nonzero(t, in.Bucket)
+		be.Equal(t, bucket, *in.Bucket)
+		be.Nonzero(t, in.Key)
+		be.Nonzero(t, in.Body)
+		sum, err := etag(in.Body)
+		be.NilErr(t, err)
+		out := &s3v2.PutObjectOutput{
+			ETag: &sum,
+		}
+		return out, nil
+	}
+	createMPU := func(ctx context.Context, in *s3v2.CreateMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CreateMultipartUploadOutput, error) {
+		be.Nonzero(t, in.Bucket)
+		be.Equal(t, bucket, *in.Bucket)
+		be.Nonzero(t, in.Key)
+		out := &s3v2.CreateMultipartUploadOutput{
+			Bucket:   in.Bucket,
+			Key:      in.Key,
+			UploadId: &uploadID,
+		}
+		return out, nil
+	}
+	putPart := func(ctx context.Context, in *s3v2.UploadPartInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartOutput, error) {
+		be.Nonzero(t, in.Bucket)
+		be.Equal(t, bucket, *in.Bucket)
+		be.Nonzero(t, in.Key)
+		be.Nonzero(t, in.UploadId)
+		be.Equal(t, uploadID, *in.UploadId)
+		be.Nonzero(t, in.PartNumber)
+		sum, err := etag(in.Body)
+		parts.Store(*in.PartNumber, sum)
+		be.NilErr(t, err)
+		out := &s3v2.UploadPartOutput{
+			ETag: &sum,
+		}
+		return out, nil
+	}
+	completeMPU := func(ctx context.Context, in *s3v2.CompleteMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CompleteMultipartUploadOutput, error) {
+		be.Nonzero(t, in.Bucket)
+		be.Equal(t, bucket, *in.Bucket)
+		be.Nonzero(t, in.Key)
+		be.Nonzero(t, in.UploadId)
+		be.Equal(t, uploadID, *in.UploadId)
+		be.Nonzero(t, in.MultipartUpload)
+		for _, p := range in.MultipartUpload.Parts {
+			be.Nonzero(t, p.PartNumber)
+			be.Nonzero(t, p.ETag)
+			tag, exists := parts.Load(*p.PartNumber)
+			be.True(t, exists)
+			be.Equal(t, *p.ETag, tag.(string))
+		}
+		out := &s3v2.CompleteMultipartUploadOutput{
+			Bucket: in.Bucket,
+			Key:    in.Key,
+			ETag:   aws.String("computed-etag"),
+		}
+		return out, nil
+	}
+	abortMPU := func(ctx context.Context, in *s3v2.AbortMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.AbortMultipartUploadOutput, error) {
+		be.Nonzero(t, in.Bucket)
+		be.Equal(t, bucket, *in.Bucket)
+		be.Nonzero(t, in.Key)
+		be.Nonzero(t, in.UploadId)
+		be.Equal(t, uploadID, *in.UploadId)
+		out := &s3v2.AbortMultipartUploadOutput{}
+		return out, nil
+	}
+	return &S3API{
+		Put:         put,
+		PutPart:     putPart,
+		CreateMPU:   createMPU,
+		CompleteMPU: completeMPU,
+		AbortMPU:    abortMPU,
+	}
 }
 
 type Object struct {
@@ -135,64 +233,48 @@ func objectMap(objs ...*Object) map[string]*Object {
 	return mockObjects
 }
 
-type s3fn[input any, output any] func(context.Context, input, ...func(*s3v2.Options)) (output, error)
-
-type s3API struct {
-	Head        s3fn[*s3v2.HeadObjectInput, *s3v2.HeadObjectOutput]
-	Get         s3fn[*s3v2.GetObjectInput, *s3v2.GetObjectOutput]
-	List        s3fn[*s3v2.ListObjectsV2Input, *s3v2.ListObjectsV2Output]
-	Put         s3fn[*s3v2.PutObjectInput, *s3v2.PutObjectOutput]
-	PutPart     s3fn[*s3v2.UploadPartInput, *s3v2.UploadPartOutput]
-	PutPartCopy s3fn[*s3v2.UploadPartCopyInput, *s3v2.UploadPartCopyOutput]
-	Copy        s3fn[*s3v2.CopyObjectInput, *s3v2.CopyObjectOutput]
-	Delete      s3fn[*s3v2.DeleteObjectInput, *s3v2.DeleteObjectOutput]
-	CreateMPU   s3fn[*s3v2.CreateMultipartUploadInput, *s3v2.CreateMultipartUploadOutput]
-	CompleteMPU s3fn[*s3v2.CompleteMultipartUploadInput, *s3v2.CompleteMultipartUploadOutput]
-	AbortMPU    s3fn[*s3v2.AbortMultipartUploadInput, *s3v2.AbortMultipartUploadOutput]
-}
-
-func (m *s3API) HeadObject(ctx context.Context, param *s3v2.HeadObjectInput, opts ...func(*s3v2.Options)) (*s3v2.HeadObjectOutput, error) {
+func (m *S3API) HeadObject(ctx context.Context, param *s3v2.HeadObjectInput, opts ...func(*s3v2.Options)) (*s3v2.HeadObjectOutput, error) {
 	return m.Head(ctx, param, opts...)
 }
 
-func (m *s3API) GetObject(ctx context.Context, param *s3v2.GetObjectInput, opts ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
+func (m *S3API) GetObject(ctx context.Context, param *s3v2.GetObjectInput, opts ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
 	return m.Get(ctx, param, opts...)
 }
 
-func (m *s3API) ListObjectsV2(ctx context.Context, param *s3v2.ListObjectsV2Input, opts ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
+func (m *S3API) ListObjectsV2(ctx context.Context, param *s3v2.ListObjectsV2Input, opts ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
 	return m.List(ctx, param, opts...)
 }
 
-func (m *s3API) PutObject(ctx context.Context, param *s3v2.PutObjectInput, opts ...func(*s3v2.Options)) (*s3v2.PutObjectOutput, error) {
+func (m *S3API) PutObject(ctx context.Context, param *s3v2.PutObjectInput, opts ...func(*s3v2.Options)) (*s3v2.PutObjectOutput, error) {
 	return m.Put(ctx, param, opts...)
 }
-func (m *s3API) CreateMultipartUpload(ctx context.Context, param *s3v2.CreateMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CreateMultipartUploadOutput, error) {
+func (m *S3API) CreateMultipartUpload(ctx context.Context, param *s3v2.CreateMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CreateMultipartUploadOutput, error) {
 	return m.CreateMPU(ctx, param, opts...)
 }
 
-func (m *s3API) UploadPart(ctx context.Context, param *s3v2.UploadPartInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartOutput, error) {
+func (m *S3API) UploadPart(ctx context.Context, param *s3v2.UploadPartInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartOutput, error) {
 	return m.PutPart(ctx, param, opts...)
 }
-func (m *s3API) UploadPartCopy(ctx context.Context, param *s3v2.UploadPartCopyInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartCopyOutput, error) {
+func (m *S3API) UploadPartCopy(ctx context.Context, param *s3v2.UploadPartCopyInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartCopyOutput, error) {
 	return m.PutPartCopy(ctx, param, opts...)
 }
-func (m *s3API) CompleteMultipartUpload(ctx context.Context, param *s3v2.CompleteMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CompleteMultipartUploadOutput, error) {
+func (m *S3API) CompleteMultipartUpload(ctx context.Context, param *s3v2.CompleteMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CompleteMultipartUploadOutput, error) {
 	return m.CompleteMPU(ctx, param, opts...)
 }
 
-func (m *s3API) AbortMultipartUpload(ctx context.Context, param *s3v2.AbortMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.AbortMultipartUploadOutput, error) {
+func (m *S3API) AbortMultipartUpload(ctx context.Context, param *s3v2.AbortMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.AbortMultipartUploadOutput, error) {
 	return m.AbortMPU(ctx, param, opts...)
 }
 
-func (m *s3API) CopyObject(ctx context.Context, param *s3v2.CopyObjectInput, opts ...func(*s3v2.Options)) (*s3v2.CopyObjectOutput, error) {
+func (m *S3API) CopyObject(ctx context.Context, param *s3v2.CopyObjectInput, opts ...func(*s3v2.Options)) (*s3v2.CopyObjectOutput, error) {
 	return m.Copy(ctx, param, opts...)
 }
 
-func (m *s3API) DeleteObject(ctx context.Context, param *s3v2.DeleteObjectInput, opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error) {
+func (m *S3API) DeleteObject(ctx context.Context, param *s3v2.DeleteObjectInput, opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error) {
 	return m.Delete(ctx, param, opts...)
 }
 
-var _ s3.S3API = (*s3API)(nil)
+var _ s3.S3API = (*S3API)(nil)
 
 func GenObjects(seed uint64, objCount int, keyPrefix string, depth int, maxFileSize int64) []*Object {
 	if depth < 1 {
@@ -274,4 +356,12 @@ func randPathPart(src *rand.Rand, minSize, maxSize int) string {
 		out += string(next)
 	}
 	return out
+}
+
+func etag(r io.Reader) (string, error) {
+	digester := ocfl.NewDigester(ocfl.MD5)
+	if _, err := io.Copy(digester, r); err != nil {
+		return "", err
+	}
+	return digester.String(), nil
 }
