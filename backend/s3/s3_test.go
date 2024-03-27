@@ -205,6 +205,67 @@ func TestWrite(t *testing.T) {
 	}
 }
 
+func TestRemove(t *testing.T) {
+	ctx := context.Background()
+	type testCase struct {
+		desc   string
+		bucket string
+		key    string
+		mock   func(*testing.T) s3.RemoveAPI
+		expect func(*testing.T, error)
+	}
+	cases := []testCase{
+		{
+			desc: "invalid path",
+			key:  "../file.txt",
+			expect: func(t *testing.T, err error) {
+				isInvalidPathError(t, err)
+			},
+		},
+	}
+	for i, tcase := range cases {
+		t.Run(strconv.Itoa(i)+"-"+tcase.desc, func(t *testing.T) {
+			var api s3.RemoveAPI
+			if tcase.mock != nil {
+				api = tcase.mock(t)
+			}
+			err := s3.Remove(ctx, api, tcase.bucket, tcase.key)
+			tcase.expect(t, err)
+		})
+	}
+}
+
+func TestRemoveAll(t *testing.T) {
+	ctx := context.Background()
+	type testCase struct {
+		desc   string
+		bucket string
+		dir    string
+		mock   func(*testing.T) s3.RemoveAllAPI
+		expect func(*testing.T, error)
+	}
+	cases := []testCase{
+		{
+			desc: "invalid path",
+			dir:  "..",
+			expect: func(t *testing.T, err error) {
+				isInvalidPathError(t, err)
+			},
+		},
+	}
+	for i, tcase := range cases {
+		t.Run(strconv.Itoa(i)+"-"+tcase.desc, func(t *testing.T) {
+			var api s3.RemoveAllAPI
+			if tcase.mock != nil {
+				api = tcase.mock(t)
+			}
+			err := s3.RemoveAll(ctx, api, tcase.bucket, tcase.dir)
+			tcase.expect(t, err)
+		})
+	}
+
+}
+
 func isInvalidPathError(t *testing.T, err error) {
 	t.Helper()
 	isPathError(t, err)

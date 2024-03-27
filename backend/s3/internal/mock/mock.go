@@ -20,316 +20,258 @@ import (
 	"golang.org/x/exp/rand"
 )
 
-type S3Func[Tin any, Tout any] func(context.Context, Tin, ...func(*s3v2.Options)) (Tout, error)
+var uploadID = "mock-mpu-id"
 
 type S3API struct {
-	Head        S3Func[*s3v2.HeadObjectInput, *s3v2.HeadObjectOutput]
-	Get         S3Func[*s3v2.GetObjectInput, *s3v2.GetObjectOutput]
-	List        S3Func[*s3v2.ListObjectsV2Input, *s3v2.ListObjectsV2Output]
-	Put         S3Func[*s3v2.PutObjectInput, *s3v2.PutObjectOutput]
-	Upload      S3Func[*s3v2.UploadPartInput, *s3v2.UploadPartOutput]
-	UploadCopy  S3Func[*s3v2.UploadPartCopyInput, *s3v2.UploadPartCopyOutput]
-	Copy        S3Func[*s3v2.CopyObjectInput, *s3v2.CopyObjectOutput]
-	Delete      S3Func[*s3v2.DeleteObjectInput, *s3v2.DeleteObjectOutput]
-	CreateMPU   S3Func[*s3v2.CreateMultipartUploadInput, *s3v2.CreateMultipartUploadOutput]
-	CompleteMPU S3Func[*s3v2.CompleteMultipartUploadInput, *s3v2.CompleteMultipartUploadOutput]
-	AbortMPU    S3Func[*s3v2.AbortMultipartUploadInput, *s3v2.AbortMultipartUploadOutput]
+	Bucket  string
+	Objects map[string]*Object
+	Updated map[string]string
+	Parts   sync.Map
 }
 
-func OpenFileAPI(bucket string, objects ...*Object) *S3API {
-	mockObjects := objectMap(objects)
-	getObj := func(ctx context.Context, param *s3v2.GetObjectInput, opts ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
-		if *param.Bucket != bucket {
-			return nil, &types.NoSuchBucket{}
-		}
-		obj := mockObjects[*param.Key]
-		if obj == nil {
-			return nil, &types.NoSuchKey{}
-		}
-		return &s3v2.GetObjectOutput{
-			Body:          io.NopCloser(bytes.NewBuffer(obj.Body)),
-			ContentLength: aws.Int64(int64(len(obj.Body))),
-			LastModified:  aws.Time(obj.LastModified),
-		}, nil
+func (m *S3API) HeadObject(ctx context.Context, in *s3v2.HeadObjectInput, opts ...func(*s3v2.Options)) (*s3v2.HeadObjectOutput, error) {
+	if err := m.bucketOK(in.Bucket); err != nil {
+		return nil, err
 	}
-	return &S3API{Get: getObj}
+	obj, err := m.getObject(in.Key)
+	if err != nil {
+		return nil, err
+	}
+	out := &s3v2.HeadObjectOutput{
+		ContentLength: aws.Int64(int64(len(obj.Body))),
+		LastModified:  aws.Time(obj.LastModified),
+	}
+	return out, nil
 }
 
-func ReadDirAPI(bucket string, objects ...*Object) *S3API {
-	sortObjects(objects)
-	listObjs := func(ctx context.Context, in *s3v2.ListObjectsV2Input, opts ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
-		maxkeys := 1000
-		if in.MaxKeys != nil {
-			maxkeys = int(*in.MaxKeys)
+func (m *S3API) GetObject(ctx context.Context, in *s3v2.GetObjectInput, opts ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
+	if err := m.bucketOK(in.Bucket); err != nil {
+		return nil, err
+	}
+	obj, err := m.getObject(in.Key)
+	if err != nil {
+		return nil, err
+	}
+	return &s3v2.GetObjectOutput{
+		Body:          io.NopCloser(bytes.NewBuffer(obj.Body)),
+		ContentLength: aws.Int64(int64(len(obj.Body))),
+		LastModified:  aws.Time(obj.LastModified),
+	}, nil
+}
+
+func (m *S3API) ListObjectsV2(ctx context.Context, in *s3v2.ListObjectsV2Input, opts ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
+	if err := m.bucketOK(in.Bucket); err != nil {
+		return nil, err
+	}
+	maxkeys := 1000
+	if in.MaxKeys != nil {
+		maxkeys = int(*in.MaxKeys)
+	}
+	prefix := ""
+	if in.Prefix != nil {
+		prefix = *in.Prefix
+	}
+	out := &s3v2.ListObjectsV2Output{
+		Name:              in.Bucket,
+		Prefix:            in.Prefix,
+		Delimiter:         in.Delimiter,
+		MaxKeys:           in.MaxKeys,
+		ContinuationToken: in.ContinuationToken,
+		IsTruncated:       aws.Bool(false),
+	}
+	for i, key := range m.Keys() {
+		if in.ContinuationToken != nil && key <= *in.ContinuationToken {
+			continue
 		}
-		prefix := ""
-		if in.Prefix != nil {
-			prefix = *in.Prefix
+		if !strings.HasPrefix(key, prefix) {
+			continue
 		}
-		out := &s3v2.ListObjectsV2Output{
-			Name:              in.Bucket,
-			Prefix:            in.Prefix,
-			Delimiter:         in.Delimiter,
-			MaxKeys:           in.MaxKeys,
-			ContinuationToken: in.ContinuationToken,
-			IsTruncated:       aws.Bool(false),
-		}
-		for i, object := range objects {
-			if in.ContinuationToken != nil && object.Key <= *in.ContinuationToken {
-				continue
-			}
-			if !strings.HasPrefix(object.Key, prefix) {
-				continue
-			}
-			keySuffix := strings.TrimPrefix(object.Key, prefix)
-			// keyPart is first path element after prefix
-			keyPart, _, isCommonPrefix := strings.Cut(keySuffix, "/")
-			switch {
-			case isCommonPrefix:
-				// add to common prefixes, if it's not there
-				commonPrefix := prefix + "/" + keyPart
-				if l := len(out.CommonPrefixes); l > 0 {
-					prev := out.CommonPrefixes[l-1]
-					if prev.Prefix != nil && *prev.Prefix == commonPrefix {
-						break
-					}
+		object := m.Objects[key]
+		keySuffix := strings.TrimPrefix(key, prefix)
+		// keyPart is first path element after prefix
+		keyPart, _, isCommonPrefix := strings.Cut(keySuffix, "/")
+		switch {
+		case isCommonPrefix:
+			// add to common prefixes, if it's not there
+			commonPrefix := prefix + "/" + keyPart
+			if l := len(out.CommonPrefixes); l > 0 {
+				prev := out.CommonPrefixes[l-1]
+				if prev.Prefix != nil && *prev.Prefix == commonPrefix {
+					break
 				}
-				out.CommonPrefixes = append(out.CommonPrefixes, types.CommonPrefix{Prefix: &commonPrefix})
-			default:
-				// add to contents
-				cont := types.Object{
-					Key:          aws.String(object.Key),
-					Size:         aws.Int64(object.ContentLength),
-					LastModified: aws.Time(object.LastModified),
-				}
-				out.Contents = append(out.Contents, cont)
 			}
-			keyCount := len(out.Contents)
-			numCommonPrefixes := len(out.CommonPrefixes)
-			if numCommonPrefixes > 0 {
-				keyCount += 1
-			}
-			out.KeyCount = aws.Int32(int32(keyCount))
-			haveMoreKeys := i < len(objects)-1
-			if haveMoreKeys && keyCount >= int(maxkeys) || numCommonPrefixes >= int(maxkeys) {
-				// that's all we can include,
-				out.IsTruncated = aws.Bool(true)
-				out.NextContinuationToken = aws.String(object.Key)
-				break
-			}
-		}
-		return out, nil
-	}
-	return &S3API{List: listObjs}
-}
-
-func WriteAPI(bucket string) *S3API {
-	uploadID := "mock-upload-id"
-	parts := sync.Map{}
-	put := func(ctx context.Context, in *s3v2.PutObjectInput, opts ...func(*s3v2.Options)) (*s3v2.PutObjectOutput, error) {
-		sum, err := etag(in.Body)
-		if err != nil {
-			return nil, err
-		}
-		out := &s3v2.PutObjectOutput{
-			ETag: &sum,
-		}
-		return out, nil
-	}
-	createMPU := func(ctx context.Context, in *s3v2.CreateMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CreateMultipartUploadOutput, error) {
-		out := &s3v2.CreateMultipartUploadOutput{
-			Bucket:   in.Bucket,
-			Key:      in.Key,
-			UploadId: &uploadID,
-		}
-		return out, nil
-	}
-	upload := func(ctx context.Context, in *s3v2.UploadPartInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartOutput, error) {
-		sum, err := etag(in.Body)
-		if err != nil {
-			return nil, err
-		}
-		parts.Store(*in.PartNumber, sum)
-		out := &s3v2.UploadPartOutput{
-			ETag: &sum,
-		}
-		return out, nil
-	}
-	completeMPU := func(ctx context.Context, in *s3v2.CompleteMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CompleteMultipartUploadOutput, error) {
-		if in.UploadId == nil || *in.UploadId != uploadID {
-			return nil, errors.New("invalid uploader id")
-		}
-		if in.MultipartUpload == nil {
-			return nil, errors.New("no uploads")
-		}
-		for _, p := range in.MultipartUpload.Parts {
-			if p.PartNumber == nil {
-				return nil, errors.New("nil partnumber")
-			}
-			if p.ETag == nil {
-				return nil, errors.New("nil etag in upload parts")
-			}
-			tag, exists := parts.Load(*p.PartNumber)
-			if !exists {
-				return nil, fmt.Errorf("unknown part number %d", *p.PartNumber)
-			}
-			if tag != *p.ETag {
-				return nil, fmt.Errorf("etags don't match for part number %d", *p.PartNumber)
-			}
-		}
-		out := &s3v2.CompleteMultipartUploadOutput{
-			Bucket: in.Bucket,
-			Key:    in.Key,
-			ETag:   aws.String("computed-etag"),
-		}
-		return out, nil
-	}
-	abortMPU := func(ctx context.Context, in *s3v2.AbortMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.AbortMultipartUploadOutput, error) {
-		if in.UploadId == nil || *in.UploadId != uploadID {
-			return nil, errors.New("invalid uploader id")
-		}
-		out := &s3v2.AbortMultipartUploadOutput{}
-		return out, nil
-	}
-	return &S3API{
-		Put:         put,
-		Upload:      upload,
-		CreateMPU:   createMPU,
-		CompleteMPU: completeMPU,
-		AbortMPU:    abortMPU,
-	}
-}
-
-func RemoveAllAPI(bucket string, objects ...*Object) *S3API {
-	sortObjects(objects)
-	toDelete := map[string]bool{}
-	objMap := objectMap(objects)
-	listObjs := func(ctx context.Context, in *s3v2.ListObjectsV2Input, opts ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
-		maxkeys := 1000
-		if in.MaxKeys != nil {
-			maxkeys = int(*in.MaxKeys)
-		}
-		prefix := ""
-		if in.Prefix != nil {
-			prefix = *in.Prefix
-		}
-		out := &s3v2.ListObjectsV2Output{
-			Name:              in.Bucket,
-			Prefix:            in.Prefix,
-			Delimiter:         in.Delimiter,
-			MaxKeys:           in.MaxKeys,
-			ContinuationToken: in.ContinuationToken,
-			IsTruncated:       aws.Bool(false),
-		}
-		for i, object := range objects {
-			if in.ContinuationToken != nil && object.Key <= *in.ContinuationToken {
-				continue
-			}
-			if !strings.HasPrefix(object.Key, prefix) {
-				continue
-			}
-			toDelete[object.Key] = false
+			out.CommonPrefixes = append(out.CommonPrefixes, types.CommonPrefix{Prefix: &commonPrefix})
+		default:
+			// add to contents
 			cont := types.Object{
-				Key:          aws.String(object.Key),
+				Key:          aws.String(key),
 				Size:         aws.Int64(object.ContentLength),
 				LastModified: aws.Time(object.LastModified),
 			}
 			out.Contents = append(out.Contents, cont)
-			keyCount := len(out.Contents)
-			out.KeyCount = aws.Int32(int32(keyCount))
-			haveMoreKeys := i < len(objects)-1
-			if haveMoreKeys && keyCount >= int(maxkeys) {
-				// that's all we can include,
-				out.IsTruncated = aws.Bool(true)
-				out.NextContinuationToken = aws.String(object.Key)
-				break
-			}
 		}
-		return out, nil
-	}
-	delete := func(_ context.Context, in *s3v2.DeleteObjectInput, _ ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error) {
-		if _, ok := objMap[*in.Key]; !ok {
-			return nil, &types.NoSuchKey{}
+		keyCount := len(out.Contents)
+		numCommonPrefixes := len(out.CommonPrefixes)
+		if numCommonPrefixes > 0 {
+			keyCount += 1
 		}
-		// wasDeleted, shouldDelete := toDelete[*in.Key]
-		// if wasDeleted {
-		// 	t.Error("key already deleted", *in.Key)
-		// }
-		// if !shouldDelete {
-		// 	t.Error("deleting key that shouldn't be deleted", *in.Key)
-		// }
-		out := &s3v2.DeleteObjectOutput{}
-		return out, nil
-
+		out.KeyCount = aws.Int32(int32(keyCount))
+		haveMoreKeys := i < len(m.Objects)-1
+		if haveMoreKeys && keyCount >= int(maxkeys) || numCommonPrefixes >= int(maxkeys) {
+			// that's all we can include,
+			out.IsTruncated = aws.Bool(true)
+			out.NextContinuationToken = aws.String(key)
+			break
+		}
 	}
-	return &S3API{List: listObjs, Delete: delete}
+	return out, nil
 }
 
+func (m *S3API) PutObject(ctx context.Context, in *s3v2.PutObjectInput, opts ...func(*s3v2.Options)) (*s3v2.PutObjectOutput, error) {
+	if err := m.bucketOK(in.Bucket); err != nil {
+		return nil, err
+	}
+	if in.Key == nil {
+		return nil, errors.New("key is nil")
+	}
+	etag, err := md5(in.Body)
+	if err != nil {
+		return nil, err
+	}
+	out := &s3v2.PutObjectOutput{
+		ETag: &etag,
+	}
+	m.Updated[*in.Key] = etag
+	return out, nil
+}
+func (m *S3API) CreateMultipartUpload(ctx context.Context, in *s3v2.CreateMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CreateMultipartUploadOutput, error) {
+	if err := m.bucketOK(in.Bucket); err != nil {
+		return nil, err
+	}
+	out := &s3v2.CreateMultipartUploadOutput{
+		Bucket:   in.Bucket,
+		Key:      in.Key,
+		UploadId: &uploadID,
+	}
+	return out, nil
+}
+
+func (m *S3API) UploadPart(ctx context.Context, in *s3v2.UploadPartInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartOutput, error) {
+	if err := m.bucketOK(in.Bucket); err != nil {
+		return nil, err
+	}
+	if in.UploadId == nil || *in.UploadId != uploadID {
+		return nil, errors.New("UploaderID is nil")
+	}
+	if in.PartNumber == nil {
+		return nil, errors.New("PartNumber is nil")
+	}
+	etag, err := md5(in.Body)
+	if err != nil {
+		return nil, err
+	}
+	out := &s3v2.UploadPartOutput{
+		ETag: &etag,
+	}
+	m.Parts.Store(*in.PartNumber, etag)
+	return out, nil
+}
+func (m *S3API) UploadPartCopy(ctx context.Context, in *s3v2.UploadPartCopyInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartCopyOutput, error) {
+	out := &s3v2.UploadPartCopyOutput{}
+	return out, nil
+}
+func (m *S3API) CompleteMultipartUpload(ctx context.Context, in *s3v2.CompleteMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CompleteMultipartUploadOutput, error) {
+	if in.UploadId == nil || *in.UploadId != uploadID {
+		return nil, errors.New("invalid uploader id")
+	}
+	if in.MultipartUpload == nil {
+		return nil, errors.New("no uploads")
+	}
+	etags := make([]string, len(in.MultipartUpload.Parts))
+	for _, p := range in.MultipartUpload.Parts {
+		if p.PartNumber == nil {
+			return nil, errors.New("nil partnumber")
+		}
+		if p.ETag == nil {
+			return nil, errors.New("nil etag in upload parts")
+		}
+		tag, exists := m.Parts.Load(*p.PartNumber)
+		if !exists {
+			return nil, fmt.Errorf("unknown part number %d", *p.PartNumber)
+		}
+		if tag.(string) != *p.ETag {
+			return nil, fmt.Errorf("etags don't match for part number %d", *p.PartNumber)
+		}
+		etags = append(etags, *p.ETag)
+	}
+	etag, err := md5(strings.NewReader(strings.Join(etags, "")))
+	if err != nil {
+		return nil, err
+	}
+	etag += fmt.Sprintf("-%d", len(etags))
+	out := &s3v2.CompleteMultipartUploadOutput{
+		Bucket: in.Bucket,
+		Key:    in.Key,
+		ETag:   aws.String(etag),
+	}
+	m.Updated[*in.Key] = etag
+	return out, nil
+}
+
+func (m *S3API) AbortMultipartUpload(ctx context.Context, param *s3v2.AbortMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.AbortMultipartUploadOutput, error) {
+	out := &s3v2.AbortMultipartUploadOutput{}
+	return out, nil
+}
+
+func (m *S3API) CopyObject(ctx context.Context, param *s3v2.CopyObjectInput, opts ...func(*s3v2.Options)) (*s3v2.CopyObjectOutput, error) {
+	out := &s3v2.CopyObjectOutput{}
+	return out, nil
+}
+
+func (m *S3API) DeleteObject(ctx context.Context, in *s3v2.DeleteObjectInput, opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error) {
+	if _, ok := m.Objects[*in.Key]; !ok {
+		return nil, &types.NoSuchKey{}
+	}
+	out := &s3v2.DeleteObjectOutput{}
+	return out, nil
+}
+
+func (m *S3API) Keys() []string {
+	keys := make([]string, 0, len(m.Objects))
+	for k := range m.Objects {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func (m *S3API) bucketOK(b *string) error {
+	if !eql(m.Bucket, b) {
+		return &types.NoSuchBucket{}
+	}
+	return nil
+}
+
+func (m *S3API) getObject(k *string) (*Object, error) {
+	if k == nil {
+		return nil, errors.New("object key is nil")
+	}
+	obj, ok := m.Objects[*k]
+	if !ok {
+		return nil, &types.NoSuchKey{}
+	}
+	return obj, nil
+}
+
+var _ s3.S3API = (*S3API)(nil)
+
 type Object struct {
-	Key           string
 	Body          []byte
 	LastModified  time.Time
 	ContentLength int64
 }
 
-func sortObjects(objects []*Object) {
-	sort.Slice(objects, func(i, j int) bool {
-		return objects[i].Key < objects[j].Key
-	})
-}
-
-func objectMap(objs []*Object) map[string]*Object {
-	mockObjects := make(map[string]*Object, len(objs))
-	for _, obj := range objs {
-		mockObjects[obj.Key] = obj
-	}
-	return mockObjects
-}
-
-func (m *S3API) HeadObject(ctx context.Context, param *s3v2.HeadObjectInput, opts ...func(*s3v2.Options)) (*s3v2.HeadObjectOutput, error) {
-	return m.Head(ctx, param, opts...)
-}
-
-func (m *S3API) GetObject(ctx context.Context, param *s3v2.GetObjectInput, opts ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
-	return m.Get(ctx, param, opts...)
-}
-
-func (m *S3API) ListObjectsV2(ctx context.Context, param *s3v2.ListObjectsV2Input, opts ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
-	return m.List(ctx, param, opts...)
-}
-
-func (m *S3API) PutObject(ctx context.Context, param *s3v2.PutObjectInput, opts ...func(*s3v2.Options)) (*s3v2.PutObjectOutput, error) {
-	return m.Put(ctx, param, opts...)
-}
-func (m *S3API) CreateMultipartUpload(ctx context.Context, param *s3v2.CreateMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CreateMultipartUploadOutput, error) {
-	return m.CreateMPU(ctx, param, opts...)
-}
-
-func (m *S3API) UploadPart(ctx context.Context, param *s3v2.UploadPartInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartOutput, error) {
-	return m.Upload(ctx, param, opts...)
-}
-func (m *S3API) UploadPartCopy(ctx context.Context, param *s3v2.UploadPartCopyInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartCopyOutput, error) {
-	return m.UploadCopy(ctx, param, opts...)
-}
-func (m *S3API) CompleteMultipartUpload(ctx context.Context, param *s3v2.CompleteMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CompleteMultipartUploadOutput, error) {
-	return m.CompleteMPU(ctx, param, opts...)
-}
-
-func (m *S3API) AbortMultipartUpload(ctx context.Context, param *s3v2.AbortMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.AbortMultipartUploadOutput, error) {
-	return m.AbortMPU(ctx, param, opts...)
-}
-
-func (m *S3API) CopyObject(ctx context.Context, param *s3v2.CopyObjectInput, opts ...func(*s3v2.Options)) (*s3v2.CopyObjectOutput, error) {
-	return m.Copy(ctx, param, opts...)
-}
-
-func (m *S3API) DeleteObject(ctx context.Context, param *s3v2.DeleteObjectInput, opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error) {
-	return m.Delete(ctx, param, opts...)
-}
-
-var _ s3.S3API = (*S3API)(nil)
-
-func GenObjects(seed uint64, objCount int, keyPrefix string, depth int, maxFileSize int64) []*Object {
+func GenObjects(seed uint64, objCount int, keyPrefix string, depth int, maxFileSize int64) map[string]*Object {
 	if depth < 1 {
 		depth = 1
 	}
@@ -340,7 +282,7 @@ func GenObjects(seed uint64, objCount int, keyPrefix string, depth int, maxFileS
 		maxFileSize = 1
 	}
 	gen := rand.New(rand.NewSource(seed))
-	objects := make([]*Object, objCount)
+	objects := make(map[string]*Object, objCount)
 	keys := make(map[string]struct{}, objCount)
 	dirs := map[string]struct{}{".": {}}
 	genKey := func() string {
@@ -372,17 +314,16 @@ func GenObjects(seed uint64, objCount int, keyPrefix string, depth int, maxFileS
 		}
 	}
 	for i := 0; i < objCount; i++ {
-		objects[i] = &Object{
-			Key:           path.Join(keyPrefix, genKey()),
+		key := path.Join(keyPrefix, genKey())
+		objects[key] = &Object{
 			ContentLength: gen.Int63n(maxFileSize + 1),
 			LastModified:  time.Unix(1711391789-int64(gen.Intn(31536000)), 0),
 		}
 	}
-	sortObjects(objects)
 	return objects
 }
 
-func randPathPart(src *rand.Rand, minSize, maxSize int) string {
+func randPathPart(genr *rand.Rand, minSize, maxSize int) string {
 	const chars = `abcdefghijklmnopqrstuvwzyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-_.`
 	const lenChars = len(chars)
 	size := minSize
@@ -390,14 +331,14 @@ func randPathPart(src *rand.Rand, minSize, maxSize int) string {
 		size = 1
 	}
 	if maxSize > size {
-		size += src.Intn(maxSize - size + 1)
+		size += genr.Intn(maxSize - size + 1)
 	}
 	out := ""
 	for i := 0; i < size; i++ {
 		var next byte
 		for {
-			next = chars[src.Intn(lenChars)]
-			if size == 2 && i > 0 && out[i-1] == '.' && next == '.' {
+			next = chars[genr.Intn(lenChars)]
+			if next == '.' && i > 0 && out[i-1] == '.' {
 				// dont allow '..'
 				continue // try again
 			}
@@ -411,10 +352,17 @@ func randPathPart(src *rand.Rand, minSize, maxSize int) string {
 	return out
 }
 
-func etag(r io.Reader) (string, error) {
+func md5(r io.Reader) (string, error) {
 	digester := ocfl.NewDigester(ocfl.MD5)
 	if _, err := io.Copy(digester, r); err != nil {
 		return "", err
 	}
 	return digester.String(), nil
+}
+
+func eql[T comparable](expect T, ptr *T) bool {
+	if ptr == nil {
+		return false
+	}
+	return *ptr == expect
 }
