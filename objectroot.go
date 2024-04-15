@@ -144,6 +144,11 @@ func (obj ObjectRoot) HasSidecar() bool {
 	return obj.Flags&HasSidecar > 0
 }
 
+// HasExtensions returns true if the object's HasExtensions flag is set
+func (obj ObjectRoot) HasExtensions() bool {
+	return obj.Flags&HasExtensions > 0
+}
+
 func (obj ObjectRoot) HasVersionDir(dir VNum) bool {
 	return slices.Contains(obj.VersionDirs, dir)
 }

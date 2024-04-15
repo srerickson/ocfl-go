@@ -1,6 +1,5 @@
 # An OCFL implementation for Go
 
-
 <a href="https://godoc.org/github.com/srerickson/ocfl-go">
     <img src="https://godoc.org/github.com/srerickson/ocfl-go?status.svg" alt="godocs"/>
 </a>
@@ -24,11 +23,12 @@ development and will have constant breaking changes.
 
 Here is a high-level overview of what's working and what's not:
 
-- [x] Both file system and cloud storage backends (via [gocloud](https://gocloud.dev/howto/blob/))
+- [x] Filesystme and S3 backends
+  - [x] S3: support writing/copying large files (>5GiB).
 - [x] Storage root creation and validation
 - [x] Object creation and validation
 - [x] Flexible API for 'staging' object changes between versions.
-- [x] Support for OCFL v1.0 and v1.1 
+- [x] Support for OCFL v1.0 and v1.1
 - [x] Reasonable test coverage
 - [x] Ability to purge objects from a storage root
 - [ ] Consistent, informative error/log messages
