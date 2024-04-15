@@ -10,7 +10,7 @@ import (
 
 const (
 	// package version
-	Version       = "0.0.23"
+	Version       = "0.0.24"
 	ExtensionsDir = "extensions"
 )
 
