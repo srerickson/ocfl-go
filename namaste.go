@@ -67,15 +67,15 @@ func (n Namaste) Body() string {
 	return n.Type + `_` + string(n.Version) + "\n"
 }
 
-func ParseNamaste(name string) (Namaste, error) {
-	var d Namaste
+func ParseNamaste(name string) (n Namaste, err error) {
 	m := namasteRE.FindStringSubmatch(name)
 	if len(m) != 3 {
-		return d, ErrNoNamaste
+		err = ErrNoNamaste
+		return
 	}
-	d.Type = m[1]
-	d.Version = Spec(m[2])
-	return d, nil
+	n.Type = m[1]
+	n.Version = Spec(m[2])
+	return n, nil
 }
 
 // ReadNamaste validates a namaste declaration

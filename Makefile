@@ -1,18 +1,14 @@
-.PHONY: startminio stopminio
+CONTAINER_BIN=docker
+RUN_CONTAINER=$(CONTAINER_BIN) run --rm --security-opt label=disable
+MINIO_CONTAINER=minio-chaparral-test
 
-startminio:
-	##
-	## checking podman install
-	##
-	which podman
-	podman pull quay.io/minio/minio:latest
-	podman run --name ocfl-test -d --rm -p 9000:9000 -p 9001:9001 minio/minio server /data --console-address ":9001"
-	podman exec ocfl-test mkdir /data/ocfl-test
+.PHONY: minio-start minio-stop
 
-stopminio:
-	##
-	## stoping minio
-	##
-	which podman
-	podman stop ocfl-test
-	
+minio-start:
+	$(RUN_CONTAINER) -d --name $(MINIO_CONTAINER)\
+		-p 9000:9000 \
+		-v "$(shell pwd)/testdata/minio:/data" \
+		quay.io/minio/minio server /data
+
+minio-stop:
+	$(CONTAINER_BIN) stop $(MINIO_CONTAINER)

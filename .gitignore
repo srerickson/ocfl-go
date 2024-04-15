@@ -1,1 +1,5 @@
+.DS_Store
 .tool-versions
+
+testdata/minio
+!testdata/minio/.gitkeep

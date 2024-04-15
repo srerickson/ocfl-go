@@ -11,9 +11,9 @@ import (
 
 func TestNewInventory(t *testing.T) {
 	ctx := context.Background()
-	base, _ := ocflv1.ValidateInventoryReader(ctx, invReader)
-	if base == nil {
-		t.Fatal("test inventory isn't valid")
+	base, validation := ocflv1.ValidateInventoryReader(ctx, strings.NewReader(testInv))
+	if err := validation.Err(); err != nil {
+		t.Fatal("test inventory isn't valid:", err)
 	}
 	// new version state
 	version := &ocflv1.Version{State: ocfl.DigestMap{
@@ -62,7 +62,7 @@ func (f fixitySource) GetFixity(digest string) ocfl.DigestSet {
 	return f[digest]
 }
 
-var invReader = strings.NewReader(`{
+var testInv = `{
   "digestAlgorithm": "sha512",
   "fixity": {
     "md5": {
@@ -165,4 +165,4 @@ var invReader = strings.NewReader(`{
       }
     }
   }
-}`)
+}`
