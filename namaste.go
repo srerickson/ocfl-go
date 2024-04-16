@@ -46,8 +46,9 @@ func FindNamaste(items []fs.DirEntry) (Namaste, error) {
 		return Namaste{}, ErrNoNamaste
 	case 1:
 		return found[0], nil
+	default:
+		return Namaste{}, ErrNamasteMultiple
 	}
-	return Namaste{}, ErrNamasteMultiple
 }
 
 // Name returns the filename for d (0=TYPE_VERSION) or an empty string if d is
