@@ -161,6 +161,28 @@ func TestReadDir(t *testing.T) {
 					return entries[i].Name() < entries[j].Name()
 				}))
 			},
+		}, {
+			desc:   "object root",
+			bucket: bucket,
+			dir:    "root",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket,
+					&mock.Object{Key: "root/0=ocfl_object_1.0"},
+					&mock.Object{Key: "root/inventory.json"},
+					&mock.Object{Key: "root/inventory.json.sha512"},
+					&mock.Object{Key: "root/v1/contents/file.txt"},
+					&mock.Object{Key: "root/extensions/ext01/config.json"})
+			},
+			expect: func(t *testing.T, entries []fs.DirEntry, err error) {
+				be.NilErr(t, err)
+				obj := ocfl.NewObjectRoot(nil, "", entries)
+				be.True(t, obj.HasNamaste())
+				be.True(t, obj.HasInventory())
+				be.True(t, obj.HasSidecar())
+				be.True(t, obj.HasVersionDir(ocfl.V(1)))
+				be.True(t, obj.HasExtensions())
+				be.Equal(t, 1, len(obj.VersionDirs))
+			},
 		},
 	}
 	for i, tcase := range cases {
@@ -264,8 +286,7 @@ func TestRemove(t *testing.T) {
 			expect: func(t *testing.T, _ *mock.S3API, err error) {
 				isInvalidPathError(t, err)
 			},
-		},
-		{
+		}, {
 			desc:   "remove file",
 			bucket: bucket,
 			key:    "remove-me",
@@ -308,8 +329,7 @@ func TestRemoveAll(t *testing.T) {
 			expect: func(t *testing.T, _ *mock.S3API, err error) {
 				isInvalidPathError(t, err)
 			},
-		},
-		{
+		}, {
 			desc:   "remove dir",
 			bucket: bucket,
 			dir:    "remove-me",
@@ -368,8 +388,7 @@ func TestCopy(t *testing.T) {
 				be.Nonzero(t, state.UpdatedETags["dst-file"])
 				be.Equal(t, 0, state.PartCount())
 			},
-		},
-		{
+		}, {
 			desc: "multipart copy",
 			mock: func(t *testing.T) *mock.S3API {
 				api := mock.New(bucket, &mock.Object{
@@ -442,8 +461,7 @@ func TestObjectRoots(t *testing.T) {
 				be.True(t, obj.HasNamaste())
 				be.True(t, obj.HasExtensions())
 			},
-		},
-		{
+		}, {
 			desc: "complete object in subdir",
 			dir:  ".",
 			mock: func(t *testing.T) *mock.S3API {
@@ -470,8 +488,7 @@ func TestObjectRoots(t *testing.T) {
 				be.True(t, obj.HasNamaste())
 				be.True(t, obj.HasExtensions())
 			},
-		},
-		{
+		}, {
 			desc: "full storage root",
 			dir:  ".",
 			mock: func(t *testing.T) *mock.S3API {
@@ -494,8 +511,7 @@ func TestObjectRoots(t *testing.T) {
 				}
 
 			},
-		},
-		{
+		}, {
 			desc: "ignore duplicate namaste",
 			dir:  "a",
 			mock: func(t *testing.T) *mock.S3API {
@@ -511,8 +527,7 @@ func TestObjectRoots(t *testing.T) {
 				obj := roots[0]
 				be.Equal(t, "1.0", obj.Spec)
 			},
-		},
-		{
+		}, {
 			desc: "ignore nested namaste",
 			dir:  ".",
 			mock: func(t *testing.T) *mock.S3API {
