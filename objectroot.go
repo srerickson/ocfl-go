@@ -12,8 +12,10 @@ import (
 )
 
 const (
-	inventoryFile = "inventory.json"
-	maxNonConform = 8
+	inventoryFile    = "inventory.json"
+	sidecarPrefix    = inventoryFile + "."
+	objectDeclPrefix = "0=" + NamasteTypeObject
+	maxNonConform    = 8
 )
 
 var (
@@ -49,41 +51,57 @@ func NewObjectRoot(fsys FS, dir string, entries []fs.DirEntry) *ObjectRoot {
 		FS:   fsys,
 		Path: dir,
 	}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() {
-			if name == ExtensionsDir {
-				obj.Flags |= HasExtensions
-				continue
-			}
-			var v VNum
-			if err := ParseVNum(name, &v); err == nil {
-				obj.VersionDirs = append(obj.VersionDirs, v)
-				continue
-			}
-		}
-		if e.Type().IsRegular() { // regular file
-			if name == inventoryFile {
-				obj.Flags |= HasInventory
-				continue
-			}
-			scPrefix := inventoryFile + "."
-			if strings.HasPrefix(name, scPrefix) {
-				obj.SidecarAlg = strings.TrimPrefix(name, scPrefix)
-				obj.Flags |= HasSidecar
-				continue
-			}
-			if decl, err := ParseNamaste(name); err == nil {
-				if decl.Type == NamasteTypeObject && !obj.HasNamaste() {
-					obj.Spec = decl.Version
-					obj.Flags |= HasNamaste
-					continue
-				}
-			}
-		}
-		// entry doesn't conform to OCFL spec
+	addNonConfoming := func(name string) {
 		if len(obj.NonConform) < maxNonConform {
 			obj.NonConform = append(obj.NonConform, name)
+		}
+	}
+	for _, e := range entries {
+		name := e.Name()
+		switch {
+		case e.IsDir():
+			var v VNum
+			switch {
+			case name == ExtensionsDir:
+				obj.Flags |= HasExtensions
+			case ParseVNum(name, &v) == nil:
+				obj.VersionDirs = append(obj.VersionDirs, v)
+			default:
+				addNonConfoming(name)
+			}
+		case e.Type() == fs.ModeIrregular:
+			fallthrough // s3 backend files are fs.ModeIrregular
+		case e.Type().IsRegular():
+			switch {
+			case name == inventoryFile:
+				obj.Flags |= HasInventory
+			case strings.HasPrefix(name, sidecarPrefix):
+				if obj.HasSidecar() {
+					// duplicate sidecar-like file
+					addNonConfoming(name)
+					break
+				}
+				obj.SidecarAlg = strings.TrimPrefix(name, sidecarPrefix)
+				obj.Flags |= HasSidecar
+			case strings.HasPrefix(name, objectDeclPrefix):
+				if obj.HasNamaste() {
+					// duplicate namaste
+					addNonConfoming(name)
+					break
+				}
+				decl, err := ParseNamaste(name)
+				if err != nil {
+					addNonConfoming(name)
+					break
+				}
+				obj.Spec = decl.Version
+				obj.Flags |= HasNamaste
+			default:
+				addNonConfoming(name)
+			}
+		default:
+			// invalid file mode type
+			addNonConfoming(name)
 		}
 	}
 	return obj
