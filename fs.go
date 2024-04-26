@@ -8,12 +8,10 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"strings"
-
-	"github.com/srerickson/ocfl-go/internal/walkdirs"
 )
 
 var ErrNotFile = errors.New("not a file")
+var ErrFileType = errors.New("invalid file type for an OCFL context")
 
 // FS is a minimal, read-only storage layer abstraction. It is similar to the
 // standard library's io/fs.FS, except it uses contexts and OpenFile is not
@@ -42,87 +40,29 @@ type CopyFS interface {
 	Copy(ctx context.Context, dst string, src string) error
 }
 
-// Files walks the directory tree under root, calling fn
-func Files(ctx context.Context, fsys FS, pth PathSelector, fn func(name string) error) error {
+// Files returns an iterator function that yields name/error pairs for
+// each file in dir and its subdirectories
+func Files(ctx context.Context, fsys FS, dir string) func(yield func(PathInfo, error) bool) bool {
 	if iter, ok := fsys.(FileIterator); ok {
-		return iter.Files(ctx, pth, fn)
+		return iter.Files(ctx, dir)
 	}
-	walkFn := func(dir string, entries []fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		for _, e := range entries {
-			if !e.Type().IsRegular() {
-				// TODO: log symlinks and irregular files as warnings
-				continue
-			}
-			if err := fn(path.Join(dir, e.Name())); err != nil {
-				return err
-			}
-		}
-		return nil
+	return func(yield func(PathInfo, error) bool) bool {
+		return walk(ctx, fsys, PathInfo{Path: dir}, yield)
 	}
-	return walkdirs.WalkDirs(ctx, fsys, pth.Path(), pth.SkipDir, walkFn, 0)
 }
 
-// FileIterator is used to iterate over regular files in an FS
+type PathInfo struct {
+	Path string      // File path relative to an FS
+	Size int64       // file size (-1 if the file size can't be determined)
+	Type fs.FileMode // just the type bits of the file mode
+}
+
+// FileIterator is used to iterate over regular files in a directory and its sub-directories.
 type FileIterator interface {
 	FS
-	// Files calls a function for each filename satisfying the path selector.
-	// The function should only be called for "regular" files (never for
-	// directories or symlinks).
-	Files(context.Context, PathSelector, func(name string) error) error
-}
-
-// PathSelector is used to configure iterators that walk an FS. See FileIterator and
-// ObjectRootIterator.
-type PathSelector struct {
-	// Dir is a parent directory for all paths that satisfy the selector. All
-	// paths in the selection match Dir or have Dir as a parent (prefix). If Dir
-	// is not a well-formed path (see fs.ValidPath), then no path names will
-	// satisfy the path selector. There is one exception: The empty string is
-	// converted to "." by consumers of the selector using Path().
-	Dir string
-
-	// SkipDirFn is used to skip directories during an iteration process. If the
-	// function returns true for a given path, the directory's contents will be
-	// skipped. The string parameter is always a directory name relative to an
-	// FS.
-	SkipDirFn func(dir string) bool
-}
-
-// Dir is a convenient way to construct a PathSelector for a given directory.
-func Dir(name string) PathSelector { return PathSelector{Dir: name} }
-
-// Path returns name as a valid path or an empty string if name is not a
-// valid path
-func (ps PathSelector) Path() string {
-	if ps.Dir == "" {
-		return "."
-	}
-	if !fs.ValidPath(ps.Dir) {
-		return ""
-	}
-	return ps.Dir
-}
-
-// SkipDir returns true if dir should be skipped during an interation process
-// that uses the path selector
-func (ps PathSelector) SkipDir(name string) bool {
-	if !fs.ValidPath(name) {
-		return true
-	}
-	d := ps.Dir
-	if d == "." {
-		d = ""
-	}
-	if !strings.HasPrefix(name, d) {
-		return true
-	}
-	if ps.SkipDirFn != nil {
-		return ps.SkipDirFn(name)
-	}
-	return false
+	// File returns a function iterator that yields all files in
+	// dir and its subdirectories
+	Files(ctx context.Context, dir string) func(yield func(PathInfo, error) bool) bool
 }
 
 type ioFS struct {
@@ -202,4 +142,44 @@ func Copy(ctx context.Context, dstFS WriteFS, dst string, srcFS FS, src string) 
 		err = fmt.Errorf("writing during copy: %w", err)
 	}
 	return
+}
+
+// validFileType returns true if mode is ok for a file
+// in an OCFL object.
+func validFileType(mode fs.FileMode) bool {
+	return mode.IsDir() || mode.IsRegular() || mode.Type() == fs.ModeIrregular
+}
+
+// walk calls yield for all files in dir and its subdirectories.
+func walk(ctx context.Context, fsys FS, dir PathInfo, yield func(PathInfo, error) bool) bool {
+	entries, err := fsys.ReadDir(ctx, dir.Path)
+	if err != nil {
+		yield(dir, err)
+		return false
+	}
+	for _, e := range entries {
+		inf := PathInfo{
+			Path: path.Join(dir.Path, e.Name()),
+			Type: e.Type(),
+		}
+		switch {
+		case e.IsDir():
+			if !walk(ctx, fsys, inf, yield) {
+				return false
+			}
+		case validFileType(e.Type()):
+			inf.Size = -1
+			if stat, err := e.Info(); err == nil {
+				inf.Size = stat.Size()
+			}
+			if !yield(inf, nil) {
+				return false
+			}
+		default:
+			if !yield(inf, ErrFileType) {
+				return false
+			}
+		}
+	}
+	return true
 }

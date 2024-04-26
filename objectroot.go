@@ -69,9 +69,7 @@ func NewObjectRoot(fsys FS, dir string, entries []fs.DirEntry) *ObjectRoot {
 			default:
 				addNonConfoming(name)
 			}
-		case e.Type() == fs.ModeIrregular:
-			fallthrough // s3 backend files are fs.ModeIrregular
-		case e.Type().IsRegular():
+		case validFileType(e.Type()):
 			switch {
 			case name == inventoryFile:
 				obj.Flags |= HasInventory
@@ -174,33 +172,35 @@ func (obj ObjectRoot) HasVersionDir(dir VNum) bool {
 // ObjectRootIterator is used to iterate over object roots
 type ObjectRootIterator interface {
 	// ObjectRoots searches root and its subdirectories for OCFL object declarations
-	// and calls fn for each object root it finds. The *ObjectRoot passed to fn is
-	// confirmed to have an object declaration, but no other validation checks are
-	// made.
-	ObjectRoots(ctx context.Context, sel PathSelector, fn func(obj *ObjectRoot) error) error
+	// and and returns an iterator that yields each object root it finds. The
+	// *ObjectRoot passed to yield is confirmed to have an object declaration, but
+	// no other validation checks are made.
+	ObjectRoots(ctx context.Context, dir string) func(yield func(*ObjectRoot, error) bool) bool
 }
 
 // ObjectRoots searches root and its subdirectories for OCFL object declarations
-// and calls fn for each object root it finds. The *ObjectRoot passed to fn is
-// confirmed to have an object declaration, but no other validation checks are
-// made.
-func ObjectRoots(ctx context.Context, fsys FS, sel PathSelector, fn func(*ObjectRoot) error) error {
+// and and returns an iterator that yields each object root it finds. The
+// *ObjectRoot passed to yield is confirmed to have an object declaration, but
+// no other validation checks are made.
+func ObjectRoots(ctx context.Context, fsys FS, dir string) func(yield func(*ObjectRoot, error) bool) bool {
 	if iterFS, ok := fsys.(ObjectRootIterator); ok {
-		return iterFS.ObjectRoots(ctx, sel, fn)
+		return iterFS.ObjectRoots(ctx, dir)
 	}
-	walkFn := func(name string, entries []fs.DirEntry, err error) error {
+	walk := func(dir string, yield func(*ObjectRoot, error) bool) bool {
+		entries, err := fsys.ReadDir(ctx, dir)
 		if err != nil {
-			return err
+			yield(nil, err)
+			return false
 		}
-		objRoot := NewObjectRoot(fsys, name, entries)
+		objRoot := NewObjectRoot(fsys, dir, entries)
 		if objRoot.HasNamaste() {
-			if err := fn(objRoot); err != nil {
-				return err
-			}
-			// don't walk object subdirectories
-			return walkdirs.ErrSkipDirs
+			return yield(objRoot, nil)
 		}
-		return nil
+		for _, e := range entries {
+
+		}
 	}
-	return walkdirs.WalkDirs(ctx, fsys, sel.Path(), sel.SkipDir, walkFn, 0)
+	return func(yield func(*ObjectRoot, error) bool) bool {
+		return walk(dir, yield)
+	}
 }
