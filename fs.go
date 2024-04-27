@@ -42,12 +42,12 @@ type CopyFS interface {
 
 // Files returns an iterator function that yields name/error pairs for
 // each file in dir and its subdirectories
-func Files(ctx context.Context, fsys FS, dir string) func(yield func(PathInfo, error) bool) bool {
+func Files(ctx context.Context, fsys FS, dir string) func(yield func(PathInfo, error) bool) {
 	if iter, ok := fsys.(FileIterator); ok {
 		return iter.Files(ctx, dir)
 	}
-	return func(yield func(PathInfo, error) bool) bool {
-		return walk(ctx, fsys, PathInfo{Path: dir}, yield)
+	return func(yield func(PathInfo, error) bool) {
+		walkFiles(ctx, fsys, PathInfo{Path: dir}, yield)
 	}
 }
 
@@ -62,7 +62,7 @@ type FileIterator interface {
 	FS
 	// File returns a function iterator that yields all files in
 	// dir and its subdirectories
-	Files(ctx context.Context, dir string) func(yield func(PathInfo, error) bool) bool
+	Files(ctx context.Context, dir string) func(yield func(PathInfo, error) bool)
 }
 
 type ioFS struct {
@@ -150,8 +150,8 @@ func validFileType(mode fs.FileMode) bool {
 	return mode.IsDir() || mode.IsRegular() || mode.Type() == fs.ModeIrregular
 }
 
-// walk calls yield for all files in dir and its subdirectories.
-func walk(ctx context.Context, fsys FS, dir PathInfo, yield func(PathInfo, error) bool) bool {
+// walkFiles calls yield for all files in dir and its subdirectories.
+func walkFiles(ctx context.Context, fsys FS, dir PathInfo, yield func(PathInfo, error) bool) bool {
 	entries, err := fsys.ReadDir(ctx, dir.Path)
 	if err != nil {
 		yield(dir, err)
@@ -164,7 +164,7 @@ func walk(ctx context.Context, fsys FS, dir PathInfo, yield func(PathInfo, error
 		}
 		switch {
 		case e.IsDir():
-			if !walk(ctx, fsys, inf, yield) {
+			if !walkFiles(ctx, fsys, inf, yield) {
 				return false
 			}
 		case validFileType(e.Type()):

@@ -184,27 +184,28 @@ func ObjectRoots(ctx context.Context, fsys FS, dir string) func(yield func(*Obje
 	if iterFS, ok := fsys.(ObjectRootIterator); ok {
 		return iterFS.ObjectRoots(ctx, dir)
 	}
-	walk := func(dir string, yield func(*ObjectRoot, error) bool) bool {
-		entries, err := fsys.ReadDir(ctx, dir)
-		if err != nil {
-			yield(nil, err)
-			return false
-		}
-		objRoot := NewObjectRoot(fsys, dir, entries)
-		if objRoot.HasNamaste() {
-			return yield(objRoot, nil)
-		}
-		for _, e := range entries {
-			if e.IsDir() {
-				subdir := path.Join(dir, e.Name())
-				if !walk(subdir, yield) {
-					return false
-				}
+	return func(yield func(*ObjectRoot, error) bool) {
+		walkObjectRoots(ctx, fsys, dir, yield)
+	}
+}
+
+func walkObjectRoots(ctx context.Context, fsys FS, dir string, yield func(*ObjectRoot, error) bool) bool {
+	entries, err := fsys.ReadDir(ctx, dir)
+	if err != nil {
+		yield(nil, err)
+		return false
+	}
+	objRoot := NewObjectRoot(fsys, dir, entries)
+	if objRoot.HasNamaste() {
+		return yield(objRoot, nil)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			subdir := path.Join(dir, e.Name())
+			if !walkObjectRoots(ctx, fsys, subdir, yield) {
+				return false
 			}
 		}
-		return true
 	}
-	return func(yield func(*ObjectRoot, error) bool) {
-		walk(dir, yield)
-	}
+	return true
 }

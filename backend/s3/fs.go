@@ -81,25 +81,9 @@ func (f *BucketFS) RemoveAll(ctx context.Context, name string) error {
 	return removeAll(ctx, f.S3, f.Bucket, name)
 }
 
-func (f *BucketFS) ObjectRoots(ctx context.Context, sel ocfl.PathSelector, fn func(*ocfl.ObjectRoot) error) error {
-	f.debugLog(ctx, "s3:find_object_roots", "bucket", f.Bucket, "prefix", sel.Path())
-	var iterErr error
-	iter := objectyRoots(ctx, f.S3, f.Bucket, sel.Path())
-	iter(func(obj *ocfl.ObjectRoot, err error) bool {
-		if err != nil {
-			iterErr = err
-			return false
-		}
-		// obj from iter doesn't have FS set
-		if obj != nil {
-			obj.FS = f
-		}
-		if iterErr = fn(obj); iterErr != nil {
-			return false
-		}
-		return true
-	})
-	return iterErr
+func (f *BucketFS) ObjectRoots(ctx context.Context, dir string) func(yield func(*ocfl.ObjectRoot, error) bool) {
+	f.debugLog(ctx, "s3:find_object_roots", "bucket", f.Bucket, "prefix", dir)
+	return objectyRoots(ctx, f.S3, f.Bucket, dir)
 }
 
 type S3API interface {

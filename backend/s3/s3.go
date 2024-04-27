@@ -303,12 +303,12 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 
 // objectyRoots returns an iterator for ocfl.objectyRoots under the
 // prefix dir, in bucket
-func objectyRoots(ctx context.Context, api ObjectRootsAPI, buck string, dir string) func(func(*ocfl.ObjectRoot, error) bool) bool {
-	return func(yield func(obj *ocfl.ObjectRoot, err error) bool) bool {
+func objectyRoots(ctx context.Context, api ObjectRootsAPI, buck string, dir string) func(func(*ocfl.ObjectRoot, error) bool) {
+	return func(yield func(obj *ocfl.ObjectRoot, err error) bool) {
 		const op = "list_objects"
 		if !fs.ValidPath(dir) {
 			yield(nil, pathErr(op, dir, fs.ErrInvalid))
-			return false
+			return
 		}
 		params := &s3v2.ListObjectsV2Input{
 			Bucket:  &buck,
@@ -322,13 +322,13 @@ func objectyRoots(ctx context.Context, api ObjectRootsAPI, buck string, dir stri
 			listPage, err := api.ListObjectsV2(ctx, params)
 			if err != nil {
 				yield(nil, pathErr(op, dir, err))
-				return false
+				return
 			}
 			for _, s3obj := range listPage.Contents {
 				if s3obj.Key == nil {
 					err := errors.New("nil content key in s3 ListObjectsV2 response")
 					yield(nil, pathErr(op, dir, err))
-					return false
+					return
 				}
 				key := *s3obj.Key
 				keyDir := path.Dir(key)
@@ -346,7 +346,7 @@ func objectyRoots(ctx context.Context, api ObjectRootsAPI, buck string, dir stri
 						}
 						// handle the previous OCFL object we saw
 						if !yield(obj, nil) {
-							return false
+							return
 						}
 					}
 					obj = &ocfl.ObjectRoot{
@@ -396,10 +396,10 @@ func objectyRoots(ctx context.Context, api ObjectRootsAPI, buck string, dir stri
 		// haven't called yield on final object
 		if obj != nil {
 			if !yield(obj, nil) {
-				return false
+				return
 			}
 		}
-		return true
+		return
 	}
 }
 
