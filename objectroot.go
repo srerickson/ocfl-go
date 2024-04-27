@@ -7,8 +7,6 @@ import (
 	"path"
 	"slices"
 	"strings"
-
-	"github.com/srerickson/ocfl-go/internal/walkdirs"
 )
 
 const (
@@ -175,14 +173,14 @@ type ObjectRootIterator interface {
 	// and and returns an iterator that yields each object root it finds. The
 	// *ObjectRoot passed to yield is confirmed to have an object declaration, but
 	// no other validation checks are made.
-	ObjectRoots(ctx context.Context, dir string) func(yield func(*ObjectRoot, error) bool) bool
+	ObjectRoots(ctx context.Context, dir string) func(yield func(*ObjectRoot, error) bool)
 }
 
 // ObjectRoots searches root and its subdirectories for OCFL object declarations
 // and and returns an iterator that yields each object root it finds. The
 // *ObjectRoot passed to yield is confirmed to have an object declaration, but
 // no other validation checks are made.
-func ObjectRoots(ctx context.Context, fsys FS, dir string) func(yield func(*ObjectRoot, error) bool) bool {
+func ObjectRoots(ctx context.Context, fsys FS, dir string) func(yield func(*ObjectRoot, error) bool) {
 	if iterFS, ok := fsys.(ObjectRootIterator); ok {
 		return iterFS.ObjectRoots(ctx, dir)
 	}
@@ -197,10 +195,16 @@ func ObjectRoots(ctx context.Context, fsys FS, dir string) func(yield func(*Obje
 			return yield(objRoot, nil)
 		}
 		for _, e := range entries {
-
+			if e.IsDir() {
+				subdir := path.Join(dir, e.Name())
+				if !walk(subdir, yield) {
+					return false
+				}
+			}
 		}
+		return true
 	}
-	return func(yield func(*ObjectRoot, error) bool) bool {
-		return walk(dir, yield)
+	return func(yield func(*ObjectRoot, error) bool) {
+		walk(dir, yield)
 	}
 }
