@@ -72,10 +72,16 @@ func listObjects(ctx context.Context, fsys ocfl.FS, dir string, gos int, logger 
 		})
 
 	}
-	return ocfl.ObjectRoots(ctx, fsys, ocfl.Dir(dir), func(obj *ocfl.ObjectRoot) error {
+	var iterErr error
+	ocfl.ObjectRoots(ctx, fsys, dir)(func(obj *ocfl.ObjectRoot, err error) bool {
+		if err != nil {
+			iterErr = err
+			return false
+		}
 		objRootChan <- obj
-		return nil
+		return true
 	})
+	return iterErr
 }
 
 func parseURI(ctx context.Context, name string) (ocfl.FS, string, error) {

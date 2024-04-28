@@ -78,20 +78,20 @@ func TestCommit(t *testing.T) {
 		ctx := context.Background()
 		fixtures := filepath.Join(`..`, `testdata`, `object-fixtures`, `1.1`)
 		fsys := ocfl.DirFS(fixtures)
-		runTestsFn := func(objRoot *ocfl.ObjectRoot) error {
+		runTestsFn := func(objRoot *ocfl.ObjectRoot, err error) bool {
+			if err != nil {
+				t.Error(err)
+				return false
+			}
 			t.Run(objRoot.Path, func(t *testing.T) {
 				testUpdateObject(ctx, objRoot, t)
 			})
-			return nil
+			return true
 		}
 		// add all version state of all good objects to states
-		if err := ocfl.ObjectRoots(ctx, fsys, ocfl.Dir("good-objects"), runTestsFn); err != nil {
-			t.Fatal(err)
-		}
+		ocfl.ObjectRoots(ctx, fsys, "good-objects")(runTestsFn)
 		// add all versions state of all warn objects to stattes
-		if err := ocfl.ObjectRoots(ctx, fsys, ocfl.Dir("warn-objects"), runTestsFn); err != nil {
-			t.Fatal(err)
-		}
+		ocfl.ObjectRoots(ctx, fsys, "warn-objects")(runTestsFn)
 	})
 }
 
@@ -330,27 +330,33 @@ func tempObject(t *testing.T, obj *ocfl.ObjectRoot) string {
 	t.Helper()
 	ctx := context.Background()
 	tmpdir := t.TempDir()
-	err := ocfl.Files(ctx, obj.FS, ocfl.Dir(obj.Path), func(name string) error {
+	ocfl.Files(ctx, obj.FS, obj.Path)(func(file ocfl.PathInfo, err error) bool {
+		name := file.Path
 		dir := path.Dir(name)
 		if err := os.MkdirAll(filepath.Join(tmpdir, filepath.FromSlash(dir)), 0777); err != nil {
-			return err
+			t.Fatal(err)
+			return false
 		}
 		f, err := obj.FS.OpenFile(ctx, name)
 		if err != nil {
-			return err
+			t.Fatal(err)
+			return false
 		}
 		defer f.Close()
 		w, err := os.Create(filepath.Join(tmpdir, filepath.FromSlash(name)))
 		if err != nil {
-			return err
+			t.Fatal(err)
+			return false
 		}
 		if _, err := io.Copy(w, f); err != nil {
-			return err
+			t.Fatal(err)
+			return false
 		}
-		return w.Sync()
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+			return false
+		}
+		return true
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	return tmpdir
 }

@@ -553,12 +553,16 @@ func TestObjectRoots(t *testing.T) {
 			}
 			fsys := s3.BucketFS{Bucket: tcase.bucket, S3: api}
 			roots := []*ocfl.ObjectRoot{}
-			err := fsys.ObjectRoots(ctx, ocfl.PathSelector{Dir: tcase.dir}, func(obj *ocfl.ObjectRoot) error {
+			var iterErr error
+			fsys.ObjectRoots(ctx, tcase.dir)(func(obj *ocfl.ObjectRoot, err error) bool {
+				if err != nil {
+					iterErr = err
+					return false
+				}
 				roots = append(roots, obj)
-				return nil
+				return true
 			})
-
-			tcase.expect(t, api, roots, err)
+			tcase.expect(t, api, roots, iterErr)
 		})
 	}
 }
