@@ -158,11 +158,14 @@ func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage,
 	}
 	var walkErr error
 	walkFS := func(addfn func(name string, algs ...string) bool) {
-		eachFileFn := func(name string) error {
-			addfn(name, algs...)
-			return nil
-		}
-		walkErr = Files(ctx, dirMan.fs, Dir(dir), eachFileFn)
+		Files(ctx, dirMan.fs, dir)(func(info PathInfo, err error) bool {
+			if err != nil {
+				walkErr = err
+				return false
+			}
+			addfn(info.Path, algs...)
+			return true
+		})
 	}
 	// digest result: add results to the stage
 	results := func(name string, result DigestSet, err error) error {

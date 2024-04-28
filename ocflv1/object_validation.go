@@ -456,14 +456,20 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 func (vldr *objectValidator) walkVersionContent(ctx context.Context, ver ocfl.VNum) (int, error) {
 	contDir := path.Join(vldr.Root, ver.String(), vldr.rootInv.ContentDirectory)
 	var added int
-	err := ocfl.Files(ctx, vldr.FS, ocfl.Dir(contDir), func(name string) error {
+	var iterErr error
+	ocfl.Files(ctx, vldr.FS, contDir)(func(info ocfl.PathInfo, err error) bool {
+		if err != nil {
+			iterErr = err
+			return false
+		}
 		// convert fs-relative path to object-relative path
+		name := info.Path
 		objPath := strings.TrimPrefix(name, vldr.Root+"/")
 		vldr.ledger.addPathExists(objPath, ver)
 		added++
-		return nil
+		return true
 	})
-	return added, err
+	return added, iterErr
 }
 
 type versionDirInfo struct {

@@ -303,7 +303,7 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 
 // objectyRoots returns an iterator for ocfl.objectyRoots under the
 // prefix dir, in bucket
-func objectyRoots(ctx context.Context, api ObjectRootsAPI, buck string, dir string) func(func(*ocfl.ObjectRoot, error) bool) {
+func objectyRoots(ctx context.Context, api ObjectRootsAPI, buck string, fsys ocfl.FS, dir string) func(func(*ocfl.ObjectRoot, error) bool) {
 	return func(yield func(obj *ocfl.ObjectRoot, err error) bool) {
 		const op = "list_objects"
 		if !fs.ValidPath(dir) {
@@ -350,7 +350,7 @@ func objectyRoots(ctx context.Context, api ObjectRootsAPI, buck string, dir stri
 						}
 					}
 					obj = &ocfl.ObjectRoot{
-						// FS:    fsys,
+						FS:    fsys,
 						Path:  keyDir,
 						Spec:  decl.Version,
 						Flags: ocfl.HasNamaste,

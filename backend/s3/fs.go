@@ -83,7 +83,7 @@ func (f *BucketFS) RemoveAll(ctx context.Context, name string) error {
 
 func (f *BucketFS) ObjectRoots(ctx context.Context, dir string) func(yield func(*ocfl.ObjectRoot, error) bool) {
 	f.debugLog(ctx, "s3:find_object_roots", "bucket", f.Bucket, "prefix", dir)
-	return objectyRoots(ctx, f.S3, f.Bucket, dir)
+	return objectyRoots(ctx, f.S3, f.Bucket, f, dir)
 }
 
 type S3API interface {
