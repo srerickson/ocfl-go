@@ -228,7 +228,8 @@ func DigestFS(ctx context.Context, fsys FS, inputIter func(add func(path string,
 		return
 	}
 	return func(yield func(DigestFSResult) bool) {
-		pipeline.Run(jobsIter, runJobs, DigestConcurrency())(func(r pipeline.Result[digestJob, DigestSet]) bool {
+		results := pipeline.Results(jobsIter, runJobs, DigestConcurrency())
+		results(func(r pipeline.Result[digestJob, DigestSet]) bool {
 			return yield(DigestFSResult{
 				Path:    r.In.path,
 				Digests: r.Out,

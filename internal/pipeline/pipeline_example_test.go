@@ -13,7 +13,7 @@ import (
 
 var alg = `sha256`
 
-func ExampleRun() {
+func ExampleResults() {
 	fsys := os.DirFS(".")
 	type job struct {
 		name string
@@ -45,7 +45,7 @@ func ExampleRun() {
 		r.sum = dig.Sums()[alg]
 		return r, nil
 	}
-	pipeline.Run(inputFn, workFn, 0)(func(r pipeline.Result[job, result]) bool {
+	pipeline.Results(inputFn, workFn, 0)(func(r pipeline.Result[job, result]) bool {
 		if r.Out.name == "pipeline.go" && r.Out.sum != "" {
 			fmt.Println(r.Out.name)
 			// Output: pipeline.go

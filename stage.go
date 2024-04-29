@@ -157,28 +157,33 @@ func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage,
 		manifest: map[string]dirManifestEntry{},
 	}
 	var walkErr error
-	walkFS := func(addfn func(name string, algs ...string) bool) {
+	walkFS := func(digestFile func(name string, algs []string) bool) {
+		// add files to digest work queue
 		Files(ctx, dirMan.fs, dir)(func(info PathInfo, err error) bool {
 			if err != nil {
 				walkErr = err
 				return false
 			}
-			addfn(info.Path, algs...)
+			digestFile(info.Path, algs)
 			return true
 		})
 	}
 	// digest result: add results to the stage
-	results := func(name string, result DigestSet, err error) error {
-		if err != nil {
-			return err
+	var digestErr error
+	DigestFS(ctx, dirMan.fs, walkFS)(func(r DigestFSResult) bool {
+		name := r.Path
+		if r.Err != nil {
+			digestErr = r.Err
+			return false
 		}
 		if dirMan.root != "." {
 			// Trim name so it's relative to root, not FS
 			name = strings.TrimPrefix(name, dirMan.root+"/")
 		}
-		primary, fixity, err := splitDigests(result, alg)
+		primary, fixity, err := splitDigests(r.Digests, alg)
 		if err != nil {
-			return err
+			digestErr = err
+			return false
 		}
 		if dirMan.manifest == nil {
 			dirMan.manifest = make(map[string]dirManifestEntry)
@@ -187,14 +192,11 @@ func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage,
 		entry.addPaths(name)
 		entry.addFixity(fixity)
 		dirMan.manifest[primary] = entry
-		return nil
-	}
+		return true
+	})
 	// run checksum
-	if err := DigestFS(ctx, dirMan.fs, walkFS, results); err != nil {
-		return nil, fmt.Errorf("while staging root '%s': %w ", dir, err)
-	}
-	if walkErr != nil {
-		return nil, walkErr
+	if err := errors.Join(walkErr, digestErr); err != nil {
+		return nil, err
 	}
 	state := DigestMap{}
 	for dig, entry := range dirMan.manifest {

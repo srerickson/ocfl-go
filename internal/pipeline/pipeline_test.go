@@ -20,7 +20,7 @@ func run(j job) (result, error) {
 }
 
 func TestPipelineNil(t *testing.T) {
-	pipeline.Run[job, result](nil, nil, 0)(func(r pipeline.Result[job, result]) bool {
+	pipeline.Results[job, result](nil, nil, 0)(func(r pipeline.Result[job, result]) bool {
 		t.Fatal("shouldn't run")
 		return true
 	})
@@ -30,10 +30,9 @@ func TestPipelineResultErr(t *testing.T) {
 	input := func(add func(job) bool) {
 		add(job(-1)) // invalid job
 	}
-	pipeline.Run(input, run, 4)(func(r pipeline.Result[job, result]) bool {
-		if r.Err != nil {
+	pipeline.Results(input, run, 4)(func(r pipeline.Result[job, result]) bool {
+		if r.Err == nil {
 			t.Fatal("expected an error")
-			return false
 		}
 		return true
 	})
@@ -47,7 +46,7 @@ func TestPipeline(t *testing.T) {
 		}
 	}
 	var results int
-	pipeline.Run(input, run, 4)(func(r pipeline.Result[job, result]) bool {
+	pipeline.Results(input, run, 4)(func(r pipeline.Result[job, result]) bool {
 		if r.Err != nil {
 			t.Fatal(r.Err)
 			return false
@@ -68,7 +67,7 @@ func BenchmarkPipeline(b *testing.B) {
 	}
 	b.ResetTimer()
 	b.ReportAllocs()
-	pipeline.Run(input, run, 0)(func(r pipeline.Result[job, result]) bool {
+	pipeline.Results(input, run, 0)(func(r pipeline.Result[job, result]) bool {
 		if r.Err != nil {
 			return false
 		}

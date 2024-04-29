@@ -113,105 +113,81 @@ func TestDigestFS(t *testing.T) {
 	}
 	fsys := ocfl.DirFS(filepath.Join("testdata", "content-fixture"))
 	ctx := context.Background()
-	algsMD5SHA1 := []string{ocfl.MD5, ocfl.SHA1}
-	t.Run("minimal", func(t *testing.T) {
-		setup := func(add func(name string, algs ...string) bool) {
+	t.Run("no input", func(t *testing.T) {
+		setup := func(add func(name string, algs []string) bool) {
 		}
-		cb := func(name string, results ocfl.DigestSet, err error) error {
-			return err
-		}
-		if err := ocfl.DigestFS(ctx, fsys, setup, cb); err != nil {
-			t.Fatal(err)
-		}
+		ocfl.DigestFS(ctx, fsys, setup)(func(r ocfl.DigestFSResult) bool {
+			if r.Err != nil {
+				t.Fatal(r.Err)
+			}
+			return true
+		})
 	})
-	t.Run("callback err", func(t *testing.T) {
-		setup := func(add func(name string, algs ...string) bool) {
-			add(filepath.Join("missingfile"))
+	t.Run("missing file", func(t *testing.T) {
+		setup := func(add func(name string, algs []string) bool) {
+			add(filepath.Join("missingfile"), nil)
 		}
-		cb := func(name string, results ocfl.DigestSet, err error) error {
-			return err
-		}
-		if err := ocfl.DigestFS(ctx, fsys, setup, cb); err == nil {
-			t.Fatal("DigestFS() didn't return expected error")
-		}
+		ocfl.DigestFS(ctx, fsys, setup)(func(r ocfl.DigestFSResult) bool {
+			if r.Err == nil {
+				t.Fatal("expected error for missing file")
+			}
+			return true
+		})
 	})
 	t.Run("minimal, one existing file, md5", func(t *testing.T) {
-		setup := func(add func(name string, algs ...string) bool) {
-			add("hello.csv", ocfl.MD5)
+		setup := func(add func(name string, algs []string) bool) {
+			add("hello.csv", []string{ocfl.MD5})
 		}
-		cb := func(name string, results ocfl.DigestSet, err error) error {
-			if err != nil {
-				return err
+		ocfl.DigestFS(ctx, fsys, setup)(func(r ocfl.DigestFSResult) bool {
+			if r.Err != nil {
+				t.Fatal(r.Err)
 			}
-			if results[ocfl.MD5] == "" {
-				return errors.New("missing result")
+			if r.Digests[ocfl.MD5] != testMD5Sums[r.Path] {
+				t.Fatal(errors.New("wrong md5 value"))
 			}
-			return nil
-		}
-		if err := ocfl.DigestFS(ctx, fsys, setup, cb); err != nil {
-			t.Fatal(err)
-		}
+			return true
+		})
 	})
 	t.Run("minimal, one existing file, md5,sha1", func(t *testing.T) {
-		setup := func(add func(name string, algs ...string) bool) {
-			add("hello.csv", algsMD5SHA1...)
+		setup := func(add func(name string, algs []string) bool) {
+			add("hello.csv", []string{ocfl.MD5, ocfl.SHA1})
 		}
-		cb := func(name string, results ocfl.DigestSet, err error) error {
-			if err != nil {
-				return err
+		ocfl.DigestFS(ctx, fsys, setup)(func(r ocfl.DigestFSResult) bool {
+			if r.Err != nil {
+				t.Fatal(r.Err)
 			}
-			if results[ocfl.MD5] != testMD5Sums["hello.csv"] {
-				return errors.New("wrong md5")
+			if r.Digests[ocfl.MD5] == "" {
+				t.Fatal(errors.New("missing result"))
 			}
-			if results[ocfl.SHA1] == "" {
-				return errors.New("missing result")
+			if r.Digests[ocfl.SHA1] == "" {
+				t.Fatal(errors.New("missing result"))
 			}
-			if len(results) > 2 {
-				return errors.New("should ony have two results")
-			}
-			return nil
-		}
-		if err := ocfl.DigestFS(ctx, fsys, setup, cb); err != nil {
-			t.Fatal(err)
-		}
+			return true
+		})
 	})
 	t.Run("minimal, one existing file, no algs", func(t *testing.T) {
-		setup := func(add func(name string, algs ...string) bool) {
-			add("hello.csv")
+		setup := func(add func(name string, algs []string) bool) {
+			add("hello.csv", nil)
 		}
-		cb := func(name string, results ocfl.DigestSet, err error) error {
-			if err != nil {
-				return err
+		ocfl.DigestFS(ctx, fsys, setup)(func(r ocfl.DigestFSResult) bool {
+			if r.Err != nil {
+				t.Fatal(r.Err)
 			}
-			if len(results) > 0 {
-				return errors.New("results should be empty")
+			if len(r.Digests) > 0 {
+				t.Fatal("results should be empty")
 			}
-			return nil
-		}
-		if err := ocfl.DigestFS(ctx, fsys, setup, cb); err != nil {
-			t.Fatal(err)
-		}
-	})
-	t.Run("minimal, non-existing file, no algs", func(t *testing.T) {
-		setup := func(add func(name string, algs ...string) bool) {
-			add("missingfile")
-		}
-		cb := func(name string, results ocfl.DigestSet, err error) error {
-			return err
-		}
-		if err := ocfl.DigestFS(ctx, fsys, setup, cb); err == nil {
-			t.Fatal("DigestFS() didn't return expected error")
-		}
+			return true
+		})
 	})
 	t.Run("minimal, non-existing file, md5", func(t *testing.T) {
-		setup := func(add func(name string, algs ...string) bool) {
-			add("missingfile.txt", ocfl.MD5)
+		setup := func(add func(name string, algs []string) bool) {
+			add("missingfile.txt", []string{ocfl.MD5})
 		}
-		cb := func(name string, results ocfl.DigestSet, err error) error {
-			return err
-		}
-		if err := ocfl.DigestFS(ctx, fsys, setup, cb); err == nil {
-			t.Fatal("DigestFS() didn't return expected error")
-		}
+		ocfl.DigestFS(ctx, fsys, setup)(func(r ocfl.DigestFSResult) bool {
+			if r.Err == nil {
+				t.Fatal("DigestFS() didn't return expected error")
+			}
+			return true
+		})
 	})
 }
