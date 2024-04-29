@@ -1,23 +1,21 @@
 package pipeline
 
 import (
-	"runtime"
 	"sync"
 )
 
 // pipeline is a parameterized type for processing generic Jobs
 // concurrently
 type pipeline[Tin, Tout any] struct {
-	numgos   int
-	setupFn  func(func(Tin) bool)
-	workFn   func(Tin) (Tout, error)
-	resultFn func(Tin, Tout, error) error
+	workers   int
+	inputIter func(func(Tin) bool)
+	workFn    func(Tin) (Tout, error)
 }
 
-type result[Tin, Tout any] struct {
-	in  Tin
-	out Tout
-	err error
+type Result[Tin, Tout any] struct {
+	In  Tin
+	Out Tout
+	Err error
 }
 
 // Run is a generic implementation of the fan-out/fan-in concurrency pattern.
@@ -26,59 +24,62 @@ type result[Tin, Tout any] struct {
 // values are returned through the callback function, result, which runs in the
 // same go routine used to call Run(). Use gos to set the maximum number of
 // worker go routines (the default is runtime.NumCPU()).
-
 func Run[Tin, Tout any](
-	setupFn func(func(Tin) bool),
-	workFn func(Tin) (Tout, error),
-	resultFn func(Tin, Tout, error) error, gos int) error {
-
-	return (&pipeline[Tin, Tout]{
-		numgos:   gos,
-		setupFn:  setupFn,
-		workFn:   workFn,
-		resultFn: resultFn,
-	}).run()
+	inputIter func(func(Tin) bool),
+	workerFn func(Tin) (Tout, error),
+	numWorkers int,
+) func(yield func(Result[Tin, Tout]) bool) {
+	pipe := &pipeline[Tin, Tout]{
+		workers:   numWorkers,
+		inputIter: inputIter,
+		workFn:    workerFn,
+	}
+	return pipe.resultIter
 }
 
-func (p *pipeline[Tin, Tout]) run() error {
-	if p.numgos < 1 {
-		p.numgos = runtime.NumCPU()
+func (p *pipeline[Tin, Tout]) resultIter(yield func(Result[Tin, Tout]) bool) {
+	if p.workers < 1 {
+		p.workers = 1
 	}
-	// job input queue
 	workQ := make(chan Tin)
-	// close to prevent new jobs in workQ
-	workQcancel := make(chan struct{})
-	// completed work
-	resultQ := make(chan result[Tin, Tout], p.numgos)
+	resultQ := make(chan Result[Tin, Tout], p.workers)
+	cancel := make(chan struct{})
+
+	defer func() {
+		// cancel context and drain result channel
+		close(cancel)
+		for range resultQ {
+		}
+	}()
+
 	go func() {
 		defer close(workQ)
-		if p.setupFn == nil {
+		if p.inputIter == nil {
 			return
 		}
-		// addWork is the function passed back to setupFn for adding jobs to the
-		// workQ
-		addWork := func(w Tin) bool {
+		p.inputIter(func(w Tin) bool {
 			select {
 			case workQ <- w:
 				return true
-			case <-workQcancel:
+			case <-cancel:
 				return false
 			}
-		}
-		p.setupFn(addWork)
+		})
 	}()
 	// workers
 	wg := sync.WaitGroup{}
-	wg.Add(p.numgos)
-	for i := 0; i < p.numgos; i++ {
+	wg.Add(p.workers)
+	for i := 0; i < p.workers; i++ {
 		go func() {
 			defer wg.Done()
 			for in := range workQ {
-				r := result[Tin, Tout]{in: in}
-				if p.workFn != nil {
-					r.out, r.err = p.workFn(r.in)
+				select {
+				case <-cancel:
+				default:
+					r := Result[Tin, Tout]{In: in}
+					r.Out, r.Err = p.workFn(r.In)
+					resultQ <- r
 				}
-				resultQ <- r
 			}
 		}()
 	}
@@ -86,26 +87,9 @@ func (p *pipeline[Tin, Tout]) run() error {
 		wg.Wait()
 		close(resultQ)
 	}()
-
-	// jobs out
-	var resultErr error
 	for r := range resultQ {
-		if p.resultFn == nil {
-			continue
-		}
-		if resultErr != nil {
-			// if resultFn returns an error, it's not called again.
-			// continue to drain resultQ
-			continue
-		}
-		if err := p.resultFn(r.in, r.out, r.err); err != nil {
-			resultErr = err
-			close(workQcancel)
+		if !yield(r) {
+			return
 		}
 	}
-	if resultErr == nil {
-		// term was only closed if err from resultQ
-		close(workQcancel)
-	}
-	return resultErr
 }

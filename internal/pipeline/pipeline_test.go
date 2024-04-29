@@ -20,23 +20,23 @@ func run(j job) (result, error) {
 }
 
 func TestPipelineNil(t *testing.T) {
-	err := pipeline.Run[job, result](nil, nil, nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	pipeline.Run[job, result](nil, nil, 0)(func(r pipeline.Result[job, result]) bool {
+		t.Fatal("shouldn't run")
+		return true
+	})
 }
 
 func TestPipelineResultErr(t *testing.T) {
 	input := func(add func(job) bool) {
 		add(job(-1)) // invalid job
 	}
-	output := func(in job, out result, err error) error {
-		return err
-	}
-	err := pipeline.Run(input, run, output, 0)
-	if err == nil {
-		t.Fatal("expected an error")
-	}
+	pipeline.Run(input, run, 4)(func(r pipeline.Result[job, result]) bool {
+		if r.Err != nil {
+			t.Fatal("expected an error")
+			return false
+		}
+		return true
+	})
 }
 
 func TestPipeline(t *testing.T) {
@@ -47,14 +47,14 @@ func TestPipeline(t *testing.T) {
 		}
 	}
 	var results int
-	output := func(in job, out result, err error) error {
+	pipeline.Run(input, run, 4)(func(r pipeline.Result[job, result]) bool {
+		if r.Err != nil {
+			t.Fatal(r.Err)
+			return false
+		}
 		results++
-		return nil
-	}
-	err := pipeline.Run(input, run, output, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+		return true
+	})
 	if results != times {
 		t.Fatalf("output func ran %d times, not %d", results, times)
 	}
@@ -66,13 +66,12 @@ func BenchmarkPipeline(b *testing.B) {
 			add(job(i))
 		}
 	}
-	output := func(in job, out result, err error) error {
-		return nil
-	}
 	b.ResetTimer()
 	b.ReportAllocs()
-	err := pipeline.Run(input, run, output, 0)
-	if err != nil {
-		b.Fatal(err)
-	}
+	pipeline.Run(input, run, 0)(func(r pipeline.Result[job, result]) bool {
+		if r.Err != nil {
+			return false
+		}
+		return true
+	})
 }

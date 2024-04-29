@@ -199,38 +199,49 @@ func (e DigestErr) Error() string {
 // will be produced, and new calls to addFile will return false. DigestFS uses
 // the value from DigestConcurrency() to determine to set the number of files
 // that are digested concurrently.
-func DigestFS(ctx context.Context, fsys FS, setupFunc func(addFile func(string, ...string) bool), resultFn func(string, DigestSet, error) error) error {
-	addJobs := func(addJob func(digestJob) bool) {
-		addFileJob := func(name string, algs ...string) bool {
-			return addJob(digestJob{path: name, algs: algs})
-		}
-		setupFunc(addFileJob)
+func DigestFS(ctx context.Context, fsys FS, inputIter func(add func(path string, algs []string) bool)) func(yield func(result DigestFSResult) bool) {
+	// checksum digestJob
+	type digestJob struct {
+		path string
+		algs []string
 	}
-	runJobs := func(j digestJob) (DigestSet, error) {
+	jobsIter := func(addJob func(digestJob) bool) {
+		inputIter(func(name string, algs []string) bool {
+			return addJob(digestJob{path: name, algs: algs})
+		})
+	}
+	runJobs := func(j digestJob) (digests DigestSet, err error) {
 		f, err := fsys.OpenFile(ctx, j.path)
 		if err != nil {
-			return nil, err
+			return
 		}
-		if closer, ok := f.(io.Closer); ok {
-			defer closer.Close()
-		}
+		defer func() {
+			if closeErr := f.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
 		digester := NewMultiDigester(j.algs...)
 		if _, err = io.Copy(digester, f); err != nil {
-			return nil, err
+			return
 		}
-		return digester.Sums(), nil
+		digests = digester.Sums()
+		return
 	}
-
-	returnJobs := func(j digestJob, sums DigestSet, err error) error {
-		return resultFn(j.path, sums, err)
+	return func(yield func(DigestFSResult) bool) {
+		pipeline.Run(jobsIter, runJobs, DigestConcurrency())(func(r pipeline.Result[digestJob, DigestSet]) bool {
+			return yield(DigestFSResult{
+				Path:    r.In.path,
+				Digests: r.Out,
+				Err:     r.Err,
+			})
+		})
 	}
-	return pipeline.Run(addJobs, runJobs, returnJobs, DigestConcurrency())
 }
 
-// checksum digestJob
-type digestJob struct {
-	path string
-	algs []string
+type DigestFSResult struct {
+	Path    string
+	Digests DigestSet
+	Err     error
 }
 
 func mustBlake2bNew512() hash.Hash {
