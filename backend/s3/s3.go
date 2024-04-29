@@ -301,11 +301,11 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 	return nil
 }
 
-// objectyRoots returns an iterator for ocfl.objectyRoots under the
+// objectyRootsIter returns an iterator for ocfl.ObjectyRoots under the
 // prefix dir, in bucket
-func objectyRoots(ctx context.Context, api ObjectRootsAPI, buck string, fsys ocfl.FS, dir string) func(func(*ocfl.ObjectRoot, error) bool) {
+func objectyRootsIter(ctx context.Context, api ObjectRootsAPI, buck string, fsys ocfl.FS, dir string) func(func(*ocfl.ObjectRoot, error) bool) {
 	return func(yield func(obj *ocfl.ObjectRoot, err error) bool) {
-		const op = "list_objects"
+		const op = "list_object_roots"
 		if !fs.ValidPath(dir) {
 			yield(nil, pathErr(op, dir, fs.ErrInvalid))
 			return
@@ -400,6 +400,45 @@ func objectyRoots(ctx context.Context, api ObjectRootsAPI, buck string, fsys ocf
 			}
 		}
 		return
+	}
+}
+
+// filesIter returns an iterator that yields PathInfo for files in the dir
+func filesIter(ctx context.Context, api FilesAPI, buck string, dir string) func(func(ocfl.PathInfo, error) bool) {
+	return func(yield func(ocfl.PathInfo, error) bool) {
+		const op = "list_files"
+		if !fs.ValidPath(dir) {
+			yield(ocfl.PathInfo{}, pathErr(op, dir, fs.ErrInvalid))
+			return
+		}
+		params := &s3v2.ListObjectsV2Input{
+			Bucket:  &buck,
+			MaxKeys: &maxKeys,
+		}
+		if dir != "." {
+			params.Prefix = aws.String(dir + "/")
+		}
+		for {
+			listPage, err := api.ListObjectsV2(ctx, params)
+			if err != nil {
+				yield(ocfl.PathInfo{}, pathErr(op, dir, err))
+				return
+			}
+			for _, s3obj := range listPage.Contents {
+				info := ocfl.PathInfo{
+					Path: *s3obj.Key,
+					Size: *s3obj.Size,
+					Type: fs.ModeIrregular,
+				}
+				if !yield(info, nil) {
+					return
+				}
+			}
+			params.ContinuationToken = listPage.NextContinuationToken
+			if params.ContinuationToken == nil {
+				break
+			}
+		}
 	}
 }
 

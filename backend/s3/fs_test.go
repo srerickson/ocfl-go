@@ -27,10 +27,13 @@ const (
 	partSize = 6 * megabyte
 )
 
-var _ ocfl.FS = (*s3.BucketFS)(nil)
-var _ ocfl.CopyFS = (*s3.BucketFS)(nil)
-var _ ocfl.WriteFS = (*s3.BucketFS)(nil)
-var _ ocfl.ObjectRootIterator = (*s3.BucketFS)(nil)
+var (
+	_ ocfl.FS                 = (*s3.BucketFS)(nil)
+	_ ocfl.CopyFS             = (*s3.BucketFS)(nil)
+	_ ocfl.WriteFS            = (*s3.BucketFS)(nil)
+	_ ocfl.ObjectRootIterator = (*s3.BucketFS)(nil)
+	_ ocfl.FileIterator       = (*s3.BucketFS)(nil)
+)
 
 func TestOpenFile(t *testing.T) {
 	type testCase struct {
