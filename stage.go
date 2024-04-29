@@ -159,7 +159,7 @@ func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage,
 	var walkErr error
 	walkFS := func(digestFile func(name string, algs []string) bool) {
 		// add files to digest work queue
-		Files(ctx, dirMan.fs, dir)(func(info PathInfo, err error) bool {
+		Files(ctx, dirMan.fs, dir)(func(info FileInfo, err error) bool {
 			if err != nil {
 				walkErr = err
 				return false

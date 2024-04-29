@@ -330,7 +330,7 @@ func tempObject(t *testing.T, obj *ocfl.ObjectRoot) string {
 	t.Helper()
 	ctx := context.Background()
 	tmpdir := t.TempDir()
-	ocfl.Files(ctx, obj.FS, obj.Path)(func(file ocfl.PathInfo, err error) bool {
+	ocfl.Files(ctx, obj.FS, obj.Path)(func(file ocfl.FileInfo, err error) bool {
 		name := file.Path
 		dir := path.Dir(name)
 		if err := os.MkdirAll(filepath.Join(tmpdir, filepath.FromSlash(dir)), 0777); err != nil {

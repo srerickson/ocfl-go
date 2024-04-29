@@ -86,7 +86,7 @@ func (f *BucketFS) ObjectRoots(ctx context.Context, dir string) func(yield func(
 	return objectyRootsIter(ctx, f.S3, f.Bucket, f, dir)
 }
 
-func (f *BucketFS) Files(ctx context.Context, dir string) func(yield func(ocfl.PathInfo, error) bool) {
+func (f *BucketFS) Files(ctx context.Context, dir string) func(yield func(ocfl.FileInfo, error) bool) {
 	f.debugLog(ctx, "s3:list_files", "bucket", f.Bucket, "prefix", dir)
 	return filesIter(ctx, f.S3, f.Bucket, dir)
 }

@@ -40,31 +40,6 @@ type CopyFS interface {
 	Copy(ctx context.Context, dst string, src string) error
 }
 
-// Files returns an iterator function that yields name/error pairs for
-// each file in dir and its subdirectories
-func Files(ctx context.Context, fsys FS, dir string) func(yield func(PathInfo, error) bool) {
-	if iter, ok := fsys.(FileIterator); ok {
-		return iter.Files(ctx, dir)
-	}
-	return func(yield func(PathInfo, error) bool) {
-		walkFiles(ctx, fsys, PathInfo{Path: dir}, yield)
-	}
-}
-
-type PathInfo struct {
-	Path string      // File path relative to an FS
-	Size int64       // file size (-1 if the file size can't be determined)
-	Type fs.FileMode // just the type bits of the file mode
-}
-
-// FileIterator is used to iterate over regular files in a directory and its sub-directories.
-type FileIterator interface {
-	FS
-	// File returns a function iterator that yields all files in
-	// dir and its subdirectories
-	Files(ctx context.Context, dir string) func(yield func(PathInfo, error) bool)
-}
-
 type ioFS struct {
 	fs.FS
 }
@@ -81,6 +56,13 @@ func (fsys *ioFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 			Op:   "openfile",
 			Path: name,
 			Err:  err,
+		}
+	}
+	if !fs.ValidPath(name) {
+		return nil, &fs.PathError{
+			Op:   "openfile",
+			Path: name,
+			Err:  fs.ErrInvalid,
 		}
 	}
 	f, err := fsys.Open(name)
@@ -100,6 +82,13 @@ func (fsys *ioFS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, erro
 			Op:   "readdir",
 			Path: name,
 			Err:  err,
+		}
+	}
+	if !fs.ValidPath(name) {
+		return nil, &fs.PathError{
+			Op:   "readdir",
+			Path: name,
+			Err:  fs.ErrInvalid,
 		}
 	}
 	dirents, err := fs.ReadDir(fsys.FS, name)
@@ -144,21 +133,40 @@ func Copy(ctx context.Context, dstFS WriteFS, dst string, srcFS FS, src string) 
 	return
 }
 
-// validFileType returns true if mode is ok for a file
-// in an OCFL object.
-func validFileType(mode fs.FileMode) bool {
-	return mode.IsDir() || mode.IsRegular() || mode.Type() == fs.ModeIrregular
+// Files returns an iterator function that yields name/error pairs for
+// each file in dir and its subdirectories
+func Files(ctx context.Context, fsys FS, dir string) func(yield func(FileInfo, error) bool) {
+	if iter, ok := fsys.(FileIterator); ok {
+		return iter.Files(ctx, dir)
+	}
+	return func(yield func(FileInfo, error) bool) {
+		walkFiles(ctx, fsys, FileInfo{Path: dir}, yield)
+	}
+}
+
+type FileInfo struct {
+	Path string      // File path relative to an FS
+	Size int64       // file size (-1 if the file size can't be determined)
+	Type fs.FileMode // just the type bits of the file mode
+}
+
+// FileIterator is used to iterate over regular files in a directory and its sub-directories.
+type FileIterator interface {
+	FS
+	// File returns a function iterator that yields all files in
+	// dir and its subdirectories
+	Files(ctx context.Context, dir string) func(yield func(FileInfo, error) bool)
 }
 
 // walkFiles calls yield for all files in dir and its subdirectories.
-func walkFiles(ctx context.Context, fsys FS, dir PathInfo, yield func(PathInfo, error) bool) bool {
+func walkFiles(ctx context.Context, fsys FS, dir FileInfo, yield func(FileInfo, error) bool) bool {
 	entries, err := fsys.ReadDir(ctx, dir.Path)
 	if err != nil {
 		yield(dir, err)
 		return false
 	}
 	for _, e := range entries {
-		inf := PathInfo{
+		inf := FileInfo{
 			Path: path.Join(dir.Path, e.Name()),
 			Type: e.Type(),
 		}
@@ -182,4 +190,10 @@ func walkFiles(ctx context.Context, fsys FS, dir PathInfo, yield func(PathInfo, 
 		}
 	}
 	return true
+}
+
+// validFileType returns true if mode is ok for a file
+// in an OCFL object.
+func validFileType(mode fs.FileMode) bool {
+	return mode.IsDir() || mode.IsRegular() || mode.Type() == fs.ModeIrregular
 }

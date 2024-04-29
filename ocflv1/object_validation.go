@@ -458,7 +458,7 @@ func (vldr *objectValidator) walkVersionContent(ctx context.Context, ver ocfl.VN
 	contDir := path.Join(vldr.Root, ver.String(), vldr.rootInv.ContentDirectory)
 	var added int
 	var iterErr error
-	ocfl.Files(ctx, vldr.FS, contDir)(func(info ocfl.PathInfo, err error) bool {
+	ocfl.Files(ctx, vldr.FS, contDir)(func(info ocfl.FileInfo, err error) bool {
 		if err != nil {
 			iterErr = err
 			return false

@@ -1,81 +1,118 @@
 package ocfl_test
 
 import (
-	"bytes"
 	"context"
-	"path/filepath"
+	"errors"
+	"fmt"
+	"io/fs"
+	"strings"
 	"testing"
+	"testing/fstest"
 
+	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/backend/memfs"
 )
-
-var (
-	// goodObjects  = filepath.Join(testDataPath, `object-fixtures`, `1.0`, `good-objects`)
-	warnObjects = filepath.Join(`testdata`, `object-fixtures`, `1.0`, `warn-objects`)
-)
-
-func newTestFS(data map[string][]byte) ocfl.FS {
-	ctx := context.Background()
-	fsys := memfs.New()
-	for name, file := range data {
-		_, err := fsys.Write(ctx, name, bytes.NewBuffer(file))
-		if err != nil {
-			panic(err)
-		}
-	}
-	return fsys
-}
 
 func TestFiles(t *testing.T) {
-	// ctx := context.Background()
-	// testdata := filepath.Join(`testdata`)
-	// bucket, err := fileblob.OpenBucket(testdata, nil)
-	// if err != nil {
-	// 	t.Fatal(err)
-	// }
-	// local, err := local.NewFS(testdata)
-	// if err != nil {
-	// 	t.Fatal(err)
-	// }
-	// fss := map[string]ocfl.FS{
-	// 	"local":    local,
-	// 	"dirfs":    ocfl.DirFS(testdata),
-	// 	"fileblob": cloud.NewFS(bucket),
-	// }
-	// got := map[string][]string{}
-	// for fsysName, fsys := range fss {
-	// 	t.Run(fsysName, func(t *testing.T) {
-	// 		dir := ocfl.Dir(`object-fixtures`)
-	// 		dir.SkipDirFn = func(n string) bool {
-	// 			return len(strings.Split(n, "/")) > 4
-	// 		}
-	// 		ocfl.Files(ctx, fsys, dir, func(name string) error {
-	// 			if dir.SkipDir(path.Dir(name)) {
-	// 				t.Error("Files didn't respect SkipDirFn", name)
-	// 			}
-	// 			f, err := fsys.OpenFile(ctx, name)
-	// 			if err != nil {
-	// 				t.Error("File name isn't accessible")
-	// 			}
-	// 			if err == nil {
-	// 				defer f.Close()
-	// 			}
-	// 			got[fsysName] = append(got[fsysName], name)
-	// 			return nil
-	// 		})
-	// 		sort.Strings(got[fsysName])
-	// 	})
-	// }
-	// cmpTo := ""
-	// for fsysName, files := range got {
-	// 	if cmpTo == "" {
-	// 		cmpTo = fsysName
-	// 		continue
-	// 	}
-	// 	expect := got[cmpTo]
-	// 	if !reflect.DeepEqual(files, expect) {
-	// 		t.Errorf("%s and %s didn't get the same results from File: got=%v and expect=%v", fsysName, cmpTo, files, expect)
-	// 	}
-	// }
+	type pathInfoSeq func(yield func(ocfl.FileInfo, error) bool)
+	type testCase struct {
+		desc   string
+		fsys   ocfl.FS
+		dir    string
+		expect func(*testing.T, pathInfoSeq)
+	}
+	tests := []testCase{
+		{
+			desc: "basic",
+			dir:  ".",
+			fsys: ocfl.NewFS(fstest.MapFS{
+				"file.txt": &fstest.MapFile{Data: []byte("content")},
+			}),
+			expect: func(t *testing.T, files pathInfoSeq) {
+				files(func(info ocfl.FileInfo, err error) bool {
+					be.NilErr(t, err)
+					be.Equal(t, "file.txt", info.Path)
+					be.Equal(t, len("content"), int(info.Size))
+					return true
+				})
+			},
+		}, {
+			desc: "deep",
+			dir:  "a",
+			fsys: ocfl.NewFS(fstest.MapFS{
+				"file.txt":         &fstest.MapFile{Data: []byte("content")},
+				"a/file.txt":       &fstest.MapFile{Data: []byte("content")},
+				"a/b/file.txt":     &fstest.MapFile{Data: []byte("content")},
+				"a/b/c/file.txt":   &fstest.MapFile{Data: []byte("content")},
+				"a/b/c/d/file.txt": &fstest.MapFile{Data: []byte("content")},
+			}),
+			expect: func(t *testing.T, files pathInfoSeq) {
+				count := 0
+				files(func(info ocfl.FileInfo, err error) bool {
+					be.NilErr(t, err)
+					be.True(t, strings.HasPrefix(info.Path, "a/"))
+					count++
+					return true
+				})
+				be.Equal(t, 4, count)
+			},
+		}, {
+			desc: "irregular file ok",
+			dir:  ".",
+			fsys: ocfl.NewFS(fstest.MapFS{
+				"file.txt": &fstest.MapFile{Data: []byte("content"), Mode: fs.ModeIrregular},
+			}),
+			expect: func(t *testing.T, files pathInfoSeq) {
+				files(func(info ocfl.FileInfo, err error) bool {
+					be.NilErr(t, err)
+					return true
+				})
+			},
+		}, {
+			desc: "empty path is error",
+			dir:  "",
+			fsys: ocfl.NewFS(fstest.MapFS{
+				"file.txt": &fstest.MapFile{Data: []byte("content")},
+			}),
+			expect: func(t *testing.T, files pathInfoSeq) {
+				files(func(info ocfl.FileInfo, err error) bool {
+					be.Nonzero(t, err)
+					be.True(t, errors.Is(err, fs.ErrInvalid))
+					return true
+				})
+			},
+		}, {
+			desc: "invalid path is error",
+			dir:  "../tmp",
+			fsys: ocfl.NewFS(fstest.MapFS{
+				"file.txt": &fstest.MapFile{Data: []byte("content")},
+			}),
+			expect: func(t *testing.T, files pathInfoSeq) {
+				files(func(info ocfl.FileInfo, err error) bool {
+					be.Nonzero(t, err)
+					be.True(t, errors.Is(err, fs.ErrInvalid))
+					return true
+				})
+			},
+		}, {
+			desc: "symlink file type error",
+			dir:  ".",
+			fsys: ocfl.NewFS(fstest.MapFS{
+				"file.txt": &fstest.MapFile{Mode: fs.ModeSymlink},
+			}),
+			expect: func(t *testing.T, files pathInfoSeq) {
+				files(func(info ocfl.FileInfo, err error) bool {
+					be.Nonzero(t, err)
+					be.True(t, errors.Is(err, ocfl.ErrFileType))
+					return true
+				})
+			},
+		},
+	}
+	for i, tcase := range tests {
+		t.Run(fmt.Sprintf("%d-%s", i, tcase.desc), func(t *testing.T) {
+			ctx := context.Background()
+			tcase.expect(t, ocfl.Files(ctx, tcase.fsys, tcase.dir))
+		})
+	}
 }

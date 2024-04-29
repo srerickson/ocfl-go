@@ -2,6 +2,7 @@ package ocfl_test
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,6 +11,8 @@ import (
 	"github.com/srerickson/ocfl-go/backend/local"
 	"gocloud.dev/blob/fileblob"
 )
+
+var warnObjects = filepath.Join(`testdata`, `object-fixtures`, `1.0`, `warn-objects`)
 
 func TestObjectRoots(t *testing.T) {
 	b, err := fileblob.OpenBucket(warnObjects, nil)

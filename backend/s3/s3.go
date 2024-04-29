@@ -404,11 +404,11 @@ func objectyRootsIter(ctx context.Context, api ObjectRootsAPI, buck string, fsys
 }
 
 // filesIter returns an iterator that yields PathInfo for files in the dir
-func filesIter(ctx context.Context, api FilesAPI, buck string, dir string) func(func(ocfl.PathInfo, error) bool) {
-	return func(yield func(ocfl.PathInfo, error) bool) {
+func filesIter(ctx context.Context, api FilesAPI, buck string, dir string) func(func(ocfl.FileInfo, error) bool) {
+	return func(yield func(ocfl.FileInfo, error) bool) {
 		const op = "list_files"
 		if !fs.ValidPath(dir) {
-			yield(ocfl.PathInfo{}, pathErr(op, dir, fs.ErrInvalid))
+			yield(ocfl.FileInfo{}, pathErr(op, dir, fs.ErrInvalid))
 			return
 		}
 		params := &s3v2.ListObjectsV2Input{
@@ -421,11 +421,11 @@ func filesIter(ctx context.Context, api FilesAPI, buck string, dir string) func(
 		for {
 			listPage, err := api.ListObjectsV2(ctx, params)
 			if err != nil {
-				yield(ocfl.PathInfo{}, pathErr(op, dir, err))
+				yield(ocfl.FileInfo{}, pathErr(op, dir, err))
 				return
 			}
 			for _, s3obj := range listPage.Contents {
-				info := ocfl.PathInfo{
+				info := ocfl.FileInfo{
 					Path: *s3obj.Key,
 					Size: *s3obj.Size,
 					Type: fs.ModeIrregular,
