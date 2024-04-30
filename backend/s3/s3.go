@@ -358,6 +358,9 @@ func objectyRootsIter(ctx context.Context, api ObjectRootsAPI, buck string, fsys
 				case obj == nil || (obj.Path != "." && !strings.HasPrefix(key, obj.Path+"/")):
 					// ignore the key if its not part of an object that
 					// we've already found the declaration for
+					// FIXME: There is a bug here since we may through-out non-conforming
+					// keys for objects that we haven't seen the declaration for yet.
+					// (ie., names that appear before `0=`).
 					break
 				case keyDir == obj.Path:
 					// file in OCFL object root
