@@ -167,21 +167,25 @@ func (obj ObjectRoot) HasVersionDir(dir VNum) bool {
 	return slices.Contains(obj.VersionDirs, dir)
 }
 
-// ObjectRootIterator is used to iterate over object roots
-type ObjectRootIterator interface {
+// ObjectRootsFS is used to iterate over object roots
+type ObjectRootsFS interface {
 	// ObjectRoots searches root and its subdirectories for OCFL object declarations
 	// and and returns an iterator that yields each object root it finds. The
 	// *ObjectRoot passed to yield is confirmed to have an object declaration, but
 	// no other validation checks are made.
-	ObjectRoots(ctx context.Context, dir string) func(yield func(*ObjectRoot, error) bool)
+	ObjectRoots(ctx context.Context, dir string) ObjectRootSeq
 }
 
+// ObjectRootSeq is an iterator that yieldss ObjectRoot references; it is returned
+// by ObjectRoots()
+type ObjectRootSeq func(yield func(*ObjectRoot, error) bool)
+
 // ObjectRoots searches root and its subdirectories for OCFL object declarations
-// and and returns an iterator that yields each object root it finds. The
+// and returns an iterator that yields each object root it finds. The
 // *ObjectRoot passed to yield is confirmed to have an object declaration, but
 // no other validation checks are made.
-func ObjectRoots(ctx context.Context, fsys FS, dir string) func(yield func(*ObjectRoot, error) bool) {
-	if iterFS, ok := fsys.(ObjectRootIterator); ok {
+func ObjectRoots(ctx context.Context, fsys FS, dir string) ObjectRootSeq {
+	if iterFS, ok := fsys.(ObjectRootsFS); ok {
 		return iterFS.ObjectRoots(ctx, dir)
 	}
 	return func(yield func(*ObjectRoot, error) bool) {

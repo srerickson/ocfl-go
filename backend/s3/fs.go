@@ -81,7 +81,7 @@ func (f *BucketFS) RemoveAll(ctx context.Context, name string) error {
 	return removeAll(ctx, f.S3, f.Bucket, name)
 }
 
-func (f *BucketFS) ObjectRoots(ctx context.Context, dir string) func(yield func(*ocfl.ObjectRoot, error) bool) {
+func (f *BucketFS) ObjectRoots(ctx context.Context, dir string) ocfl.ObjectRootSeq {
 	f.debugLog(ctx, "s3:list_object_roots", "bucket", f.Bucket, "prefix", dir)
 	return objectyRootsIter(ctx, f.S3, f.Bucket, f, dir)
 }

@@ -28,11 +28,11 @@ const (
 )
 
 var (
-	_ ocfl.FS                 = (*s3.BucketFS)(nil)
-	_ ocfl.CopyFS             = (*s3.BucketFS)(nil)
-	_ ocfl.WriteFS            = (*s3.BucketFS)(nil)
-	_ ocfl.ObjectRootIterator = (*s3.BucketFS)(nil)
-	_ ocfl.FilesFS            = (*s3.BucketFS)(nil)
+	_ ocfl.FS            = (*s3.BucketFS)(nil)
+	_ ocfl.CopyFS        = (*s3.BucketFS)(nil)
+	_ ocfl.WriteFS       = (*s3.BucketFS)(nil)
+	_ ocfl.ObjectRootsFS = (*s3.BucketFS)(nil)
+	_ ocfl.FilesFS       = (*s3.BucketFS)(nil)
 )
 
 func TestOpenFile(t *testing.T) {
