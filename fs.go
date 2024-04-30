@@ -135,8 +135,8 @@ func Copy(ctx context.Context, dstFS WriteFS, dst string, srcFS FS, src string) 
 
 // Files returns an iterator function that yields name/error pairs for
 // each file in dir and its subdirectories
-func Files(ctx context.Context, fsys FS, dir string) func(yield func(FileInfo, error) bool) {
-	if iter, ok := fsys.(FileIterator); ok {
+func Files(ctx context.Context, fsys FS, dir string) FileSeq {
+	if iter, ok := fsys.(FilesFS); ok {
 		return iter.Files(ctx, dir)
 	}
 	return func(yield func(FileInfo, error) bool) {
@@ -144,18 +144,22 @@ func Files(ctx context.Context, fsys FS, dir string) func(yield func(FileInfo, e
 	}
 }
 
+// FileInfo provides path and size information for a file in an OCFL context.
 type FileInfo struct {
 	Path string      // File path relative to an FS
 	Size int64       // file size (-1 if the file size can't be determined)
 	Type fs.FileMode // just the type bits of the file mode
 }
 
-// FileIterator is used to iterate over regular files in a directory and its sub-directories.
-type FileIterator interface {
+// FileSeq is an interator returned by Files(), that yields FileInfo values
+type FileSeq func(yield func(FileInfo, error) bool)
+
+// FilesFS is used to iterate over regular files in a directory and its sub-directories.
+type FilesFS interface {
 	FS
-	// File returns a function iterator that yields all files in
+	// Files returns a function iterator that yields all files in
 	// dir and its subdirectories
-	Files(ctx context.Context, dir string) func(yield func(FileInfo, error) bool)
+	Files(ctx context.Context, dir string) FileSeq
 }
 
 // walkFiles calls yield for all files in dir and its subdirectories.

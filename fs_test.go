@@ -14,12 +14,11 @@ import (
 )
 
 func TestFiles(t *testing.T) {
-	type pathInfoSeq func(yield func(ocfl.FileInfo, error) bool)
 	type testCase struct {
 		desc   string
 		fsys   ocfl.FS
 		dir    string
-		expect func(*testing.T, pathInfoSeq)
+		expect func(*testing.T, ocfl.FileSeq)
 	}
 	tests := []testCase{
 		{
@@ -28,7 +27,7 @@ func TestFiles(t *testing.T) {
 			fsys: ocfl.NewFS(fstest.MapFS{
 				"file.txt": &fstest.MapFile{Data: []byte("content")},
 			}),
-			expect: func(t *testing.T, files pathInfoSeq) {
+			expect: func(t *testing.T, files ocfl.FileSeq) {
 				files(func(info ocfl.FileInfo, err error) bool {
 					be.NilErr(t, err)
 					be.Equal(t, "file.txt", info.Path)
@@ -46,7 +45,7 @@ func TestFiles(t *testing.T) {
 				"a/b/c/file.txt":   &fstest.MapFile{Data: []byte("content")},
 				"a/b/c/d/file.txt": &fstest.MapFile{Data: []byte("content")},
 			}),
-			expect: func(t *testing.T, files pathInfoSeq) {
+			expect: func(t *testing.T, files ocfl.FileSeq) {
 				count := 0
 				files(func(info ocfl.FileInfo, err error) bool {
 					be.NilErr(t, err)
@@ -57,12 +56,25 @@ func TestFiles(t *testing.T) {
 				be.Equal(t, 4, count)
 			},
 		}, {
-			desc: "irregular file ok",
+			desc: "irregular file type ok",
 			dir:  ".",
 			fsys: ocfl.NewFS(fstest.MapFS{
-				"file.txt": &fstest.MapFile{Data: []byte("content"), Mode: fs.ModeIrregular},
+				"file.txt": &fstest.MapFile{
+					Data: []byte("content"),
+					Mode: fs.ModeIrregular,
+				},
 			}),
-			expect: func(t *testing.T, files pathInfoSeq) {
+			expect: func(t *testing.T, files ocfl.FileSeq) {
+				files(func(info ocfl.FileInfo, err error) bool {
+					be.NilErr(t, err)
+					return true
+				})
+			},
+		}, {
+			desc: "use  FilesFS implementation",
+			dir:  ".",
+			fsys: &mockFilesFS{},
+			expect: func(t *testing.T, files ocfl.FileSeq) {
 				files(func(info ocfl.FileInfo, err error) bool {
 					be.NilErr(t, err)
 					return true
@@ -74,7 +86,7 @@ func TestFiles(t *testing.T) {
 			fsys: ocfl.NewFS(fstest.MapFS{
 				"file.txt": &fstest.MapFile{Data: []byte("content")},
 			}),
-			expect: func(t *testing.T, files pathInfoSeq) {
+			expect: func(t *testing.T, files ocfl.FileSeq) {
 				files(func(info ocfl.FileInfo, err error) bool {
 					be.Nonzero(t, err)
 					be.True(t, errors.Is(err, fs.ErrInvalid))
@@ -87,7 +99,7 @@ func TestFiles(t *testing.T) {
 			fsys: ocfl.NewFS(fstest.MapFS{
 				"file.txt": &fstest.MapFile{Data: []byte("content")},
 			}),
-			expect: func(t *testing.T, files pathInfoSeq) {
+			expect: func(t *testing.T, files ocfl.FileSeq) {
 				files(func(info ocfl.FileInfo, err error) bool {
 					be.Nonzero(t, err)
 					be.True(t, errors.Is(err, fs.ErrInvalid))
@@ -95,12 +107,15 @@ func TestFiles(t *testing.T) {
 				})
 			},
 		}, {
-			desc: "symlink file type error",
+			desc: "invalid file types",
 			dir:  ".",
 			fsys: ocfl.NewFS(fstest.MapFS{
-				"file.txt": &fstest.MapFile{Mode: fs.ModeSymlink},
+				"symlink": &fstest.MapFile{Mode: fs.ModeSymlink},
+				"device":  &fstest.MapFile{Mode: fs.ModeDevice},
+				"file":    &fstest.MapFile{Mode: fs.ModeSocket},
+				"pipe":    &fstest.MapFile{Mode: fs.ModeNamedPipe},
 			}),
-			expect: func(t *testing.T, files pathInfoSeq) {
+			expect: func(t *testing.T, files ocfl.FileSeq) {
 				files(func(info ocfl.FileInfo, err error) bool {
 					be.Nonzero(t, err)
 					be.True(t, errors.Is(err, ocfl.ErrFileType))
@@ -114,5 +129,23 @@ func TestFiles(t *testing.T) {
 			ctx := context.Background()
 			tcase.expect(t, ocfl.Files(ctx, tcase.fsys, tcase.dir))
 		})
+	}
+}
+
+type mockFilesFS struct{}
+
+var _ ocfl.FilesFS = (*mockFilesFS)(nil)
+
+func (m *mockFilesFS) OpenFile(_ context.Context, _ string) (fs.File, error) {
+	return nil, errors.New("shouldn't be called")
+}
+
+func (m *mockFilesFS) ReadDir(_ context.Context, _ string) ([]fs.DirEntry, error) {
+	return nil, errors.New("shouldn't be called")
+}
+
+func (m *mockFilesFS) Files(_ context.Context, _ string) ocfl.FileSeq {
+	return func(yield func(ocfl.FileInfo, error) bool) {
+		yield(ocfl.FileInfo{Path: "test", Size: 1}, nil)
 	}
 }
