@@ -8,10 +8,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"path"
-	"strings"
 
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/internal/walkdirs"
 	"gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
 )
@@ -278,140 +276,6 @@ func (fsys *FS) Copy(ctx context.Context, dst, src string) error {
 		}
 	}
 	return fsys.Bucket.Copy(ctx, dst, src, &blob.CopyOptions{})
-}
-
-// ObjectRoots implements ObjectRootIterator
-func (fsys *FS) ObjectRoots(ctx context.Context, sel ocfl.PathSelector, fn func(obj *ocfl.ObjectRoot) error) error {
-	if fsys.ObjectRootsUseWalkDirs {
-		return fsys.objectRootsWalkDirs(ctx, sel, fn)
-	}
-	return fsys.objectRootsList(ctx, sel, fn)
-}
-
-// an ObjectRoots strategy based on WalkDirs
-func (fsys *FS) objectRootsWalkDirs(ctx context.Context, sel ocfl.PathSelector, fn func(obj *ocfl.ObjectRoot) error) error {
-	fsys.debugLog(ctx, "objectroots", "dir", sel.Path(), "strategy", "walkdir")
-	walkFn := func(name string, entries []fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		objRoot := ocfl.NewObjectRoot(fsys, name, entries)
-		if objRoot.HasNamaste() {
-			if err := fn(objRoot); err != nil {
-				return err
-			}
-			// don't walk object subdirectories
-			return walkdirs.ErrSkipDirs
-		}
-		return nil
-	}
-	return walkdirs.WalkDirs(ctx, fsys, sel.Path(), sel.SkipDir, walkFn, fsys.ObjectRootWalkDirsGos)
-}
-
-// an ObjectRoots strategy based on List()
-func (fsys *FS) objectRootsList(ctx context.Context, sel ocfl.PathSelector, fn func(obj *ocfl.ObjectRoot) error) error {
-	dir := sel.Path()
-	fsys.debugLog(ctx, "objectroots", "dir", dir, "strategy", "listkeys")
-	if !fs.ValidPath(dir) {
-		return &fs.PathError{
-			Op:   "each_object",
-			Path: dir,
-			Err:  fs.ErrInvalid,
-		}
-	}
-	var opts blob.ListOptions
-	if dir != "." {
-		opts.Prefix = dir + "/"
-	}
-	var obj *ocfl.ObjectRoot
-	iter := fsys.List(&opts)
-	for {
-		item, err := iter.Next(ctx)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return err
-		}
-		keyDir := path.Dir(item.Key)
-		if sel.SkipDir(keyDir) {
-			continue
-		}
-		keyBase := path.Base(item.Key)
-		decl, err := ocfl.ParseNamaste(keyBase)
-		if err == nil && decl.Type == ocfl.NamasteTypeObject {
-			// new object declaration: apply fn to existing obj and reset
-			if obj != nil {
-				fsys.debugLog(ctx, "objectroots.complete",
-					"dir", obj.Path,
-					"alg", obj.SidecarAlg,
-					"has_declaration", obj.HasNamaste(),
-					"has_inventory", obj.HasInventory(),
-					"has_sidecar", obj.HasSidecar(),
-					"versions", obj.VersionDirs,
-				)
-				if err := fn(obj); err != nil {
-					return err
-				}
-			}
-			obj = &ocfl.ObjectRoot{
-				FS:    fsys,
-				Path:  keyDir,
-				Spec:  decl.Version,
-				Flags: ocfl.HasNamaste,
-			}
-			continue
-		}
-		// only continue with this key if is within the object's root
-		if obj == nil || !strings.HasPrefix(item.Key, obj.Path) {
-			fsys.debugLog(ctx, "objectroots.skipping", "key", item.Key)
-			continue
-		}
-		// item path relative to the object root
-		// handle object root file entries
-		if keyDir == obj.Path {
-			// inventory.json
-			if keyBase == "inventory.json" {
-				obj.Flags = obj.Flags | ocfl.HasInventory
-				continue
-			}
-			// sidecar
-			if strings.HasPrefix(keyBase, "inventory.json.") {
-				obj.SidecarAlg = strings.TrimPrefix(keyBase, "inventory.json.")
-				obj.Flags |= ocfl.HasSidecar
-				continue
-			}
-
-		}
-		// directories in object root: versions and extensions
-		child, _, _ := strings.Cut(strings.TrimPrefix(item.Key, obj.Path+"/"), "/")
-		if child == "extensions" && (obj.Flags&ocfl.HasExtensions) == 0 {
-			obj.Flags |= ocfl.HasExtensions
-			continue
-		}
-		var v ocfl.VNum
-		if err := ocfl.ParseVNum(child, &v); err == nil {
-			var found bool
-			for _, prev := range obj.VersionDirs {
-				if v == prev {
-					found = true
-					break
-				}
-			}
-			if !found {
-				obj.VersionDirs = append(obj.VersionDirs, v)
-			}
-			continue
-		}
-		// otherwise, non-conforming file
-		obj.NonConform = append(obj.NonConform, child)
-		continue
-	}
-	// haven't called fn on final object
-	if obj != nil {
-		return fn(obj)
-	}
-	return nil
 }
 
 func (fsys *FS) debugLog(ctx context.Context, method string, args ...any) {

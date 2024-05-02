@@ -301,14 +301,14 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 	return nil
 }
 
-// objectyRoots returns an iterator for ocfl.objectyRoots under the
+// objectyRootsIter returns an iterator for ocfl.ObjectyRoots under the
 // prefix dir, in bucket
-func objectyRoots(ctx context.Context, api ObjectRootsAPI, buck string, dir string) func(func(*ocfl.ObjectRoot, error) bool) bool {
-	return func(yield func(obj *ocfl.ObjectRoot, err error) bool) bool {
-		const op = "list_objects"
+func objectyRootsIter(ctx context.Context, api ObjectRootsAPI, buck string, fsys ocfl.FS, dir string) func(func(*ocfl.ObjectRoot, error) bool) {
+	return func(yield func(obj *ocfl.ObjectRoot, err error) bool) {
+		const op = "list_object_roots"
 		if !fs.ValidPath(dir) {
 			yield(nil, pathErr(op, dir, fs.ErrInvalid))
-			return false
+			return
 		}
 		params := &s3v2.ListObjectsV2Input{
 			Bucket:  &buck,
@@ -322,13 +322,13 @@ func objectyRoots(ctx context.Context, api ObjectRootsAPI, buck string, dir stri
 			listPage, err := api.ListObjectsV2(ctx, params)
 			if err != nil {
 				yield(nil, pathErr(op, dir, err))
-				return false
+				return
 			}
 			for _, s3obj := range listPage.Contents {
 				if s3obj.Key == nil {
 					err := errors.New("nil content key in s3 ListObjectsV2 response")
 					yield(nil, pathErr(op, dir, err))
-					return false
+					return
 				}
 				key := *s3obj.Key
 				keyDir := path.Dir(key)
@@ -346,11 +346,11 @@ func objectyRoots(ctx context.Context, api ObjectRootsAPI, buck string, dir stri
 						}
 						// handle the previous OCFL object we saw
 						if !yield(obj, nil) {
-							return false
+							return
 						}
 					}
 					obj = &ocfl.ObjectRoot{
-						// FS:    fsys,
+						FS:    fsys,
 						Path:  keyDir,
 						Spec:  decl.Version,
 						Flags: ocfl.HasNamaste,
@@ -358,6 +358,9 @@ func objectyRoots(ctx context.Context, api ObjectRootsAPI, buck string, dir stri
 				case obj == nil || (obj.Path != "." && !strings.HasPrefix(key, obj.Path+"/")):
 					// ignore the key if its not part of an object that
 					// we've already found the declaration for
+					// FIXME: There is a bug here since we may through-out non-conforming
+					// keys for objects that we haven't seen the declaration for yet.
+					// (ie., names that appear before `0=`).
 					break
 				case keyDir == obj.Path:
 					// file in OCFL object root
@@ -396,10 +399,49 @@ func objectyRoots(ctx context.Context, api ObjectRootsAPI, buck string, dir stri
 		// haven't called yield on final object
 		if obj != nil {
 			if !yield(obj, nil) {
-				return false
+				return
 			}
 		}
-		return true
+		return
+	}
+}
+
+// filesIter returns an iterator that yields PathInfo for files in the dir
+func filesIter(ctx context.Context, api FilesAPI, buck string, dir string) func(func(ocfl.FileInfo, error) bool) {
+	return func(yield func(ocfl.FileInfo, error) bool) {
+		const op = "list_files"
+		if !fs.ValidPath(dir) {
+			yield(ocfl.FileInfo{}, pathErr(op, dir, fs.ErrInvalid))
+			return
+		}
+		params := &s3v2.ListObjectsV2Input{
+			Bucket:  &buck,
+			MaxKeys: &maxKeys,
+		}
+		if dir != "." {
+			params.Prefix = aws.String(dir + "/")
+		}
+		for {
+			listPage, err := api.ListObjectsV2(ctx, params)
+			if err != nil {
+				yield(ocfl.FileInfo{}, pathErr(op, dir, err))
+				return
+			}
+			for _, s3obj := range listPage.Contents {
+				info := ocfl.FileInfo{
+					Path: *s3obj.Key,
+					Size: *s3obj.Size,
+					Type: fs.ModeIrregular,
+				}
+				if !yield(info, nil) {
+					return
+				}
+			}
+			params.ContinuationToken = listPage.NextContinuationToken
+			if params.ContinuationToken == nil {
+				break
+			}
+		}
 	}
 }
 

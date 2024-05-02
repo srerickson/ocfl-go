@@ -27,10 +27,13 @@ const (
 	partSize = 6 * megabyte
 )
 
-var _ ocfl.FS = (*s3.BucketFS)(nil)
-var _ ocfl.CopyFS = (*s3.BucketFS)(nil)
-var _ ocfl.WriteFS = (*s3.BucketFS)(nil)
-var _ ocfl.ObjectRootIterator = (*s3.BucketFS)(nil)
+var (
+	_ ocfl.FS            = (*s3.BucketFS)(nil)
+	_ ocfl.CopyFS        = (*s3.BucketFS)(nil)
+	_ ocfl.WriteFS       = (*s3.BucketFS)(nil)
+	_ ocfl.ObjectRootsFS = (*s3.BucketFS)(nil)
+	_ ocfl.FilesFS       = (*s3.BucketFS)(nil)
+)
 
 func TestOpenFile(t *testing.T) {
 	type testCase struct {
@@ -544,6 +547,51 @@ func TestObjectRoots(t *testing.T) {
 				be.Equal(t, "1.0", obj.Spec)
 			},
 		},
+		{
+			desc: "invalid path",
+			dir:  "../tmp",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket)
+			},
+			bucket: bucket,
+			expect: func(t *testing.T, state *mock.S3API, roots []*ocfl.ObjectRoot, err error) {
+				isInvalidPathError(t, err)
+			},
+		},
+		{
+			desc: "non-conforming before namaste",
+			dir:  ".",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket,
+					&mock.Object{Key: "00"},
+					&mock.Object{Key: "0=ocfl_object_1.0"},
+				)
+			},
+			bucket: bucket,
+			expect: func(t *testing.T, state *mock.S3API, roots []*ocfl.ObjectRoot, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, 1, len(roots))
+				obj := roots[0]
+				be.Equal(t, 1, len(obj.NonConform))
+			},
+		},
+		{
+			desc: "non-conforming after namaste",
+			dir:  ".",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket,
+					&mock.Object{Key: "0=ocfl_object_1.0"},
+					&mock.Object{Key: "file.txt"},
+				)
+			},
+			bucket: bucket,
+			expect: func(t *testing.T, state *mock.S3API, roots []*ocfl.ObjectRoot, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, 1, len(roots))
+				obj := roots[0]
+				be.Equal(t, 1, len(obj.NonConform))
+			},
+		},
 	}
 	for i, tcase := range cases {
 		t.Run(strconv.Itoa(i)+"-"+tcase.desc, func(t *testing.T) {
@@ -553,12 +601,80 @@ func TestObjectRoots(t *testing.T) {
 			}
 			fsys := s3.BucketFS{Bucket: tcase.bucket, S3: api}
 			roots := []*ocfl.ObjectRoot{}
-			err := fsys.ObjectRoots(ctx, ocfl.PathSelector{Dir: tcase.dir}, func(obj *ocfl.ObjectRoot) error {
+			var iterErr error
+			fsys.ObjectRoots(ctx, tcase.dir)(func(obj *ocfl.ObjectRoot, err error) bool {
+				if err != nil {
+					iterErr = err
+					return false
+				}
 				roots = append(roots, obj)
-				return nil
+				return true
 			})
-
-			tcase.expect(t, api, roots, err)
+			tcase.expect(t, api, roots, iterErr)
+		})
+	}
+}
+func TestFiles(t *testing.T) {
+	ctx := context.Background()
+	type testCase struct {
+		desc   string
+		mock   func(t *testing.T) *mock.S3API
+		bucket string
+		dir    string
+		expect func(*testing.T, *mock.S3API, []ocfl.FileInfo, error)
+	}
+	cases := []testCase{
+		{
+			desc: "object in root",
+			dir:  "obj",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket,
+					&mock.Object{Key: "obj/0=ocfl_object_1.0"},
+					&mock.Object{Key: "obj/inventory.json"},
+					&mock.Object{Key: "obj/inventory.json.sha512"},
+					&mock.Object{Key: "obj/v1/contents/file.txt"},
+					&mock.Object{Key: "obj/extensions/ext01/config.json"},
+				)
+			},
+			bucket: bucket,
+			expect: func(t *testing.T, state *mock.S3API, files []ocfl.FileInfo, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, 5, len(files))
+				for _, f := range files {
+					be.True(t, strings.HasPrefix(f.Path, "obj/"))
+				}
+			},
+		},
+		{
+			desc: "invalid path error",
+			dir:  "../tmp",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket)
+			},
+			bucket: bucket,
+			expect: func(t *testing.T, state *mock.S3API, files []ocfl.FileInfo, err error) {
+				isInvalidPathError(t, err)
+			},
+		},
+	}
+	for i, tcase := range cases {
+		t.Run(strconv.Itoa(i)+"-"+tcase.desc, func(t *testing.T) {
+			var api *mock.S3API
+			if tcase.mock != nil {
+				api = tcase.mock(t)
+			}
+			fsys := s3.BucketFS{Bucket: tcase.bucket, S3: api}
+			files := []ocfl.FileInfo{}
+			var iterErr error
+			fsys.Files(ctx, tcase.dir)(func(info ocfl.FileInfo, err error) bool {
+				if err != nil {
+					iterErr = err
+					return false
+				}
+				files = append(files, info)
+				return true
+			})
+			tcase.expect(t, api, files, iterErr)
 		})
 	}
 }

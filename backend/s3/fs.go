@@ -81,25 +81,14 @@ func (f *BucketFS) RemoveAll(ctx context.Context, name string) error {
 	return removeAll(ctx, f.S3, f.Bucket, name)
 }
 
-func (f *BucketFS) ObjectRoots(ctx context.Context, sel ocfl.PathSelector, fn func(*ocfl.ObjectRoot) error) error {
-	f.debugLog(ctx, "s3:find_object_roots", "bucket", f.Bucket, "prefix", sel.Path())
-	var iterErr error
-	iter := objectyRoots(ctx, f.S3, f.Bucket, sel.Path())
-	iter(func(obj *ocfl.ObjectRoot, err error) bool {
-		if err != nil {
-			iterErr = err
-			return false
-		}
-		// obj from iter doesn't have FS set
-		if obj != nil {
-			obj.FS = f
-		}
-		if iterErr = fn(obj); iterErr != nil {
-			return false
-		}
-		return true
-	})
-	return iterErr
+func (f *BucketFS) ObjectRoots(ctx context.Context, dir string) ocfl.ObjectRootSeq {
+	f.debugLog(ctx, "s3:list_object_roots", "bucket", f.Bucket, "prefix", dir)
+	return objectyRootsIter(ctx, f.S3, f.Bucket, f, dir)
+}
+
+func (f *BucketFS) Files(ctx context.Context, dir string) ocfl.FileSeq {
+	f.debugLog(ctx, "s3:list_files", "bucket", f.Bucket, "prefix", dir)
+	return filesIter(ctx, f.S3, f.Bucket, dir)
 }
 
 type S3API interface {
@@ -110,6 +99,7 @@ type S3API interface {
 	RemoveAPI
 	RemoveAllAPI
 	ObjectRootsAPI
+	FilesAPI
 }
 
 // OpenFileAPI includes S3 methods needed for OpenFile()
@@ -154,6 +144,11 @@ type RemoveAllAPI interface {
 
 // ObjectRootsAPI includes S3 methods needed for ObjectRoots()
 type ObjectRootsAPI interface {
+	ListObjectsV2(context.Context, *s3v2.ListObjectsV2Input, ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error)
+}
+
+// FilesAPI includes S3 methods needed for ObjectRoots()
+type FilesAPI interface {
 	ListObjectsV2(context.Context, *s3v2.ListObjectsV2Input, ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error)
 }
 

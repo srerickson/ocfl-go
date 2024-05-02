@@ -107,14 +107,22 @@ func (obj *Object) GetFixity(digest string) ocfl.DigestSet {
 	return obj.Inventory.GetFixity(digest)
 }
 
-// Objects iterates over the OCFL Object in fsys with the given path selector
-// and calls fn for each. If an error is encountered while loading the object,
-// the error is passed to fn. If fn returns an error the iteration process
-// terminates.
-func Objects(ctx context.Context, fsys ocfl.FS, pth ocfl.PathSelector, fn func(*Object, error) error) error {
-	eachRoot := func(root *ocfl.ObjectRoot) error {
-		obj := Object{ObjectRoot: *root}
-		return fn(&obj, obj.SyncInventory(ctx))
+// Objects returns a function iterator that yields Objects
+// found in dir and its subdirectories
+func Objects(ctx context.Context, fsys ocfl.FS, dir string) ObjectSeq {
+	return func(yieldObject func(*Object, error) bool) {
+		objectRootIter := ocfl.ObjectRoots(ctx, fsys, dir)
+		objectRootIter(func(objRoot *ocfl.ObjectRoot, err error) bool {
+			var obj *Object
+			if objRoot != nil {
+				obj = &Object{ObjectRoot: *objRoot}
+			}
+			if err != nil && !yieldObject(obj, err) {
+				return false
+			}
+			return yieldObject(obj, obj.SyncInventory(ctx))
+		})
 	}
-	return ocfl.ObjectRoots(ctx, fsys, pth, eachRoot)
 }
+
+type ObjectSeq func(yield func(*Object, error) bool)

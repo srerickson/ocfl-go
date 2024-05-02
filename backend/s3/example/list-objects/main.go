@@ -27,10 +27,16 @@ func run(ctx context.Context, bucket string, prefix string) error {
 	if err != nil {
 		return err
 	}
-	return fsys.ObjectRoots(ctx, ocfl.PathSelector{Dir: prefix}, func(obj *ocfl.ObjectRoot) error {
+	var iterErr error
+	ocfl.ObjectRoots(ctx, fsys, prefix)(func(obj *ocfl.ObjectRoot, err error) bool {
+		if err != nil {
+			iterErr = err
+			return false
+		}
 		fmt.Println(obj.Path)
-		return nil
+		return true
 	})
+	return iterErr
 }
 
 func backend(ctx context.Context, bucket string) (*s3.BucketFS, error) {

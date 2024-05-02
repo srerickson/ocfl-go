@@ -178,15 +178,9 @@ func (s *Store) Spec() ocfl.Spec {
 	return s.spec
 }
 
-// Objects iterates over over the OCFL Object in the storage root and calls fn
-// for each. If an error is encountered while loading the object, the error is
-// passed to fn. If fn returns an error the iteration process terminates.
-func (s Store) Objects(ctx context.Context, fn func(*Object, error) error) error {
-	sel := ocfl.PathSelector{
-		Dir:       s.rootDir,
-		SkipDirFn: func(n string) bool { return n == path.Join(s.rootDir, extensionsDir) },
-	}
-	return Objects(ctx, s.fsys, sel, fn)
+// Object returns a function iterator that yield objects in the storage root
+func (s Store) Objects(ctx context.Context) ObjectSeq {
+	return Objects(ctx, s.fsys, s.rootDir)
 }
 
 // Validate performs complete validation on the store

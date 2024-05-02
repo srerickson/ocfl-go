@@ -83,7 +83,7 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string
 			err = fmt.Errorf("new version would have same state as existing version")
 			return &CommitError{Err: err}
 		}
-	case existObj == nil:
+	default: // existObj == nil
 		opts.logger.DebugContext(ctx, "commiting new object")
 		// create base inventory with '0' head version:
 		// the head is incremented later by inv.NextInventory

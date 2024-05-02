@@ -393,7 +393,7 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 	}
 	// digests
 	var setupErr error
-	digestSetup := func(add func(name string, algs ...string) bool) {
+	digestSetup := func(digestFile func(name string, algs []string) bool) {
 		for name, pInfo := range vldr.ledger.paths {
 			algs := make([]string, 0, len(pInfo.digests))
 			for alg := range pInfo.digests {
@@ -405,20 +405,23 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 				setupErr = ec(err, codes.E023.Ref(ocflV))
 				return
 			}
-			if !add(path.Join(vldr.Root, name), algs...) {
-				setupErr = errors.New("checksum interupted")
+			if !digestFile(path.Join(vldr.Root, name), algs) {
+				setupErr = errors.New("digest validation interupted")
 			}
 		}
 	}
-	digestCallback := func(name string, result ocfl.DigestSet, err error) error {
+	var digestErr error
+	ocfl.Digest(ctx, vldr.FS, digestSetup)(func(r ocfl.DigestResult, err error) bool {
 		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				err = ec(err, codes.E092.Ref(ocflV))
+			digestErr = err
+			if errors.Is(digestErr, fs.ErrNotExist) {
+				digestErr = ec(digestErr, codes.E092.Ref(ocflV))
 			}
-			vldr.LogFatal(lgr, err)
-			return err
+			vldr.LogFatal(lgr, digestErr)
+			return false
 		}
-		for alg, sum := range result {
+		name := r.Path
+		for alg, sum := range r.Digests {
 			// convert path back from FS-relative to object-relative path
 			objPath := strings.TrimPrefix(name, vldr.Root+"/")
 			entry, exists := vldr.ledger.getDigest(objPath, alg)
@@ -426,7 +429,7 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 				panic(`BUG: path/algorithm not a valid key as expected`)
 			}
 			if !strings.EqualFold(sum, entry.digest) {
-				err := &ContentDigestErr{
+				digestErr = &ContentDigestErr{
 					Path:   name,
 					Alg:    alg,
 					Entry:  *entry,
@@ -434,19 +437,17 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 				}
 				for _, l := range entry.locs {
 					if l.InManifest() {
-						vldr.LogFatal(lgr, ec(err, codes.E092.Ref(ocflV)))
+						vldr.LogFatal(lgr, ec(digestErr, codes.E092.Ref(ocflV)))
 					} else {
-						vldr.LogFatal(lgr, ec(err, codes.E093.Ref(ocflV)))
+						vldr.LogFatal(lgr, ec(digestErr, codes.E093.Ref(ocflV)))
 					}
 				}
-				return err
+				return false
 			}
 		}
-		return nil
-	}
-	err := ocfl.DigestFS(ctx, vldr.FS, digestSetup, digestCallback)
-	err = errors.Join(setupErr, err)
-	if err != nil {
+		return true
+	})
+	if err := errors.Join(setupErr, digestErr); err != nil {
 		vldr.LogFatal(lgr, err)
 		return err
 	}
@@ -456,14 +457,20 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 func (vldr *objectValidator) walkVersionContent(ctx context.Context, ver ocfl.VNum) (int, error) {
 	contDir := path.Join(vldr.Root, ver.String(), vldr.rootInv.ContentDirectory)
 	var added int
-	err := ocfl.Files(ctx, vldr.FS, ocfl.Dir(contDir), func(name string) error {
+	var iterErr error
+	ocfl.Files(ctx, vldr.FS, contDir)(func(info ocfl.FileInfo, err error) bool {
+		if err != nil {
+			iterErr = err
+			return false
+		}
 		// convert fs-relative path to object-relative path
+		name := info.Path
 		objPath := strings.TrimPrefix(name, vldr.Root+"/")
 		vldr.ledger.addPathExists(objPath, ver)
 		added++
-		return nil
+		return true
 	})
-	return added, err
+	return added, iterErr
 }
 
 type versionDirInfo struct {

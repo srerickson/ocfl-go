@@ -73,13 +73,12 @@ func TestGetStore(t *testing.T) {
 			if store.Layout == nil {
 				t.Fatal("store should have set layout")
 			}
-			scanFn := func(obj *ocflv1.Object, err error) error {
-				return err
-			}
-
-			if err := store.Objects(ctx, scanFn); err != nil {
-				t.Fatal(err)
-			}
+			store.Objects(ctx)(func(obj *ocflv1.Object, err error) bool {
+				if err != nil {
+					t.Error(err)
+				}
+				return true
+			})
 		})
 	}
 }
@@ -118,16 +117,14 @@ func TestStoreEachObject(t *testing.T) {
 				t.Fatal(err)
 			}
 			numObjs := 0
-			scanFn := func(obj *ocflv1.Object, err error) error {
+			store.Objects(ctx)(func(obj *ocflv1.Object, err error) bool {
 				if err != nil {
-					return err
+					t.Error(err)
+					return false
 				}
 				numObjs++
-				return nil
-			}
-			if scanErr := store.Objects(ctx, scanFn); scanErr != nil {
-				t.Fatal(scanErr)
-			}
+				return true
+			})
 			if numObjs != sttest.size {
 				t.Fatalf("expected %d objects, got %d", sttest.size, numObjs)
 			}

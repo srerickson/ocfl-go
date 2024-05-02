@@ -13,7 +13,7 @@ import (
 
 var alg = `sha256`
 
-func ExampleRun() {
+func ExampleResults() {
 	fsys := os.DirFS(".")
 	type job struct {
 		name string
@@ -23,7 +23,7 @@ func ExampleRun() {
 		sum  string
 	}
 	var walkErr error
-	setupFn := func(add func(job) bool) {
+	inputFn := func(add func(job) bool) {
 		walkErr = fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
 			if d.Type().IsRegular() {
 				add(job{name: path})
@@ -45,16 +45,13 @@ func ExampleRun() {
 		r.sum = dig.Sums()[alg]
 		return r, nil
 	}
-	resultFn := func(in job, out result, err error) error {
-		if out.name == "pipeline.go" && out.sum != "" {
-			fmt.Println(out.name)
+	pipeline.Results(inputFn, workFn, 0)(func(r pipeline.Result[job, result]) bool {
+		if r.Out.name == "pipeline.go" && r.Out.sum != "" {
+			fmt.Println(r.Out.name)
 			// Output: pipeline.go
 		}
-		return nil
-	}
-	if err := pipeline.Run(setupFn, workFn, resultFn, 0); err != nil {
-		log.Fatal(err)
-	}
+		return true
+	})
 	if walkErr != nil {
 		log.Fatal(walkErr)
 	}

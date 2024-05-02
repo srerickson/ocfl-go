@@ -2,6 +2,7 @@ package ocfl_test
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,6 +11,8 @@ import (
 	"github.com/srerickson/ocfl-go/backend/local"
 	"gocloud.dev/blob/fileblob"
 )
+
+var warnObjects = filepath.Join(`testdata`, `object-fixtures`, `1.0`, `warn-objects`)
 
 func TestObjectRoots(t *testing.T) {
 	b, err := fileblob.OpenBucket(warnObjects, nil)
@@ -29,7 +32,11 @@ func TestObjectRoots(t *testing.T) {
 	for fsName, fsys := range fss {
 		t.Run(fsName, func(t *testing.T) {
 			numobjs := 0
-			fn := func(obj *ocfl.ObjectRoot) error {
+			fn := func(obj *ocfl.ObjectRoot, err error) bool {
+				if err != nil {
+					t.Error(err)
+					return false
+				}
 				numobjs++
 				if obj.SidecarAlg == "" {
 					t.Error("algorithm not set for", obj.Path)
@@ -55,12 +62,9 @@ func TestObjectRoots(t *testing.T) {
 						t.Errorf(obj.Path, "should have extensions flag")
 					}
 				}
-				return nil
+				return true
 			}
-			err = ocfl.ObjectRoots(context.Background(), fsys, ocfl.PathSelector{}, fn)
-			if err != nil {
-				t.Fatal(err)
-			}
+			ocfl.ObjectRoots(context.Background(), fsys, ".")(fn)
 			if numobjs != 12 {
 				t.Fatalf("expected 12 objects to be called, got %d", numobjs)
 			}

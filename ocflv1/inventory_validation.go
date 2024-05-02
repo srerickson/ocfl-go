@@ -248,6 +248,9 @@ func ValidateInventoryReader(ctx context.Context, reader io.Reader, vops ...Vali
 // pointed to by inv; it also digests the contents of the reader using the
 // digest algorithm alg, returning the digest string.
 func readDigestInventory(ctx context.Context, reader io.Reader, inv *decodeInventory) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	byt, err := io.ReadAll(reader)
 	if err != nil {
 		return "", err

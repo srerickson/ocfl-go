@@ -20,8 +20,6 @@ import (
 	"gocloud.dev/blob/memblob"
 )
 
-var _ ocfl.ObjectRootIterator = (*cloud.FS)(nil)
-
 var (
 	testDataPath = filepath.Join(`..`, `..`, `testdata`)
 	goodObjects  = filepath.Join(testDataPath, `object-fixtures`, `1.0`, `good-objects`)
@@ -386,51 +384,6 @@ func TestCopy(t *testing.T) {
 	}
 }
 
-func TestObjectRoots(t *testing.T) {
-	b, err := fileblob.OpenBucket(warnObjects, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close()
-	fsys := cloud.NewFS(b)
-	numobjs := 0
-	fn := func(obj *ocfl.ObjectRoot) error {
-		numobjs++
-		if obj.SidecarAlg == "" {
-			t.Error("algorithm not set for", obj.Path)
-		}
-		if !obj.HasInventory() {
-			t.Error("HasInventory false for", obj.Path)
-		}
-		if !obj.HasSidecar() {
-			t.Error("HasSidecar false for", obj.Path)
-		}
-		if err := obj.VersionDirs.Valid(); err != nil {
-			t.Error("version dirs not valid for", obj.Path)
-		}
-		v3Fixture := "w001_zero_padded_versions"
-		if strings.HasSuffix(obj.Path, v3Fixture) {
-			if len(obj.VersionDirs) != 3 {
-				t.Error(obj.Path, "should have 3 versions")
-			}
-		}
-		extFixture := "W013_unregistered_extension"
-		if strings.HasSuffix(obj.Path, extFixture) {
-			if obj.Flags&ocfl.HasExtensions == 0 {
-				t.Errorf(obj.Path, "should have extensions flag")
-			}
-		}
-		return nil
-	}
-	err = fsys.ObjectRoots(context.Background(), ocfl.PathSelector{}, fn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if numobjs != 12 {
-		t.Fatalf("expected 12 objects to be called, got %d", numobjs)
-	}
-}
-
 func TestLogging(t *testing.T) {
 	ctx := context.Background()
 	buff := &bytes.Buffer{}
@@ -444,12 +397,11 @@ func TestLogging(t *testing.T) {
 				defer f.Close()
 			}
 		},
-		"readdir":     func() { fsys.ReadDir(ctx, `a`) },
-		"write":       func() { fsys.Write(ctx, "tmp", strings.NewReader("cont")) },
-		"remove":      func() { fsys.Remove(ctx, "a/file.txt") },
-		"removeall":   func() { fsys.RemoveAll(ctx, "a") },
-		"copy":        func() { fsys.Copy(ctx, "a", "b") },
-		"objectroots": func() { fsys.ObjectRoots(ctx, ocfl.Dir("."), func(_ *ocfl.ObjectRoot) error { return nil }) },
+		"readdir":   func() { fsys.ReadDir(ctx, `a`) },
+		"write":     func() { fsys.Write(ctx, "tmp", strings.NewReader("cont")) },
+		"remove":    func() { fsys.Remove(ctx, "a/file.txt") },
+		"removeall": func() { fsys.RemoveAll(ctx, "a") },
+		"copy":      func() { fsys.Copy(ctx, "a", "b") },
 	}
 	for fnName, fn := range loggingFuncs {
 		fn()

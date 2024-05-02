@@ -192,46 +192,56 @@ func (e DigestErr) Error() string {
 	return fmt.Sprintf("unexpected %s for %q: %q, expected=%q", e.Alg, e.Name, e.Got, e.Expected)
 }
 
-// DigestFS concurrently digests files in an FS. The setup function adds files
-// to the work quue using the addFile function passed to it. addFile returns a
-// bool indicating if the file was added to the queue. Results are passed back
-// using the result function. If resultFn returns an error, not more results
-// will be produced, and new calls to addFile will return false. DigestFS uses
-// the value from DigestConcurrency() to determine to set the number of files
-// that are digested concurrently.
-func DigestFS(ctx context.Context, fsys FS, setupFunc func(addFile func(string, ...string) bool), resultFn func(string, DigestSet, error) error) error {
-	addJobs := func(addJob func(digestJob) bool) {
-		addFileJob := func(name string, algs ...string) bool {
-			return addJob(digestJob{path: name, algs: algs})
-		}
-		setupFunc(addFileJob)
+// Digest concurrently digests files in an FS. The inputIter argument is a funcion
+// iterator that yields file paths and digest algorithms. It returns an iteratator
+// the yield the computed DigestSet for each path.
+func Digest(ctx context.Context, fsys FS, inputSeq func(func(path string, algs []string) bool)) DigestResultSeq {
+	// checksum digestJob
+	type digestJob struct {
+		path string
+		algs []string
 	}
-	runJobs := func(j digestJob) (DigestSet, error) {
+	jobsIter := func(addJob func(digestJob) bool) {
+		inputSeq(func(name string, algs []string) bool {
+			return addJob(digestJob{path: name, algs: algs})
+		})
+	}
+	runJobs := func(j digestJob) (digests DigestSet, err error) {
 		f, err := fsys.OpenFile(ctx, j.path)
 		if err != nil {
-			return nil, err
+			return
 		}
-		if closer, ok := f.(io.Closer); ok {
-			defer closer.Close()
-		}
+		defer func() {
+			if closeErr := f.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
 		digester := NewMultiDigester(j.algs...)
 		if _, err = io.Copy(digester, f); err != nil {
-			return nil, err
+			return
 		}
-		return digester.Sums(), nil
+		digests = digester.Sums()
+		return
 	}
-
-	returnJobs := func(j digestJob, sums DigestSet, err error) error {
-		return resultFn(j.path, sums, err)
+	return func(yield func(DigestResult, error) bool) {
+		results := pipeline.Results(jobsIter, runJobs, DigestConcurrency())
+		results(func(r pipeline.Result[digestJob, DigestSet]) bool {
+			return yield(DigestResult{
+				Path:    r.In.path,
+				Digests: r.Out,
+			}, r.Err)
+		})
 	}
-	return pipeline.Run(addJobs, runJobs, returnJobs, DigestConcurrency())
 }
 
-// checksum digestJob
-type digestJob struct {
-	path string
-	algs []string
+// DigestResult represent on or more computed
+// digests for a file in an FS.
+type DigestResult struct {
+	Path    string
+	Digests DigestSet
 }
+
+type DigestResultSeq func(yield func(DigestResult, error) bool)
 
 func mustBlake2bNew512() hash.Hash {
 	h, err := blake2b.New512(nil)
