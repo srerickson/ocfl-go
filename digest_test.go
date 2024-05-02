@@ -116,9 +116,9 @@ func TestDigestFS(t *testing.T) {
 	t.Run("no input", func(t *testing.T) {
 		setup := func(add func(name string, algs []string) bool) {
 		}
-		ocfl.DigestFS(ctx, fsys, setup)(func(r ocfl.DigestFSResult) bool {
-			if r.Err != nil {
-				t.Fatal(r.Err)
+		ocfl.Digest(ctx, fsys, setup)(func(r ocfl.DigestResult, err error) bool {
+			if err != nil {
+				t.Fatal(err)
 			}
 			return true
 		})
@@ -127,8 +127,8 @@ func TestDigestFS(t *testing.T) {
 		setup := func(add func(name string, algs []string) bool) {
 			add(filepath.Join("missingfile"), nil)
 		}
-		ocfl.DigestFS(ctx, fsys, setup)(func(r ocfl.DigestFSResult) bool {
-			if r.Err == nil {
+		ocfl.Digest(ctx, fsys, setup)(func(r ocfl.DigestResult, err error) bool {
+			if err == nil {
 				t.Fatal("expected error for missing file")
 			}
 			return true
@@ -138,9 +138,9 @@ func TestDigestFS(t *testing.T) {
 		setup := func(add func(name string, algs []string) bool) {
 			add("hello.csv", []string{ocfl.MD5})
 		}
-		ocfl.DigestFS(ctx, fsys, setup)(func(r ocfl.DigestFSResult) bool {
-			if r.Err != nil {
-				t.Fatal(r.Err)
+		ocfl.Digest(ctx, fsys, setup)(func(r ocfl.DigestResult, err error) bool {
+			if err != nil {
+				t.Fatal(err)
 			}
 			if r.Digests[ocfl.MD5] != testMD5Sums[r.Path] {
 				t.Fatal(errors.New("wrong md5 value"))
@@ -152,9 +152,9 @@ func TestDigestFS(t *testing.T) {
 		setup := func(add func(name string, algs []string) bool) {
 			add("hello.csv", []string{ocfl.MD5, ocfl.SHA1})
 		}
-		ocfl.DigestFS(ctx, fsys, setup)(func(r ocfl.DigestFSResult) bool {
-			if r.Err != nil {
-				t.Fatal(r.Err)
+		ocfl.Digest(ctx, fsys, setup)(func(r ocfl.DigestResult, err error) bool {
+			if err != nil {
+				t.Fatal(err)
 			}
 			if r.Digests[ocfl.MD5] == "" {
 				t.Fatal(errors.New("missing result"))
@@ -169,9 +169,9 @@ func TestDigestFS(t *testing.T) {
 		setup := func(add func(name string, algs []string) bool) {
 			add("hello.csv", nil)
 		}
-		ocfl.DigestFS(ctx, fsys, setup)(func(r ocfl.DigestFSResult) bool {
-			if r.Err != nil {
-				t.Fatal(r.Err)
+		ocfl.Digest(ctx, fsys, setup)(func(r ocfl.DigestResult, err error) bool {
+			if err != nil {
+				t.Fatal(err)
 			}
 			if len(r.Digests) > 0 {
 				t.Fatal("results should be empty")
@@ -183,8 +183,8 @@ func TestDigestFS(t *testing.T) {
 		setup := func(add func(name string, algs []string) bool) {
 			add("missingfile.txt", []string{ocfl.MD5})
 		}
-		ocfl.DigestFS(ctx, fsys, setup)(func(r ocfl.DigestFSResult) bool {
-			if r.Err == nil {
+		ocfl.Digest(ctx, fsys, setup)(func(r ocfl.DigestResult, err error) bool {
+			if err == nil {
 				t.Fatal("DigestFS() didn't return expected error")
 			}
 			return true

@@ -411,9 +411,9 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 		}
 	}
 	var digestErr error
-	ocfl.DigestFS(ctx, vldr.FS, digestSetup)(func(r ocfl.DigestFSResult) bool {
-		if r.Err != nil {
-			digestErr = r.Err
+	ocfl.Digest(ctx, vldr.FS, digestSetup)(func(r ocfl.DigestResult, err error) bool {
+		if err != nil {
+			digestErr = err
 			if errors.Is(digestErr, fs.ErrNotExist) {
 				digestErr = ec(digestErr, codes.E092.Ref(ocflV))
 			}

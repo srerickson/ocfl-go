@@ -142,7 +142,10 @@ func (ps fixitySources) GetFixity(digest string) DigestSet {
 	return set
 }
 
-// StageDir builds a stage based on the contents of the directory dir in
+// StageDir builds a stage based on the contents of the directory dir in FS.
+// All files in dir and its subdirectories are digested with the given digest
+// algs and added to the stage. The algs must include sha512 or sha256 or an
+// error is returned
 func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage, error) {
 	if len(algs) < 1 || (algs[0] != SHA512 && algs[0] != SHA256) {
 		return nil, fmt.Errorf("must use sha512 or sha256 as the primary digest algorithm for the stage")
@@ -170,10 +173,10 @@ func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage,
 	}
 	// digest result: add results to the stage
 	var digestErr error
-	DigestFS(ctx, dirMan.fs, walkFS)(func(r DigestFSResult) bool {
+	Digest(ctx, dirMan.fs, walkFS)(func(r DigestResult, err error) bool {
 		name := r.Path
-		if r.Err != nil {
-			digestErr = r.Err
+		if err != nil {
+			digestErr = err
 			return false
 		}
 		if dirMan.root != "." {
