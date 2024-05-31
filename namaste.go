@@ -17,7 +17,7 @@ const (
 )
 
 var (
-	ErrNoNamaste       = fmt.Errorf("missing NAMASTE declaration: %w", fs.ErrNotExist)
+	ErrNamasteNotExist = fmt.Errorf("missing NAMASTE declaration: %w", fs.ErrNotExist)
 	ErrNamasteInvalid  = errors.New("invalid NAMASTE declaration contents")
 	ErrNamasteMultiple = errors.New("multiple NAMASTE declarations found")
 	namasteRE          = regexp.MustCompile(`^0=([a-z_]+)_([0-9]+\.[0-9]+)$`)
@@ -29,7 +29,7 @@ type Namaste struct {
 	Version Spec
 }
 
-// FindNamaste returns the Namasted declaration from a fs.DirEntry slice. An
+// FindNamaste returns the NAMASTE declaration from a fs.DirEntry slice. An
 // error is returned if the number of declarations is not one.
 func FindNamaste(items []fs.DirEntry) (Namaste, error) {
 	var found []Namaste
@@ -43,7 +43,7 @@ func FindNamaste(items []fs.DirEntry) (Namaste, error) {
 	}
 	switch len(found) {
 	case 0:
-		return Namaste{}, ErrNoNamaste
+		return Namaste{}, ErrNamasteNotExist
 	case 1:
 		return found[0], nil
 	default:
@@ -71,7 +71,7 @@ func (n Namaste) Body() string {
 func ParseNamaste(name string) (n Namaste, err error) {
 	m := namasteRE.FindStringSubmatch(name)
 	if len(m) != 3 {
-		err = ErrNoNamaste
+		err = ErrNamasteNotExist
 		return
 	}
 	n.Type = m[1]

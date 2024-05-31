@@ -128,7 +128,7 @@ func GetStore(ctx context.Context, fsys ocfl.FS, root string) (*Store, error) {
 		break
 	}
 	if ocflVer.Empty() {
-		return nil, fmt.Errorf("missing storage root declaration: %w", ocfl.ErrNoNamaste)
+		return nil, fmt.Errorf("missing storage root declaration: %w", ocfl.ErrNamasteNotExist)
 	}
 	str := &Store{
 		fsys:    fsys,

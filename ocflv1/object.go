@@ -73,6 +73,7 @@ func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) *vali
 	return r
 }
 
+// Stage returns an ocfl.Stage based on the specified version index.
 func (obj *Object) Stage(i int) (*ocfl.Stage, error) {
 	version := obj.Inventory.Version(i)
 	if version == nil {

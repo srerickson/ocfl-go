@@ -10,16 +10,41 @@ import (
 )
 
 const (
+	// HasNamaste indicates that an ObjectRoot has been initialized
+	// and an object declaration file is confirmed to exist in the object's root
+	// directory
+	HasNamaste objectRootFlag = 1 << iota
+	// HasInventory indicates that an ObjectRoot includes an "inventory.json"
+	// file
+	HasInventory
+	// HasSidecar indicates that an ObjectRoot includes an "inventory.json.*"
+	// file (the inventory sidecar).
+	HasSidecar
+	// HasExtensions indicates that an ObjectRoot includes a directory
+	// named "extensions"
+	HasExtensions
+
 	inventoryFile    = "inventory.json"
 	sidecarPrefix    = inventoryFile + "."
 	objectDeclPrefix = "0=" + NamasteTypeObject
 	maxNonConform    = 8
 )
 
-var (
-	ErrObjectNotFound = fmt.Errorf("missing object declaration: %w", ErrNoNamaste)
-	ErrObjectExists   = fmt.Errorf("existing OCFL object declaration: %w", fs.ErrExist)
-)
+var ErrObjectExists = fmt.Errorf("existing OCFL object declaration: %w", fs.ErrExist)
+
+// ObjectRoot represents an existing OCFL object root directory. Instances are
+// typically created with functions like GetObjectRoot().
+type ObjectRoot struct {
+	FS          FS       // the FS where the object is stored
+	Path        string   // object path in FS
+	Spec        Spec     // the OCFL spec from the object's NAMASTE declaration
+	VersionDirs VNums    // versions directories found in the object directory
+	SidecarAlg  string   // digest algorithm declared by the inventory sidecar
+	NonConform  []string // non-conforming entries found in the object root (max=8)
+	Flags       objectRootFlag
+}
+
+type objectRootFlag uint8
 
 // GetObjectRoot reads the contents of directory dir in fsys, confirms that an
 // OCFL Object declaration is present, and returns a new ObjectRoot reference
@@ -35,7 +60,7 @@ func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error
 	}
 	obj := NewObjectRoot(fsys, dir, entries)
 	if !obj.HasNamaste() {
-		return nil, fmt.Errorf("missing object declaration: %w", ErrNoNamaste)
+		return nil, fmt.Errorf("missing object declaration: %w", ErrNamasteNotExist)
 	}
 	return obj, nil
 }
@@ -103,41 +128,11 @@ func NewObjectRoot(fsys FS, dir string, entries []fs.DirEntry) *ObjectRoot {
 	return obj
 }
 
-// ObjectRoot represents an existing OCFL object root directory. Instances are
-// typically created with functions like GetObjectRoot().
-type ObjectRoot struct {
-	FS          FS       // the FS where the object is stored
-	Path        string   // object path in FS
-	Spec        Spec     // the OCFL spec from the object's NAMASTE declaration
-	VersionDirs VNums    // versions directories found in the object directory
-	SidecarAlg  string   // digest algorithm declared by the inventory sidecar
-	NonConform  []string // non-conforming entries found in the object root (max=8)
-	Flags       ObjectRootFlag
-}
-
-type ObjectRootFlag int
-
-const (
-	// HasNamaste indicates that an ObjectRoot has been initialized
-	// and an object declaration file is confirmed to exist in the object's root
-	// directory
-	HasNamaste ObjectRootFlag = 1 << iota
-	// HasInventory indicates that an ObjectRoot includes an "inventory.json"
-	// file
-	HasInventory
-	// HasSidecar indicates that an ObjectRoot includes an "inventory.json.*"
-	// file (the inventory sidecar).
-	HasSidecar
-	// HasExtensions indicates that an ObjectRoot includes a directory
-	// named "extensions"
-	HasExtensions
-)
-
 // ValidateNamaste reads and validates the contents of the OCFL object
 // declaration in the object root.
 func (obj ObjectRoot) ValidateNamaste(ctx context.Context) error {
 	if !obj.HasNamaste() {
-		return ErrNoNamaste
+		return ErrNamasteNotExist
 	}
 	pth := path.Join(obj.Path, Namaste{Type: NamasteTypeObject, Version: obj.Spec}.Name())
 	return ReadNamaste(ctx, obj.FS, pth)
