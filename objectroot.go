@@ -40,23 +40,12 @@ type ObjectRoot struct {
 	State *ObjectRootState
 }
 
-type ObjectRootState struct {
-	Spec        Spec     // the OCFL spec from the object's NAMASTE declaration
-	VersionDirs VNums    // versions directories found in the object directory
-	SidecarAlg  string   // digest algorithm declared by the inventory sidecar
-	NonConform  []string // non-conforming entries found in the object root (max=8)
-	Flags       objectRootFlag
-}
-
-type objectRootFlag uint8
-
 // GetObjectRoot reads the contents of directory dir in fsys, confirms that an
 // OCFL Object declaration is present, and returns a new ObjectRoot reference
-// based on the directory contents. If the directory cannot be read or a
-// declaration is not found, ErrObjectNotFound is returned. Note, the object
-// declaration is not read or fully validated. The returned ObjectRoot will have
-// the FoundNamaste flag set, but other flags expected for a complete object
-// root may not be set (e.g., if the inventory is missing).
+// with an initialized State. The object declaration is not read or fully
+// validated. The returned ObjectRoot State will have the HasNamaste flag set,
+// but other flags expected for a complete object root may not be set (e.g., if
+// the inventory is missing).
 func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error) {
 	obj := &ObjectRoot{
 		FS:   fsys,
@@ -66,11 +55,13 @@ func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error
 		return nil, err
 	}
 	if !obj.State.HasNamaste() {
-		return nil, fmt.Errorf("missing object declaration: %w", ErrNamasteNotExist)
+		return nil, fmt.Errorf("missing OCFL Object declaration: %w", ErrNamasteNotExist)
 	}
 	return obj, nil
 }
 
+// SyncState reads the entries of of the object root directory
+// and initializes obj.State
 func (obj *ObjectRoot) SyncState(ctx context.Context) error {
 	entries, err := obj.FS.ReadDir(ctx, obj.Path)
 	if err != nil {
@@ -80,6 +71,34 @@ func (obj *ObjectRoot) SyncState(ctx context.Context) error {
 	return nil
 }
 
+// ValidateNamaste reads and validates the contents of the OCFL object
+// declaration in the object root.
+func (obj ObjectRoot) ValidateNamaste(ctx context.Context) error {
+	if obj.State == nil {
+		if err := obj.SyncState(ctx); err != nil {
+			return err
+		}
+	}
+	if !obj.State.HasNamaste() {
+		return ErrNamasteNotExist
+	}
+	pth := path.Join(obj.Path, Namaste{Type: NamasteTypeObject, Version: obj.State.Spec}.Name())
+	return ReadNamaste(ctx, obj.FS, pth)
+}
+
+// ObjectRootState represents the contents of an OCFL Object root directory.
+type ObjectRootState struct {
+	Spec        Spec           // the OCFL spec from the object's NAMASTE declaration file
+	VersionDirs VNums          // versions directories found in the object directory
+	SidecarAlg  string         // digest algorithm decl by the inventory sidecar
+	NonConform  []string       // non-conforming entries found in the object root (max=8)
+	Flags       objectRootFlag // represents various boolean attributes
+}
+
+type objectRootFlag uint8
+
+// NewObjectRootState returns a new ObjectRootState based on contents of a
+// directory
 func NewObjectRootState(entries []fs.DirEntry) *ObjectRootState {
 	state := &ObjectRootState{}
 	addNonConfoming := func(name string) {
@@ -134,34 +153,6 @@ func NewObjectRootState(entries []fs.DirEntry) *ObjectRootState {
 		}
 	}
 	return state
-}
-
-// NewObjectRoot constructs an ObjectRoot for the directory dir in fsys using
-// the given fs.DirEntry slice as dir's contents. The returned ObjectRoot may
-// be invalid.
-func NewObjectRoot(fsys FS, dir string, entries []fs.DirEntry) *ObjectRoot {
-	// set zero values for everything except FS and Path
-	obj := &ObjectRoot{
-		FS:    fsys,
-		Path:  dir,
-		State: NewObjectRootState(entries),
-	}
-	return obj
-}
-
-// ValidateNamaste reads and validates the contents of the OCFL object
-// declaration in the object root.
-func (obj ObjectRoot) ValidateNamaste(ctx context.Context) error {
-	if obj.State == nil {
-		if err := obj.SyncState(ctx); err != nil {
-			return err
-		}
-	}
-	if !obj.State.HasNamaste() {
-		return ErrNamasteNotExist
-	}
-	pth := path.Join(obj.Path, Namaste{Type: NamasteTypeObject, Version: obj.State.Spec}.Name())
-	return ReadNamaste(ctx, obj.FS, pth)
 }
 
 // HasNamaste returns true if the object's FoundDeclaration flag is set
@@ -220,7 +211,11 @@ func walkObjectRoots(ctx context.Context, fsys FS, dir string, yield func(*Objec
 		yield(nil, err)
 		return false
 	}
-	objRoot := NewObjectRoot(fsys, dir, entries)
+	objRoot := &ObjectRoot{
+		FS:    fsys,
+		Path:  dir,
+		State: NewObjectRootState(entries),
+	}
 	if objRoot.State.HasNamaste() {
 		return yield(objRoot, nil)
 	}

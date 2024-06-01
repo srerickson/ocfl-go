@@ -178,13 +178,13 @@ func TestReadDir(t *testing.T) {
 			},
 			expect: func(t *testing.T, entries []fs.DirEntry, err error) {
 				be.NilErr(t, err)
-				obj := ocfl.NewObjectRoot(nil, "", entries)
-				be.True(t, obj.State.HasNamaste())
-				be.True(t, obj.State.HasInventory())
-				be.True(t, obj.State.HasSidecar())
-				be.True(t, obj.State.HasVersionDir(ocfl.V(1)))
-				be.True(t, obj.State.HasExtensions())
-				be.Equal(t, 1, len(obj.State.VersionDirs))
+				state := ocfl.NewObjectRootState(entries)
+				be.True(t, state.HasNamaste())
+				be.True(t, state.HasInventory())
+				be.True(t, state.HasSidecar())
+				be.True(t, state.HasVersionDir(ocfl.V(1)))
+				be.True(t, state.HasExtensions())
+				be.Equal(t, 1, len(state.VersionDirs))
 			},
 		},
 	}
