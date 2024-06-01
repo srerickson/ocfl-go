@@ -179,12 +179,12 @@ func TestReadDir(t *testing.T) {
 			expect: func(t *testing.T, entries []fs.DirEntry, err error) {
 				be.NilErr(t, err)
 				obj := ocfl.NewObjectRoot(nil, "", entries)
-				be.True(t, obj.HasNamaste())
-				be.True(t, obj.HasInventory())
-				be.True(t, obj.HasSidecar())
-				be.True(t, obj.HasVersionDir(ocfl.V(1)))
-				be.True(t, obj.HasExtensions())
-				be.Equal(t, 1, len(obj.VersionDirs))
+				be.True(t, obj.State.HasNamaste())
+				be.True(t, obj.State.HasInventory())
+				be.True(t, obj.State.HasSidecar())
+				be.True(t, obj.State.HasVersionDir(ocfl.V(1)))
+				be.True(t, obj.State.HasExtensions())
+				be.Equal(t, 1, len(obj.State.VersionDirs))
 			},
 		},
 	}
@@ -458,11 +458,11 @@ func TestObjectRoots(t *testing.T) {
 				obj := roots[0]
 				be.Nonzero(t, obj.FS)
 				be.Equal(t, ".", obj.Path)
-				be.Equal(t, "sha512", obj.SidecarAlg)
-				be.True(t, obj.HasInventory())
-				be.True(t, obj.HasSidecar())
-				be.True(t, obj.HasNamaste())
-				be.True(t, obj.HasExtensions())
+				be.Equal(t, "sha512", obj.State.SidecarAlg)
+				be.True(t, obj.State.HasInventory())
+				be.True(t, obj.State.HasSidecar())
+				be.True(t, obj.State.HasNamaste())
+				be.True(t, obj.State.HasExtensions())
 			},
 		}, {
 			desc: "complete object in subdir",
@@ -484,12 +484,12 @@ func TestObjectRoots(t *testing.T) {
 				obj := roots[0]
 				be.Nonzero(t, obj.FS)
 				be.Equal(t, "a/b", obj.Path)
-				be.Equal(t, "sha512", obj.SidecarAlg)
-				be.Equal(t, 2, len(obj.VersionDirs))
-				be.True(t, obj.HasInventory())
-				be.True(t, obj.HasSidecar())
-				be.True(t, obj.HasNamaste())
-				be.True(t, obj.HasExtensions())
+				be.Equal(t, "sha512", obj.State.SidecarAlg)
+				be.Equal(t, 2, len(obj.State.VersionDirs))
+				be.True(t, obj.State.HasInventory())
+				be.True(t, obj.State.HasSidecar())
+				be.True(t, obj.State.HasNamaste())
+				be.True(t, obj.State.HasExtensions())
 			},
 		}, {
 			desc: "full storage root",
@@ -503,14 +503,14 @@ func TestObjectRoots(t *testing.T) {
 				be.Equal(t, 2001, len(roots))
 				for _, obj := range roots {
 					be.Nonzero(t, obj.FS)
-					be.Equal(t, "sha512", obj.SidecarAlg)
-					be.True(t, obj.HasNamaste())
-					be.Equal(t, "1.1", string(obj.Spec))
-					be.True(t, obj.HasInventory())
-					be.True(t, obj.HasSidecar())
-					be.True(t, obj.HasNamaste())
-					be.True(t, obj.HasExtensions())
-					be.Equal(t, 1, len(obj.VersionDirs))
+					be.Equal(t, "sha512", obj.State.SidecarAlg)
+					be.True(t, obj.State.HasNamaste())
+					be.Equal(t, "1.1", string(obj.State.Spec))
+					be.True(t, obj.State.HasInventory())
+					be.True(t, obj.State.HasSidecar())
+					be.True(t, obj.State.HasNamaste())
+					be.True(t, obj.State.HasExtensions())
+					be.Equal(t, 1, len(obj.State.VersionDirs))
 				}
 
 			},
@@ -528,7 +528,7 @@ func TestObjectRoots(t *testing.T) {
 				be.NilErr(t, err)
 				be.Equal(t, 1, len(roots))
 				obj := roots[0]
-				be.Equal(t, "1.0", obj.Spec)
+				be.Equal(t, "1.0", obj.State.Spec)
 			},
 		}, {
 			desc: "ignore nested namaste",
@@ -544,7 +544,7 @@ func TestObjectRoots(t *testing.T) {
 				be.NilErr(t, err)
 				be.Equal(t, 1, len(roots))
 				obj := roots[0]
-				be.Equal(t, "1.0", obj.Spec)
+				be.Equal(t, "1.0", obj.State.Spec)
 			},
 		},
 		{
@@ -572,7 +572,7 @@ func TestObjectRoots(t *testing.T) {
 				be.NilErr(t, err)
 				be.Equal(t, 1, len(roots))
 				obj := roots[0]
-				be.Equal(t, 1, len(obj.NonConform))
+				be.Equal(t, 1, len(obj.State.NonConform))
 			},
 		},
 		{
@@ -589,7 +589,7 @@ func TestObjectRoots(t *testing.T) {
 				be.NilErr(t, err)
 				be.Equal(t, 1, len(roots))
 				obj := roots[0]
-				be.Equal(t, 1, len(obj.NonConform))
+				be.Equal(t, 1, len(obj.State.NonConform))
 			},
 		},
 	}

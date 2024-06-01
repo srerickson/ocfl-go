@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"log/slog"
 	"path"
 	"slices"
@@ -47,6 +48,7 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string
 
 	existObj, err = GetObject(ctx, fsys, objPath)
 	if err != nil {
+		log.Println(err)
 		// Handle acceptable error from GetObject() if the object doesn't exist. For a
 		// new object, the object path must not exist. The only acceptable error
 		// here is ErrNotExist for the object path.
@@ -103,7 +105,7 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string
 			newSpec = opts.storeSpec
 		// use the existing object's spec, if available.
 		case existObj != nil:
-			newSpec = existObj.Spec
+			newSpec = existObj.State.Spec
 		// otherwise, default spec
 		default:
 			newSpec = defaultSpec
@@ -116,8 +118,8 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string
 		err = fmt.Errorf("new object version's OCFL spec can't be higher than the storage root's (%s)", opts.storeSpec)
 		return &CommitError{Err: err}
 	}
-	if existObj != nil && newSpec.Cmp(existObj.Spec) < 0 {
-		err = fmt.Errorf("new object version's OCFL spec can't be lower than the current version (%s)", existObj.Spec)
+	if existObj != nil && newSpec.Cmp(existObj.State.Spec) < 0 {
+		err = fmt.Errorf("new object version's OCFL spec can't be lower than the current version (%s)", existObj.State.Spec)
 		return &CommitError{Err: err}
 	}
 	baseInv.Type = newSpec.AsInvType()
@@ -144,7 +146,7 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string
 
 	// this check is reduntant given previous validations, but we don't want to
 	// over-write an existing version directory.
-	if existObj != nil && slices.Contains(existObj.ObjectRoot.VersionDirs, newInv.Head) {
+	if existObj != nil && slices.Contains(existObj.ObjectRoot.State.VersionDirs, newInv.Head) {
 		err = fmt.Errorf("version directory %q already exists in %q", newInv.Head, objPath)
 		return &CommitError{Err: err}
 	}

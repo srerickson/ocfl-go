@@ -38,27 +38,27 @@ func TestObjectRoots(t *testing.T) {
 					return false
 				}
 				numobjs++
-				if obj.SidecarAlg == "" {
+				if obj.State.SidecarAlg == "" {
 					t.Error("algorithm not set for", obj.Path)
 				}
-				if !obj.HasInventory() {
+				if !obj.State.HasInventory() {
 					t.Error("HasInventory false for", obj.Path)
 				}
-				if !obj.HasSidecar() {
+				if !obj.State.HasSidecar() {
 					t.Error("HasSidecar false for", obj.Path)
 				}
-				if err := obj.VersionDirs.Valid(); err != nil {
+				if err := obj.State.VersionDirs.Valid(); err != nil {
 					t.Error("version dirs not valid for", obj.Path)
 				}
 				v3Fixture := "w001_zero_padded_versions"
 				if strings.HasSuffix(obj.Path, v3Fixture) {
-					if len(obj.VersionDirs) != 3 {
+					if len(obj.State.VersionDirs) != 3 {
 						t.Error(obj.Path, "should have 3 versions")
 					}
 				}
 				extFixture := "W013_unregistered_extension"
 				if strings.HasSuffix(obj.Path, extFixture) {
-					if obj.Flags&ocfl.HasExtensions == 0 {
+					if obj.State.Flags&ocfl.HasExtensions == 0 {
 						t.Errorf(obj.Path, "should have extensions flag")
 					}
 				}

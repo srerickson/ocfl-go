@@ -129,7 +129,7 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 		if objLgr != nil {
 			objLgr = objLgr.With("object_path", objRoot.Path)
 		}
-		if ocflV.Cmp(objRoot.Spec) < 0 {
+		if ocflV.Cmp(objRoot.State.Spec) < 0 {
 			// object ocfl spec is higher than storage root's
 			result.LogFatal(objLgr, ErrObjectVersion)
 		}

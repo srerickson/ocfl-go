@@ -350,10 +350,12 @@ func objectyRootsIter(ctx context.Context, api ObjectRootsAPI, buck string, fsys
 						}
 					}
 					obj = &ocfl.ObjectRoot{
-						FS:    fsys,
-						Path:  keyDir,
-						Spec:  decl.Version,
-						Flags: ocfl.HasNamaste,
+						FS:   fsys,
+						Path: keyDir,
+						State: &ocfl.ObjectRootState{
+							Spec:  decl.Version,
+							Flags: ocfl.HasNamaste,
+						},
 					}
 				case obj == nil || (obj.Path != "." && !strings.HasPrefix(key, obj.Path+"/")):
 					// ignore the key if its not part of an object that
@@ -366,12 +368,12 @@ func objectyRootsIter(ctx context.Context, api ObjectRootsAPI, buck string, fsys
 					// file in OCFL object root
 					switch {
 					case keyBase == "inventory.json":
-						obj.Flags |= ocfl.HasInventory
+						obj.State.Flags |= ocfl.HasInventory
 					case strings.HasPrefix(keyBase, "inventory.json."):
-						obj.Flags |= ocfl.HasSidecar
-						obj.SidecarAlg = strings.TrimPrefix(keyBase, "inventory.json.")
+						obj.State.Flags |= ocfl.HasSidecar
+						obj.State.SidecarAlg = strings.TrimPrefix(keyBase, "inventory.json.")
 					default:
-						obj.NonConform = append(obj.NonConform, keyBase)
+						obj.State.NonConform = append(obj.State.NonConform, keyBase)
 					}
 				default:
 					// subdirectory of OCFL object root
@@ -379,15 +381,15 @@ func objectyRootsIter(ctx context.Context, api ObjectRootsAPI, buck string, fsys
 					var vnum ocfl.VNum
 					switch {
 					case subdir == "extensions":
-						if !obj.HasExtensions() {
-							obj.Flags |= ocfl.HasExtensions
+						if !obj.State.HasExtensions() {
+							obj.State.Flags |= ocfl.HasExtensions
 						}
 					case ocfl.ParseVNum(subdir, &vnum) == nil:
-						if !slices.Contains(obj.VersionDirs, vnum) {
-							obj.VersionDirs = append(obj.VersionDirs, vnum)
+						if !slices.Contains(obj.State.VersionDirs, vnum) {
+							obj.State.VersionDirs = append(obj.State.VersionDirs, vnum)
 						}
 					default:
-						obj.NonConform = append(obj.NonConform, subdir)
+						obj.State.NonConform = append(obj.State.NonConform, subdir)
 					}
 				}
 			}

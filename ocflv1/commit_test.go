@@ -34,7 +34,7 @@ func TestCommit(t *testing.T) {
 		if err := result.Err(); err != nil {
 			t.Fatal(err)
 		}
-		if alg != obj.SidecarAlg {
+		if alg != obj.State.SidecarAlg {
 			t.Fatal("expected digest to be", alg)
 		}
 		if obj.Path != root {
