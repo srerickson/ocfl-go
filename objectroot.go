@@ -10,9 +10,8 @@ import (
 )
 
 const (
-	// HasNamaste indicates that an ObjectRoot has been initialized
-	// and an object declaration file is confirmed to exist in the object's root
-	// directory
+	// HasNamaste indicates a NAMASTE object declaration file exists in the
+	// object root directory
 	HasNamaste objectRootFlag = 1 << iota
 	// HasInventory indicates that an ObjectRoot includes an "inventory.json"
 	// file
@@ -30,13 +29,18 @@ const (
 	maxNonConform    = 8
 )
 
-var ErrObjectExists = fmt.Errorf("existing OCFL object declaration: %w", fs.ErrExist)
+var (
+	ErrObjectExists          = fmt.Errorf("found existing OCFL object declaration: %w", fs.ErrExist)
+	ErrObjectNamasteNotExist = fmt.Errorf("missing OCFL object declaration: %w", ErrNamasteNotExist)
+)
 
-// ObjectRoot represents an existing OCFL object root directory. Instances are
-// typically created with functions like GetObjectRoot().
+// ObjectRoot represents an existing OCFL object root directory.
 type ObjectRoot struct {
-	FS    FS     // the FS where the object is stored
-	Path  string // object path in FS
+	// FS is the FS for accessing the object's contents
+	FS FS
+	// Path is the path in the FS for the object root directory
+	Path string
+	// State represents the contents of the object root directory.
 	State *ObjectRootState
 }
 
@@ -55,7 +59,7 @@ func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error
 		return nil, err
 	}
 	if !obj.State.HasNamaste() {
-		return nil, fmt.Errorf("missing OCFL Object declaration: %w", ErrNamasteNotExist)
+		return nil, ErrObjectNamasteNotExist
 	}
 	return obj, nil
 }
@@ -65,7 +69,7 @@ func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error
 func (obj *ObjectRoot) SyncState(ctx context.Context) error {
 	entries, err := obj.FS.ReadDir(ctx, obj.Path)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading object root directory: %w", err)
 	}
 	obj.State = NewObjectRootState(entries)
 	return nil
@@ -80,10 +84,11 @@ func (obj ObjectRoot) ValidateNamaste(ctx context.Context) error {
 		}
 	}
 	if !obj.State.HasNamaste() {
-		return ErrNamasteNotExist
+		return ErrObjectNamasteNotExist
 	}
-	pth := path.Join(obj.Path, Namaste{Type: NamasteTypeObject, Version: obj.State.Spec}.Name())
-	return ReadNamaste(ctx, obj.FS, pth)
+	name := Namaste{Type: NamasteTypeObject, Version: obj.State.Spec}.Name()
+	decl := path.Join(obj.Path, name)
+	return ValidateNamaste(ctx, obj.FS, decl)
 }
 
 // ObjectRootState represents the contents of an OCFL Object root directory.

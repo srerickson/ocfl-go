@@ -79,8 +79,8 @@ func ParseNamaste(name string) (n Namaste, err error) {
 	return n, nil
 }
 
-// ReadNamaste validates a namaste declaration
-func ReadNamaste(ctx context.Context, fsys FS, name string) error {
+// ValidateNamaste validates a namaste declaration
+func ValidateNamaste(ctx context.Context, fsys FS, name string) error {
 	d, err := ParseNamaste(path.Base(name))
 	if err != nil {
 		return err
