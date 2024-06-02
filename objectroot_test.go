@@ -2,10 +2,13 @@ package ocfl_test
 
 import (
 	"context"
+	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/cloud"
 	"github.com/srerickson/ocfl-go/backend/local"
@@ -13,6 +16,40 @@ import (
 )
 
 var warnObjects = filepath.Join(`testdata`, `object-fixtures`, `1.0`, `warn-objects`)
+
+func TestNewObjectRootState(t *testing.T) {
+	type testCase struct {
+		input []fs.DirEntry
+		want  ocfl.ObjectRootState
+	}
+	testCases := map[string]testCase{
+		"nil input": {
+			input: nil,
+			want:  ocfl.ObjectRootState{},
+		},
+		"empty input": {
+			input: []fs.DirEntry{},
+			want:  ocfl.ObjectRootState{},
+		},
+		"single regular namaste": {
+			input: []fs.DirEntry{
+				&dirEntry{name: "0=ocfl_object_1.1"},
+			},
+			want: ocfl.ObjectRootState{
+				Spec:  ocfl.Spec1_1,
+				Flags: ocfl.HasNamaste,
+			},
+		},
+	}
+	i := 0
+	for name, kase := range testCases {
+		t.Run(fmt.Sprintf("%d-%s", i, name), func(t *testing.T) {
+			got := ocfl.NewObjectRootState(kase.input)
+			be.DeepEqual(t, kase.want, *got)
+		})
+		i++
+	}
+}
 
 func TestObjectRoots(t *testing.T) {
 	b, err := fileblob.OpenBucket(warnObjects, nil)
@@ -70,5 +107,16 @@ func TestObjectRoots(t *testing.T) {
 			}
 		})
 	}
+}
 
+type dirEntry struct {
+	name string
+	typ  fs.FileMode
+}
+
+func (d dirEntry) Name() string      { return d.name }
+func (d dirEntry) IsDir() bool       { return d.typ.IsDir() }
+func (d dirEntry) Type() fs.FileMode { return d.typ.Type() }
+func (d dirEntry) Info() (fs.FileInfo, error) {
+	return nil, fmt.Errorf("not implemented")
 }
