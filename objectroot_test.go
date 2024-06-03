@@ -2,21 +2,16 @@ package ocfl_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/backend/cloud"
-	"github.com/srerickson/ocfl-go/backend/local"
-	"gocloud.dev/blob/fileblob"
 )
-
-var warnObjects = filepath.Join(`testdata`, `object-fixtures`, `1.0`, `warn-objects`)
 
 func TestParseObjectRootEntries(t *testing.T) {
 	const objDecl = "0=ocfl_object_1.1"
@@ -122,64 +117,68 @@ func TestParseObjectRootEntries(t *testing.T) {
 	}
 }
 
-func TestObjectRoots(t *testing.T) {
-	b, err := fileblob.OpenBucket(warnObjects, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close()
-	localfs, err := local.NewFS(warnObjects)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fss := map[string]ocfl.FS{
-		"fileblob": cloud.NewFS(b),
-		"dirfs":    ocfl.DirFS(warnObjects),
-		"localfs":  localfs,
-	}
-	for fsName, fsys := range fss {
-		t.Run(fsName, func(t *testing.T) {
-			numobjs := 0
-			fn := func(obj *ocfl.ObjectRoot, err error) bool {
-				if err != nil {
-					t.Error(err)
-					return false
-				}
-				numobjs++
-				if obj.State.SidecarAlg == "" {
-					t.Error("algorithm not set for", obj.Path)
-				}
-				if !obj.State.HasInventory() {
-					t.Error("HasInventory false for", obj.Path)
-				}
-				if !obj.State.HasSidecar() {
-					t.Error("HasSidecar false for", obj.Path)
-				}
-				if err := obj.State.VersionDirs.Valid(); err != nil {
-					t.Error("version dirs not valid for", obj.Path)
-				}
-				v3Fixture := "w001_zero_padded_versions"
-				if strings.HasSuffix(obj.Path, v3Fixture) {
-					if len(obj.State.VersionDirs) != 3 {
-						t.Error(obj.Path, "should have 3 versions")
-					}
-				}
-				extFixture := "W013_unregistered_extension"
-				if strings.HasSuffix(obj.Path, extFixture) {
-					if obj.State.Flags&ocfl.HasExtensions == 0 {
-						t.Errorf(obj.Path, "should have extensions flag")
-					}
-				}
-				return true
-			}
-			ocfl.ObjectRoots(context.Background(), fsys, ".")(fn)
-			if numobjs != 12 {
-				t.Fatalf("expected 12 objects to be called, got %d", numobjs)
-			}
-		})
-	}
+func TestGetObjectRoots(t *testing.T) {
+	ctx := context.Background()
+	fsys := ocfl.DirFS(filepath.Join(`testdata`, `object-fixtures`))
+	t.Run("ok", func(t *testing.T) {
+		const dir = "1.0/good-objects/spec-ex-full"
+		obj, err := ocfl.GetObjectRoot(ctx, fsys, dir)
+		be.NilErr(t, err)
+		be.Equal(t, fsys, obj.FS)
+		be.Equal(t, dir, obj.Path)
+		expect := ocfl.ObjectRootState{
+			Spec:        ocfl.Spec1_0,
+			SidecarAlg:  "sha512",
+			VersionDirs: ocfl.VNums{ocfl.V(1), ocfl.V(2), ocfl.V(3)},
+			Flags:       ocfl.HasNamaste | ocfl.HasInventory | ocfl.HasSidecar,
+		}
+		be.DeepEqual(t, expect, *obj.State)
+	})
+	t.Run("missing directory error", func(t *testing.T) {
+		const dir = "not-existing"
+		obj, err := ocfl.GetObjectRoot(ctx, fsys, dir)
+		be.Zero(t, obj)
+		be.True(t, err != nil)
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+		var pathError *fs.PathError
+		be.True(t, errors.As(err, &pathError))
+		be.Equal(t, dir, pathError.Path)
+	})
+	t.Run("missing namaste error", func(t *testing.T) {
+		const dir = "1.0"
+		obj, err := ocfl.GetObjectRoot(ctx, fsys, dir)
+		be.Zero(t, obj)
+		be.True(t, err != nil)
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+		be.True(t, errors.Is(err, ocfl.ErrObjectNamasteNotExist))
+	})
 }
 
+func TestObjectRootValidateNamaste(t *testing.T) {
+	ctx := context.Background()
+	fsys := ocfl.DirFS(filepath.Join(`testdata`, `object-fixtures`))
+	t.Run("ok", func(t *testing.T) {
+		const dir = "1.0/good-objects/spec-ex-full"
+		objroot := &ocfl.ObjectRoot{FS: fsys, Path: dir}
+		be.NilErr(t, objroot.ValidateNamaste(ctx))
+	})
+	t.Run("missing namaste error", func(t *testing.T) {
+		const dir = "1.0"
+		objroot := &ocfl.ObjectRoot{FS: fsys, Path: dir}
+		err := objroot.ValidateNamaste(ctx)
+		be.True(t, err != nil)
+		be.True(t, errors.Is(err, ocfl.ErrObjectNamasteNotExist))
+	})
+	t.Run("invalid namaste", func(t *testing.T) {
+		const dir = "1.0/bad-objects/E007_bad_declaration_contents"
+		objroot := &ocfl.ObjectRoot{FS: fsys, Path: dir}
+		err := objroot.ValidateNamaste(ctx)
+		be.True(t, err != nil)
+		be.True(t, errors.Is(err, ocfl.ErrNamasteContents))
+	})
+}
+
+// dirEntry is used for testing object root parsing
 type dirEntry struct {
 	name string
 	mode fs.FileMode

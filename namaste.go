@@ -18,7 +18,7 @@ const (
 
 var (
 	ErrNamasteNotExist = fmt.Errorf("missing NAMASTE declaration: %w", fs.ErrNotExist)
-	ErrNamasteInvalid  = errors.New("invalid NAMASTE declaration contents")
+	ErrNamasteContents = errors.New("invalid NAMASTE declaration contents")
 	ErrNamasteMultiple = errors.New("multiple NAMASTE declarations found")
 	namasteRE          = regexp.MustCompile(`^0=([a-z_]+)_([0-9]+\.[0-9]+)$`)
 )
@@ -95,7 +95,7 @@ func ValidateNamaste(ctx context.Context, fsys FS, name string) error {
 		return fmt.Errorf("reading declaration: %w", err)
 	}
 	if string(decl) != d.Body() {
-		return ErrNamasteInvalid
+		return ErrNamasteContents
 	}
 	return nil
 }

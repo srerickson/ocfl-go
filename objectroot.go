@@ -92,6 +92,30 @@ func (obj ObjectRoot) ValidateNamaste(ctx context.Context) error {
 	return ValidateNamaste(ctx, obj.FS, decl)
 }
 
+// ExtensionNames returns the names of directories in the
+// object root's extensions directory.
+// func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
+// 	if obj.State != nil && !obj.State.HasExtensions() {
+// 		return nil, nil
+// 	}
+// 	entries, err := obj.FS.ReadDir(ctx, path.Join(obj.Path, ExtensionsDir))
+// 	if err != nil {
+// 		if errors.Is(err, fs.ErrNotExist) {
+// 			return nil, nil
+// 		}
+// 		return nil, err
+// 	}
+// 	names := make([]string, len(entries))
+// 	for _, e := range entries {
+// 		if !e.IsDir() {
+// 			// return error?
+// 			continue
+// 		}
+// 		names = append(names, e.Name())
+// 	}
+// 	return names, err
+// }
+
 // ObjectRootState represents the contents of an OCFL Object root directory.
 type ObjectRootState struct {
 	Spec        Spec           // the OCFL spec from the object's NAMASTE declaration file
