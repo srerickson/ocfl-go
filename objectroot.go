@@ -56,17 +56,14 @@ func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error
 		FS:   fsys,
 		Path: dir,
 	}
-	if err := obj.SyncState(ctx); err != nil {
+	if err := obj.checkState(ctx); err != nil {
 		return nil, err
-	}
-	if !obj.State.HasNamaste() {
-		return nil, ErrObjectNamasteNotExist
 	}
 	return obj, nil
 }
 
-// SyncState reads the entries of of the object root directory
-// and initializes obj.State
+// SyncState reads the entries of the object root directory
+// and initializes the ObjectRoot's state.
 func (obj *ObjectRoot) SyncState(ctx context.Context) error {
 	entries, err := obj.FS.ReadDir(ctx, obj.Path)
 	if err != nil {
@@ -78,7 +75,17 @@ func (obj *ObjectRoot) SyncState(ctx context.Context) error {
 
 // ValidateNamaste reads and validates the contents of the OCFL object
 // declaration in the object root.
-func (obj ObjectRoot) ValidateNamaste(ctx context.Context) error {
+func (obj *ObjectRoot) ValidateNamaste(ctx context.Context) error {
+	if err := obj.checkState(ctx); err != nil {
+		return err
+	}
+	decl := Namaste{Type: NamasteTypeObject, Version: obj.State.Spec}.Name()
+	return ValidateNamaste(ctx, obj.FS, path.Join(obj.Path, decl))
+}
+
+// checkState syncs the objec state if necessary and checks the
+// an object declaration is present
+func (obj *ObjectRoot) checkState(ctx context.Context) error {
 	if obj.State == nil {
 		if err := obj.SyncState(ctx); err != nil {
 			return err
@@ -87,34 +94,33 @@ func (obj ObjectRoot) ValidateNamaste(ctx context.Context) error {
 	if !obj.State.HasNamaste() {
 		return ErrObjectNamasteNotExist
 	}
-	name := Namaste{Type: NamasteTypeObject, Version: obj.State.Spec}.Name()
-	decl := path.Join(obj.Path, name)
-	return ValidateNamaste(ctx, obj.FS, decl)
+	return nil
 }
 
-// ExtensionNames returns the names of directories in the
-// object root's extensions directory.
-// func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
-// 	if obj.State != nil && !obj.State.HasExtensions() {
-// 		return nil, nil
-// 	}
-// 	entries, err := obj.FS.ReadDir(ctx, path.Join(obj.Path, ExtensionsDir))
-// 	if err != nil {
-// 		if errors.Is(err, fs.ErrNotExist) {
-// 			return nil, nil
-// 		}
-// 		return nil, err
-// 	}
-// 	names := make([]string, len(entries))
-// 	for _, e := range entries {
-// 		if !e.IsDir() {
-// 			// return error?
-// 			continue
-// 		}
-// 		names = append(names, e.Name())
-// 	}
-// 	return names, err
-// }
+// ExtensionNames returns the names of directories in the object root's
+// extensions directory.
+func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
+	if err := obj.checkState(ctx); err != nil {
+		return nil, err
+	}
+	if !obj.State.HasExtensions() {
+		return nil, nil
+	}
+	entries, err := obj.FS.ReadDir(ctx, path.Join(obj.Path, ExtensionsDir))
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			// if the extensions directory includes non-directory
+			// entries, should we return an error?
+			continue
+		}
+		names = append(names, e.Name())
+	}
+	return names, err
+}
 
 // ObjectRootState represents the contents of an OCFL Object root directory.
 type ObjectRootState struct {
