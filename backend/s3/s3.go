@@ -373,7 +373,7 @@ func objectyRootsIter(ctx context.Context, api ObjectRootsAPI, buck string, fsys
 						obj.State.Flags |= ocfl.HasSidecar
 						obj.State.SidecarAlg = strings.TrimPrefix(keyBase, "inventory.json.")
 					default:
-						obj.State.NonConform = append(obj.State.NonConform, keyBase)
+						obj.State.Invalid = append(obj.State.Invalid, keyBase)
 					}
 				default:
 					// subdirectory of OCFL object root
@@ -389,7 +389,7 @@ func objectyRootsIter(ctx context.Context, api ObjectRootsAPI, buck string, fsys
 							obj.State.VersionDirs = append(obj.State.VersionDirs, vnum)
 						}
 					default:
-						obj.State.NonConform = append(obj.State.NonConform, subdir)
+						obj.State.Invalid = append(obj.State.Invalid, subdir)
 					}
 				}
 			}

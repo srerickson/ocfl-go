@@ -178,7 +178,7 @@ func TestReadDir(t *testing.T) {
 			},
 			expect: func(t *testing.T, entries []fs.DirEntry, err error) {
 				be.NilErr(t, err)
-				state := ocfl.NewObjectRootState(entries)
+				state := ocfl.ParseObjectRootEntries(entries)
 				be.True(t, state.HasNamaste())
 				be.True(t, state.HasInventory())
 				be.True(t, state.HasSidecar())
@@ -572,7 +572,7 @@ func TestObjectRoots(t *testing.T) {
 				be.NilErr(t, err)
 				be.Equal(t, 1, len(roots))
 				obj := roots[0]
-				be.Equal(t, 1, len(obj.State.NonConform))
+				be.Equal(t, 1, len(obj.State.Invalid))
 			},
 		},
 		{
@@ -589,7 +589,7 @@ func TestObjectRoots(t *testing.T) {
 				be.NilErr(t, err)
 				be.Equal(t, 1, len(roots))
 				obj := roots[0]
-				be.Equal(t, 1, len(obj.State.NonConform))
+				be.Equal(t, 1, len(obj.State.Invalid))
 			},
 		},
 	}

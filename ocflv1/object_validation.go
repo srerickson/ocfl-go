@@ -107,7 +107,7 @@ func (vldr *objectValidator) validateRoot(ctx context.Context) error {
 		err = ec(err, codes.E007.Ref(ocflV))
 		vldr.LogFatal(lgr, err)
 	}
-	for _, name := range vldr.root.State.NonConform {
+	for _, name := range vldr.root.State.Invalid {
 		err := fmt.Errorf(`%w: %s`, ErrObjRootStructure, name)
 		vldr.LogFatal(lgr, ec(err, codes.E001.Ref(ocflV)))
 	}

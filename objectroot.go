@@ -26,7 +26,8 @@ const (
 	inventoryFile    = "inventory.json"
 	sidecarPrefix    = inventoryFile + "."
 	objectDeclPrefix = "0=" + NamasteTypeObject
-	maxNonConform    = 8
+
+	maxObjectRootStateInvalid = 8
 )
 
 var (
@@ -71,7 +72,7 @@ func (obj *ObjectRoot) SyncState(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reading object root directory: %w", err)
 	}
-	obj.State = NewObjectRootState(entries)
+	obj.State = ParseObjectRootEntries(entries)
 	return nil
 }
 
@@ -96,19 +97,19 @@ type ObjectRootState struct {
 	Spec        Spec           // the OCFL spec from the object's NAMASTE declaration file
 	VersionDirs VNums          // versions directories found in the object directory
 	SidecarAlg  string         // digest algorithm decl by the inventory sidecar
-	NonConform  []string       // non-conforming entries found in the object root (max=8)
+	Invalid     []string       // non-conforming entries found in the object root (max=8)
 	Flags       objectRootFlag // represents various boolean attributes
 }
 
 type objectRootFlag uint8
 
-// NewObjectRootState returns a new ObjectRootState based on contents of a
-// directory
-func NewObjectRootState(entries []fs.DirEntry) *ObjectRootState {
+// ParseObjectRootEntries returns a new ObjectRootState based on contents of an
+// object root directory
+func ParseObjectRootEntries(entries []fs.DirEntry) *ObjectRootState {
 	state := &ObjectRootState{}
 	addNonConfoming := func(name string) {
-		if len(state.NonConform) < maxNonConform {
-			state.NonConform = append(state.NonConform, name)
+		if len(state.Invalid) < maxObjectRootStateInvalid {
+			state.Invalid = append(state.Invalid, name)
 		}
 	}
 	for _, e := range entries {
@@ -219,7 +220,7 @@ func walkObjectRoots(ctx context.Context, fsys FS, dir string, yield func(*Objec
 	objRoot := &ObjectRoot{
 		FS:    fsys,
 		Path:  dir,
-		State: NewObjectRootState(entries),
+		State: ParseObjectRootEntries(entries),
 	}
 	if objRoot.State.HasNamaste() {
 		return yield(objRoot, nil)
