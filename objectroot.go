@@ -10,16 +10,16 @@ import (
 )
 
 const (
-	// HasNamaste indicates a NAMASTE object declaration file exists in the
-	// object root directory
+	// HasNamaste indicates that an object root directory includes a NAMASTE
+	// object declaration file
 	HasNamaste objectRootFlag = 1 << iota
-	// HasInventory indicates that an ObjectRoot includes an "inventory.json"
+	// HasInventory indicates that an object root includes an "inventory.json"
 	// file
 	HasInventory
-	// HasSidecar indicates that an ObjectRoot includes an "inventory.json.*"
+	// HasSidecar indicates that an object root includes an "inventory.json.*"
 	// file (the inventory sidecar).
 	HasSidecar
-	// HasExtensions indicates that an ObjectRoot includes a directory
+	// HasExtensions indicates that an object root includes a directory
 	// named "extensions"
 	HasExtensions
 
