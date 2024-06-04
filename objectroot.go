@@ -2,7 +2,9 @@ package ocfl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"slices"
@@ -84,20 +86,6 @@ func (obj *ObjectRoot) ValidateNamaste(ctx context.Context) error {
 	return ValidateNamaste(ctx, obj.FS, path.Join(obj.Path, decl))
 }
 
-// checkState syncs the objec state if necessary and checks the
-// an object declaration is present
-func (obj *ObjectRoot) checkState(ctx context.Context) error {
-	if obj.State == nil {
-		if err := obj.SyncState(ctx); err != nil {
-			return err
-		}
-	}
-	if !obj.State.HasNamaste() {
-		return ErrObjectNamasteNotExist
-	}
-	return nil
-}
-
 // ExtensionNames returns the names of directories in the object root's
 // extensions directory. The ObjectRoot's State is initialized if it is
 // nil. If the object root does not include an object declaration, an error
@@ -110,7 +98,7 @@ func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
 	if !obj.State.HasExtensions() {
 		return nil, nil
 	}
-	entries, err := obj.FS.ReadDir(ctx, path.Join(obj.Path, ExtensionsDir))
+	entries, err := obj.ReadDir(ctx, ExtensionsDir)
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +112,53 @@ func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
 		names = append(names, e.Name())
 	}
 	return names, err
+}
+
+// UnmarshalInventory unmarshals the contents of the object root's
+// inventory.json file into the value pointed to by v.
+func (obj ObjectRoot) UnmarshalInventory(ctx context.Context, v any) error {
+	f, err := obj.OpenFile(ctx, inventoryFile)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	bytes, err := io.ReadAll(f)
+	if err != nil {
+		return nil
+	}
+	return json.Unmarshal(bytes, v)
+}
+
+// OpenFile opens a file using a name relative to the object root's path
+func (obj ObjectRoot) OpenFile(ctx context.Context, name string) (fs.File, error) {
+	if obj.Path != "." {
+		// not using path.Join because it would collapse path elements,
+		// potentially ignoring invalid values for obj.Path and name.
+		name = obj.Path + "/" + name
+	}
+	return obj.FS.OpenFile(ctx, name)
+}
+
+// ReadDir reads a directory using a name relative to the object root's dir
+func (obj ObjectRoot) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
+	if obj.Path != "." {
+		name = obj.Path + "/" + name
+	}
+	return obj.FS.ReadDir(ctx, name)
+}
+
+// checkState syncs the objec state if necessary and checks the
+// an object declaration is present
+func (obj *ObjectRoot) checkState(ctx context.Context) error {
+	if obj.State == nil {
+		if err := obj.SyncState(ctx); err != nil {
+			return err
+		}
+	}
+	if !obj.State.HasNamaste() {
+		return ErrObjectNamasteNotExist
+	}
+	return nil
 }
 
 // ObjectRootState provides details of an OCFL object root based on the names of
