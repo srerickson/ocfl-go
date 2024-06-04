@@ -126,15 +126,15 @@ func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
 	return names, err
 }
 
-// ObjectRootState represents details of an OCFL object root based on the names
-// of files and directories in the object's root. ParseObjectRootDir should
-// typically be used to create new ObjectRootState values.
+// ObjectRootState provides details of an OCFL object root based on the names of
+// files and directories in the object's root. ParseObjectRootDir is typically
+// used to create a new ObjectRootState from a slice of fs.DirEntry values.
 type ObjectRootState struct {
 	Spec        Spec           // the OCFL spec from the object's NAMASTE declaration file
-	VersionDirs VNums          // versions directories found in the object directory
-	SidecarAlg  string         // digest algorithm decl by the inventory sidecar
-	Invalid     []string       // non-conforming entries found in the object root (max=8)
-	Flags       objectRootFlag // represents various boolean attributes
+	VersionDirs VNums          // version directories found in the object directory
+	SidecarAlg  string         // digest algorithm used by the inventory sidecar file
+	Invalid     []string       // non-conforming directory entries in the object root (max of 8)
+	Flags       objectRootFlag // boolean attributes of the object root
 }
 
 type objectRootFlag uint8
@@ -143,7 +143,7 @@ type objectRootFlag uint8
 // object root directory.
 func ParseObjectRootDir(entries []fs.DirEntry) *ObjectRootState {
 	state := &ObjectRootState{}
-	addNonConfoming := func(name string) {
+	addInvalid := func(name string) {
 		if len(state.Invalid) < maxObjectRootStateInvalid {
 			state.Invalid = append(state.Invalid, name)
 		}
@@ -159,7 +159,8 @@ func ParseObjectRootDir(entries []fs.DirEntry) *ObjectRootState {
 			case ParseVNum(name, &v) == nil:
 				state.VersionDirs = append(state.VersionDirs, v)
 			default:
-				addNonConfoming(name)
+				// invalid directory
+				addInvalid(name)
 			}
 		case validFileType(e.Type()):
 			switch {
@@ -168,7 +169,7 @@ func ParseObjectRootDir(entries []fs.DirEntry) *ObjectRootState {
 			case strings.HasPrefix(name, sidecarPrefix):
 				if state.HasSidecar() {
 					// duplicate sidecar-like file
-					addNonConfoming(name)
+					addInvalid(name)
 					break
 				}
 				state.SidecarAlg = strings.TrimPrefix(name, sidecarPrefix)
@@ -176,22 +177,23 @@ func ParseObjectRootDir(entries []fs.DirEntry) *ObjectRootState {
 			case strings.HasPrefix(name, objectDeclPrefix):
 				if state.HasNamaste() {
 					// duplicate namaste
-					addNonConfoming(name)
+					addInvalid(name)
 					break
 				}
 				decl, err := ParseNamaste(name)
 				if err != nil {
-					addNonConfoming(name)
+					addInvalid(name)
 					break
 				}
 				state.Spec = decl.Version
 				state.Flags |= HasNamaste
 			default:
-				addNonConfoming(name)
+				// invalid file
+				addInvalid(name)
 			}
 		default:
-			// invalid file mode type
-			addNonConfoming(name)
+			// invalid mode type
+			addInvalid(name)
 		}
 	}
 	return state
