@@ -178,7 +178,7 @@ func TestReadDir(t *testing.T) {
 			},
 			expect: func(t *testing.T, entries []fs.DirEntry, err error) {
 				be.NilErr(t, err)
-				state := ocfl.ParseObjectRootEntries(entries)
+				state := ocfl.ParseObjectRootDir(entries)
 				be.True(t, state.HasNamaste())
 				be.True(t, state.HasInventory())
 				be.True(t, state.HasSidecar())

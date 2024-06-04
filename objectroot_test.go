@@ -58,7 +58,7 @@ func TestParseObjectRootEntries(t *testing.T) {
 	i := 0
 	for name, kase := range testCases {
 		t.Run(fmt.Sprintf("case %d %s", i, name), func(t *testing.T) {
-			got := ocfl.ParseObjectRootEntries(kase.input)
+			got := ocfl.ParseObjectRootDir(kase.input)
 			be.DeepEqual(t, kase.want, *got)
 		})
 		i++
@@ -111,7 +111,7 @@ func TestParseObjectRootEntries(t *testing.T) {
 		t.Run(fmt.Sprintf("fixture %s", fixCase.name), func(t *testing.T) {
 			entries, err := os.ReadDir(filepath.Join(fixtureDir, fixCase.name))
 			be.NilErr(t, err)
-			got := ocfl.ParseObjectRootEntries(entries)
+			got := ocfl.ParseObjectRootDir(entries)
 			be.DeepEqual(t, fixCase.want, *got)
 		})
 	}
@@ -189,4 +189,52 @@ func (d dirEntry) IsDir() bool       { return d.mode.IsDir() }
 func (d dirEntry) Type() fs.FileMode { return d.mode.Type() }
 func (d dirEntry) Info() (fs.FileInfo, error) {
 	return nil, fmt.Errorf("not implemented")
+}
+
+func TestObjectRoots(t *testing.T) {
+	ctx := context.Background()
+	fixtureDir := filepath.Join(`testdata`, `store-fixtures`, `1.0`)
+	fsys := ocfl.DirFS(fixtureDir)
+	// storage root path -> number of objects expected
+	testCases := map[string]int{
+		"good-stores/simple-root":              3,
+		"good-stores/reg-extension-dir-root":   1,
+		"good-stores/unreg-extension-dir-root": 1,
+	}
+	for dir, numObj := range testCases {
+		t.Run(dir, func(t *testing.T) {
+			foundStores := 0
+			ocfl.ObjectRoots(ctx, fsys, dir)(func(obj *ocfl.ObjectRoot, err error) bool {
+				be.NilErr(t, err)
+				foundStores++
+				return true
+			})
+			be.Equal(t, numObj, foundStores)
+		})
+	}
+
+	t.Run("use ocfl.ObjecRootsFS", func(t *testing.T) {
+		const dir = "dir"
+		fsys := &objectRooter{}
+		ocfl.ObjectRoots(ctx, fsys, dir)
+		be.Equal(t, dir, fsys.calledWith)
+	})
+}
+
+// objectRooter is a mock implementation of ocfl.ObjectRootFS
+type objectRooter struct {
+	calledWith string
+}
+
+func (r *objectRooter) OpenFile(_ context.Context, _ string) (fs.File, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (r *objectRooter) ReadDir(_ context.Context, _ string) ([]fs.DirEntry, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (r *objectRooter) ObjectRoots(ctx context.Context, dir string) ocfl.ObjectRootSeq {
+	r.calledWith = dir
+	return func(_ func(*ocfl.ObjectRoot, error) bool) {}
 }

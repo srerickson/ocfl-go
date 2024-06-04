@@ -171,7 +171,7 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 			objRoot := &ocfl.ObjectRoot{
 				FS:    fsys,
 				Path:  name,
-				State: ocfl.ParseObjectRootEntries(entries),
+				State: ocfl.ParseObjectRootDir(entries),
 			}
 			validateObjectRoot(objRoot)
 			return walkdirs.ErrSkipDirs // don't continue scan further into the object

@@ -62,19 +62,20 @@ func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error
 	return obj, nil
 }
 
-// SyncState reads the entries of the object root directory
-// and initializes the ObjectRoot's state.
+// SyncState reads the entries of the object root directory and initializes the
+// ObjectRoot's state.
 func (obj *ObjectRoot) SyncState(ctx context.Context) error {
 	entries, err := obj.FS.ReadDir(ctx, obj.Path)
 	if err != nil {
 		return fmt.Errorf("reading object root directory: %w", err)
 	}
-	obj.State = ParseObjectRootEntries(entries)
+	obj.State = ParseObjectRootDir(entries)
 	return nil
 }
 
 // ValidateNamaste reads and validates the contents of the OCFL object
-// declaration in the object root.
+// declaration in the object root. The ObjectRoot's State is initialized if it
+// is nil.
 func (obj *ObjectRoot) ValidateNamaste(ctx context.Context) error {
 	if err := obj.checkState(ctx); err != nil {
 		return err
@@ -98,7 +99,10 @@ func (obj *ObjectRoot) checkState(ctx context.Context) error {
 }
 
 // ExtensionNames returns the names of directories in the object root's
-// extensions directory.
+// extensions directory. The ObjectRoot's State is initialized if it is
+// nil. If the object root does not include an object declaration, an error
+// is returned. If object root does not include an extensions directory both
+// return values are nil.
 func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
 	if err := obj.checkState(ctx); err != nil {
 		return nil, err
@@ -122,7 +126,9 @@ func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
 	return names, err
 }
 
-// ObjectRootState represents the contents of an OCFL Object root directory.
+// ObjectRootState represents details of an OCFL object root based on the names
+// of files and directories in the object's root. ParseObjectRootDir should
+// typically be used to create new ObjectRootState values.
 type ObjectRootState struct {
 	Spec        Spec           // the OCFL spec from the object's NAMASTE declaration file
 	VersionDirs VNums          // versions directories found in the object directory
@@ -133,9 +139,9 @@ type ObjectRootState struct {
 
 type objectRootFlag uint8
 
-// ParseObjectRootEntries returns a new ObjectRootState based on contents of an
-// object root directory
-func ParseObjectRootEntries(entries []fs.DirEntry) *ObjectRootState {
+// ParseObjectRootDir returns a new ObjectRootState based on contents of an
+// object root directory.
+func ParseObjectRootDir(entries []fs.DirEntry) *ObjectRootState {
 	state := &ObjectRootState{}
 	addNonConfoming := func(name string) {
 		if len(state.Invalid) < maxObjectRootStateInvalid {
@@ -191,47 +197,50 @@ func ParseObjectRootEntries(entries []fs.DirEntry) *ObjectRootState {
 	return state
 }
 
-// HasNamaste returns true if the object's FoundDeclaration flag is set
+// HasNamaste returns true if state's HasNamaste flag is set
 func (state ObjectRootState) HasNamaste() bool {
 	return state.Flags&HasNamaste > 0
 }
 
-// HasInventory returns true if the object's FoundInventory flag is set
+// HasInventory returns true if state's HasInventory flag is set
 func (state ObjectRootState) HasInventory() bool {
 	return state.Flags&HasInventory > 0
 }
 
-// HasSidecar returns true if the object's FoundSidecar flag is set
+// HasSidecar returns true if state's HasSidecar flag is set
 func (state ObjectRootState) HasSidecar() bool {
 	return state.Flags&HasSidecar > 0
 }
 
-// HasExtensions returns true if the object's HasExtensions flag is set
+// HasExtensions returns true if state's HasExtensions flag is set
 func (state ObjectRootState) HasExtensions() bool {
 	return state.Flags&HasExtensions > 0
 }
 
-func (state ObjectRootState) HasVersionDir(dir VNum) bool {
-	return slices.Contains(state.VersionDirs, dir)
+// HasVersionDir returns true if the state's VersionDirs includes v
+func (state ObjectRootState) HasVersionDir(v VNum) bool {
+	return slices.Contains(state.VersionDirs, v)
 }
 
-// ObjectRootsFS is used to iterate over object roots
+// ObjectRootsFS is an FS with an optimized implementation of ObjectRoots
 type ObjectRootsFS interface {
+	FS
 	// ObjectRoots searches root and its subdirectories for OCFL object declarations
-	// and and returns an iterator that yields each object root it finds. The
+	// and returns an iterator that yields each object root it finds. The
 	// *ObjectRoot passed to yield is confirmed to have an object declaration, but
 	// no other validation checks are made.
 	ObjectRoots(ctx context.Context, dir string) ObjectRootSeq
 }
 
-// ObjectRootSeq is an iterator that yieldss ObjectRoot references; it is returned
+// ObjectRootSeq is an iterator that yields ObjectRoot references; it is returned
 // by ObjectRoots()
 type ObjectRootSeq func(yield func(*ObjectRoot, error) bool)
 
-// ObjectRoots searches root and its subdirectories for OCFL object declarations
-// and returns an iterator that yields each object root it finds. The
-// *ObjectRoot passed to yield is confirmed to have an object declaration, but
-// no other validation checks are made.
+// ObjectRoots searches dir in fsys (and its subdirectories) for OCFL object
+// declarations and returns an iterator that yields each object root it finds.
+// The *ObjectRoot passed back to ObjectRootSeq's yield function is confirmed to
+// have an object declaration, but no other validation checks are made. If fsys
+// is an ObjectRootsFS, its implementation of ObjectRoots is used.
 func ObjectRoots(ctx context.Context, fsys FS, dir string) ObjectRootSeq {
 	if iterFS, ok := fsys.(ObjectRootsFS); ok {
 		return iterFS.ObjectRoots(ctx, dir)
@@ -250,7 +259,7 @@ func walkObjectRoots(ctx context.Context, fsys FS, dir string, yield func(*Objec
 	objRoot := &ObjectRoot{
 		FS:    fsys,
 		Path:  dir,
-		State: ParseObjectRootEntries(entries),
+		State: ParseObjectRootDir(entries),
 	}
 	if objRoot.State.HasNamaste() {
 		return yield(objRoot, nil)
