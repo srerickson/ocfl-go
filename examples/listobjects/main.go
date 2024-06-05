@@ -48,7 +48,7 @@ func main() {
 	}
 }
 
-func listObjects(ctx context.Context, fsys ocfl.FS, dir string, gos int, logger *slog.Logger) error {
+func listObjects(ctx context.Context, fsys ocfl.FS, dir string, gos int, _ *slog.Logger) error {
 	objectRoots := func(yield func(*ocfl.ObjectRoot) bool) {
 		// with go 1.23, we should be able to write:
 		// for obj, err := range ocfl.ObjectRoots(...) {}
@@ -61,7 +61,7 @@ func listObjects(ctx context.Context, fsys ocfl.FS, dir string, gos int, logger 
 	}
 	getID := func(obj *ocfl.ObjectRoot) (inventory, error) {
 		var inv inventory
-		if err := obj.UnmarshalInventory(ctx, &inv); err != nil {
+		if err := obj.UnmarshalInventory(ctx, `.`, &inv); err != nil {
 			return inv, err
 		}
 		return inv, nil

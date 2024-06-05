@@ -114,16 +114,11 @@ func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
 	return names, err
 }
 
-// UnmarshalInventory unmarshals the object root's inventory.json file into the
-// value pointed to by v
-func (obj ObjectRoot) UnmarshalInventory(ctx context.Context, v any) error {
-	return obj.UnmarshalInventoryDir(ctx, `.`, v)
-}
-
-// UnmarshalInventoryDir unmarshals the inventory.json file in object root's
-// directory dir into the value pointed to by v. Set dir to `.` to unmarshal the
+// UnmarshalInventory unmarshals the inventory.json file in the object root's
+// sub-directory, dir, into the value pointed to by v. For example, set dir to
+// `v1` to unmarshall the object's v1 inventory. Set dir to `.` to unmarshal the
 // root inventory.
-func (obj ObjectRoot) UnmarshalInventoryDir(ctx context.Context, dir string, v any) error {
+func (obj ObjectRoot) UnmarshalInventory(ctx context.Context, dir string, v any) error {
 	name := inventoryFile
 	if dir != `.` {
 		name = dir + "/" + name
