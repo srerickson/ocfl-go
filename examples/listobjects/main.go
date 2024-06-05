@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
@@ -16,8 +17,12 @@ import (
 	"github.com/srerickson/ocfl-go/backend/s3"
 	"github.com/srerickson/ocfl-go/internal/pipeline"
 	"github.com/srerickson/ocfl-go/logging"
-	"github.com/srerickson/ocfl-go/ocflv1"
 )
+
+// just the fields we need from the inventory
+type inventory struct {
+	ID string `json:"id"`
+}
 
 var numgos int
 
@@ -45,6 +50,8 @@ func main() {
 
 func listObjects(ctx context.Context, fsys ocfl.FS, dir string, gos int, logger *slog.Logger) error {
 	objectRoots := func(yield func(*ocfl.ObjectRoot) bool) {
+		// with go 1.23, we should be able to write:
+		// for obj, err := range ocfl.ObjectRoots(...) {}
 		ocfl.ObjectRoots(ctx, fsys, dir)(func(obj *ocfl.ObjectRoot, err error) bool {
 			if err != nil {
 				return false
@@ -52,23 +59,21 @@ func listObjects(ctx context.Context, fsys ocfl.FS, dir string, gos int, logger 
 			return yield(obj)
 		})
 	}
-	readInventories := func(root *ocfl.ObjectRoot) (*ocflv1.Object, error) {
-		obj := &ocflv1.Object{
-			ObjectRoot: *root,
+	getID := func(obj *ocfl.ObjectRoot) (inventory, error) {
+		var inv inventory
+		if err := obj.UnmarshalInventory(ctx, &inv); err != nil {
+			return inv, err
 		}
-		if err := obj.SyncInventory(ctx); err != nil {
-			return nil, err
-		}
-		return obj, nil
+		return inv, nil
 	}
 	var err error
-	resultIter := pipeline.Results(objectRoots, readInventories, gos)
-	resultIter(func(r pipeline.Result[*ocfl.ObjectRoot, *ocflv1.Object]) bool {
+	resultIter := pipeline.Results(objectRoots, getID, gos)
+	resultIter(func(r pipeline.Result[*ocfl.ObjectRoot, inventory]) bool {
 		if r.Err != nil {
 			err = r.Err
 			return false
 		}
-		logger.Info("found object", "id", r.Out.Inventory.ID, "path", r.In.Path)
+		fmt.Println(r.In.Path, r.Out.ID)
 		return true
 	})
 	return err

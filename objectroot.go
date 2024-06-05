@@ -114,10 +114,21 @@ func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
 	return names, err
 }
 
-// UnmarshalInventory unmarshals the contents of the object root's
-// inventory.json file into the value pointed to by v.
+// UnmarshalInventory unmarshals the object root's inventory.json file into the
+// value pointed to by v
 func (obj ObjectRoot) UnmarshalInventory(ctx context.Context, v any) error {
-	f, err := obj.OpenFile(ctx, inventoryFile)
+	return obj.UnmarshalInventoryDir(ctx, `.`, v)
+}
+
+// UnmarshalInventoryDir unmarshals the inventory.json file in object root's
+// directory dir into the value pointed to by v. Set dir to `.` to unmarshal the
+// root inventory.
+func (obj ObjectRoot) UnmarshalInventoryDir(ctx context.Context, dir string, v any) error {
+	name := inventoryFile
+	if dir != `.` {
+		name = dir + "/" + name
+	}
+	f, err := obj.OpenFile(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -132,8 +143,8 @@ func (obj ObjectRoot) UnmarshalInventory(ctx context.Context, v any) error {
 // OpenFile opens a file using a name relative to the object root's path
 func (obj ObjectRoot) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	if obj.Path != "." {
-		// not using path.Join because it would collapse path elements,
-		// potentially ignoring invalid values for obj.Path and name.
+		// using path.Join might hide potentially invalid values for
+		// obj.Path or name.
 		name = obj.Path + "/" + name
 	}
 	return obj.FS.OpenFile(ctx, name)
