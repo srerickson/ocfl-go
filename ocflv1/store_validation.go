@@ -44,7 +44,7 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 	//NAMASTE specification.
 	//E080: The text contents of [the OCFL version declaration file] MUST be
 	//the same as dvalue, followed by a newline (\n).
-	err = ocfl.ReadNamaste(ctx, fsys, path.Join(root, decl.Name()))
+	err = ocfl.ValidateNamaste(ctx, fsys, path.Join(root, decl.Name()))
 	if err != nil {
 		result.LogFatal(lgr, ec(err, codes.E080.Ref(ocflV)))
 	}
@@ -129,7 +129,7 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 		if objLgr != nil {
 			objLgr = objLgr.With("object_path", objRoot.Path)
 		}
-		if ocflV.Cmp(objRoot.Spec) < 0 {
+		if ocflV.Cmp(objRoot.State.Spec) < 0 {
 			// object ocfl spec is higher than storage root's
 			result.LogFatal(objLgr, ErrObjectVersion)
 		}
@@ -168,7 +168,11 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 		decl, _ := ocfl.FindNamaste(entries)
 		switch decl.Type {
 		case ocfl.NamasteTypeObject:
-			objRoot := ocfl.NewObjectRoot(fsys, name, entries)
+			objRoot := &ocfl.ObjectRoot{
+				FS:    fsys,
+				Path:  name,
+				State: ocfl.ParseObjectRootDir(entries),
+			}
 			validateObjectRoot(objRoot)
 			return walkdirs.ErrSkipDirs // don't continue scan further into the object
 		case ocfl.NamasteTypeStore:

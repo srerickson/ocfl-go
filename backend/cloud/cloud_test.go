@@ -132,7 +132,7 @@ func TestReadDir(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if v := obj.VersionDirs.Head(); v != ocfl.V(3) {
+		if v := obj.State.VersionDirs.Head(); v != ocfl.V(3) {
 			t.Errorf("expected readdir results to include v3, got %v", v)
 		}
 	})

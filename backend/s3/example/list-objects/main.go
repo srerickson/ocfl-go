@@ -17,6 +17,12 @@ func main() {
 	ctx := context.Background()
 	bucket := flag.Arg(0)
 	prefix := flag.Arg(1)
+	if bucket == "" {
+		log.Fatal("missing arg: bucket name")
+	}
+	if prefix == "" {
+		log.Fatal("missing arg: prefix")
+	}
 	if err := run(ctx, bucket, prefix); err != nil {
 		log.Fatal(err)
 	}

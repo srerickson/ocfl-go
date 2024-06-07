@@ -36,10 +36,10 @@ func GetObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !ocflVerSupported[root.Spec] {
-		return nil, fmt.Errorf("%s: %w", root.Spec, ErrOCFLVersion)
+	if !ocflVerSupported[root.State.Spec] {
+		return nil, fmt.Errorf("%s: %w", root.State.Spec, ErrOCFLVersion)
 	}
-	if !root.HasInventory() {
+	if !root.State.HasInventory() {
 		// what is the best error to use here?
 		return nil, ErrInventoryNotExist
 	}
@@ -73,6 +73,7 @@ func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) *vali
 	return r
 }
 
+// Stage returns an ocfl.Stage based on the specified version index.
 func (obj *Object) Stage(i int) (*ocfl.Stage, error) {
 	version := obj.Inventory.Version(i)
 	if version == nil {
