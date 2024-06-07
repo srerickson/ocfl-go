@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/carlmjohnson/be"
@@ -175,6 +176,147 @@ func TestObjectRootValidateNamaste(t *testing.T) {
 		err := objroot.ValidateNamaste(ctx)
 		be.True(t, err != nil)
 		be.True(t, errors.Is(err, ocfl.ErrNamasteContents))
+	})
+}
+
+func TestObjecroot(t *testing.T) {
+	ctx := context.Background()
+	goodObjPath := "1.1/good-objects/spec-ex-full"
+	extensionObjPath := "1.1/warn-objects/W013_unregistered_extension"
+	fsys := ocfl.DirFS(filepath.Join(`testdata`, `object-fixtures`))
+
+	t.Run("OpenFile", func(t *testing.T) {
+		t.Run("ok", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: goodObjPath}
+			_, err := objroot.OpenFile(ctx, "v3/inventory.json")
+			be.NilErr(t, err)
+		})
+		t.Run("error on invalid path", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: goodObjPath}
+			_, err := objroot.OpenFile(ctx, "../file.txt")
+			be.True(t, err != nil)
+			be.True(t, errors.Is(err, fs.ErrInvalid))
+		})
+		t.Run("error on invalid object root path", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: "invalid/.."}
+			_, err := objroot.OpenFile(ctx, "file.txt")
+			be.True(t, err != nil)
+			be.True(t, errors.Is(err, fs.ErrInvalid))
+		})
+	})
+
+	t.Run("ReadDir", func(t *testing.T) {
+		t.Run("ok", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: goodObjPath}
+			_, err := objroot.ReadDir(ctx, "v3")
+			be.NilErr(t, err)
+		})
+		t.Run("error on invalid path", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: goodObjPath}
+			_, err := objroot.ReadDir(ctx, "../dir")
+			be.True(t, err != nil)
+			be.True(t, errors.Is(err, fs.ErrInvalid))
+		})
+
+		t.Run("error on invalid object root path", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: "invalid/.."}
+			_, err := objroot.ReadDir(ctx, "dir")
+			be.True(t, err != nil)
+			be.True(t, errors.Is(err, fs.ErrInvalid))
+		})
+	})
+
+	t.Run("ValidateNamaste", func(t *testing.T) {
+		t.Run("ok", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: goodObjPath}
+			be.NilErr(t, objroot.ValidateNamaste(ctx))
+		})
+		t.Run("missing namaste error", func(t *testing.T) {
+			// dir exists, but isn't an object
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: "1.0"}
+			err := objroot.ValidateNamaste(ctx)
+			be.True(t, err != nil)
+			be.True(t, errors.Is(err, ocfl.ErrObjectNamasteNotExist))
+		})
+		t.Run("invalid namaste", func(t *testing.T) {
+			dir := "1.0/bad-objects/E007_bad_declaration_contents"
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: dir}
+			err := objroot.ValidateNamaste(ctx)
+			be.True(t, err != nil)
+			be.True(t, errors.Is(err, ocfl.ErrNamasteContents))
+		})
+	})
+
+	t.Run("UnmarshalInventory", func(t *testing.T) {
+		t.Run("root inventory", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: goodObjPath}
+			inv := struct {
+				ID string `json:"id"`
+			}{}
+			be.NilErr(t, objroot.UnmarshalInventory(ctx, ".", &inv))
+			be.Nonzero(t, inv.ID)
+		})
+		t.Run("version inventory", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: goodObjPath}
+			inv := struct {
+				ID string `json:"id"`
+			}{}
+			be.NilErr(t, objroot.UnmarshalInventory(ctx, "v3", &inv))
+			be.Nonzero(t, inv.ID)
+		})
+		t.Run("missing inventory", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: goodObjPath}
+			inv := struct {
+				ID string `json:"id"`
+			}{}
+			err := objroot.UnmarshalInventory(ctx, "v2/content", &inv)
+			be.True(t, err != nil)
+			be.True(t, errors.Is(err, fs.ErrNotExist))
+		})
+		t.Run("invalid path", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: goodObjPath}
+			inv := struct {
+				ID string `json:"id"`
+			}{}
+			err := objroot.UnmarshalInventory(ctx, "../v2", &inv)
+			be.True(t, err != nil)
+			be.True(t, errors.Is(err, fs.ErrInvalid))
+		})
+	})
+
+	t.Run("ExtensionNames", func(t *testing.T) {
+		t.Run("has extensions", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: extensionObjPath}
+			exts, err := objroot.ExtensionNames(ctx)
+			be.NilErr(t, err)
+			slices.Sort(exts)
+			be.DeepEqual(t, []string{"unregistered"}, exts)
+		})
+		t.Run("no extensions", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: goodObjPath}
+			exts, err := objroot.ExtensionNames(ctx)
+			be.NilErr(t, err)
+			be.True(t, len(exts) == 0)
+		})
+		t.Run("has extensions", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: extensionObjPath}
+			exts, err := objroot.ExtensionNames(ctx)
+			be.NilErr(t, err)
+			slices.Sort(exts)
+			be.DeepEqual(t, []string{"unregistered"}, exts)
+		})
+		t.Run("not an object", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: "1.0"}
+			_, err := objroot.ExtensionNames(ctx)
+			be.True(t, err != nil)
+			be.True(t, errors.Is(err, ocfl.ErrObjectNamasteNotExist))
+		})
+		t.Run("root path doesn't exist", func(t *testing.T) {
+			objroot := &ocfl.ObjectRoot{FS: fsys, Path: "none"}
+			_, err := objroot.ExtensionNames(ctx)
+			be.True(t, err != nil)
+			be.True(t, errors.Is(err, fs.ErrNotExist))
+		})
 	})
 }
 

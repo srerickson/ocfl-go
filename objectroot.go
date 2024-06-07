@@ -92,6 +92,9 @@ func (obj *ObjectRoot) ValidateNamaste(ctx context.Context) error {
 // is returned. If object root does not include an extensions directory both
 // return values are nil.
 func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
+	// state needs to be checked in order to differentiate between the case of
+	// of the object root not an existing (an error) and the extensions
+	// directory not existing (not an error).
 	if err := obj.checkState(ctx); err != nil {
 		return nil, err
 	}
@@ -102,7 +105,7 @@ func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	names := make([]string, len(entries))
+	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if !e.IsDir() {
 			// if the extensions directory includes non-directory
