@@ -8,7 +8,6 @@ import (
 	"path"
 
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/logging"
 	"github.com/srerickson/ocfl-go/validation"
 )
 
@@ -30,7 +29,7 @@ type Object struct {
 
 // GetObject returns the Object at the path in fsys. It returns an error if the
 // object's root directory doesn't include an object declaration file, or if the
-// root inventory is invalid.
+// root inventory could not be unmarshalled.
 func GetObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) {
 	root, err := ocfl.GetObjectRoot(ctx, fsys, dir)
 	if err != nil {
@@ -50,16 +49,14 @@ func GetObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) {
 	return obj, nil
 }
 
-// SyncInventory downloads and validates the object's root inventory. If
-// successful the object's Inventory value is updated.
+// SyncInventory reads and unmarshals the object's existing root
+// inventory in obj.Inventory.
 func (obj *Object) SyncInventory(ctx context.Context) error {
-	name := path.Join(obj.Path, inventoryFile)
-	nolog := ValidationLogger(logging.DisabledLogger())
-	inv, results := ValidateInventory(ctx, obj.FS, name, nolog)
-	if err := results.Err(); err != nil {
-		return fmt.Errorf("reading inventory: %w", err)
+	var newInv Inventory
+	if err := obj.ObjectRoot.UnmarshalInventory(ctx, ".", &newInv); err != nil {
+		return err
 	}
-	obj.Inventory = *inv
+	obj.Inventory = newInv
 	return nil
 }
 

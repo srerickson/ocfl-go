@@ -204,7 +204,7 @@ func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum)
 	}
 	info := newVersionDirInfo(entries)
 	for _, f := range info.extraFiles {
-		err := fmt.Errorf(`unexpected files in version directory: %s`, f)
+		err := fmt.Errorf(`unexpected file in %s: %s`, ver, f)
 		vldr.LogFatal(lgr, ec(err, codes.E015.Ref(ocflV)))
 	}
 	for _, d := range info.dirs {

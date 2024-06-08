@@ -61,6 +61,9 @@ func (inv *Inventory) UnmarshalJSON(b []byte) error {
 		alias.digest = d.String()
 	}
 	*inv = Inventory(alias)
+	if inv.ContentDirectory == "" {
+		inv.ContentDirectory = contentDir
+	}
 	return nil
 }
 
