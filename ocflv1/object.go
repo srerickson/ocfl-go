@@ -8,7 +8,6 @@ import (
 	"path"
 
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/logging"
 	"github.com/srerickson/ocfl-go/validation"
 )
 
@@ -28,9 +27,10 @@ type Object struct {
 	Inventory Inventory
 }
 
-// GetObject returns the Object at the path in fsys. It returns an error if the
-// object's root directory doesn't include an object declaration file, or if the
-// root inventory is invalid.
+// GetObject returns an existing oject at dir in fsys. It returns an error if
+// dir doesn't exist or doesn't include an object declaration file, or if the
+// contents of the root inventory can't be unmarshalled into an Inventory value.
+// Neither the object root or the inventory are fully validated.
 func GetObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) {
 	root, err := ocfl.GetObjectRoot(ctx, fsys, dir)
 	if err != nil {
@@ -50,16 +50,14 @@ func GetObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) {
 	return obj, nil
 }
 
-// SyncInventory downloads and validates the object's root inventory. If
-// successful the object's Inventory value is updated.
+// SyncInventory reads and unmarshals the object's existing root inventory into
+// obj.Inventory.
 func (obj *Object) SyncInventory(ctx context.Context) error {
-	name := path.Join(obj.Path, inventoryFile)
-	nolog := ValidationLogger(logging.DisabledLogger())
-	inv, results := ValidateInventory(ctx, obj.FS, name, nolog)
-	if err := results.Err(); err != nil {
-		return fmt.Errorf("reading inventory: %w", err)
+	var newInv Inventory
+	if err := obj.ObjectRoot.UnmarshalInventory(ctx, ".", &newInv); err != nil {
+		return err
 	}
-	obj.Inventory = *inv
+	obj.Inventory = newInv
 	return nil
 }
 
@@ -103,7 +101,7 @@ func (obj *Object) GetContent(digest string) (ocfl.FS, string) {
 	return obj.FS, path.Join(obj.ObjectRoot.Path, paths[0])
 }
 
-// Fixity implements ocfl.FixitySource for Object
+// GetFixity implements ocfl.FixitySource for Object
 func (obj *Object) GetFixity(digest string) ocfl.DigestSet {
 	return obj.Inventory.GetFixity(digest)
 }

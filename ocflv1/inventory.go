@@ -33,7 +33,8 @@ type Inventory struct {
 	Versions         map[ocfl.VNum]*Version    `json:"versions"`
 	Fixity           map[string]ocfl.DigestMap `json:"fixity,omitempty"`
 
-	digest string // inventory digest using alg
+	// digest of raw inventory using DigestAlgorithm, set during json unmarshal
+	digest string
 }
 
 // Version represents object version state and metadata
@@ -42,6 +43,28 @@ type Version struct {
 	State   ocfl.DigestMap `json:"state"`
 	Message string         `json:"message,omitempty"`
 	User    *ocfl.User     `json:"user,omitempty"`
+}
+
+// UnmarshalJSON decodes the inventory and sets inv's
+// digest value for the bytes b.
+func (inv *Inventory) UnmarshalJSON(b []byte) error {
+	type invAlias Inventory
+	var alias invAlias
+	if err := json.Unmarshal(b, &alias); err != nil {
+		return err
+	}
+	// digest json bytes
+	if d := ocfl.NewDigester(alias.DigestAlgorithm); d != nil {
+		if _, err := io.Copy(d, bytes.NewReader(b)); err != nil {
+			return err
+		}
+		alias.digest = d.String()
+	}
+	*inv = Inventory(alias)
+	if inv.ContentDirectory == "" {
+		inv.ContentDirectory = contentDir
+	}
+	return nil
 }
 
 // VNums returns a sorted slice of VNums corresponding to the keys in the
@@ -125,24 +148,25 @@ func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs
 	if digester == nil {
 		return fmt.Errorf("%w: %q", ocfl.ErrUnknownAlg, inv.DigestAlgorithm)
 	}
-	byt, err := json.MarshalIndent(inv, "", " ")
+	byts, err := json.Marshal(inv)
 	if err != nil {
 		return fmt.Errorf("encoding inventory: %w", err)
 	}
-	_, err = io.Copy(digester, bytes.NewBuffer(byt))
+	_, err = io.Copy(digester, bytes.NewReader(byts))
 	if err != nil {
 		return err
 	}
-	sum := digester.String()
+	invDigest := digester.String()
 	// write inventory.json and sidecar
 	for _, dir := range dirs {
 		invFile := path.Join(dir, inventoryFile)
 		sideFile := invFile + "." + inv.DigestAlgorithm
-		_, err = fsys.Write(ctx, invFile, bytes.NewBuffer(byt))
+		sideContent := invDigest + " " + inventoryFile + "\n"
+		_, err = fsys.Write(ctx, invFile, bytes.NewReader(byts))
 		if err != nil {
 			return fmt.Errorf("write inventory failed: %w", err)
 		}
-		_, err = fsys.Write(ctx, sideFile, strings.NewReader(sum+" "+inventoryFile+"\n"))
+		_, err = fsys.Write(ctx, sideFile, strings.NewReader(sideContent))
 		if err != nil {
 			return fmt.Errorf("write inventory sidecar failed: %w", err)
 		}
@@ -153,21 +177,23 @@ func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs
 // readInventorySidecar parses the contents of file as an inventory sidecar, returning
 // the stored digest on succecss. An error is returned if the sidecar is not in the expected
 // format
-func readInventorySidecar(ctx context.Context, fsys ocfl.FS, name string) (string, error) {
+func readInventorySidecar(ctx context.Context, fsys ocfl.FS, name string) (digest string, err error) {
 	file, err := fsys.OpenFile(ctx, name)
 	if err != nil {
-		return "", err
+		return
 	}
 	defer file.Close()
 	cont, err := io.ReadAll(file)
 	if err != nil {
-		return "", err
+		return
 	}
 	matches := invSidecarContentsRexp.FindSubmatch(cont)
 	if len(matches) != 2 {
-		return "", fmt.Errorf("%w: %s", ErrInvSidecarContents, string(cont))
+		err = fmt.Errorf("reading %s: %w", name, ErrInvSidecarContents)
+		return
 	}
-	return string(matches[1]), nil
+	digest = string(matches[1])
+	return
 }
 
 // NormalizedCopy returns a copy of the inventory with all digests
