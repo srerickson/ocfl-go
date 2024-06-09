@@ -3,6 +3,7 @@ package ocfl
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -121,21 +122,26 @@ func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
 // sub-directory, dir, into the value pointed to by v. For example, set dir to
 // `v1` to unmarshall the object's v1 inventory. Set dir to `.` to unmarshal the
 // root inventory.
-func (obj ObjectRoot) UnmarshalInventory(ctx context.Context, dir string, v any) error {
+func (obj ObjectRoot) UnmarshalInventory(ctx context.Context, dir string, v any) (err error) {
 	name := inventoryFile
 	if dir != `.` {
 		name = dir + "/" + name
 	}
 	f, err := obj.OpenFile(ctx, name)
 	if err != nil {
-		return err
+		return
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			err = errors.Join(err, f.Close())
+		}
+	}()
 	bytes, err := io.ReadAll(f)
 	if err != nil {
-		return nil
+		return
 	}
-	return json.Unmarshal(bytes, v)
+	err = json.Unmarshal(bytes, v)
+	return
 }
 
 // OpenFile opens a file using a name relative to the object root's path
