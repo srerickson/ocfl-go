@@ -82,10 +82,11 @@ func readDir(ctx context.Context, api ReadDirAPI, buck string, dir string) ([]fs
 		}
 		numDirs := len(list.CommonPrefixes)
 		numFiles := len(list.Contents)
-		if numDirs == 0 && numFiles == 0 {
-			return nil, pathErr("readdir", dir, fs.ErrNotExist)
+		numEntries := numDirs + numFiles
+		if numEntries == 0 {
+			break
 		}
-		newEntries := make([]fs.DirEntry, numDirs+numFiles)
+		newEntries := make([]fs.DirEntry, numEntries)
 		for i, item := range list.CommonPrefixes {
 			newEntries[i] = &iofsInfo{
 				name: path.Base(*item.Prefix),
@@ -107,6 +108,10 @@ func readDir(ctx context.Context, api ReadDirAPI, buck string, dir string) ([]fs
 		if params.ContinuationToken == nil {
 			break
 		}
+	}
+	if len(entries) == 0 {
+		// treat the prefix as a non-existing directory
+		return nil, pathErr("readdir", dir, fs.ErrNotExist)
 	}
 	return entries, nil
 }

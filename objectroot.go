@@ -40,12 +40,50 @@ var (
 
 // ObjectRoot represents an existing OCFL object root directory.
 type ObjectRoot struct {
-	// FS is the FS for accessing the object's contents
+	// FS is the FS for accessing the object's contents.
 	FS FS
-	// Path is the path in the FS for the object root directory
+	// Path is the path in the FS for the object root directory.
 	Path string
 	// State represents the contents of the object root directory.
 	State *ObjectRootState
+	// stateErr is an error from building State.
+	stateErr error
+}
+
+func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (*ObjectRoot, error) {
+	obj := &ObjectRoot{
+		FS:   fsys,
+		Path: dir,
+	}
+	config := objectOpts{}
+	for _, o := range opts {
+		o(&config)
+	}
+	err := obj.ReadRoot(ctx)
+	if err != nil {
+		obj.stateErr = err
+		return obj, obj.stateErr
+	}
+	return obj, nil
+}
+
+type objectOpts struct {
+	mustExist    bool
+	mustNotExist bool
+}
+
+type ObjectOption func(*objectOpts)
+
+func ObjectMustExist() ObjectOption {
+	return func(conf *objectOpts) {
+		conf.mustExist = true
+	}
+}
+
+func ObjectMustNotExist() ObjectOption {
+	return func(conf *objectOpts) {
+		conf.mustNotExist = true
+	}
 }
 
 // GetObjectRoot reads the contents of directory dir in fsys, confirms that an
@@ -65,11 +103,13 @@ func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error
 	return obj, nil
 }
 
-// SyncState reads the entries of the object root directory and initializes the
+// ReadRoot reads the entries of the object root directory and initializes the
 // ObjectRoot's state.
-func (obj *ObjectRoot) SyncState(ctx context.Context) error {
+func (obj *ObjectRoot) ReadRoot(ctx context.Context) error {
 	entries, err := obj.FS.ReadDir(ctx, obj.Path)
 	if err != nil {
+		obj.stateErr = err
+		obj.State = nil
 		return fmt.Errorf("reading object root directory: %w", err)
 	}
 	obj.State = ParseObjectRootDir(entries)
@@ -166,7 +206,7 @@ func (obj ObjectRoot) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, 
 // an object declaration is present
 func (obj *ObjectRoot) checkState(ctx context.Context) error {
 	if obj.State == nil {
-		if err := obj.SyncState(ctx); err != nil {
+		if err := obj.ReadRoot(ctx); err != nil {
 			return err
 		}
 	}
@@ -272,6 +312,11 @@ func (state ObjectRootState) HasExtensions() bool {
 // HasVersionDir returns true if the state's VersionDirs includes v
 func (state ObjectRootState) HasVersionDir(v VNum) bool {
 	return slices.Contains(state.VersionDirs, v)
+}
+
+// Empty returns true if the object root directory is empty
+func (state ObjectRootState) Empty() bool {
+	return state.Flags == 0 && len(state.VersionDirs) == 0 && len(state.Invalid) == 0
 }
 
 // ObjectRootsFS is an FS with an optimized implementation of ObjectRoots

@@ -35,6 +35,65 @@ Here is a high-level overview of what's working and what's not:
 - [ ] Well-documented API
 - [ ] Stable API
 
+
+
+## API overview
+
+
+### ocfl.StorageRoot
+
+```go
+// create a new store
+store, err := ocfl.InitStore(ctx, fsys, path, spec, description, extensions ... extension.Extension)
+
+// get an existing store
+store, err := ocfl.GetStore(ctx, fsys, path)
+
+// set storage root layout if necessary (needed to access objects)
+store.Layout = customLayout
+
+
+```
+
+### ocfl.Object
+
+```go
+// object reference from store with storage layout
+obj, err := store.NewObject(ctx, id)
+
+// require object doesn't exist (i.e., before creating)
+obj, err := store.NewObject(ctx, id,
+  ocfl.MustNotExist())
+
+// options for a new object
+obj.CreateWith() 
+
+// remove an object
+err := store.RemoveObject(ctx, id)
+
+// commit a new version
+stage, err := ocfl.StageDir(ctx, fsys, path, `sha512`)
+result, err := obj.Commit(ctx, stage, user, message)
+
+
+
+
+// create new object reference, and require that it exists
+obj, err := store.NewObject(ctx, id, 
+  ocfl.MustExist(),
+  ocfl.SkipInventoryValidation(),
+  ocfl.SkipExtensions())
+
+
+// access contents of an object
+ver := obj.Version(0)
+for name := range ver.Files {
+  ...
+}
+```
+
+
+
 ## Development
 
 Requires go >= 1.21.

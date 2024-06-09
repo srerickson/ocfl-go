@@ -179,7 +179,7 @@ func TestObjectRootValidateNamaste(t *testing.T) {
 	})
 }
 
-func TestObjecroot(t *testing.T) {
+func TestObjectRoot(t *testing.T) {
 	ctx := context.Background()
 	goodObjPath := "1.1/good-objects/spec-ex-full"
 	extensionObjPath := "1.1/warn-objects/W013_unregistered_extension"
