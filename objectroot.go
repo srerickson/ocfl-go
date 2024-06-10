@@ -50,42 +50,6 @@ type ObjectRoot struct {
 	stateErr error
 }
 
-func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (*ObjectRoot, error) {
-	obj := &ObjectRoot{
-		FS:   fsys,
-		Path: dir,
-	}
-	config := objectOpts{}
-	for _, o := range opts {
-		o(&config)
-	}
-	err := obj.ReadRoot(ctx)
-	if err != nil {
-		obj.stateErr = err
-		return obj, obj.stateErr
-	}
-	return obj, nil
-}
-
-type objectOpts struct {
-	mustExist    bool
-	mustNotExist bool
-}
-
-type ObjectOption func(*objectOpts)
-
-func ObjectMustExist() ObjectOption {
-	return func(conf *objectOpts) {
-		conf.mustExist = true
-	}
-}
-
-func ObjectMustNotExist() ObjectOption {
-	return func(conf *objectOpts) {
-		conf.mustNotExist = true
-	}
-}
-
 // GetObjectRoot reads the contents of directory dir in fsys, confirms that an
 // OCFL Object declaration is present, and returns a new ObjectRoot reference
 // with an initialized State. The object declaration is not read or fully
