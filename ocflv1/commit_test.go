@@ -40,7 +40,7 @@ func TestCommit(t *testing.T) {
 		if obj.Path != root {
 			t.Fatal("expected object path to be", root)
 		}
-		if err := obj.SyncInventory(ctx); err != nil {
+		if err := obj.ReadInventory(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if obj.Inventory.ID != id {
@@ -272,7 +272,7 @@ func testUpdateObject(ctx context.Context, fixtureObj *ocfl.ObjectRoot, t *testi
 	})
 
 	t.Run("update-2", func(t *testing.T) {
-		if err := obj.SyncInventory(ctx); err != nil {
+		if err := obj.ReadInventory(ctx); err != nil {
 			t.Fatal(err)
 		}
 		stage, err := obj.Stage(0)
@@ -330,7 +330,7 @@ func tempObject(t *testing.T, obj *ocfl.ObjectRoot) string {
 	t.Helper()
 	ctx := context.Background()
 	tmpdir := t.TempDir()
-	ocfl.Files(ctx, obj.FS, obj.Path)(func(file ocfl.FileInfo, err error) bool {
+	ocfl.Files(ctx, obj.FS, obj.Path)(func(file ocfl.FileInfo, _ error) bool {
 		name := file.Path
 		dir := path.Dir(name)
 		if err := os.MkdirAll(filepath.Join(tmpdir, filepath.FromSlash(dir)), 0777); err != nil {

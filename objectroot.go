@@ -34,7 +34,7 @@ const (
 )
 
 var (
-	ErrObjectExists          = fmt.Errorf("found existing OCFL object declaration: %w", fs.ErrExist)
+	ErrObjectNamasteExists   = fmt.Errorf("found existing OCFL object declaration: %w", fs.ErrExist)
 	ErrObjectNamasteNotExist = fmt.Errorf("missing OCFL object declaration: %w", ErrNamasteNotExist)
 )
 
@@ -44,9 +44,13 @@ type ObjectRoot struct {
 	FS FS
 	// Path is the path in the FS for the object root directory.
 	Path string
-	// State represents the contents of the object root directory.
+	// State provides details about an existing object root as determined by
+	// reading the contents of the directory with ReadRoot(). State may be nil
+	// if the object root has not be read or if an error occured while reading
+	// it.
 	State *ObjectRootState
-	// stateErr is an error from building State.
+
+	// stateErr is the error from ReadRoot() used to set State.
 	stateErr error
 }
 
@@ -61,30 +65,17 @@ func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error
 		FS:   fsys,
 		Path: dir,
 	}
-	if err := obj.checkState(ctx); err != nil {
+	if err := obj.mustHaveNamaste(ctx); err != nil {
 		return nil, err
 	}
 	return obj, nil
-}
-
-// ReadRoot reads the entries of the object root directory and initializes the
-// ObjectRoot's state.
-func (obj *ObjectRoot) ReadRoot(ctx context.Context) error {
-	entries, err := obj.FS.ReadDir(ctx, obj.Path)
-	if err != nil {
-		obj.stateErr = err
-		obj.State = nil
-		return fmt.Errorf("reading object root directory: %w", err)
-	}
-	obj.State = ParseObjectRootDir(entries)
-	return nil
 }
 
 // ValidateNamaste reads and validates the contents of the OCFL object
 // declaration in the object root. The ObjectRoot's State is initialized if it
 // is nil.
 func (obj *ObjectRoot) ValidateNamaste(ctx context.Context) error {
-	if err := obj.checkState(ctx); err != nil {
+	if err := obj.mustHaveNamaste(ctx); err != nil {
 		return err
 	}
 	decl := Namaste{Type: NamasteTypeObject, Version: obj.State.Spec}.Name()
@@ -100,7 +91,7 @@ func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
 	// state needs to be checked in order to differentiate between the case of
 	// of the object root not an existing (an error) and the extensions
 	// directory not existing (not an error).
-	if err := obj.checkState(ctx); err != nil {
+	if err := obj.mustHaveNamaste(ctx); err != nil {
 		return nil, err
 	}
 	if !obj.State.HasExtensions() {
@@ -149,7 +140,7 @@ func (obj ObjectRoot) UnmarshalInventory(ctx context.Context, dir string, v any)
 }
 
 // OpenFile opens a file using a name relative to the object root's path
-func (obj ObjectRoot) OpenFile(ctx context.Context, name string) (fs.File, error) {
+func (obj *ObjectRoot) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	if obj.Path != "." {
 		// using path.Join might hide potentially invalid values for
 		// obj.Path or name.
@@ -158,17 +149,47 @@ func (obj ObjectRoot) OpenFile(ctx context.Context, name string) (fs.File, error
 	return obj.FS.OpenFile(ctx, name)
 }
 
-// ReadDir reads a directory using a name relative to the object root's dir
-func (obj ObjectRoot) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
+// ReadDir reads a directory using a name relative to the object root's dir. If name
+// is ".", obj's State value is updated using the returned values.
+func (obj *ObjectRoot) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
+	if name == "." {
+		// we're reading the object root, so update its state.
+		entries, err := obj.FS.ReadDir(ctx, obj.Path)
+		if err == nil {
+			obj.State = ParseObjectRootDir(entries)
+		}
+		obj.stateErr = err
+		return nil, err
+	}
 	if obj.Path != "." {
 		name = obj.Path + "/" + name
 	}
 	return obj.FS.ReadDir(ctx, name)
 }
 
-// checkState syncs the objec state if necessary and checks the
+// ReadRoot reads the contents of the object root directory and updates
+// obj.State.
+func (obj *ObjectRoot) ReadRoot(ctx context.Context) error {
+	_, err := obj.ReadDir(ctx, ".")
+	return err
+}
+
+// Exists returns two bools: the first indicates if the existence status of the
+// object's root directory is known; the second indicates the existence status.
+// The second value should only be used if the first is true.
+func (obj ObjectRoot) Exists() (bool, bool) {
+	if obj.stateErr == nil && obj.State != nil {
+		return true, true
+	}
+	if obj.stateErr != nil && errors.Is(obj.stateErr, fs.ErrNotExist) {
+		return true, false
+	}
+	return false, false
+}
+
+// mustHaveNamaste syncs the objec state if necessary and checks that
 // an object declaration is present
-func (obj *ObjectRoot) checkState(ctx context.Context) error {
+func (obj *ObjectRoot) mustHaveNamaste(ctx context.Context) error {
 	if obj.State == nil {
 		if err := obj.ReadRoot(ctx); err != nil {
 			return err

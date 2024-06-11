@@ -2,6 +2,8 @@
 package ocflv1
 
 import (
+	"context"
+
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/validation"
 )
@@ -33,3 +35,28 @@ var (
 	// shorthand
 	ec = validation.NewErrorCode
 )
+
+func init() {
+	ocfl.RegisterOCLF(&OCFL{spec: ocfl.Spec1_0})
+	ocfl.RegisterOCLF(&OCFL{spec: ocfl.Spec1_1})
+}
+
+// Implementation of OCFL v1.x
+type OCFL struct {
+	spec ocfl.Spec // 1.0 or 1.1
+}
+
+func (imp OCFL) Spec() ocfl.Spec {
+	return imp.spec
+}
+
+func (imp OCFL) NewObject(ctx context.Context, root *ocfl.ObjectRoot, opts ...func(*ocfl.ObjectOptions)) (ocfl.Object, error) {
+	obj := &Object{
+		ObjectRoot: root,
+	}
+	for _, applyOpt := range opts {
+		applyOpt(&obj.opts)
+	}
+	// load marshal or not?
+	return obj, nil
+}

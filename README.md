@@ -76,8 +76,6 @@ stage, err := ocfl.StageDir(ctx, fsys, path, `sha512`)
 result, err := obj.Commit(ctx, stage, user, message)
 
 
-
-
 // create new object reference, and require that it exists
 obj, err := store.NewObject(ctx, id, 
   ocfl.MustExist(),

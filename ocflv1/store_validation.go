@@ -136,7 +136,7 @@ func ValidateStore(ctx context.Context, fsys ocfl.FS, root string, vops ...Valid
 		if opts.SkipObjects {
 			return nil
 		}
-		obj := &Object{ObjectRoot: *objRoot}
+		obj := &Object{ObjectRoot: objRoot}
 		objValidOpts := []ValidationOption{
 			copyValidationOptions(opts),
 			ValidationLogger(objLgr),

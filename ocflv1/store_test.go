@@ -213,7 +213,7 @@ func TestStoreCommit(t *testing.T) {
 			ocflv1.WithMessage("second commit")); err != nil {
 			t.Fatal(err)
 		}
-		if err := obj.SyncInventory(ctx); err != nil {
+		if err := obj.ReadInventory(ctx); err != nil {
 			t.Fatal(err)
 		}
 		expected := []string{"file2.txt"}
@@ -229,6 +229,9 @@ func TestStoreCommit(t *testing.T) {
 		newContent, err := ocfl.StageBytes(map[string][]byte{
 			"file3.txt": []byte("content3"),
 		}, ocfl.SHA256)
+		if err != nil {
+			t.Fatal(err)
+		}
 		obj, err := store.GetObject(ctx, "object-1")
 		if err != nil {
 			t.Fatal(err)
@@ -247,7 +250,7 @@ func TestStoreCommit(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
-		if err := obj.SyncInventory(ctx); err != nil {
+		if err := obj.ReadInventory(ctx); err != nil {
 			t.Fatal(err)
 		}
 		expected := []string{"dir/file2.txt", "file3.txt"}
@@ -263,6 +266,9 @@ func TestStoreCommit(t *testing.T) {
 		newContent, err := ocfl.StageBytes(map[string][]byte{
 			"file3.txt": []byte("changed"),
 		}, ocfl.SHA256)
+		if err != nil {
+			t.Fatal(err)
+		}
 		obj, err := store.GetObject(ctx, "object-1")
 		if err != nil {
 			t.Fatal(err)
@@ -281,7 +287,7 @@ func TestStoreCommit(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
-		if err := obj.SyncInventory(ctx); err != nil {
+		if err := obj.ReadInventory(ctx); err != nil {
 			t.Fatal(err)
 		}
 		expected := []string{"file3.txt"}

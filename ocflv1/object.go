@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"time"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/validation"
@@ -23,8 +24,11 @@ var (
 // Object represents an existing OCFL v1.x object. Use GetObject() to initialize
 // new Objects.
 type Object struct {
-	ocfl.ObjectRoot
+	*ocfl.ObjectRoot
 	Inventory Inventory
+
+	// options from construction
+	opts ocfl.ObjectOptions
 }
 
 // GetObject returns an existing oject at dir in fsys. It returns an error if
@@ -43,16 +47,29 @@ func GetObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) {
 		// what is the best error to use here?
 		return nil, ErrInventoryNotExist
 	}
-	obj := &Object{ObjectRoot: *root}
-	if err := obj.SyncInventory(ctx); err != nil {
+	obj := &Object{ObjectRoot: root}
+	if err := obj.ReadInventory(ctx); err != nil {
 		return nil, err
 	}
 	return obj, nil
 }
 
-// SyncInventory reads and unmarshals the object's existing root inventory into
+func (obj Object) DigestAlgorithm() string  { return obj.Inventory.DigestAlgorithm }
+func (obj Object) Head() ocfl.VNum          { return obj.Inventory.Head }
+func (obj Object) ID() string               { return obj.Inventory.ID }
+func (obj Object) Manifest() ocfl.DigestMap { return obj.Inventory.Manifest }
+func (obj Object) Root() *ocfl.ObjectRoot   { return obj.ObjectRoot }
+func (obj Object) Spec() ocfl.Spec          { return obj.Inventory.Type.Spec }
+func (obj Object) Version(v int) ocfl.ObjectVersion {
+	if ver := obj.Inventory.Version(v); ver != nil {
+		return &ocflVersion{ver}
+	}
+	return nil
+}
+
+// ReadInventory reads and unmarshals the object's existing root inventory into
 // obj.Inventory.
-func (obj *Object) SyncInventory(ctx context.Context) error {
+func (obj *Object) ReadInventory(ctx context.Context) error {
 	var newInv Inventory
 	if err := obj.ObjectRoot.UnmarshalInventory(ctx, ".", &newInv); err != nil {
 		return err
@@ -102,7 +119,7 @@ func (obj *Object) GetContent(digest string) (ocfl.FS, string) {
 }
 
 // GetFixity implements ocfl.FixitySource for Object
-func (obj *Object) GetFixity(digest string) ocfl.DigestSet {
+func (obj Object) GetFixity(digest string) ocfl.DigestSet {
 	return obj.Inventory.GetFixity(digest)
 }
 
@@ -114,14 +131,24 @@ func Objects(ctx context.Context, fsys ocfl.FS, dir string) ObjectSeq {
 		objectRootIter(func(objRoot *ocfl.ObjectRoot, err error) bool {
 			var obj *Object
 			if objRoot != nil {
-				obj = &Object{ObjectRoot: *objRoot}
+				obj = &Object{ObjectRoot: objRoot}
 			}
 			if err != nil && !yieldObject(obj, err) {
 				return false
 			}
-			return yieldObject(obj, obj.SyncInventory(ctx))
+			return yieldObject(obj, obj.ReadInventory(ctx))
 		})
 	}
 }
 
 type ObjectSeq func(yield func(*Object, error) bool)
+
+// ocflVersion wraps a Version to implement ocfl.ObjectVersion
+type ocflVersion struct {
+	v *Version
+}
+
+func (v *ocflVersion) User() *ocfl.User      { return v.v.User }
+func (v *ocflVersion) State() ocfl.DigestMap { return v.v.State }
+func (v *ocflVersion) Message() string       { return v.v.Message }
+func (v *ocflVersion) Created() time.Time    { return v.v.Created }
