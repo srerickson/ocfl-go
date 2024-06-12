@@ -5,6 +5,7 @@ package ocfl
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -17,11 +18,13 @@ const (
 )
 
 var (
+	ErrOCFLNotImplemented = errors.New("no implementation found for the given OCFL specification version")
+
 	digestConcurrency atomic.Int32 // FIXME: get rid of this
 	commitConcurrency atomic.Int32 // FIXME: get rid of this
 
 	ocflRegister   = map[Spec]OCFL{}
-	ocflRegisterMx sync.Mutex
+	ocflRegisterMx sync.RWMutex
 )
 
 // OCFL is an interface implemented by types that implement a specific
@@ -43,10 +46,13 @@ func RegisterOCLF(imp OCFL) bool {
 	return true
 }
 
-func GetOCFL(spec Spec) OCFL {
-	ocflRegisterMx.Lock()
-	defer ocflRegisterMx.Unlock()
-	return ocflRegister[spec]
+func GetOCFL(spec Spec) (OCFL, error) {
+	ocflRegisterMx.RLock()
+	defer ocflRegisterMx.RUnlock()
+	if imp := ocflRegister[spec]; imp != nil {
+		return imp, nil
+	}
+	return nil, ErrOCFLNotImplemented
 }
 
 // UnsetOCFL removes the previously set implementation for spec, if
@@ -63,8 +69,8 @@ func UnsetOCFL(spec Spec) bool {
 }
 
 func Implementations() []Spec {
-	ocflRegisterMx.Lock()
-	defer ocflRegisterMx.Unlock()
+	ocflRegisterMx.RLock()
+	defer ocflRegisterMx.RUnlock()
 	specs := make([]Spec, 0, len(ocflRegister))
 	for spec := range ocflRegister {
 		specs = append(specs, spec)

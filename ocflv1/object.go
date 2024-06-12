@@ -27,7 +27,7 @@ type Object struct {
 	*ocfl.ObjectRoot
 	Inventory Inventory
 
-	// options from construction
+	// options from open object
 	opts ocfl.ObjectOptions
 }
 

@@ -3,6 +3,7 @@ package ocfl
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"time"
 )
@@ -24,6 +25,15 @@ type Object interface {
 	// Commit
 }
 
+type Inventory interface {
+	DigestAlgorithm() string
+	Head() VNum
+	ID() string
+	Manifest() DigestMap
+	Spec() Spec
+	Version(int) ObjectVersion
+}
+
 type ObjectVersion interface {
 	State() DigestMap
 	User() *User
@@ -37,69 +47,84 @@ type User struct {
 	Address string `json:"address,omitempty"`
 }
 
-func NewObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptions)) (Object, error) {
-	var ocflImpl OCFL // OCFL spec implementation
+func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptions)) (Object, error) {
 	objOptions := ObjectOptions{}
 	for _, o := range opts {
 		o(&objOptions)
 	}
 	// determine implementation of OCFL spec to use
-	switch {
-	case !objOptions.UseSpec.Empty():
-		// ocfl spect set explicitly in options
-		ocflImpl = GetOCFL(objOptions.UseSpec)
-	case !objOptions.SkipRead:
+	useSpec := objOptions.UseSpec
+	if useSpec.Empty() {
 		// get spec by reading the object root directory
 		err := root.ReadRoot(ctx)
 		if err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
 				return nil, err
 			}
-			// object doesn't exist
-			if objOptions.MustExist {
-				return nil, err
-			}
+			// object root directory doesn't exist
+			// FIXME: revert to a default?
+			return nil, fmt.Errorf("set the OCFL version explicitly to open objects for creation: %w", err)
 		}
-		if err == nil && objOptions.MustNotExist {
-			return nil, ErrObjectNamasteExists
+		if root.State == nil {
+			panic("root state wasn't set correctly in ReadRoot")
 		}
-		if root.State != nil {
-			ocflImpl = GetOCFL(root.State.Spec)
+		if !root.State.HasNamaste() {
+			return nil, fmt.Errorf("path is not an OCFL object: %w", ErrObjectNamasteNotExist)
 		}
-	default:
-		return nil, errors.New("NewObject options prevented determining the OCFL implementation for the object")
+		useSpec = root.State.Spec
 	}
-	if ocflImpl == nil {
-		return nil, errors.New("could not determine OCFL implementation for the object")
+	if useSpec.Empty() {
+		// FIXME: revert to a default?
+		return nil, errors.New("couldn't determine an appropriate OCFL version for openning the object")
+	}
+	ocflImpl, err := GetOCFL(useSpec)
+	if err != nil {
+		return nil, fmt.Errorf("openning object with OCFL version %s: %w", useSpec, err)
 	}
 	return ocflImpl.NewObject(ctx, root, func(opt *ObjectOptions) {
 		*opt = objOptions
 	})
 }
 
+type ObjectMode uint8
+
+const (
+	ObjectModeReadOnly ObjectMode = iota
+	// ObjectModeReadWrite
+	// ObjectModeCreate // When writing, create a new object if neccessary.
+	// ObjectModeUpdate
+)
+
+// ObjectOptions are options used in OpenObject
 type ObjectOptions struct {
 	// ID is the expected ID for the object (if being read), or the new ID for
-	// the object (if being created)
+	// the object (if being created). ID is only required if the object is being
+	// created.
 	ID string
 	// UseSpec sets the OCFL specification that should be used for accessing or
 	// creating the object.
 	UseSpec Spec
+
 	// MustExist: if the object doesn't exist, return an error
-	MustExist bool
-	// MustNotExist: if the object does exist, return an error
-	MustNotExist bool
-	// SkipRead prevents the object from being accessed during NewObject(). If
-	// set, MustExist and MustNotExist are ignored.
-	SkipRead bool
+	// MustExist bool
+	// // MustNotExist: if the object does exist, return an error
+	// MustNotExist bool
+
+	// SkipRead prevents the object from being accessed during OpenObject(). If
+	// set, MustExist is ignored
+	// SkipRead bool
+
+	// Mode used to open the object, determines how the object can be used.
+	// Mode ObjectMode
 }
 
 type ObjectOptionsFunc func(*ObjectOptions)
 
-func ObjectMustExist() ObjectOptionsFunc {
-	return func(opt *ObjectOptions) {
-		opt.MustExist = true
-	}
-}
+// func ObjectMustExist() ObjectOptionsFunc {
+// 	return func(opt *ObjectOptions) {
+// 		opt.MustExist = true
+// 	}
+// }
 
 func ObjectUseSpec(spec Spec) ObjectOptionsFunc {
 	return func(opt *ObjectOptions) {
@@ -113,14 +138,14 @@ func ObjectSetID(id string) ObjectOptionsFunc {
 	}
 }
 
-func ObjectMustNotExist() ObjectOptionsFunc {
-	return func(opt *ObjectOptions) {
-		opt.MustNotExist = true
-	}
-}
+// func ObjectMustNotExist() ObjectOptionsFunc {
+// 	return func(opt *ObjectOptions) {
+// 		opt.MustNotExist = true
+// 	}
+// }
 
-func ObjectSkipRead() ObjectOptionsFunc {
-	return func(opt *ObjectOptions) {
-		opt.SkipRead = true
-	}
-}
+// func ObjectSkipRead() ObjectOptionsFunc {
+// 	return func(opt *ObjectOptions) {
+// 		opt.SkipRead = true
+// 	}
+// }
