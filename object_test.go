@@ -55,17 +55,16 @@ func TestOpenObject(t *testing.T) {
 			if tCase.ctx == nil {
 				tCase.ctx = ctx
 			}
+			if tCase.expect == nil {
+				tCase.expect = expectNilErr
+			}
 			obj, err := ocfl.OpenObject(tCase.ctx, tCase.root, func(opt *ocfl.ObjectOptions) {
 				if tCase.opts != nil {
 					*opt = *tCase.opts
 				}
 			})
-			if tCase.expect == nil {
-				tCase.expect = expectNilErr
-			}
 			tCase.expect(t, obj, err)
 		})
 		i++
 	}
-
 }
