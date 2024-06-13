@@ -47,14 +47,21 @@ func (s Spec) Valid() error {
 // - If v1 is less than v2, returns -1.
 // - If v1 is the same as v2, returns 0
 // - If v1 is greater than v2, returns 1
+// - any valid spec is greater than an invalid spec.
+// - if both specs are invlid, Cmp panics.
 func (v1 Spec) Cmp(v2 Spec) int {
-	f1, suf1, err := v1.cutFloatSuffix()
-	if err != nil {
-		panic(err)
-	}
-	f2, suf2, err := v2.cutFloatSuffix()
-	if err != nil {
-		panic(err)
+	f1, suf1, err1 := v1.parse()
+	f2, suf2, err2 := v2.parse()
+	// handle errors
+	if err1 != nil || err2 != nil {
+		if err1 == nil {
+			return 1 // v1 is larger because v2 is invalid
+		}
+		if err2 == nil {
+			return -1 // v2 is larger because v1 is invalid
+		}
+		// both are invalid
+		panic(errors.Join(err1, err2))
 	}
 	switch {
 	case f1 == f2:
@@ -78,7 +85,7 @@ func (s Spec) Empty() bool {
 	return s == Spec("")
 }
 
-func (s Spec) cutFloatSuffix() (float64, string, error) {
+func (s Spec) parse() (float64, string, error) {
 	// allow format like 1.2-draft
 	if err := s.Valid(); err != nil {
 		return 0, "", err

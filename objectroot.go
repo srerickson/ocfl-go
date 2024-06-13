@@ -38,7 +38,7 @@ var (
 	ErrObjectNamasteNotExist = fmt.Errorf("missing OCFL object declaration: %w", ErrNamasteNotExist)
 )
 
-// ObjectRoot represents an existing OCFL object root directory.
+// ObjectRoot represents an OCFL object root directory.
 type ObjectRoot struct {
 	// FS is the FS for accessing the object's contents.
 	FS FS

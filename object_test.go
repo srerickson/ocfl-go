@@ -17,10 +17,12 @@ func TestOpenObject(t *testing.T) {
 	fsys := ocfl.DirFS(objectFixturesPath)
 
 	expectNilErr := func(t *testing.T, _ ocfl.Object, err error) {
+		t.Helper()
 		be.NilErr(t, err)
 	}
 	expectErrIs := func(wantErr error) func(t *testing.T, _ ocfl.Object, err error) {
 		return func(t *testing.T, _ ocfl.Object, err error) {
+			t.Helper()
 			be.True(t, errors.Is(err, wantErr))
 		}
 	}

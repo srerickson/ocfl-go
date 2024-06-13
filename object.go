@@ -59,15 +59,16 @@ func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptio
 		// spec was set explicitly in options
 		useSpec = objOptions.UseSpec
 	case root.State != nil:
-		// use existing state from previous ReadRoot()
-		if root.State.Empty() {
-			// root directory is empty
-			// use a default spec?
-		}
-		if !root.State.Spec.Empty() {
-			// root directory includes an object declaration
+		if root.State.HasNamaste() {
 			useSpec = root.State.Spec
+			break
 		}
+		if root.State.Empty() {
+			// if the root directory is empty, fall back to latest OCFL
+			break
+		}
+		// the object root exists, but it's not an object
+		return nil, fmt.Errorf("directory is not an OCFL object root: %w", ErrObjectNamasteNotExist)
 	default:
 		// try to read root to get spec
 		err := root.ReadRoot(ctx)
@@ -75,25 +76,27 @@ func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptio
 			if !errors.Is(err, fs.ErrNotExist) {
 				return nil, err
 			}
-			// object root directory doesn't exist
-			// use default spec?
-			return nil, fmt.Errorf("set the OCFL version explicitly to open objects for creation: %w", err)
+			// if the object root directory doesn't exist, fall back to latest ocfl
+			break
 		}
 		if root.State == nil {
 			panic("root state wasn't set correctly in ReadRoot")
 		}
 		if !root.State.HasNamaste() {
-			return nil, fmt.Errorf("path is not an OCFL object: %w", ErrObjectNamasteNotExist)
+			return nil, fmt.Errorf("directory is not an OCFL object: %w", ErrObjectNamasteNotExist)
 		}
 		useSpec = root.State.Spec
 	}
-	if useSpec.Empty() {
-		// FIXME: revert to a default?
-		return nil, errors.New("couldn't determine an appropriate OCFL version for openning the object")
+	var ocflImpl OCFL
+	var err error
+	switch {
+	case useSpec.Empty():
+		ocflImpl, err = LatestOCFL()
+	default:
+		ocflImpl, err = GetOCFL(useSpec)
 	}
-	ocflImpl, err := GetOCFL(useSpec)
 	if err != nil {
-		return nil, fmt.Errorf("openning object with OCFL version %s: %w", useSpec, err)
+		return nil, err
 	}
 	return ocflImpl.NewObject(ctx, root, func(opt *ObjectOptions) {
 		*opt = objOptions

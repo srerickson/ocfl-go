@@ -25,8 +25,9 @@ func TestSpecCmp(t *testing.T) {
 		{v1: ocfl.Spec("1.1"), v2: ocfl.Spec("1.1-draft"), wantResult: 1},
 		{v1: ocfl.Spec("2.2-draft"), v2: ocfl.Spec("2.2"), wantResult: -1},
 		{v1: ocfl.Spec("1.1-draft"), v2: ocfl.Spec("1.1-new"), wantResult: 0},
-		{v1: ocfl.Spec(""), v2: ocfl.Spec1_0, wantPanic: true},
-		{v1: ocfl.Spec1_0, v2: ocfl.Spec("1"), wantPanic: true},
+		{v1: ocfl.Spec(""), v2: ocfl.Spec1_0, wantResult: -1},
+		{v1: ocfl.Spec1_0, v2: ocfl.Spec("1"), wantResult: 1},
+		{v1: ocfl.Spec("invalid"), v2: ocfl.Spec("bad"), wantPanic: true},
 	}
 	for i, tcase := range testCases {
 		t.Run(fmt.Sprintf("case%d--%v vs %v", i, tcase.v1, tcase.v2), func(t *testing.T) {

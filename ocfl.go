@@ -26,6 +26,7 @@ var (
 	// map of OCFL implementations
 	ocflRegister   = map[Spec]OCFL{}
 	ocflRegisterMx sync.RWMutex
+	defaultOCFL    OCFL
 )
 
 // OCFL is an interface implemented by types that implement a specific
@@ -40,11 +41,29 @@ type OCFL interface {
 func RegisterOCLF(imp OCFL) bool {
 	ocflRegisterMx.Lock()
 	defer ocflRegisterMx.Unlock()
+	if err := imp.Spec().Valid(); err != nil {
+		return false
+	}
 	if _, exists := ocflRegister[imp.Spec()]; exists {
 		return false
 	}
 	ocflRegister[imp.Spec()] = imp
 	return true
+}
+
+func LatestOCFL() (OCFL, error) {
+	ocflRegisterMx.RLock()
+	defer ocflRegisterMx.RUnlock()
+	var max Spec
+	if len(ocflRegister) == 0 {
+		return nil, errors.New("no registered OCFL implementations")
+	}
+	for spec := range ocflRegister {
+		if spec.Cmp(max) > 0 {
+			max = spec
+		}
+	}
+	return ocflRegister[max], nil
 }
 
 func GetOCFL(spec Spec) (OCFL, error) {
