@@ -53,16 +53,30 @@ func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptio
 		o(&objOptions)
 	}
 	// determine implementation of OCFL spec to use
-	useSpec := objOptions.UseSpec
-	if useSpec.Empty() {
-		// get spec by reading the object root directory
+	var useSpec Spec
+	switch {
+	case !objOptions.UseSpec.Empty():
+		// spec was set explicitly in options
+		useSpec = objOptions.UseSpec
+	case root.State != nil:
+		// use existing state from previous ReadRoot()
+		if root.State.Empty() {
+			// root directory is empty
+			// use a default spec?
+		}
+		if !root.State.Spec.Empty() {
+			// root directory includes an object declaration
+			useSpec = root.State.Spec
+		}
+	default:
+		// try to read root to get spec
 		err := root.ReadRoot(ctx)
 		if err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
 				return nil, err
 			}
 			// object root directory doesn't exist
-			// FIXME: revert to a default?
+			// use default spec?
 			return nil, fmt.Errorf("set the OCFL version explicitly to open objects for creation: %w", err)
 		}
 		if root.State == nil {

@@ -23,6 +23,7 @@ var (
 	digestConcurrency atomic.Int32 // FIXME: get rid of this
 	commitConcurrency atomic.Int32 // FIXME: get rid of this
 
+	// map of OCFL implementations
 	ocflRegister   = map[Spec]OCFL{}
 	ocflRegisterMx sync.RWMutex
 )
