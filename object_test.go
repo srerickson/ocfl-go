@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"testing"
 
 	"github.com/carlmjohnson/be"
@@ -23,7 +22,9 @@ func TestOpenObject(t *testing.T) {
 	expectErrIs := func(wantErr error) func(t *testing.T, _ ocfl.Object, err error) {
 		return func(t *testing.T, _ ocfl.Object, err error) {
 			t.Helper()
-			be.True(t, errors.Is(err, wantErr))
+			if !errors.Is(err, wantErr) {
+				t.Errorf("wanted error: %q; got error: %q", wantErr, err)
+			}
 		}
 	}
 
@@ -40,10 +41,15 @@ func TestOpenObject(t *testing.T) {
 		"ok 1.1": {
 			root: &ocfl.ObjectRoot{FS: fsys, Path: "1.1/good-objects/spec-ex-full"},
 		},
-		"missing": {
-			ctx:    ctx,
-			root:   &ocfl.ObjectRoot{FS: fsys, Path: "missing"},
-			expect: expectErrIs(fs.ErrNotExist),
+		"not-existing-root": {
+			ctx:  ctx,
+			root: &ocfl.ObjectRoot{FS: fsys, Path: "new-dir"},
+			expect: func(t *testing.T, obj ocfl.Object, err error) {
+				be.NilErr(t, err)
+				latestOCFL, err := ocfl.LatestOCFL()
+				be.NilErr(t, err)
+				be.Equal(t, latestOCFL.Spec(), obj.Spec())
+			},
 		},
 		"empty": {
 			ctx:    ctx,
