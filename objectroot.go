@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"path"
@@ -31,11 +30,6 @@ const (
 	objectDeclPrefix = "0=" + NamasteTypeObject
 
 	maxObjectRootStateInvalid = 8
-)
-
-var (
-	ErrObjectNamasteExists   = fmt.Errorf("found existing OCFL object declaration: %w", fs.ErrExist)
-	ErrObjectNamasteNotExist = fmt.Errorf("missing OCFL object declaration: %w", ErrNamasteNotExist)
 )
 
 // ObjectRoot represents an OCFL object root directory.
@@ -153,13 +147,14 @@ func (obj *ObjectRoot) OpenFile(ctx context.Context, name string) (fs.File, erro
 // is ".", obj's State value is updated using the returned values.
 func (obj *ObjectRoot) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
 	if name == "." {
-		// we're reading the object root, so update its state.
-		entries, err := obj.FS.ReadDir(ctx, obj.Path)
-		if err == nil {
-			obj.State = ParseObjectRootDir(entries)
+		// we're reading the object root, so update state
+		var entries []fs.DirEntry
+		entries, obj.stateErr = obj.FS.ReadDir(ctx, obj.Path)
+		if obj.stateErr != nil {
+			return nil, obj.stateErr
 		}
-		obj.stateErr = err
-		return nil, err
+		obj.State = ParseObjectRootDir(entries)
+		return entries, nil
 	}
 	if obj.Path != "." {
 		name = obj.Path + "/" + name
@@ -177,14 +172,21 @@ func (obj *ObjectRoot) ReadRoot(ctx context.Context) error {
 // Exists returns two bools: the first indicates if the existence status of the
 // object's root directory is known; the second indicates the existence status.
 // The second value should only be used if the first is true.
-func (obj ObjectRoot) Exists() (bool, bool) {
-	if obj.stateErr == nil && obj.State != nil {
-		return true, true
+func (obj *ObjectRoot) Exists(ctx context.Context) (bool, error) {
+	if obj.State == nil && obj.stateErr == nil {
+		// error is retained in stateErr
+		obj.ReadRoot(ctx)
 	}
-	if obj.stateErr != nil && errors.Is(obj.stateErr, fs.ErrNotExist) {
-		return true, false
+	if obj.stateErr != nil {
+		if errors.Is(obj.stateErr, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, obj.stateErr
 	}
-	return false, false
+	if obj.State == nil {
+		panic("ReadRoot didn't set objcet state as expected")
+	}
+	return true, nil
 }
 
 // mustHaveNamaste syncs the objec state if necessary and checks that

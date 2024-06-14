@@ -3,43 +3,29 @@ package ocfl
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
-	"time"
 )
 
 type Object interface {
-	ContentSource
-	FixitySource
-
-	DigestAlgorithm() string
-	Head() VNum
-	ID() string
-	Manifest() DigestMap
+	Exists(context.Context) (bool, error)
 	Root() *ObjectRoot
-	ReadInventory(context.Context) error
-	Spec() Spec
-	Stage(int) (*Stage, error)
-	Version(int) ObjectVersion
-	// Validate
-	// Commit
 }
 
-type Inventory interface {
-	DigestAlgorithm() string
-	Head() VNum
-	ID() string
-	Manifest() DigestMap
-	Spec() Spec
-	Version(int) ObjectVersion
-}
+// type Inventory interface {
+// 	DigestAlgorithm() string
+// 	Head() VNum
+// 	ID() string
+// 	Manifest() DigestMap
+// 	Spec() Spec
+// 	Version(int) ObjectVersion
+// }
 
-type ObjectVersion interface {
-	State() DigestMap
-	User() *User
-	Message() string
-	Created() time.Time
-}
+// type ObjectVersion interface {
+// 	State() DigestMap
+// 	User() *User
+// 	Message() string
+// 	Created() time.Time
+// }
 
 // User is a generic user information struct
 type User struct {
@@ -63,12 +49,10 @@ func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptio
 			useSpec = root.State.Spec
 			break
 		}
-		if root.State.Empty() {
-			// if the root directory is empty, fall back to latest OCFL
-			break
+		if !root.State.Empty() {
+			// the object root exiss, but it's not an object
+			return nil, ErrDirNotObject
 		}
-		// the object root exists, but it's not an object
-		return nil, fmt.Errorf("directory is not an OCFL object root: %w", ErrObjectNamasteNotExist)
 	default:
 		// try to read root to get spec
 		err := root.ReadRoot(ctx)
@@ -83,7 +67,7 @@ func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptio
 			panic("root state wasn't set correctly in ReadRoot")
 		}
 		if !root.State.HasNamaste() {
-			return nil, fmt.Errorf("directory is not an OCFL object: %w", ErrObjectNamasteNotExist)
+			return nil, ErrDirNotObject
 		}
 		useSpec = root.State.Spec
 	}

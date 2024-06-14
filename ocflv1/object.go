@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"time"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/validation"
@@ -54,18 +53,40 @@ func GetObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) {
 	return obj, nil
 }
 
-func (obj Object) DigestAlgorithm() string  { return obj.Inventory.DigestAlgorithm }
-func (obj Object) Head() ocfl.VNum          { return obj.Inventory.Head }
-func (obj Object) ID() string               { return obj.Inventory.ID }
-func (obj Object) Manifest() ocfl.DigestMap { return obj.Inventory.Manifest }
-func (obj Object) Root() *ocfl.ObjectRoot   { return obj.ObjectRoot }
-func (obj Object) Spec() ocfl.Spec          { return obj.Inventory.Type.Spec }
-func (obj Object) Version(v int) ocfl.ObjectVersion {
-	if ver := obj.Inventory.Version(v); ver != nil {
-		return &ocflVersion{ver}
+func (obj Object) Root() *ocfl.ObjectRoot { return obj.ObjectRoot }
+
+func (obj *Object) Exists(ctx context.Context) (bool, error) {
+	// the object root directory dirExists
+	dirExists, err := obj.ObjectRoot.Exists(ctx)
+	if err != nil {
+		return false, err
 	}
-	return nil
+	if !dirExists {
+		// object root doesn't exist
+		return false, nil
+	}
+	if obj.ObjectRoot.State.Empty() {
+		// object root is an empty directory
+		return false, nil
+	}
+	if obj.ObjectRoot.State.HasNamaste() {
+		// object root has an object namaste file
+		return true, nil
+	}
+	return false, ocfl.ErrDirNotObject
 }
+
+// func (obj Object) DigestAlgorithm() string  { return obj.Inventory.DigestAlgorithm }
+// func (obj Object) Head() ocfl.VNum          { return obj.Inventory.Head }
+// func (obj Object) ID() string               { return obj.Inventory.ID }
+// func (obj Object) Manifest() ocfl.DigestMap { return obj.Inventory.Manifest }
+// func (obj Object) Spec() ocfl.Spec          { return obj.Inventory.Type.Spec }
+// func (obj Object) Version(v int) ocfl.ObjectVersion {
+// 	if ver := obj.Inventory.Version(v); ver != nil {
+// 		return &ocflVersion{ver}
+// 	}
+// 	return nil
+// }
 
 // ReadInventory reads and unmarshals the object's existing root inventory into
 // obj.Inventory.
@@ -144,11 +165,11 @@ func Objects(ctx context.Context, fsys ocfl.FS, dir string) ObjectSeq {
 type ObjectSeq func(yield func(*Object, error) bool)
 
 // ocflVersion wraps a Version to implement ocfl.ObjectVersion
-type ocflVersion struct {
-	v *Version
-}
+// type ocflVersion struct {
+// 	v *Version
+// }
 
-func (v *ocflVersion) User() *ocfl.User      { return v.v.User }
-func (v *ocflVersion) State() ocfl.DigestMap { return v.v.State }
-func (v *ocflVersion) Message() string       { return v.v.Message }
-func (v *ocflVersion) Created() time.Time    { return v.v.Created }
+// func (v *ocflVersion) User() *ocfl.User      { return v.v.User }
+// func (v *ocflVersion) State() ocfl.DigestMap { return v.v.State }
+// func (v *ocflVersion) Message() string       { return v.v.Message }
+// func (v *ocflVersion) Created() time.Time    { return v.v.Created }

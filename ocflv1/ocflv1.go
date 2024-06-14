@@ -3,6 +3,7 @@ package ocflv1
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/validation"
@@ -57,6 +58,18 @@ func (imp OCFL) NewObject(ctx context.Context, root *ocfl.ObjectRoot, opts ...fu
 	for _, applyOpt := range opts {
 		applyOpt(&obj.opts)
 	}
-	// load marshal or not?
+	exists, err := obj.Exists(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		if err := obj.ObjectRoot.UnmarshalInventory(ctx, ".", &obj.Inventory); err != nil {
+			return nil, err
+		}
+		invSpec := obj.Inventory.Type.Spec
+		if invSpec != imp.spec {
+			return nil, fmt.Errorf("object's OCFL specification (%q) is not supported: expected %q", string(invSpec), string(imp.spec))
+		}
+	}
 	return obj, nil
 }
