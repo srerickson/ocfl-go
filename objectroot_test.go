@@ -161,19 +161,19 @@ func TestObjectRootValidateNamaste(t *testing.T) {
 	t.Run("ok", func(t *testing.T) {
 		const dir = "1.0/good-objects/spec-ex-full"
 		objroot := &ocfl.ObjectRoot{FS: fsys, Path: dir}
-		be.NilErr(t, objroot.ValidateNamaste(ctx))
+		be.NilErr(t, objroot.ValidateNamaste(ctx, ocfl.Spec1_0))
 	})
 	t.Run("missing namaste error", func(t *testing.T) {
 		const dir = "1.0"
 		objroot := &ocfl.ObjectRoot{FS: fsys, Path: dir}
-		err := objroot.ValidateNamaste(ctx)
+		err := objroot.ValidateNamaste(ctx, ocfl.Spec1_0)
 		be.True(t, err != nil)
 		be.True(t, errors.Is(err, ocfl.ErrObjectNamasteNotExist))
 	})
 	t.Run("invalid namaste", func(t *testing.T) {
 		const dir = "1.0/bad-objects/E007_bad_declaration_contents"
 		objroot := &ocfl.ObjectRoot{FS: fsys, Path: dir}
-		err := objroot.ValidateNamaste(ctx)
+		err := objroot.ValidateNamaste(ctx, ocfl.Spec1_0)
 		be.True(t, err != nil)
 		be.True(t, errors.Is(err, ocfl.ErrNamasteContents))
 	})
@@ -182,6 +182,7 @@ func TestObjectRootValidateNamaste(t *testing.T) {
 func TestObjectRoot(t *testing.T) {
 	ctx := context.Background()
 	goodObjPath := "1.1/good-objects/spec-ex-full"
+	goodObjSpec := ocfl.Spec("1.1")
 	extensionObjPath := "1.1/warn-objects/W013_unregistered_extension"
 	fsys := ocfl.DirFS(filepath.Join(`testdata`, `object-fixtures`))
 
@@ -229,19 +230,19 @@ func TestObjectRoot(t *testing.T) {
 	t.Run("ValidateNamaste", func(t *testing.T) {
 		t.Run("ok", func(t *testing.T) {
 			objroot := &ocfl.ObjectRoot{FS: fsys, Path: goodObjPath}
-			be.NilErr(t, objroot.ValidateNamaste(ctx))
+			be.NilErr(t, objroot.ValidateNamaste(ctx, goodObjSpec))
 		})
 		t.Run("missing namaste error", func(t *testing.T) {
 			// dir exists, but isn't an object
 			objroot := &ocfl.ObjectRoot{FS: fsys, Path: "1.0"}
-			err := objroot.ValidateNamaste(ctx)
+			err := objroot.ValidateNamaste(ctx, goodObjSpec)
 			be.True(t, err != nil)
 			be.True(t, errors.Is(err, ocfl.ErrObjectNamasteNotExist))
 		})
 		t.Run("invalid namaste", func(t *testing.T) {
 			dir := "1.0/bad-objects/E007_bad_declaration_contents"
 			objroot := &ocfl.ObjectRoot{FS: fsys, Path: dir}
-			err := objroot.ValidateNamaste(ctx)
+			err := objroot.ValidateNamaste(ctx, ocfl.Spec1_0)
 			be.True(t, err != nil)
 			be.True(t, errors.Is(err, ocfl.ErrNamasteContents))
 		})

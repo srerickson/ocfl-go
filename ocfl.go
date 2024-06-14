@@ -21,10 +21,8 @@ const (
 
 var (
 	ErrOCFLNotImplemented    = errors.New("no implementation for the given OCFL specification version")
-	ErrObjectSpec            = errors.New("object's OCFL specification is not supported by the implementation")
 	ErrObjectNamasteExists   = fmt.Errorf("found existing OCFL object declaration: %w", fs.ErrExist)
-	ErrObjectNamasteNotExist = fmt.Errorf("missing OCFL object declaration: %w", ErrNamasteNotExist)
-	ErrDirNotObject          = fmt.Errorf("found directory is not an OCFL object: %w", ErrObjectNamasteNotExist)
+	ErrObjectNamasteNotExist = fmt.Errorf("the OCFL object declaration does not exist: %w", ErrNamasteNotExist)
 
 	digestConcurrency atomic.Int32 // FIXME: get rid of this
 	commitConcurrency atomic.Int32 // FIXME: get rid of this

@@ -2,8 +2,7 @@ package ocfl
 
 import (
 	"context"
-	"errors"
-	"io/fs"
+	"fmt"
 )
 
 type Object interface {
@@ -38,53 +37,40 @@ func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptio
 	for _, o := range opts {
 		o(&objOptions)
 	}
-	// determine implementation of OCFL spec to use
-	var useSpec Spec
-	switch {
-	case !objOptions.UseSpec.Empty():
-		// spec was set explicitly in options
-		useSpec = objOptions.UseSpec
-	case root.State != nil:
-		if root.State.HasNamaste() {
-			useSpec = root.State.Spec
-			break
-		}
-		if !root.State.Empty() {
-			// the object root exiss, but it's not an object
-			return nil, ErrDirNotObject
-		}
-	default:
-		// try to read root to get spec
-		err := root.ReadRoot(ctx)
-		if err != nil {
-			if !errors.Is(err, fs.ErrNotExist) {
-				return nil, err
-			}
-			// if the object root directory doesn't exist, fall back to latest ocfl
-			break
-		}
-		if root.State == nil {
-			panic("root state wasn't set correctly in ReadRoot")
-		}
-		if !root.State.HasNamaste() {
-			return nil, ErrDirNotObject
-		}
-		useSpec = root.State.Spec
-	}
-	var ocflImpl OCFL
-	var err error
-	switch {
-	case useSpec.Empty():
-		ocflImpl, err = LatestOCFL()
-	default:
-		ocflImpl, err = GetOCFL(useSpec)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return ocflImpl.NewObject(ctx, root, func(opt *ObjectOptions) {
+	withOptions := func(opt *ObjectOptions) {
 		*opt = objOptions
-	})
+	}
+	// check if the OCFL spec was set explicitly
+	if useSpec := objOptions.UseSpec; !useSpec.Empty() {
+		ocflImpl, err := GetOCFL(useSpec)
+		if err != nil {
+			return nil, fmt.Errorf("with explicit OCFL spec %q: %w", useSpec, err)
+		}
+		return ocflImpl.NewObject(ctx, root, withOptions)
+	}
+	// Use the OCFL spec found in object root, if present
+	rootDirExists, err := root.Exists(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("accessing object root contents: %w", err)
+	}
+	if rootDirExists && root.State.HasNamaste() {
+		useSpec := root.State.Spec
+		ocflImpl, err := GetOCFL(useSpec)
+		if err != nil {
+			return nil, fmt.Errorf("with OCFL spec found in object root %q: %w", useSpec, err)
+		}
+		return ocflImpl.NewObject(ctx, root, withOptions)
+	}
+	// Use the latest OCFL if object root is missing or empty
+	if !rootDirExists || root.State.Empty() {
+		ocflImpl, err := LatestOCFL()
+		if err != nil {
+			return nil, fmt.Errorf("with latest OCFL spec: %w", err)
+		}
+		return ocflImpl.NewObject(ctx, root, withOptions)
+	}
+	// give, up because there is no OCFL object declaration
+	return nil, fmt.Errorf("can't identify an OCFL specification for the object: %w", ErrObjectNamasteNotExist)
 }
 
 type ObjectMode uint8

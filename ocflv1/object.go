@@ -28,6 +28,8 @@ type Object struct {
 
 	// options from open object
 	opts ocfl.ObjectOptions
+	// myOCFL is the ocfl Implementation used to create the object
+	myOCFL OCFL
 }
 
 // GetObject returns an existing oject at dir in fsys. It returns an error if
@@ -73,7 +75,7 @@ func (obj *Object) Exists(ctx context.Context) (bool, error) {
 		// object root has an object namaste file
 		return true, nil
 	}
-	return false, ocfl.ErrDirNotObject
+	return false, fmt.Errorf("object root is not an OCFL object: %w", ocfl.ErrObjectNamasteNotExist)
 }
 
 // func (obj Object) DigestAlgorithm() string  { return obj.Inventory.DigestAlgorithm }

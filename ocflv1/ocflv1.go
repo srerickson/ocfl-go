@@ -54,6 +54,7 @@ func (imp OCFL) Spec() ocfl.Spec {
 func (imp OCFL) NewObject(ctx context.Context, root *ocfl.ObjectRoot, opts ...func(*ocfl.ObjectOptions)) (ocfl.Object, error) {
 	obj := &Object{
 		ObjectRoot: root,
+		myOCFL:     imp,
 	}
 	for _, applyOpt := range opts {
 		applyOpt(&obj.opts)

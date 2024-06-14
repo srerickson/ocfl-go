@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"path"
@@ -68,12 +69,17 @@ func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error
 // ValidateNamaste reads and validates the contents of the OCFL object
 // declaration in the object root. The ObjectRoot's State is initialized if it
 // is nil.
-func (obj *ObjectRoot) ValidateNamaste(ctx context.Context) error {
-	if err := obj.mustHaveNamaste(ctx); err != nil {
+func (obj *ObjectRoot) ValidateNamaste(ctx context.Context, spec Spec) error {
+	decl := Namaste{Type: NamasteTypeObject, Version: spec}
+	name := path.Join(obj.Path, decl.Name())
+	err := ValidateNamaste(ctx, obj.FS, name)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%s: %w", name, ErrObjectNamasteNotExist)
+		}
 		return err
 	}
-	decl := Namaste{Type: NamasteTypeObject, Version: obj.State.Spec}.Name()
-	return ValidateNamaste(ctx, obj.FS, path.Join(obj.Path, decl))
+	return nil
 }
 
 // ExtensionNames returns the names of directories in the object root's
@@ -169,9 +175,6 @@ func (obj *ObjectRoot) ReadRoot(ctx context.Context) error {
 	return err
 }
 
-// Exists returns two bools: the first indicates if the existence status of the
-// object's root directory is known; the second indicates the existence status.
-// The second value should only be used if the first is true.
 func (obj *ObjectRoot) Exists(ctx context.Context) (bool, error) {
 	if obj.State == nil && obj.stateErr == nil {
 		// error is retained in stateErr
