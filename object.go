@@ -37,12 +37,13 @@ func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptio
 	for _, o := range opts {
 		o(&objOptions)
 	}
-	withOptions := func(opt *ObjectOptions) {
-		*opt = objOptions
+	if objOptions.Config.OCFLs == nil {
+		objOptions.Config.OCFLs = &defaultOCFLs
 	}
+	withOptions := func(opt *ObjectOptions) { *opt = objOptions }
 	// check if the OCFL spec was set explicitly
 	if useSpec := objOptions.UseSpec; !useSpec.Empty() {
-		ocflImpl, err := GetOCFL(useSpec)
+		ocflImpl, err := objOptions.Config.OCFLs.Get(useSpec)
 		if err != nil {
 			return nil, fmt.Errorf("with explicit OCFL spec %q: %w", useSpec, err)
 		}
@@ -55,7 +56,7 @@ func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptio
 	}
 	if rootDirExists && root.State.HasNamaste() {
 		useSpec := root.State.Spec
-		ocflImpl, err := GetOCFL(useSpec)
+		ocflImpl, err := objOptions.Config.OCFLs.Get(useSpec)
 		if err != nil {
 			return nil, fmt.Errorf("with OCFL spec found in object root %q: %w", useSpec, err)
 		}
@@ -63,7 +64,7 @@ func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptio
 	}
 	// Use the latest OCFL if object root is missing or empty
 	if !rootDirExists || root.State.Empty() {
-		ocflImpl, err := LatestOCFL()
+		ocflImpl, err := objOptions.Config.OCFLs.Latest()
 		if err != nil {
 			return nil, fmt.Errorf("with latest OCFL spec: %w", err)
 		}
@@ -84,6 +85,8 @@ const (
 
 // ObjectOptions are options used in OpenObject
 type ObjectOptions struct {
+	// Global OCFL Configuration
+	Config Config
 	// ID is the expected ID for the object (if being read), or the new ID for
 	// the object (if being created). ID is only required if the object is being
 	// created.
