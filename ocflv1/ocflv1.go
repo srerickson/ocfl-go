@@ -51,7 +51,7 @@ func (imp OCFL) Spec() ocfl.Spec {
 	return imp.spec
 }
 
-func (imp OCFL) NewObject(ctx context.Context, root *ocfl.ObjectRoot, opts ...func(*ocfl.ObjectOptions)) (ocfl.Object, error) {
+func (imp OCFL) OpenObject(ctx context.Context, root *ocfl.ObjectRoot, opts ...func(*ocfl.ObjectOptions)) (ocfl.Object, error) {
 	obj := &Object{
 		ObjectRoot: root,
 		myOCFL:     imp,

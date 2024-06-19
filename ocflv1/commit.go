@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log"
 	"log/slog"
 	"path"
 	"slices"
@@ -48,7 +47,6 @@ func Commit(ctx context.Context, fsys ocfl.WriteFS, objPath string, objID string
 
 	existObj, err = GetObject(ctx, fsys, objPath)
 	if err != nil {
-		log.Println(err)
 		// Handle acceptable error from GetObject() if the object doesn't exist. For a
 		// new object, the object path must not exist. The only acceptable error
 		// here is ErrNotExist for the object path.

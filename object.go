@@ -48,7 +48,7 @@ func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptio
 		if err != nil {
 			return nil, fmt.Errorf("with explicit OCFL spec %q: %w", useSpec, err)
 		}
-		return ocflImpl.NewObject(ctx, root, withOptions)
+		return ocflImpl.OpenObject(ctx, root, withOptions)
 	}
 	// Use the OCFL spec found in object root, if present
 	rootDirExists, err := root.Exists(ctx)
@@ -61,7 +61,7 @@ func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptio
 		if err != nil {
 			return nil, fmt.Errorf("with OCFL spec found in object root %q: %w", useSpec, err)
 		}
-		return ocflImpl.NewObject(ctx, root, withOptions)
+		return ocflImpl.OpenObject(ctx, root, withOptions)
 	}
 	// Use the latest OCFL if object root is missing or empty
 	if !rootDirExists || root.State.Empty() {
@@ -69,7 +69,7 @@ func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptio
 		if err != nil {
 			return nil, fmt.Errorf("with latest OCFL spec: %w", err)
 		}
-		return ocflImpl.NewObject(ctx, root, withOptions)
+		return ocflImpl.OpenObject(ctx, root, withOptions)
 	}
 	// give, up because there is no OCFL object declaration
 	return nil, fmt.Errorf("can't identify an OCFL specification for the object: %w", ErrObjectNamasteNotExist)

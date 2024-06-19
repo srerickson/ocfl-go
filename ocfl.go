@@ -35,7 +35,7 @@ var (
 // version of the OCFL specification.
 type OCFL interface {
 	Spec() Spec
-	NewObject(context.Context, *ObjectRoot, ...func(*ObjectOptions)) (Object, error)
+	OpenObject(context.Context, *ObjectRoot, ...func(*ObjectOptions)) (Object, error)
 	// SorageRoot
 	// Validate
 }
