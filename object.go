@@ -74,14 +74,14 @@ func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptio
 	return obj, nil
 }
 
-type ObjectMode uint8
+// type ObjectMode uint8
 
-const (
-	ObjectModeReadOnly ObjectMode = iota
-	// ObjectModeReadWrite
-	// ObjectModeCreate // When writing, create a new object if neccessary.
-	// ObjectModeUpdate
-)
+// const (
+// 	ObjectModeReadOnly ObjectMode = iota
+// 	// ObjectModeReadWrite
+// 	// ObjectModeCreate // When writing, create a new object if neccessary.
+// 	// ObjectModeUpdate
+// )
 
 // ObjectOptions are options used in OpenObject
 type ObjectOptions struct {
