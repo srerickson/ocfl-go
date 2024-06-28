@@ -3,76 +3,75 @@ package ocfl
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
-type Object interface {
-	Exists(context.Context) (bool, error)
-	Root() *ObjectRoot
+type Object struct {
+	OCFL      OCFL
+	Root      *ObjectRoot
+	Inventory Inventory
 }
 
-// type Inventory interface {
-// 	DigestAlgorithm() string
-// 	Head() VNum
-// 	ID() string
-// 	Manifest() DigestMap
-// 	Spec() Spec
-// 	Version(int) ObjectVersion
-// }
-
-// type ObjectVersion interface {
-// 	State() DigestMap
-// 	User() *User
-// 	Message() string
-// 	Created() time.Time
-// }
-
-// User is a generic user information struct
-type User struct {
-	Name    string `json:"name"`
-	Address string `json:"address,omitempty"`
-}
-
-func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptions)) (Object, error) {
-	objOptions := ObjectOptions{}
-	for _, o := range opts {
-		o(&objOptions)
-	}
-	ocfls := objOptions.Config.OCFLs
-	if ocfls == nil {
-		ocfls = &defaultOCFLs
-	}
-	withOptions := func(opt *ObjectOptions) { *opt = objOptions }
-	// check if the OCFL spec was set explicitly
-	if useSpec := objOptions.UseSpec; !useSpec.Empty() {
-		ocflImpl, err := ocfls.Get(useSpec)
-		if err != nil {
-			return nil, fmt.Errorf("with explicit OCFL spec %q: %w", useSpec, err)
-		}
-		return ocflImpl.OpenObject(ctx, root, withOptions)
-	}
-	// Use the OCFL spec found in object root, if present
-	rootDirExists, err := root.Exists(ctx)
+func (obj *Object) Exists(ctx context.Context) (bool, error) {
+	dirExists, err := obj.Root.Exists(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("accessing object root contents: %w", err)
+		return false, err
 	}
-	if rootDirExists && root.State.HasNamaste() {
-		useSpec := root.State.Spec
-		ocflImpl, err := ocfls.Get(useSpec)
+	if !dirExists {
+		// object root doesn't exist
+		return false, nil
+	}
+	if obj.Root.State.Empty() {
+		// object root is an empty directory
+		return false, nil
+	}
+	if obj.Root.State.HasNamaste() {
+		// object root has an object namaste file
+		return true, nil
+	}
+	return false, fmt.Errorf("object root is not an OCFL object: %w", ErrObjectNamasteNotExist)
+}
+
+func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*ObjectOptions)) (*Object, error) {
+	objOpts := ObjectOptions{}
+	for _, optFn := range opts {
+		optFn(&objOpts)
+	}
+	obj := &Object{Root: root, OCFL: objOpts.OCFL}
+	if obj.OCFL == nil {
+		rootDirExists, err := root.Exists(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("with OCFL spec found in object root %q: %w", useSpec, err)
+			return nil, fmt.Errorf("accessing object root contents: %w", err)
 		}
-		return ocflImpl.OpenObject(ctx, root, withOptions)
-	}
-	// Use the latest OCFL if object root is missing or empty
-	if !rootDirExists || root.State.Empty() {
-		ocflImpl, err := ocfls.Latest()
-		if err != nil {
-			return nil, fmt.Errorf("with latest OCFL spec: %w", err)
+		ocfls := objOpts.Config.OCFLs
+		if ocfls == nil {
+			ocfls = &defaultOCFLs
 		}
-		return ocflImpl.OpenObject(ctx, root, withOptions)
+		switch {
+		case rootDirExists && root.State.HasNamaste():
+			useSpec := root.State.Spec
+			ocflImpl, err := ocfls.Get(useSpec)
+			if err != nil {
+				return nil, fmt.Errorf("with OCFL spec found in object root %q: %w", useSpec, err)
+			}
+			obj.OCFL = ocflImpl
+		case !rootDirExists || root.State.Empty():
+			ocflImpl, err := ocfls.Latest()
+			if err != nil {
+				return nil, fmt.Errorf("with latest OCFL spec: %w", err)
+			}
+			obj.OCFL = ocflImpl
+		default:
+			err = fmt.Errorf("can't identify an OCFL specification for the object: %w", ErrObjectNamasteNotExist)
+			return nil, err
+		}
 	}
-	// give, up because there is no OCFL object declaration
-	return nil, fmt.Errorf("can't identify an OCFL specification for the object: %w", ErrObjectNamasteNotExist)
+
+	// inv := obj.OCFL.Inventory()
+	// if err := obj.Root.UnmarshalInventory(ctx, ".", inv); err != nil {
+	// 	return nil, err
+	// }
+	return obj, nil
 }
 
 type ObjectMode uint8
@@ -92,9 +91,9 @@ type ObjectOptions struct {
 	// the object (if being created). ID is only required if the object is being
 	// created.
 	ID string
-	// UseSpec sets the OCFL specification that should be used for accessing or
+	// OCFL sets the OCFL specification that should be used for accessing or
 	// creating the object.
-	UseSpec Spec
+	OCFL OCFL
 
 	// MustExist: if the object doesn't exist, return an error
 	// MustExist bool
@@ -117,9 +116,9 @@ type ObjectOptionsFunc func(*ObjectOptions)
 // 	}
 // }
 
-func ObjectUseSpec(spec Spec) ObjectOptionsFunc {
+func ObjectUseOCFL(ocfl OCFL) ObjectOptionsFunc {
 	return func(opt *ObjectOptions) {
-		opt.UseSpec = spec
+		opt.OCFL = ocfl
 	}
 }
 
@@ -140,3 +139,26 @@ func ObjectSetID(id string) ObjectOptionsFunc {
 // 		opt.SkipRead = true
 // 	}
 // }
+
+type Inventory interface {
+	FixitySource
+	DigestAlgorithm() string
+	Head() VNum
+	ID() string
+	Manifest() DigestMap
+	Spec() Spec
+	Version(int) ObjectVersion
+}
+
+type ObjectVersion interface {
+	State() DigestMap
+	User() *User
+	Message() string
+	Created() time.Time
+}
+
+// User is a generic user information struct
+type User struct {
+	Name    string `json:"name"`
+	Address string `json:"address,omitempty"`
+}

@@ -4,7 +4,6 @@
 package ocfl
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -35,7 +34,8 @@ var (
 // version of the OCFL specification.
 type OCFL interface {
 	Spec() Spec
-	OpenObject(context.Context, *ObjectRoot, ...func(*ObjectOptions)) (Object, error)
+	Inventory() Inventory
+	// OpenObject(context.Context, *ObjectRoot, ...func(*ObjectOptions)) (*Object, error)
 	// SorageRoot
 	// Validate
 }
@@ -51,6 +51,7 @@ type OCLFRegister struct {
 }
 
 func GetOCFL(spec Spec) (OCFL, error) { return defaultOCFLs.Get(spec) }
+func MustGetOCFL(spec Spec) OCFL      { return defaultOCFLs.MustGet(spec) }
 func RegisterOCLF(imp OCFL) bool      { return defaultOCFLs.Set(imp) }
 func UnsetOCFL(spec Spec) bool        { return defaultOCFLs.Unset(spec) }
 func LatestOCFL() (OCFL, error)       { return defaultOCFLs.Latest() }
@@ -63,6 +64,14 @@ func (reg *OCLFRegister) Get(spec Spec) (OCFL, error) {
 		return imp, nil
 	}
 	return nil, ErrOCFLNotImplemented
+}
+
+func (reg *OCLFRegister) MustGet(spec Spec) OCFL {
+	imp, err := reg.Get(spec)
+	if err != nil {
+		panic(err)
+	}
+	return imp
 }
 
 func (ocfl *OCLFRegister) Set(imp OCFL) bool {

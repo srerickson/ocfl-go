@@ -15,16 +15,10 @@ func TestOpenObject(t *testing.T) {
 	ctx := context.Background()
 	fsys := ocfl.DirFS(objectFixturesPath)
 
-	expectNilErr := func(t *testing.T, _ ocfl.Object, err error) {
+	expectErrIs := func(t *testing.T, err error, wantErr error) {
 		t.Helper()
-		be.NilErr(t, err)
-	}
-	expectErrIs := func(wantErr error) func(t *testing.T, _ ocfl.Object, err error) {
-		return func(t *testing.T, _ ocfl.Object, err error) {
-			t.Helper()
-			if !errors.Is(err, wantErr) {
-				t.Errorf("wanted error: %q; got error: %q", wantErr, err)
-			}
+		if !errors.Is(err, wantErr) {
+			t.Errorf("wanted error: %q; got error: %q", wantErr, err)
 		}
 	}
 
@@ -32,24 +26,32 @@ func TestOpenObject(t *testing.T) {
 		ctx    context.Context
 		root   *ocfl.ObjectRoot
 		opts   *ocfl.ObjectOptions
-		expect func(*testing.T, ocfl.Object, error)
+		expect func(*testing.T, *ocfl.Object, error)
 	}
 	testCases := map[string]testCase{
 		"ok 1.0": {
 			root: &ocfl.ObjectRoot{FS: fsys, Path: "1.0/good-objects/spec-ex-full"},
+			expect: func(t *testing.T, _ *ocfl.Object, err error) {
+				be.NilErr(t, err)
+			},
 		},
 		"wrong spec 1.0": {
-			root:   &ocfl.ObjectRoot{FS: fsys, Path: "1.0/good-objects/spec-ex-full"},
-			opts:   &ocfl.ObjectOptions{UseSpec: ocfl.Spec1_1},
-			expect: expectErrIs(ocfl.ErrObjectNamasteNotExist),
+			root: &ocfl.ObjectRoot{FS: fsys, Path: "1.0/good-objects/spec-ex-full"},
+			opts: &ocfl.ObjectOptions{OCFL: ocfl.MustGetOCFL(ocfl.Spec1_1)},
+			expect: func(t *testing.T, _ *ocfl.Object, err error) {
+				expectErrIs(t, err, ocfl.ErrObjectNamasteNotExist)
+			},
 		},
 		"ok 1.1": {
 			root: &ocfl.ObjectRoot{FS: fsys, Path: "1.1/good-objects/spec-ex-full"},
+			expect: func(t *testing.T, _ *ocfl.Object, err error) {
+				be.NilErr(t, err)
+			},
 		},
 		"not existing": {
 			ctx:  ctx,
 			root: &ocfl.ObjectRoot{FS: fsys, Path: "new-dir"},
-			expect: func(t *testing.T, obj ocfl.Object, err error) {
+			expect: func(t *testing.T, obj *ocfl.Object, err error) {
 				be.NilErr(t, err)
 				exists, err := obj.Exists(ctx)
 				be.NilErr(t, err)
@@ -57,10 +59,12 @@ func TestOpenObject(t *testing.T) {
 			},
 		},
 		"empty": {
-			ctx:    ctx,
-			root:   &ocfl.ObjectRoot{FS: fsys, Path: "1.1/bad-objects/E003_E063_empty"},
-			opts:   &ocfl.ObjectOptions{UseSpec: ocfl.Spec1_1},
-			expect: expectNilErr,
+			ctx:  ctx,
+			root: &ocfl.ObjectRoot{FS: fsys, Path: "1.1/bad-objects/E003_E063_empty"},
+			opts: &ocfl.ObjectOptions{OCFL: ocfl.MustGetOCFL(ocfl.Spec1_1)},
+			expect: func(t *testing.T, _ *ocfl.Object, err error) {
+				be.NilErr(t, err)
+			},
 		},
 	}
 	i := 0
@@ -68,9 +72,6 @@ func TestOpenObject(t *testing.T) {
 		t.Run(fmt.Sprintf("%d-%s", i, name), func(t *testing.T) {
 			if tCase.ctx == nil {
 				tCase.ctx = ctx
-			}
-			if tCase.expect == nil {
-				tCase.expect = expectNilErr
 			}
 			obj, err := ocfl.OpenObject(tCase.ctx, tCase.root, func(opt *ocfl.ObjectOptions) {
 				if tCase.opts != nil {

@@ -2,9 +2,6 @@
 package ocflv1
 
 import (
-	"context"
-	"fmt"
-
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/validation"
 )
@@ -47,30 +44,8 @@ type OCFL struct {
 	spec ocfl.Spec // 1.0 or 1.1
 }
 
-func (imp OCFL) Spec() ocfl.Spec {
-	return imp.spec
-}
+func (imp OCFL) Spec() ocfl.Spec { return imp.spec }
 
-func (imp OCFL) OpenObject(ctx context.Context, root *ocfl.ObjectRoot, opts ...func(*ocfl.ObjectOptions)) (ocfl.Object, error) {
-	obj := &Object{
-		ObjectRoot: root,
-		myOCFL:     imp,
-	}
-	for _, applyOpt := range opts {
-		applyOpt(&obj.opts)
-	}
-	exists, err := obj.Exists(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if exists {
-		if err := obj.ObjectRoot.UnmarshalInventory(ctx, ".", &obj.Inventory); err != nil {
-			return nil, err
-		}
-		invSpec := obj.Inventory.Type.Spec
-		if invSpec != imp.spec {
-			return nil, fmt.Errorf("object's OCFL specification (%q) is not supported: expected %q", string(invSpec), string(imp.spec))
-		}
-	}
-	return obj, nil
+func (imp OCFL) Inventory() ocfl.Inventory {
+	return &inventory{}
 }
