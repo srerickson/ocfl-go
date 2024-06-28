@@ -25,7 +25,7 @@ func TestOpenObject(t *testing.T) {
 	type testCase struct {
 		ctx    context.Context
 		root   *ocfl.ObjectRoot
-		opts   *ocfl.ObjectOptions
+		opts   []func(*ocfl.Object)
 		expect func(*testing.T, *ocfl.Object, error)
 	}
 	testCases := map[string]testCase{
@@ -36,8 +36,10 @@ func TestOpenObject(t *testing.T) {
 			},
 		},
 		"wrong spec 1.0": {
+			// FIXME: the test should check that openning an object with a spec
+			// that is older than the object return an error.
 			root: &ocfl.ObjectRoot{FS: fsys, Path: "1.0/good-objects/spec-ex-full"},
-			opts: &ocfl.ObjectOptions{OCFL: ocfl.MustGetOCFL(ocfl.Spec1_1)},
+			opts: []func(*ocfl.Object){ocfl.ObjectUseOCFL(ocfl.MustGetOCFL(ocfl.Spec1_1))},
 			expect: func(t *testing.T, _ *ocfl.Object, err error) {
 				expectErrIs(t, err, ocfl.ErrObjectNamasteNotExist)
 			},
@@ -61,7 +63,7 @@ func TestOpenObject(t *testing.T) {
 		"empty": {
 			ctx:  ctx,
 			root: &ocfl.ObjectRoot{FS: fsys, Path: "1.1/bad-objects/E003_E063_empty"},
-			opts: &ocfl.ObjectOptions{OCFL: ocfl.MustGetOCFL(ocfl.Spec1_1)},
+			opts: []func(*ocfl.Object){ocfl.ObjectUseOCFL(ocfl.MustGetOCFL(ocfl.Spec1_1))},
 			expect: func(t *testing.T, _ *ocfl.Object, err error) {
 				be.NilErr(t, err)
 			},
@@ -73,11 +75,7 @@ func TestOpenObject(t *testing.T) {
 			if tCase.ctx == nil {
 				tCase.ctx = ctx
 			}
-			obj, err := ocfl.OpenObject(tCase.ctx, tCase.root, func(opt *ocfl.ObjectOptions) {
-				if tCase.opts != nil {
-					*opt = *tCase.opts
-				}
-			})
+			obj, err := ocfl.OpenObject(tCase.ctx, tCase.root, tCase.opts...)
 			tCase.expect(t, obj, err)
 		})
 		i++

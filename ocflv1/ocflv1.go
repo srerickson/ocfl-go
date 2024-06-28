@@ -2,6 +2,9 @@
 package ocflv1
 
 import (
+	"context"
+	"errors"
+
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/validation"
 )
@@ -48,4 +51,18 @@ func (imp OCFL) Spec() ocfl.Spec { return imp.spec }
 
 func (imp OCFL) Inventory() ocfl.Inventory {
 	return &inventory{}
+}
+
+func (imp OCFL) Commit(ctx context.Context, obj *ocfl.Object, commit *ocfl.Commit) error {
+	writeFS, ok := obj.Root.FS.(ocfl.WriteFS)
+	if !ok {
+		return errors.New("object's backing file system doesn't support writes")
+	}
+	return Commit(ctx, writeFS, obj.Root.Path, obj.ID(), commit.Stage,
+		WithUser(&commit.User),
+		WithMessage(commit.Message),
+		WithOCFLSpec(imp.Spec()),
+		WithAllowUnchanged(commit.AllowUnchanged),
+		WithHEAD(commit.NewHEAD),
+	)
 }

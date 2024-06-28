@@ -80,7 +80,7 @@ func main() {
 	}
 	err = store.Commit(ctx, id, stage,
 		ocflv1.WithMessage(msg),
-		ocflv1.WithUser(user))
+		ocflv1.WithUser(&user))
 	if err != nil {
 		quit(err)
 	}

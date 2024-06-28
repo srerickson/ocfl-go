@@ -4,6 +4,7 @@
 package ocfl
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -35,6 +36,7 @@ var (
 type OCFL interface {
 	Spec() Spec
 	Inventory() Inventory
+	Commit(ctx context.Context, obj *Object, commit *Commit) error
 	// OpenObject(context.Context, *ObjectRoot, ...func(*ObjectOptions)) (*Object, error)
 	// SorageRoot
 	// Validate
@@ -42,6 +44,13 @@ type OCFL interface {
 
 type Config struct {
 	OCFLs *OCLFRegister
+}
+
+func (c Config) GetSpec(spec Spec) (OCFL, error) {
+	if c.OCFLs == nil {
+		defaultOCFLs.Get(spec)
+	}
+	return c.OCFLs.Get(spec)
 }
 
 type OCLFRegister struct {

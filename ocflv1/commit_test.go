@@ -69,7 +69,7 @@ func TestCommit(t *testing.T) {
 		if err == nil {
 			t.Error("Commit() should return an error because of duplicate version")
 		}
-		err = ocflv1.Commit(ctx, fsys, root, id, stage, ocflv1.WithAllowUnchanged())
+		err = ocflv1.Commit(ctx, fsys, root, id, stage, ocflv1.WithAllowUnchanged(true))
 		if err != nil {
 			t.Error("Commit() didn't allow unchanged version with WithAllowUnchange:", err)
 		}

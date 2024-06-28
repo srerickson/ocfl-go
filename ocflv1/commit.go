@@ -285,9 +285,9 @@ func WithMessage(msg string) CommitOption {
 }
 
 // WithUser sets the user for the new object version.
-func WithUser(user ocfl.User) CommitOption {
+func WithUser(user *ocfl.User) CommitOption {
 	return func(comm *commitOpt) {
-		comm.user = &user
+		comm.user = user
 	}
 }
 
@@ -319,9 +319,9 @@ func WithLogger(logger *slog.Logger) CommitOption {
 
 // WithAllowUnchanged enables committing a version with the same state
 // as the existing head version.
-func WithAllowUnchanged() CommitOption {
+func WithAllowUnchanged(val bool) CommitOption {
 	return func(comm *commitOpt) {
-		comm.allowUnchanged = true
+		comm.allowUnchanged = val
 	}
 }
 
