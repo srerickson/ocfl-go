@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"time"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/validation"
@@ -125,3 +126,42 @@ func Objects(ctx context.Context, fsys ocfl.FS, dir string) ObjectSeq {
 }
 
 type ObjectSeq func(yield func(*Object, error) bool)
+
+type versionFS struct {
+	fs       ocfl.FS
+	path     string
+	manifest ocfl.DigestMap
+	version  Version
+}
+
+func (vfs versionFS) State() ocfl.DigestMap { return vfs.version.State }
+func (vfs versionFS) Message() string       { return vfs.version.Message }
+func (vfs versionFS) Created() time.Time    { return vfs.version.Created }
+func (vfs versionFS) User() *ocfl.User      { return vfs.version.User }
+func (vfs versionFS) Close() error          { return nil }
+func (vfs *versionFS) OpenFile(ctx context.Context, logical string) (fs.File, error) {
+	// if version.State.
+	digest := vfs.version.State.GetDigest(logical)
+	realNames := vfs.manifest[digest]
+	if digest == "" || len(realNames) < 1 {
+		return nil, &fs.PathError{
+			Err:  fs.ErrNotExist,
+			Op:   "open",
+			Path: logical,
+		}
+	}
+	realName := realNames[0]
+	if !fs.ValidPath(realName) {
+		return nil, &fs.PathError{
+			Err:  fs.ErrInvalid,
+			Op:   "open",
+			Path: logical,
+		}
+	}
+	f, err := vfs.fs.OpenFile(ctx, path.Join(vfs.path, realName))
+	if err != nil {
+		err = fmt.Errorf("opening file with logical path %q: %w", logical, err)
+		return nil, err
+	}
+	return f, nil
+}

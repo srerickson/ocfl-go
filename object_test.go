@@ -14,6 +14,7 @@ import (
 func TestOpenObject(t *testing.T) {
 	ctx := context.Background()
 	fsys := ocfl.DirFS(objectFixturesPath)
+	ocflv1_1 := ocfl.MustGetOCFL(ocfl.Spec1_1)
 
 	expectErrIs := func(t *testing.T, err error, wantErr error) {
 		t.Helper()
@@ -36,10 +37,8 @@ func TestOpenObject(t *testing.T) {
 			},
 		},
 		"wrong spec 1.0": {
-			// FIXME: the test should check that openning an object with a spec
-			// that is older than the object return an error.
 			root: &ocfl.ObjectRoot{FS: fsys, Path: "1.0/good-objects/spec-ex-full"},
-			opts: []func(*ocfl.Object){ocfl.ObjectUseOCFL(ocfl.MustGetOCFL(ocfl.Spec1_1))},
+			opts: []func(*ocfl.Object){ocfl.ObjectUseOCFL(ocflv1_1)},
 			expect: func(t *testing.T, _ *ocfl.Object, err error) {
 				expectErrIs(t, err, ocfl.ErrObjectNamasteNotExist)
 			},

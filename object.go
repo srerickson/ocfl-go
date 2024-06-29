@@ -3,24 +3,26 @@ package ocfl
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"time"
 )
 
 type Object struct {
-	Root *ObjectRoot
-	//Inventory Inventory
-
+	root *ObjectRoot
+	// inv    Inventory
 	ocfl   OCFL
 	id     string
 	config Config
 }
 
-func (obj *Object) ID() string {
-	return obj.id
-}
+func (obj *Object) FS() FS { return obj.root.FS }
+
+func (obj *Object) Path() string { return obj.root.Path }
+
+func (obj *Object) ID() string { return obj.id }
 
 func (obj *Object) Exists(ctx context.Context) (bool, error) {
-	dirExists, err := obj.Root.Exists(ctx)
+	dirExists, err := obj.root.Exists(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -28,15 +30,21 @@ func (obj *Object) Exists(ctx context.Context) (bool, error) {
 		// object root doesn't exist
 		return false, nil
 	}
-	if obj.Root.State.Empty() {
+	if obj.root.State.Empty() {
 		// object root is an empty directory
 		return false, nil
 	}
-	if obj.Root.State.HasNamaste() {
+	if obj.root.State.HasNamaste() {
 		// object root has an object namaste file
 		return true, nil
 	}
 	return false, fmt.Errorf("object root is not an OCFL object: %w", ErrObjectNamasteNotExist)
+}
+
+// OpenVersion returns an ObjectVersionFS for the version with the given
+// index (1...HEAD).
+func (obj *Object) OpenVersion(ctx context.Context, i int) (ObjectVersionFS, error) {
+	return obj.ocfl.OpenVersion(ctx, obj, i)
 }
 
 func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
@@ -64,12 +72,12 @@ type Commit struct {
 }
 
 func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*Object)) (*Object, error) {
-	obj := &Object{Root: root}
+	obj := &Object{root: root}
 	for _, optFn := range opts {
 		optFn(obj)
 	}
 	if obj.ocfl == nil {
-		rootDirExists, err := obj.Root.Exists(ctx)
+		rootDirExists, err := obj.root.Exists(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("accessing object root contents: %w", err)
 		}
@@ -191,4 +199,10 @@ type ObjectVersion interface {
 type User struct {
 	Name    string `json:"name"`
 	Address string `json:"address,omitempty"`
+}
+
+type ObjectVersionFS interface {
+	ObjectVersion
+	OpenFile(ctx context.Context, name string) (fs.File, error)
+	Close() error
 }

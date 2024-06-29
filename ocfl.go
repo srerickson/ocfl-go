@@ -37,6 +37,7 @@ type OCFL interface {
 	Spec() Spec
 	Inventory() Inventory
 	Commit(ctx context.Context, obj *Object, commit *Commit) error
+	OpenVersion(ctx context.Context, obj *Object, i int) (ObjectVersionFS, error)
 	// OpenObject(context.Context, *ObjectRoot, ...func(*ObjectOptions)) (*Object, error)
 	// SorageRoot
 	// Validate

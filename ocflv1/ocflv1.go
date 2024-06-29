@@ -54,15 +54,23 @@ func (imp OCFL) Inventory() ocfl.Inventory {
 }
 
 func (imp OCFL) Commit(ctx context.Context, obj *ocfl.Object, commit *ocfl.Commit) error {
-	writeFS, ok := obj.Root.FS.(ocfl.WriteFS)
+	writeFS, ok := obj.FS().(ocfl.WriteFS)
 	if !ok {
 		return errors.New("object's backing file system doesn't support writes")
 	}
-	return Commit(ctx, writeFS, obj.Root.Path, obj.ID(), commit.Stage,
+	return Commit(ctx, writeFS, obj.Path(), obj.ID(), commit.Stage,
 		WithUser(&commit.User),
 		WithMessage(commit.Message),
 		WithOCFLSpec(imp.Spec()),
 		WithAllowUnchanged(commit.AllowUnchanged),
 		WithHEAD(commit.NewHEAD),
 	)
+}
+
+func (imp OCFL) OpenVersion(ctx context.Context, obj *ocfl.Object, i int) (ocfl.ObjectVersionFS, error) {
+	return &versionFS{
+		fs:   obj.FS(),
+		path: obj.Path(),
+		// ?
+	}, nil
 }
