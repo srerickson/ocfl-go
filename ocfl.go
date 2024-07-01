@@ -35,9 +35,9 @@ var (
 // version of the OCFL specification.
 type OCFL interface {
 	Spec() Spec
-	Inventory() Inventory
-	Commit(ctx context.Context, obj *Object, commit *Commit) error
-	OpenVersion(ctx context.Context, obj *Object, i int) (ObjectVersionFS, error)
+	OpenObject(ctx context.Context, fsys FS, path string) (SpecObject, error)
+	Commit(ctx context.Context, fsys WriteFS, path string, commit *Commit) (SpecObject, error)
+	// OpenVersion(ctx context.Context, obj *Object, i int) (ObjectVersionFS, error)
 	// OpenObject(context.Context, *ObjectRoot, ...func(*ObjectOptions)) (*Object, error)
 	// SorageRoot
 	// Validate

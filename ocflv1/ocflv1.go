@@ -49,22 +49,19 @@ type OCFL struct {
 
 func (imp OCFL) Spec() ocfl.Spec { return imp.spec }
 
-func (imp OCFL) Inventory() ocfl.Inventory {
-	return &inventory{}
+func (imp OCFL) OpenObject(ctx context.Context, fsys ocfl.FS, path string) (ocfl.SpecObject, error) {
+	return nil, errors.New("not implemented")
 }
 
-func (imp OCFL) Commit(ctx context.Context, obj *ocfl.Object, commit *ocfl.Commit) error {
-	writeFS, ok := obj.FS().(ocfl.WriteFS)
-	if !ok {
-		return errors.New("object's backing file system doesn't support writes")
-	}
-	return Commit(ctx, writeFS, obj.Path(), obj.ID(), commit.Stage,
+func (imp OCFL) Commit(ctx context.Context, fsys ocfl.WriteFS, path string, commit *ocfl.Commit) (ocfl.SpecObject, error) {
+	err := Commit(ctx, fsys, path, commit.ID, commit.Stage,
 		WithUser(&commit.User),
 		WithMessage(commit.Message),
 		WithOCFLSpec(imp.Spec()),
 		WithAllowUnchanged(commit.AllowUnchanged),
 		WithHEAD(commit.NewHEAD),
 	)
+	return nil, err
 }
 
 func (imp OCFL) OpenVersion(ctx context.Context, obj *ocfl.Object, i int) (ocfl.ObjectVersionFS, error) {

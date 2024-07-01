@@ -25,43 +25,46 @@ func TestOpenObject(t *testing.T) {
 
 	type testCase struct {
 		ctx    context.Context
-		root   *ocfl.ObjectRoot
+		fs     ocfl.FS
+		path   string
 		opts   []func(*ocfl.Object)
 		expect func(*testing.T, *ocfl.Object, error)
 	}
 	testCases := map[string]testCase{
 		"ok 1.0": {
-			root: &ocfl.ObjectRoot{FS: fsys, Path: "1.0/good-objects/spec-ex-full"},
+			fs:   fsys,
+			path: "1.0/good-objects/spec-ex-full",
 			expect: func(t *testing.T, _ *ocfl.Object, err error) {
 				be.NilErr(t, err)
 			},
 		},
 		"wrong spec 1.0": {
-			root: &ocfl.ObjectRoot{FS: fsys, Path: "1.0/good-objects/spec-ex-full"},
+			fs:   fsys,
+			path: "1.0/good-objects/spec-ex-full",
 			opts: []func(*ocfl.Object){ocfl.ObjectUseOCFL(ocflv1_1)},
 			expect: func(t *testing.T, _ *ocfl.Object, err error) {
 				expectErrIs(t, err, ocfl.ErrObjectNamasteNotExist)
 			},
 		},
 		"ok 1.1": {
-			root: &ocfl.ObjectRoot{FS: fsys, Path: "1.1/good-objects/spec-ex-full"},
+			fs:   fsys,
+			path: "1.1/good-objects/spec-ex-full",
 			expect: func(t *testing.T, _ *ocfl.Object, err error) {
 				be.NilErr(t, err)
 			},
 		},
 		"not existing": {
 			ctx:  ctx,
-			root: &ocfl.ObjectRoot{FS: fsys, Path: "new-dir"},
+			fs:   fsys,
+			path: "new-dir",
 			expect: func(t *testing.T, obj *ocfl.Object, err error) {
 				be.NilErr(t, err)
-				exists, err := obj.Exists(ctx)
-				be.NilErr(t, err)
-				be.False(t, exists)
 			},
 		},
 		"empty": {
 			ctx:  ctx,
-			root: &ocfl.ObjectRoot{FS: fsys, Path: "1.1/bad-objects/E003_E063_empty"},
+			fs:   fsys,
+			path: "1.1/bad-objects/E003_E063_empty",
 			opts: []func(*ocfl.Object){ocfl.ObjectUseOCFL(ocfl.MustGetOCFL(ocfl.Spec1_1))},
 			expect: func(t *testing.T, _ *ocfl.Object, err error) {
 				be.NilErr(t, err)
@@ -74,7 +77,7 @@ func TestOpenObject(t *testing.T) {
 			if tCase.ctx == nil {
 				tCase.ctx = ctx
 			}
-			obj, err := ocfl.OpenObject(tCase.ctx, tCase.root, tCase.opts...)
+			obj, err := ocfl.OpenObject(tCase.ctx, tCase.fs, tCase.path, tCase.opts...)
 			tCase.expect(t, obj, err)
 		})
 		i++

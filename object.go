@@ -2,49 +2,170 @@ package ocfl
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"path"
 	"time"
 )
 
+// OpenObject returns a new Object reference for managing the OCFL object at
+// root. The object doesn't need to exist when OpenObject is called.
+func OpenObject(ctx context.Context, fsys FS, path string, opts ...func(*Object)) (*Object, error) {
+	if !fs.ValidPath(path) {
+		return nil, fmt.Errorf("invalid object path: %q: %w", path, fs.ErrInvalid)
+	}
+	obj := &Object{fs: fsys, path: path}
+	for _, optFn := range opts {
+		optFn(obj)
+	}
+	if obj.ocfl == nil {
+		rootState, err := obj.RootState(ctx)
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				return nil, fmt.Errorf("reading object root contents: %w", err)
+			}
+		}
+		ocflRegister := obj.config.OCFLs
+		if ocflRegister == nil {
+			ocflRegister = &defaultOCFLs
+		}
+		switch {
+		case rootState == nil || rootState.Empty():
+			ocflImpl, err := ocflRegister.Latest()
+			if err != nil {
+				return nil, fmt.Errorf("with latest OCFL spec: %w", err)
+			}
+			obj.ocfl = ocflImpl
+		case rootState.HasNamaste():
+			ocflImpl, err := ocflRegister.Get(rootState.Spec)
+			if err != nil {
+				return nil, fmt.Errorf("with OCFL spec found in object root %q: %w", rootState.Spec, err)
+			}
+			obj.ocfl = ocflImpl
+
+		default:
+			return nil, fmt.Errorf("can't identify an OCFL specification for the object: %w", ErrObjectNamasteNotExist)
+		}
+	}
+	return obj, nil
+}
+
 type Object struct {
-	root *ObjectRoot
-	// inv    Inventory
+	fs     FS
+	path   string
 	ocfl   OCFL
-	id     string
 	config Config
 }
 
-func (obj *Object) FS() FS { return obj.root.FS }
+func (obj *Object) FS() FS { return obj.fs }
 
-func (obj *Object) Path() string { return obj.root.Path }
+func (obj *Object) Path() string { return obj.path }
 
-func (obj *Object) ID() string { return obj.id }
+// func (obj *Object) ID() string { return obj.id }
 
-func (obj *Object) Exists(ctx context.Context) (bool, error) {
-	dirExists, err := obj.root.Exists(ctx)
+// ValidateNamaste reads and validates the contents of the OCFL object
+// declaration in the object root. The ObjectRoot's State is initialized if it
+// is nil.
+func (obj *Object) ValidateNamaste(ctx context.Context) error {
+	decl := Namaste{Type: NamasteTypeObject, Version: obj.ocfl.Spec()}
+	name := path.Join(obj.path, decl.Name())
+	err := ValidateNamaste(ctx, obj.fs, name)
 	if err != nil {
-		return false, err
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%s: %w", name, ErrObjectNamasteNotExist)
+		}
+		return err
 	}
-	if !dirExists {
-		// object root doesn't exist
-		return false, nil
+	return nil
+}
+
+func (obj Object) RootState(ctx context.Context) (*ObjectRootState, error) {
+	entries, err := obj.ReadDir(ctx, ".")
+	if err != nil {
+		return nil, err
 	}
-	if obj.root.State.Empty() {
-		// object root is an empty directory
-		return false, nil
+	return ParseObjectRootDir(entries), nil
+}
+
+// ExtensionNames returns the names of directories in the object's
+// extensions directory. The ObjectRoot's State is initialized if it is
+// nil. If the object root does not include an object declaration, an error
+// is returned. If object root does not include an extensions directory both
+// return values are nil.
+func (obj Object) ExtensionNames(ctx context.Context) ([]string, error) {
+	entries, err := obj.ReadDir(ctx, ExtensionsDir)
+	if err != nil {
+		return nil, err
 	}
-	if obj.root.State.HasNamaste() {
-		// object root has an object namaste file
-		return true, nil
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			// if the extensions directory includes non-directory
+			// entries, should we return an error?
+			continue
+		}
+		names = append(names, e.Name())
 	}
-	return false, fmt.Errorf("object root is not an OCFL object: %w", ErrObjectNamasteNotExist)
+	return names, err
+}
+
+// UnmarshalInventory unmarshals the inventory.json file in the object root's
+// sub-directory, dir, into the value pointed to by v. For example, set dir to
+// `v1` to unmarshall the object's v1 inventory. Set dir to `.` to unmarshal the
+// root inventory.
+func (obj Object) UnmarshalInventory(ctx context.Context, dir string, v any) (err error) {
+	name := inventoryFile
+	if dir != `.` {
+		name = dir + "/" + name
+	}
+	f, err := obj.OpenFile(ctx, name)
+	if err != nil {
+		return
+	}
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			err = errors.Join(err, f.Close())
+		}
+	}()
+	bytes, err := io.ReadAll(f)
+	if err != nil {
+		return
+	}
+	err = json.Unmarshal(bytes, v)
+	return
+}
+
+// OpenFile opens a file using a name relative to the object root's path
+func (obj *Object) OpenFile(ctx context.Context, name string) (fs.File, error) {
+	if obj.path != "." {
+		// using path.Join might hide potentially invalid values for
+		// obj.Path or name.
+		name = obj.path + "/" + name
+	}
+	return obj.fs.OpenFile(ctx, name)
+}
+
+// ReadDir reads a directory using a name relative to the object root's dir.
+func (obj *Object) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
+	if obj.path != "." {
+		switch {
+		case name == ".":
+			name = obj.path
+		default:
+			name = obj.path + "/" + name
+		}
+	}
+	return obj.fs.ReadDir(ctx, name)
 }
 
 // OpenVersion returns an ObjectVersionFS for the version with the given
 // index (1...HEAD).
 func (obj *Object) OpenVersion(ctx context.Context, i int) (ObjectVersionFS, error) {
-	return obj.ocfl.OpenVersion(ctx, obj, i)
+	//return obj.ocfl.OpenVersion(ctx, obj, i)
+	return nil, errors.New("not implemented")
 }
 
 func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
@@ -56,10 +177,19 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 			return err
 		}
 	}
-	return useOCFL.Commit(ctx, obj, commit)
+	writeFS, ok := obj.FS().(WriteFS)
+	if !ok {
+		return errors.New("object's backing file system doesn't support writes")
+	}
+	_, err := useOCFL.Commit(ctx, writeFS, obj.path, commit)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 type Commit struct {
+	ID      string
 	Stage   *Stage // required
 	Message string // required
 	User    User   // required
@@ -69,47 +199,6 @@ type Commit struct {
 	Upgrade        Spec      // used to upgrade object to newer OCFL
 	NewHEAD        int       // enforces new object version number
 	AllowUnchanged bool
-}
-
-func OpenObject(ctx context.Context, root *ObjectRoot, opts ...func(*Object)) (*Object, error) {
-	obj := &Object{root: root}
-	for _, optFn := range opts {
-		optFn(obj)
-	}
-	if obj.ocfl == nil {
-		rootDirExists, err := obj.root.Exists(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("accessing object root contents: %w", err)
-		}
-		ocflRegister := obj.config.OCFLs
-		if ocflRegister == nil {
-			ocflRegister = &defaultOCFLs
-		}
-		switch {
-		case rootDirExists && root.State.HasNamaste():
-			useSpec := root.State.Spec
-			ocflImpl, err := ocflRegister.Get(useSpec)
-			if err != nil {
-				return nil, fmt.Errorf("with OCFL spec found in object root %q: %w", useSpec, err)
-			}
-			obj.ocfl = ocflImpl
-		case !rootDirExists || root.State.Empty():
-			ocflImpl, err := ocflRegister.Latest()
-			if err != nil {
-				return nil, fmt.Errorf("with latest OCFL spec: %w", err)
-			}
-			obj.ocfl = ocflImpl
-		default:
-			err = fmt.Errorf("can't identify an OCFL specification for the object: %w", ErrObjectNamasteNotExist)
-			return nil, err
-		}
-	}
-
-	// inv := obj.OCFL.Inventory()
-	// if err := obj.Root.UnmarshalInventory(ctx, ".", inv); err != nil {
-	// 	return nil, err
-	// }
-	return obj, nil
 }
 
 // type ObjectMode uint8
@@ -160,11 +249,11 @@ func ObjectUseOCFL(ocfl OCFL) ObjectOption {
 	}
 }
 
-func ObjectSetID(id string) ObjectOption {
-	return func(opt *Object) {
-		opt.id = id
-	}
-}
+// func ObjectSetID(id string) ObjectOption {
+// 	return func(opt *Object) {
+// 		opt.id = id
+// 	}
+// }
 
 // func ObjectMustNotExist() ObjectOptionsFunc {
 // 	return func(opt *ObjectOptions) {
@@ -177,6 +266,10 @@ func ObjectSetID(id string) ObjectOption {
 // 		opt.SkipRead = true
 // 	}
 // }
+
+type SpecObject interface {
+	Inventory() Inventory
+}
 
 type Inventory interface {
 	FixitySource
