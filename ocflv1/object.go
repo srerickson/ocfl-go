@@ -2,8 +2,10 @@ package ocflv1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"time"
@@ -20,6 +22,63 @@ var (
 	ErrDigestAlg          = errors.New("invalid digest algorithm")
 	ErrObjRootStructure   = errors.New("object includes invalid files or directories")
 )
+
+func OpenObject(ctx context.Context, fsys ocfl.FS, dir string) (*FunObject, error) {
+	if !fs.ValidPath(dir) {
+		return nil, &fs.PathError{
+			Op:   "open",
+			Path: dir,
+			Err:  fs.ErrInvalid,
+		}
+	}
+	var inv *Inventory
+	invFile, err := fsys.OpenFile(ctx, path.Join(dir, inventoryFile))
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+		// additional checks in inventory doesn't exist?
+	}
+	if invFile != nil {
+		defer func() {
+			if closeErr := invFile.Close(); closeErr != nil {
+				err = errors.Join(err, invFile.Close())
+			}
+		}()
+		bytes, err := io.ReadAll(invFile)
+		if err != nil {
+			return nil, err
+		}
+		inv = &Inventory{}
+		if err := json.Unmarshal(bytes, inv); err != nil {
+			return nil, err
+		}
+	}
+	// inventory may be nil
+	obj := &FunObject{fs: fsys, path: dir, inv: inv}
+	return obj, nil
+}
+
+type FunObject struct {
+	fs   ocfl.FS
+	path string
+	inv  *Inventory
+}
+
+func (o *FunObject) FS() ocfl.FS { return o.fs }
+
+func (o *FunObject) Path() string { return o.path }
+
+func (o *FunObject) Inventory() ocfl.Inventory {
+	if o.inv == nil {
+		return nil
+	}
+	return &inventory{inv: *o.inv}
+}
+
+func (o *FunObject) Exists() bool {
+	return o.inv != nil
+}
 
 // Object represents an existing OCFL v1.x object. Use GetObject() to initialize
 // new Objects.

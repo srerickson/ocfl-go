@@ -36,7 +36,7 @@ var (
 type OCFL interface {
 	Spec() Spec
 	OpenObject(ctx context.Context, fsys FS, path string) (SpecObject, error)
-	Commit(ctx context.Context, fsys WriteFS, path string, commit *Commit) (SpecObject, error)
+	Commit(ctx context.Context, obj SpecObject, commit *Commit) (SpecObject, error)
 	// OpenVersion(ctx context.Context, obj *Object, i int) (ObjectVersionFS, error)
 	// OpenObject(context.Context, *ObjectRoot, ...func(*ObjectOptions)) (*Object, error)
 	// SorageRoot
@@ -49,7 +49,7 @@ type Config struct {
 
 func (c Config) GetSpec(spec Spec) (OCFL, error) {
 	if c.OCFLs == nil {
-		defaultOCFLs.Get(spec)
+		return defaultOCFLs.Get(spec)
 	}
 	return c.OCFLs.Get(spec)
 }
