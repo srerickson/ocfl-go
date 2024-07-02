@@ -361,3 +361,32 @@ func (a logicalState) Eq(b logicalState) bool {
 		return a.state.GetDigest(otherName) != ""
 	})
 }
+
+type inventory struct {
+	inv Inventory
+}
+
+func (inv *inventory) UnmarshalJSON(b []byte) error           { return json.Unmarshal(b, &inv.inv) }
+func (inv *inventory) MarshalJSON() ([]byte, error)           { return json.Marshal(inv.inv) }
+func (inv *inventory) GetFixity(digest string) ocfl.DigestSet { return inv.inv.GetFixity(digest) }
+func (inv *inventory) DigestAlgorithm() string                { return inv.inv.DigestAlgorithm }
+func (inv *inventory) Head() ocfl.VNum                        { return inv.inv.Head }
+func (inv *inventory) ID() string                             { return inv.inv.ID }
+func (inv *inventory) Manifest() ocfl.DigestMap               { return inv.inv.Manifest }
+func (inv *inventory) Spec() ocfl.Spec                        { return inv.inv.Type.Spec }
+func (inv *inventory) Version(i int) ocfl.ObjectVersion {
+	v := inv.inv.Version(i)
+	if v == nil {
+		return nil
+	}
+	return &inventoryVersion{ver: v}
+}
+
+type inventoryVersion struct {
+	ver *Version
+}
+
+func (v *inventoryVersion) State() ocfl.DigestMap { return v.ver.State }
+func (v *inventoryVersion) Message() string       { return v.ver.Message }
+func (v *inventoryVersion) Created() time.Time    { return v.ver.Created }
+func (v *inventoryVersion) User() *ocfl.User      { return v.ver.User }

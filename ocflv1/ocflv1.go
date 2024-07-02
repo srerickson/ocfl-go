@@ -2,6 +2,9 @@
 package ocflv1
 
 import (
+	"context"
+	"errors"
+
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/validation"
 )
@@ -33,3 +36,38 @@ var (
 	// shorthand
 	ec = validation.NewErrorCode
 )
+
+func init() {
+	ocfl.RegisterOCLF(&OCFL{spec: ocfl.Spec1_0})
+	ocfl.RegisterOCLF(&OCFL{spec: ocfl.Spec1_1})
+}
+
+// Implementation of OCFL v1.x
+type OCFL struct {
+	spec ocfl.Spec // 1.0 or 1.1
+}
+
+func (imp OCFL) Spec() ocfl.Spec { return imp.spec }
+
+func (imp OCFL) OpenObject(ctx context.Context, fsys ocfl.FS, path string) (ocfl.SpecObject, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (imp OCFL) Commit(ctx context.Context, fsys ocfl.WriteFS, path string, commit *ocfl.Commit) (ocfl.SpecObject, error) {
+	err := Commit(ctx, fsys, path, commit.ID, commit.Stage,
+		WithUser(&commit.User),
+		WithMessage(commit.Message),
+		WithOCFLSpec(imp.Spec()),
+		WithAllowUnchanged(commit.AllowUnchanged),
+		WithHEAD(commit.NewHEAD),
+	)
+	return nil, err
+}
+
+func (imp OCFL) OpenVersion(ctx context.Context, obj *ocfl.Object, i int) (ocfl.ObjectVersionFS, error) {
+	return &versionFS{
+		fs:   obj.FS(),
+		path: obj.Path(),
+		// ?
+	}, nil
+}

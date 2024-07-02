@@ -33,19 +33,20 @@ const (
 	maxObjectRootStateInvalid = 8
 )
 
-var (
-	ErrObjectExists          = fmt.Errorf("found existing OCFL object declaration: %w", fs.ErrExist)
-	ErrObjectNamasteNotExist = fmt.Errorf("missing OCFL object declaration: %w", ErrNamasteNotExist)
-)
-
-// ObjectRoot represents an existing OCFL object root directory.
+// ObjectRoot represents an OCFL object root directory.
 type ObjectRoot struct {
-	// FS is the FS for accessing the object's contents
+	// FS is the FS for accessing the object's contents.
 	FS FS
-	// Path is the path in the FS for the object root directory
+	// Path is the path in the FS for the object root directory.
 	Path string
-	// State represents the contents of the object root directory.
+	// State provides details about an existing object root as determined by
+	// reading the contents of the directory with ReadRoot(). State may be nil
+	// if the object root has not be read or if an error occured while reading
+	// it.
 	State *ObjectRootState
+
+	// stateErr is the error from ReadRoot() used to set State.
+	stateErr error
 }
 
 // GetObjectRoot reads the contents of directory dir in fsys, confirms that an
@@ -59,32 +60,26 @@ func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error
 		FS:   fsys,
 		Path: dir,
 	}
-	if err := obj.checkState(ctx); err != nil {
+	if err := obj.mustHaveNamaste(ctx); err != nil {
 		return nil, err
 	}
 	return obj, nil
 }
 
-// SyncState reads the entries of the object root directory and initializes the
-// ObjectRoot's state.
-func (obj *ObjectRoot) SyncState(ctx context.Context) error {
-	entries, err := obj.FS.ReadDir(ctx, obj.Path)
-	if err != nil {
-		return fmt.Errorf("reading object root directory: %w", err)
-	}
-	obj.State = ParseObjectRootDir(entries)
-	return nil
-}
-
 // ValidateNamaste reads and validates the contents of the OCFL object
 // declaration in the object root. The ObjectRoot's State is initialized if it
 // is nil.
-func (obj *ObjectRoot) ValidateNamaste(ctx context.Context) error {
-	if err := obj.checkState(ctx); err != nil {
+func (obj *ObjectRoot) ValidateNamaste(ctx context.Context, spec Spec) error {
+	decl := Namaste{Type: NamasteTypeObject, Version: spec}
+	name := path.Join(obj.Path, decl.Name())
+	err := ValidateNamaste(ctx, obj.FS, name)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%s: %w", name, ErrObjectNamasteNotExist)
+		}
 		return err
 	}
-	decl := Namaste{Type: NamasteTypeObject, Version: obj.State.Spec}.Name()
-	return ValidateNamaste(ctx, obj.FS, path.Join(obj.Path, decl))
+	return nil
 }
 
 // ExtensionNames returns the names of directories in the object root's
@@ -96,7 +91,7 @@ func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
 	// state needs to be checked in order to differentiate between the case of
 	// of the object root not an existing (an error) and the extensions
 	// directory not existing (not an error).
-	if err := obj.checkState(ctx); err != nil {
+	if err := obj.mustHaveNamaste(ctx); err != nil {
 		return nil, err
 	}
 	if !obj.State.HasExtensions() {
@@ -145,7 +140,7 @@ func (obj ObjectRoot) UnmarshalInventory(ctx context.Context, dir string, v any)
 }
 
 // OpenFile opens a file using a name relative to the object root's path
-func (obj ObjectRoot) OpenFile(ctx context.Context, name string) (fs.File, error) {
+func (obj *ObjectRoot) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	if obj.Path != "." {
 		// using path.Join might hide potentially invalid values for
 		// obj.Path or name.
@@ -154,19 +149,54 @@ func (obj ObjectRoot) OpenFile(ctx context.Context, name string) (fs.File, error
 	return obj.FS.OpenFile(ctx, name)
 }
 
-// ReadDir reads a directory using a name relative to the object root's dir
-func (obj ObjectRoot) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
+// ReadDir reads a directory using a name relative to the object root's dir. If name
+// is ".", obj's State value is updated using the returned values.
+func (obj *ObjectRoot) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
+	if name == "." {
+		// we're reading the object root, so update state
+		var entries []fs.DirEntry
+		entries, obj.stateErr = obj.FS.ReadDir(ctx, obj.Path)
+		if obj.stateErr != nil {
+			return nil, obj.stateErr
+		}
+		obj.State = ParseObjectRootDir(entries)
+		return entries, nil
+	}
 	if obj.Path != "." {
 		name = obj.Path + "/" + name
 	}
 	return obj.FS.ReadDir(ctx, name)
 }
 
-// checkState syncs the objec state if necessary and checks the
-// an object declaration is present
-func (obj *ObjectRoot) checkState(ctx context.Context) error {
+// ReadRoot reads the contents of the object root directory and updates
+// obj.State.
+func (obj *ObjectRoot) ReadRoot(ctx context.Context) error {
+	_, err := obj.ReadDir(ctx, ".")
+	return err
+}
+
+func (obj *ObjectRoot) Exists(ctx context.Context) (bool, error) {
+	if obj.State == nil && obj.stateErr == nil {
+		// error is retained in stateErr
+		obj.ReadRoot(ctx)
+	}
+	if obj.stateErr != nil {
+		if errors.Is(obj.stateErr, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, obj.stateErr
+	}
 	if obj.State == nil {
-		if err := obj.SyncState(ctx); err != nil {
+		panic("ReadRoot didn't set objcet state as expected")
+	}
+	return true, nil
+}
+
+// mustHaveNamaste syncs the objec state if necessary and checks that
+// an object declaration is present
+func (obj *ObjectRoot) mustHaveNamaste(ctx context.Context) error {
+	if obj.State == nil {
+		if err := obj.ReadRoot(ctx); err != nil {
 			return err
 		}
 	}
@@ -272,6 +302,11 @@ func (state ObjectRootState) HasExtensions() bool {
 // HasVersionDir returns true if the state's VersionDirs includes v
 func (state ObjectRootState) HasVersionDir(v VNum) bool {
 	return slices.Contains(state.VersionDirs, v)
+}
+
+// Empty returns true if the object root directory is empty
+func (state ObjectRootState) Empty() bool {
+	return state.Flags == 0 && len(state.VersionDirs) == 0 && len(state.Invalid) == 0
 }
 
 // ObjectRootsFS is an FS with an optimized implementation of ObjectRoots

@@ -180,7 +180,7 @@ func TestStoreCommit(t *testing.T) {
 		if err = store.Commit(ctx, "object-1", newContent,
 			ocflv1.WithContentDir("foo"),
 			ocflv1.WithVersionPadding(2),
-			ocflv1.WithUser(ocfl.User{Name: "Will", Address: "mailto:Will@email.com"}),
+			ocflv1.WithUser(&ocfl.User{Name: "Will", Address: "mailto:Will@email.com"}),
 			ocflv1.WithMessage("first commit"),
 		); err != nil {
 			t.Fatal(err)
@@ -209,11 +209,11 @@ func TestStoreCommit(t *testing.T) {
 		}
 		stage.State.Remap(ocfl.Remove("file1.txt"))
 		if err := store.Commit(ctx, "object-1", stage,
-			ocflv1.WithUser(ocfl.User{Name: "Wanda", Address: "mailto:wanda@email.com"}),
+			ocflv1.WithUser(&ocfl.User{Name: "Wanda", Address: "mailto:wanda@email.com"}),
 			ocflv1.WithMessage("second commit")); err != nil {
 			t.Fatal(err)
 		}
-		if err := obj.SyncInventory(ctx); err != nil {
+		if err := obj.ReadInventory(ctx); err != nil {
 			t.Fatal(err)
 		}
 		expected := []string{"file2.txt"}
@@ -229,6 +229,9 @@ func TestStoreCommit(t *testing.T) {
 		newContent, err := ocfl.StageBytes(map[string][]byte{
 			"file3.txt": []byte("content3"),
 		}, ocfl.SHA256)
+		if err != nil {
+			t.Fatal(err)
+		}
 		obj, err := store.GetObject(ctx, "object-1")
 		if err != nil {
 			t.Fatal(err)
@@ -242,12 +245,12 @@ func TestStoreCommit(t *testing.T) {
 		}
 		stage.State.Remap(ocfl.Rename("file2.txt", "dir/file2.txt"))
 		if err := store.Commit(ctx, "object-1", stage,
-			ocflv1.WithUser(ocfl.User{Name: "Woody", Address: "mailto:Woody@email.com"}),
+			ocflv1.WithUser(&ocfl.User{Name: "Woody", Address: "mailto:Woody@email.com"}),
 			ocflv1.WithMessage("third commit"),
 		); err != nil {
 			t.Fatal(err)
 		}
-		if err := obj.SyncInventory(ctx); err != nil {
+		if err := obj.ReadInventory(ctx); err != nil {
 			t.Fatal(err)
 		}
 		expected := []string{"dir/file2.txt", "file3.txt"}
@@ -263,6 +266,9 @@ func TestStoreCommit(t *testing.T) {
 		newContent, err := ocfl.StageBytes(map[string][]byte{
 			"file3.txt": []byte("changed"),
 		}, ocfl.SHA256)
+		if err != nil {
+			t.Fatal(err)
+		}
 		obj, err := store.GetObject(ctx, "object-1")
 		if err != nil {
 			t.Fatal(err)
@@ -276,12 +282,12 @@ func TestStoreCommit(t *testing.T) {
 		}
 		stage.State.Remap(ocfl.Remove("dir/file2.txt"))
 		if err := store.Commit(ctx, "object-1", stage,
-			ocflv1.WithUser(ocfl.User{Name: "Winnie", Address: "mailto:Winnie@no.com"}),
+			ocflv1.WithUser(&ocfl.User{Name: "Winnie", Address: "mailto:Winnie@no.com"}),
 			ocflv1.WithMessage("last commit"),
 		); err != nil {
 			t.Fatal(err)
 		}
-		if err := obj.SyncInventory(ctx); err != nil {
+		if err := obj.ReadInventory(ctx); err != nil {
 			t.Fatal(err)
 		}
 		expected := []string{"file3.txt"}

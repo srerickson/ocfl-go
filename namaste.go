@@ -80,24 +80,35 @@ func ParseNamaste(name string) (n Namaste, err error) {
 }
 
 // ValidateNamaste validates a namaste declaration
-func ValidateNamaste(ctx context.Context, fsys FS, name string) error {
-	d, err := ParseNamaste(path.Base(name))
+func ValidateNamaste(ctx context.Context, fsys FS, name string) (err error) {
+	nam, err := ParseNamaste(path.Base(name))
 	if err != nil {
-		return err
+		return
 	}
 	f, err := fsys.OpenFile(ctx, name)
 	if err != nil {
-		return fmt.Errorf("opening declaration: %w", err)
+		if errors.Is(err, fs.ErrNotExist) {
+			err = fmt.Errorf("opening %q: %w", name, ErrNamasteNotExist)
+			return
+		}
+		err = fmt.Errorf("opening %q: %w", name, err)
+		return
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	decl, err := io.ReadAll(f)
 	if err != nil {
-		return fmt.Errorf("reading declaration: %w", err)
+		err = fmt.Errorf("reading %q: %w", name, err)
+		return
 	}
-	if string(decl) != d.Body() {
-		return ErrNamasteContents
+	if string(decl) != nam.Body() {
+		err = fmt.Errorf("contents of %q: %w", name, ErrNamasteContents)
+		return
 	}
-	return nil
+	return
 }
 
 func WriteDeclaration(ctx context.Context, root WriteFS, dir string, d Namaste) error {

@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"slices"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -24,8 +25,9 @@ var (
 	ErrSpecInvalid  = errors.New("invalid OCFL spec version")
 	ErrSpecNotFound = errors.New("OCFL spec file not found")
 
-	// specs lists known OCFL specifications in the  order they were published
-	specs = []Spec{Spec1_0, Spec1_1}
+	// matcher for OCFL specification version format:
+	// matches "1.0", "2.1", "2.2-draft"
+	verNumRegex = regexp.MustCompile(`^\d\.\d+(\-\w+)?$`)
 )
 
 //go:embed specs/*
@@ -35,7 +37,7 @@ var specFS embed.FS
 type Spec string
 
 func (s Spec) Valid() error {
-	if slices.Index(specs, s) < 0 {
+	if !verNumRegex.MatchString(string(s)) {
 		return ErrSpecInvalid
 	}
 	return nil
@@ -45,17 +47,60 @@ func (s Spec) Valid() error {
 // - If v1 is less than v2, returns -1.
 // - If v1 is the same as v2, returns 0
 // - If v1 is greater than v2, returns 1
+// - any valid spec is greater than an invalid spec.
+// - if both specs are invlid, Cmp panics.
 func (v1 Spec) Cmp(v2 Spec) int {
-	return slices.Index(specs, v1) - slices.Index(specs, v2)
+	f1, suf1, err1 := v1.parse()
+	f2, suf2, err2 := v2.parse()
+	// handle errors
+	if err1 != nil || err2 != nil {
+		if err1 == nil {
+			return 1 // v1 is larger because v2 is invalid
+		}
+		if err2 == nil {
+			return -1 // v2 is larger because v1 is invalid
+		}
+		// both are invalid
+		panic(errors.Join(err1, err2))
+	}
+	switch {
+	case f1 == f2:
+		// if v1 and v2 are numerically equal and one has a suffix, the one
+		// with the suffix is *less* than the one without.
+		if suf1 == "" && suf2 != "" {
+			return 1
+		}
+		if suf2 == "" && suf1 != "" {
+			return -1
+		}
+		return 0
+	case f1 > f2:
+		return 1
+	default:
+		return -1
+	}
 }
 
-func (n Spec) Empty() bool {
-	return n == Spec("")
+func (s Spec) Empty() bool {
+	return s == Spec("")
+}
+
+func (s Spec) parse() (float64, string, error) {
+	// allow format like 1.2-draft
+	if err := s.Valid(); err != nil {
+		return 0, "", err
+	}
+	numStr, suffix, _ := strings.Cut(string(s), "-")
+	val, err := strconv.ParseFloat(numStr, 64)
+	if err != nil {
+		return 0, "", ErrSpecInvalid
+	}
+	return val, suffix, nil
 }
 
 // AsInvType returns n as an InventoryType
-func (n Spec) AsInvType() InvType {
-	return InvType{Spec: n}
+func (s Spec) AsInvType() InvType {
+	return InvType{Spec: s}
 }
 
 func WriteSpecFile(ctx context.Context, fsys WriteFS, dir string, n Spec) (string, error) {

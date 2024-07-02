@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"time"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/validation"
@@ -23,7 +24,7 @@ var (
 // Object represents an existing OCFL v1.x object. Use GetObject() to initialize
 // new Objects.
 type Object struct {
-	ocfl.ObjectRoot
+	*ocfl.ObjectRoot
 	Inventory Inventory
 }
 
@@ -43,16 +44,16 @@ func GetObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) {
 		// what is the best error to use here?
 		return nil, ErrInventoryNotExist
 	}
-	obj := &Object{ObjectRoot: *root}
-	if err := obj.SyncInventory(ctx); err != nil {
+	obj := &Object{ObjectRoot: root}
+	if err := obj.ReadInventory(ctx); err != nil {
 		return nil, err
 	}
 	return obj, nil
 }
 
-// SyncInventory reads and unmarshals the object's existing root inventory into
+// ReadInventory reads and unmarshals the object's existing root inventory into
 // obj.Inventory.
-func (obj *Object) SyncInventory(ctx context.Context) error {
+func (obj *Object) ReadInventory(ctx context.Context) error {
 	var newInv Inventory
 	if err := obj.ObjectRoot.UnmarshalInventory(ctx, ".", &newInv); err != nil {
 		return err
@@ -102,7 +103,7 @@ func (obj *Object) GetContent(digest string) (ocfl.FS, string) {
 }
 
 // GetFixity implements ocfl.FixitySource for Object
-func (obj *Object) GetFixity(digest string) ocfl.DigestSet {
+func (obj Object) GetFixity(digest string) ocfl.DigestSet {
 	return obj.Inventory.GetFixity(digest)
 }
 
@@ -114,14 +115,53 @@ func Objects(ctx context.Context, fsys ocfl.FS, dir string) ObjectSeq {
 		objectRootIter(func(objRoot *ocfl.ObjectRoot, err error) bool {
 			var obj *Object
 			if objRoot != nil {
-				obj = &Object{ObjectRoot: *objRoot}
+				obj = &Object{ObjectRoot: objRoot}
 			}
 			if err != nil && !yieldObject(obj, err) {
 				return false
 			}
-			return yieldObject(obj, obj.SyncInventory(ctx))
+			return yieldObject(obj, obj.ReadInventory(ctx))
 		})
 	}
 }
 
 type ObjectSeq func(yield func(*Object, error) bool)
+
+type versionFS struct {
+	fs       ocfl.FS
+	path     string
+	manifest ocfl.DigestMap
+	version  Version
+}
+
+func (vfs versionFS) State() ocfl.DigestMap { return vfs.version.State }
+func (vfs versionFS) Message() string       { return vfs.version.Message }
+func (vfs versionFS) Created() time.Time    { return vfs.version.Created }
+func (vfs versionFS) User() *ocfl.User      { return vfs.version.User }
+func (vfs versionFS) Close() error          { return nil }
+func (vfs *versionFS) OpenFile(ctx context.Context, logical string) (fs.File, error) {
+	// if version.State.
+	digest := vfs.version.State.GetDigest(logical)
+	realNames := vfs.manifest[digest]
+	if digest == "" || len(realNames) < 1 {
+		return nil, &fs.PathError{
+			Err:  fs.ErrNotExist,
+			Op:   "open",
+			Path: logical,
+		}
+	}
+	realName := realNames[0]
+	if !fs.ValidPath(realName) {
+		return nil, &fs.PathError{
+			Err:  fs.ErrInvalid,
+			Op:   "open",
+			Path: logical,
+		}
+	}
+	f, err := vfs.fs.OpenFile(ctx, path.Join(vfs.path, realName))
+	if err != nil {
+		err = fmt.Errorf("opening file with logical path %q: %w", logical, err)
+		return nil, err
+	}
+	return f, nil
+}

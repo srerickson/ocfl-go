@@ -270,7 +270,7 @@ func readExtensionConfig(ctx context.Context, fsys ocfl.FS, root string, name st
 	f, err := fsys.OpenFile(ctx, confPath)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("openning config for extension %s: %w", name, err)
+			return nil, fmt.Errorf("opening config for extension %s: %w", name, err)
 		}
 		return nil, nil
 	}

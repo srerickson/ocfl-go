@@ -29,7 +29,7 @@ func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...Vali
 	if err := result.Err(); err != nil {
 		return nil, result
 	}
-	obj := &Object{ObjectRoot: *vldr.root, Inventory: *vldr.rootInv}
+	obj := &Object{ObjectRoot: vldr.root, Inventory: *vldr.rootInv}
 	return obj, result
 }
 
@@ -103,7 +103,7 @@ func (vldr *objectValidator) validate(ctx context.Context) *validation.Result {
 func (vldr *objectValidator) validateRoot(ctx context.Context) error {
 	ocflV := vldr.root.State.Spec
 	lgr := vldr.opts.Logger
-	if err := vldr.root.ValidateNamaste(ctx); err != nil {
+	if err := vldr.root.ValidateNamaste(ctx, ocflV); err != nil {
 		err = ec(err, codes.E007.Ref(ocflV))
 		vldr.LogFatal(lgr, err)
 	}

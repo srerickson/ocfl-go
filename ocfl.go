@@ -4,7 +4,12 @@
 package ocfl
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
 	"runtime"
+	"sync"
 	"sync/atomic"
 )
 
@@ -15,9 +20,121 @@ const (
 )
 
 var (
-	digestConcurrency atomic.Int32
-	commitConcurrency atomic.Int32
+	ErrOCFLNotImplemented    = errors.New("no implementation for the given OCFL specification version")
+	ErrObjectNamasteExists   = fmt.Errorf("found existing OCFL object declaration: %w", fs.ErrExist)
+	ErrObjectNamasteNotExist = fmt.Errorf("the OCFL object declaration does not exist: %w", ErrNamasteNotExist)
+
+	digestConcurrency atomic.Int32 // FIXME: get rid of this
+	commitConcurrency atomic.Int32 // FIXME: get rid of this
+
+	// map of OCFL implementations
+	defaultOCFLs OCLFRegister
 )
+
+// OCFL is an interface implemented by types that implement a specific
+// version of the OCFL specification.
+type OCFL interface {
+	Spec() Spec
+	OpenObject(ctx context.Context, fsys FS, path string) (SpecObject, error)
+	Commit(ctx context.Context, fsys WriteFS, path string, commit *Commit) (SpecObject, error)
+	// OpenVersion(ctx context.Context, obj *Object, i int) (ObjectVersionFS, error)
+	// OpenObject(context.Context, *ObjectRoot, ...func(*ObjectOptions)) (*Object, error)
+	// SorageRoot
+	// Validate
+}
+
+type Config struct {
+	OCFLs *OCLFRegister
+}
+
+func (c Config) GetSpec(spec Spec) (OCFL, error) {
+	if c.OCFLs == nil {
+		defaultOCFLs.Get(spec)
+	}
+	return c.OCFLs.Get(spec)
+}
+
+type OCLFRegister struct {
+	ocfls   map[Spec]OCFL
+	ocflsMx sync.RWMutex
+	latest  OCFL
+}
+
+func GetOCFL(spec Spec) (OCFL, error) { return defaultOCFLs.Get(spec) }
+func MustGetOCFL(spec Spec) OCFL      { return defaultOCFLs.MustGet(spec) }
+func RegisterOCLF(imp OCFL) bool      { return defaultOCFLs.Set(imp) }
+func UnsetOCFL(spec Spec) bool        { return defaultOCFLs.Unset(spec) }
+func LatestOCFL() (OCFL, error)       { return defaultOCFLs.Latest() }
+func Implementations() []Spec         { return defaultOCFLs.Specs() }
+
+func (reg *OCLFRegister) Get(spec Spec) (OCFL, error) {
+	reg.ocflsMx.RLock()
+	defer reg.ocflsMx.RUnlock()
+	if imp := reg.ocfls[spec]; imp != nil {
+		return imp, nil
+	}
+	return nil, ErrOCFLNotImplemented
+}
+
+func (reg *OCLFRegister) MustGet(spec Spec) OCFL {
+	imp, err := reg.Get(spec)
+	if err != nil {
+		panic(err)
+	}
+	return imp
+}
+
+func (ocfl *OCLFRegister) Set(imp OCFL) bool {
+	newSpec := imp.Spec()
+	if err := newSpec.Valid(); err != nil {
+		return false
+	}
+	ocfl.ocflsMx.Lock()
+	defer ocfl.ocflsMx.Unlock()
+	if _, exists := ocfl.ocfls[newSpec]; exists {
+		return false
+	}
+	if ocfl.ocfls == nil {
+		ocfl.ocfls = map[Spec]OCFL{}
+	}
+	ocfl.ocfls[newSpec] = imp
+	if ocfl.latest == nil || newSpec.Cmp(ocfl.latest.Spec()) > 0 {
+		ocfl.latest = imp
+	}
+	return true
+}
+
+// UnsetOCFL removes the previously set implementation for spec, if
+// present. It returns true if the implementation was removed and false if no
+// implementation was found for the spec.
+func (reg *OCLFRegister) Unset(spec Spec) bool {
+	reg.ocflsMx.Lock()
+	defer reg.ocflsMx.Unlock()
+	if _, exists := reg.ocfls[spec]; !exists {
+		return false
+	}
+	delete(reg.ocfls, spec)
+	return true
+}
+
+func (reg *OCLFRegister) Latest() (OCFL, error) {
+	reg.ocflsMx.RLock()
+	defer reg.ocflsMx.RUnlock()
+	if reg.latest == nil {
+		return nil, ErrOCFLNotImplemented
+	}
+	return reg.latest, nil
+}
+
+func (reg *OCLFRegister) Specs() []Spec {
+	reg.ocflsMx.RLock()
+	defer reg.ocflsMx.RUnlock()
+	specs := make([]Spec, 0, len(reg.ocfls))
+	for spec := range reg.ocfls {
+		specs = append(specs, spec)
+	}
+	return specs
+}
 
 // DigestConcurrency is a global configuration for the number  of files to
 // digest concurrently.
@@ -49,10 +166,4 @@ func XferConcurrency() int {
 // during a commit operation.
 func SetXferConcurrency(i int) {
 	commitConcurrency.Store(int32(i))
-}
-
-// User is a generic user information struct
-type User struct {
-	Name    string `json:"name"`
-	Address string `json:"address,omitempty"`
 }
