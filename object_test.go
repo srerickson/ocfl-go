@@ -12,12 +12,11 @@ import (
 )
 
 func TestObject(t *testing.T) {
+	t.Run("Example", testObjectExample)
 	t.Run("Open", testOpenObject)
-	t.Run("Lifecycle", testObjectLifecycle)
-
 }
 
-func testObjectLifecycle(t *testing.T) {
+func testObjectExample(t *testing.T) {
 	ocflv1_0 := ocfl.MustGetOCFL(ocfl.Spec1_0)
 	// ocflv1_1 := ocfl.MustGetOCFL(ocfl.Spec1_1)
 	ctx := context.Background()
@@ -28,10 +27,8 @@ func testObjectLifecycle(t *testing.T) {
 	obj, err := ocfl.OpenObject(ctx, tmpFS, "new-object-01", ocfl.ObjectUseOCFL(ocflv1_0))
 	be.NilErr(t, err)
 
-	// the object doesn't exist
-	be.False(t, obj.Exists())
-	// the object was opened in ocfl v1.0 mode.
-	be.Equal(t, ocfl.Spec1_0, obj.Spec())
+	be.False(t, obj.Exists())                  // the object doesn't exist yet
+	be.Equal(t, ocfl.Spec1_0, obj.UsingSpec()) // the object was opened in ocfl v1.0 mode.
 
 	// commit new object version from bytes:
 	v1Content := map[string][]byte{
@@ -67,9 +64,14 @@ func testObjectLifecycle(t *testing.T) {
 		Upgrade: ocfl.Spec1_1,
 	})
 	be.NilErr(t, err)
-	be.Equal(t, ocfl.Spec1_1, obj.Spec())
+	be.Equal(t, ocfl.Spec1_1, obj.UsingSpec())
 	be.Equal(t, ocfl.Spec1_1, obj.Inventory().Spec())
 	be.Nonzero(t, obj.Inventory().Version(2).State().PathMap()["new-data.csv"])
+
+	// Other things to do:
+	// create another new object that forks new-object-01
+	// roll-back an object to a previous version
+	// interact with an object's extensions
 }
 
 // OpenObject unit tests

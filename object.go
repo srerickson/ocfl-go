@@ -114,7 +114,7 @@ func (obj *Object) Inventory() Inventory { return obj.specObj.Inventory() }
 
 func (obj *Object) Path() string { return obj.specObj.Path() }
 
-func (obj *Object) Spec() Spec { return obj.ocfl.Spec() }
+func (obj *Object) UsingSpec() Spec { return obj.ocfl.Spec() }
 
 // func (obj *Object) ID() string { return obj.id }
 
