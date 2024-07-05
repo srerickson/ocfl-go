@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.53.1
 	github.com/carlmjohnson/be v0.23.2
 	github.com/carlmjohnson/deque v0.23.1
+	github.com/hashicorp/go-multierror v1.1.1
 	github.com/matryer/is v1.4.0
 	gocloud.dev v0.37.0
 	golang.org/x/crypto v0.22.0
@@ -35,6 +36,7 @@ require (
 	github.com/aws/smithy-go v1.20.2 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/googleapis/gax-go/v2 v2.12.3 // indirect
+	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/net v0.24.0 // indirect

@@ -91,6 +91,12 @@ func testObjectExample(t *testing.T) {
 	be.NilErr(t, err)
 	be.Equal(t, "1,2,3", string(gotBytes))
 
+	// check that the object is valid
+	result := obj.Validate(ctx, nil)
+	// FIXME
+	be.NilErr(t, result.Fatal)
+	// be.NilErr(t, result.Warning)
+
 	// TODO
 	// validate new-object-01
 	// create another new object that forks new-object-01

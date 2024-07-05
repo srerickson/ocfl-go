@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/go-multierror"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/validation"
 	"golang.org/x/exp/slices"
@@ -80,14 +81,22 @@ func (o *FunObject) Inventory() ocfl.Inventory {
 	return &inventory{inv: *o.inv}
 }
 
+func (o *FunObject) Validate(ctx context.Context, opts *ocfl.Validation) *ocfl.ValidationResult {
+	_, r := ValidateObject(ctx, o.fs, o.path)
+	result := &ocfl.ValidationResult{}
+	result.Fatal = multierror.Append(result.Fatal, r.Fatal()...)
+	result.Warning = multierror.Append(result.Warning, r.Warn()...)
+	return result
+}
+
 func (o *FunObject) VersionFS(ctx context.Context, i int) ocfl.FSCloser {
 	ver := o.inv.Version(i)
 	if ver == nil {
 		return nil
 	}
-	// FIXME: This is a hack so that versionFS replicates the filemode of the
-	// undering FS. Open a random content file to get the file mode used by the
-	// underlying FS.
+	// FIXME: This is a hacky way to wmake versionFS replicates the filemode of
+	// the undering FS. Open a random content file to get the file mode used by
+	// the underlying FS.
 	regfileType := fs.FileMode(0)
 	for _, paths := range o.inv.Manifest {
 		if len(paths) < 1 {

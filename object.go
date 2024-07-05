@@ -206,6 +206,10 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 	return &ObjectVersionFS{fsys: vfs, ver: ver}, nil
 }
 
+func (obj *Object) Validate(ctx context.Context, opts *Validation) *ValidationResult {
+	return obj.specObj.Validate(ctx, opts)
+}
+
 type Commit struct {
 	ID      string
 	Stage   *Stage // required
@@ -261,6 +265,10 @@ type SpecObject interface {
 	Inventory() Inventory
 	// Path returns the object's path relative to its FS()
 	Path() string
+	Validate(context.Context, *Validation) *ValidationResult
+	// VersionFS returns a value that implements an io/fs.FS for
+	// accessing the logical contents of the object version state
+	// with the index v.
 	VersionFS(ctx context.Context, v int) FSCloser
 }
 
