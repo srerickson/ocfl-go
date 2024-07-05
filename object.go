@@ -194,14 +194,16 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 	}
 	ver := obj.Inventory().Version(i)
 	if ver == nil {
-		// FIXME
+		// FIXME; better error
 		return nil, errors.New("version not found")
 	}
-	vfs := &ObjectVersionFS{
-		fsys: obj.specObj.StateFS(ctx, ver.State()),
-		ver:  ver,
+
+	vfs := obj.specObj.VersionFS(ctx, i)
+	if vfs == nil {
+		// FIXME; better error
+		return nil, errors.New("version not found")
 	}
-	return vfs, nil
+	return &ObjectVersionFS{fsys: vfs, ver: ver}, nil
 }
 
 type Commit struct {
@@ -257,9 +259,9 @@ type SpecObject interface {
 	// FS for accessing object contents
 	FS() FS
 	Inventory() Inventory
-	StateFS(ctx context.Context, state DigestMap) FSCloser
 	// Path returns the object's path relative to its FS()
 	Path() string
+	VersionFS(ctx context.Context, v int) FSCloser
 }
 
 type Inventory interface {

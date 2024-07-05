@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io/fs"
 	"testing"
+	"testing/fstest"
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/local"
 	_ "github.com/srerickson/ocfl-go/ocflv1"
+	"golang.org/x/exp/maps"
 )
 
 func TestObject(t *testing.T) {
@@ -53,8 +55,9 @@ func testObjectExample(t *testing.T) {
 
 	// commit a new version and upgrade to OCFL v1.1
 	v2Content := map[string][]byte{
-		"README.txt":   []byte("this is a test file (v2)"),
-		"new-data.csv": []byte("1,2,3"),
+		"README.txt":    []byte("this is a test file (v2)"),
+		"new-data.csv":  []byte("1,2,3"),
+		"docs/note.txt": []byte("this is a note"),
 	}
 	stage, err = ocfl.StageBytes(v2Content, ocfl.SHA512, ocfl.MD5)
 	be.NilErr(t, err)
@@ -70,19 +73,25 @@ func testObjectExample(t *testing.T) {
 	be.Equal(t, ocfl.Spec1_1, obj.Inventory().Spec())
 	be.Nonzero(t, obj.Inventory().Version(2).State().PathMap()["new-data.csv"])
 
-	// TODO
-	// read content from an object
+	// open an object version to access files
 	vfs, err := obj.OpenVersion(ctx, 0)
 	be.NilErr(t, err)
-	entries, err := fs.ReadDir(vfs, ".")
+	defer be.NilErr(t, vfs.Close())
+
+	// vfs implements fs.FS for the version state
+	be.NilErr(t, fstest.TestFS(vfs, maps.Keys(v2Content)...))
+
+	// we can list files in a directory
+	entries, err := fs.ReadDir(vfs, "docs")
 	be.NilErr(t, err)
-	be.Equal(t, 2, len(entries))
+	be.Equal(t, 1, len(entries))
+
+	// we can read files
 	gotBytes, err := fs.ReadFile(vfs, "new-data.csv")
 	be.NilErr(t, err)
 	be.Equal(t, "1,2,3", string(gotBytes))
 
-	// obj.OpenVer
-
+	// TODO
 	// validate new-object-01
 	// create another new object that forks new-object-01
 	// roll-back an object to a previous version

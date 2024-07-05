@@ -1,6 +1,7 @@
 package ocflv1
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,9 +9,12 @@ import (
 	"io"
 	"io/fs"
 	"path"
+	"strings"
+	"time"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/validation"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -76,8 +80,38 @@ func (o *FunObject) Inventory() ocfl.Inventory {
 	return &inventory{inv: *o.inv}
 }
 
-func (o *FunObject) StateFS(ctx context.Context, state ocfl.DigestMap) ocfl.FSCloser {
-	return &versionFS{ctx: ctx, obj: o, state: state}
+func (o *FunObject) VersionFS(ctx context.Context, i int) ocfl.FSCloser {
+	ver := o.inv.Version(i)
+	if ver == nil {
+		return nil
+	}
+	// FIXME: This is a hack so that versionFS replicates the filemode of the
+	// undering FS. Open a random content file to get the file mode used by the
+	// underlying FS.
+	regfileType := fs.FileMode(0)
+	for _, paths := range o.inv.Manifest {
+		if len(paths) < 1 {
+			break
+		}
+		f, err := o.fs.OpenFile(ctx, path.Join(o.path, paths[0]))
+		if err != nil {
+			return nil
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil {
+			return nil
+		}
+		regfileType = info.Mode().Type()
+		break
+	}
+	return &versionFS{
+		ctx:     ctx,
+		obj:     o,
+		state:   ver.State,
+		created: ver.Created,
+		regMode: regfileType,
+	}
 }
 
 func (o *FunObject) Path() string { return o.path }
@@ -189,16 +223,35 @@ func Objects(ctx context.Context, fsys ocfl.FS, dir string) ObjectSeq {
 type ObjectSeq func(yield func(*Object, error) bool)
 
 type versionFS struct {
-	ctx   context.Context
-	obj   *FunObject
-	state ocfl.DigestMap
+	ctx     context.Context
+	obj     *FunObject
+	state   ocfl.DigestMap
+	created time.Time
+	regMode fs.FileMode
 }
 
 func (vfs versionFS) Close() error { return nil }
 func (vfs *versionFS) Open(logical string) (fs.File, error) {
+	if !fs.ValidPath(logical) {
+		return nil, &fs.PathError{
+			Err:  fs.ErrInvalid,
+			Op:   "open",
+			Path: logical,
+		}
+	}
+	if logical == "." {
+		return vfs.openDir(".")
+	}
+
 	digest := vfs.state.GetDigest(logical)
+	if digest == "" {
+		// name doesn't exist in state.
+		// try opening as a directory
+		return vfs.openDir(logical)
+	}
+
 	realNames := vfs.obj.inv.Manifest[digest]
-	if digest == "" || len(realNames) < 1 {
+	if len(realNames) < 1 {
 		return nil, &fs.PathError{
 			Err:  fs.ErrNotExist,
 			Op:   "open",
@@ -220,3 +273,115 @@ func (vfs *versionFS) Open(logical string) (fs.File, error) {
 	}
 	return f, nil
 }
+
+func (vfs *versionFS) openDir(dir string) (fs.File, error) {
+	prefix := dir + "/"
+	if prefix == "./" {
+		prefix = ""
+	}
+	children := map[string]*vfsDirEntry{}
+	for _, paths := range vfs.state {
+		for _, p := range paths {
+			if !strings.HasPrefix(p, prefix) {
+				continue
+			}
+			name, _, isdir := strings.Cut(strings.TrimPrefix(p, prefix), "/")
+			if _, exists := children[name]; exists {
+				continue
+			}
+			entry := &vfsDirEntry{
+				name:    name,
+				mode:    vfs.regMode,
+				created: vfs.created,
+				open:    func() (fs.File, error) { return vfs.Open(path.Join(dir, name)) },
+			}
+			if isdir {
+				entry.mode = entry.mode | fs.ModeDir | fs.ModeIrregular
+			}
+			children[name] = entry
+		}
+	}
+
+	if len(children) < 1 {
+		return nil, &fs.PathError{
+			Op:   "open",
+			Path: dir,
+			Err:  fs.ErrNotExist,
+		}
+	}
+
+	dirFile := &vfsDirFile{
+		name:    dir,
+		entries: make([]fs.DirEntry, 0, len(children)),
+	}
+	for _, entry := range children {
+		dirFile.entries = append(dirFile.entries, entry)
+	}
+	slices.SortFunc(dirFile.entries, func(a, b fs.DirEntry) int {
+		return cmp.Compare(a.Name(), b.Name())
+	})
+	return dirFile, nil
+}
+
+type vfsDirEntry struct {
+	name    string
+	created time.Time
+	mode    fs.FileMode
+	open    func() (fs.File, error)
+}
+
+var _ fs.DirEntry = (*vfsDirEntry)(nil)
+
+func (info *vfsDirEntry) Name() string      { return info.name }
+func (info *vfsDirEntry) IsDir() bool       { return info.mode.IsDir() }
+func (info *vfsDirEntry) Type() fs.FileMode { return info.mode.Type() }
+
+func (info *vfsDirEntry) Info() (fs.FileInfo, error) {
+	f, err := info.open()
+	if err != nil {
+		return nil, err
+	}
+	stat, err := f.Stat()
+	return stat, errors.Join(err, f.Close())
+}
+
+func (info *vfsDirEntry) Size() int64        { return 0 }
+func (info *vfsDirEntry) Mode() fs.FileMode  { return info.mode | fs.ModeIrregular }
+func (info *vfsDirEntry) ModTime() time.Time { return info.created }
+func (info *vfsDirEntry) Sys() any           { return nil }
+
+type vfsDirFile struct {
+	name    string
+	created time.Time
+	entries []fs.DirEntry
+	offset  int
+}
+
+var _ fs.ReadDirFile = (*vfsDirFile)(nil)
+
+func (dir *vfsDirFile) ReadDir(n int) ([]fs.DirEntry, error) {
+	if n <= 0 {
+		entries := dir.entries[dir.offset:]
+		dir.offset = len(dir.entries)
+		return entries, nil
+	}
+	if remain := len(dir.entries) - dir.offset; remain < n {
+		n = remain
+	}
+	if n <= 0 {
+		return nil, io.EOF
+	}
+	entries := dir.entries[dir.offset : dir.offset+n]
+	dir.offset += n
+	return entries, nil
+}
+
+func (dir *vfsDirFile) Close() error               { return nil }
+func (dir *vfsDirFile) IsDir() bool                { return true }
+func (dir *vfsDirFile) Mode() fs.FileMode          { return fs.ModeDir | fs.ModeIrregular }
+func (dir *vfsDirFile) ModTime() time.Time         { return dir.created }
+func (dir *vfsDirFile) Name() string               { return dir.name }
+func (dir *vfsDirFile) Read(_ []byte) (int, error) { return 0, nil }
+func (dir *vfsDirFile) Size() int64                { return 0 }
+func (dir *vfsDirFile) Stat() (fs.FileInfo, error) { return dir, nil }
+func (dir *vfsDirFile) Sys() any                   { return nil }
