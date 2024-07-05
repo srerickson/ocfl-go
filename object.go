@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"time"
@@ -83,6 +84,8 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	obj.specObj = newSpecObj
 	return nil
 }
+
+func (obj *Object) Close() error { return obj.specObj.Close() }
 
 func (obj *Object) Exists() bool { return obj.specObj.Exists() }
 
@@ -185,9 +188,20 @@ func (obj *Object) UsingSpec() Spec { return obj.ocfl.Spec() }
 
 // OpenVersion returns an ObjectVersionFS for the version with the given
 // index (1...HEAD).
-func (obj *Object) OpenVersion(ctx context.Context, i int) (ObjectVersionFS, error) {
-	//return obj.ocfl.OpenVersion(ctx, obj, i)
-	return nil, errors.New("not implemented")
+func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, error) {
+	if !obj.Exists() {
+		return nil, ErrNamasteNotExist
+	}
+	ver := obj.Inventory().Version(i)
+	if ver == nil {
+		// FIXME
+		return nil, errors.New("version not found")
+	}
+	vfs := &ObjectVersionFS{
+		fsys: obj.specObj.StateFS(ctx, ver.State()),
+		ver:  ver,
+	}
+	return vfs, nil
 }
 
 type Commit struct {
@@ -236,10 +250,16 @@ func ObjectUseOCFL(ocfl OCFL) ObjectOption {
 // }
 
 type SpecObject interface {
-	FS() FS
-	Path() string
-	Inventory() Inventory
+	// Close closes the object, freeing allocated resources.
+	Close() error
+	// Exists return bool indicating if the object exists or not
 	Exists() bool
+	// FS for accessing object contents
+	FS() FS
+	Inventory() Inventory
+	StateFS(ctx context.Context, state DigestMap) FSCloser
+	// Path returns the object's path relative to its FS()
+	Path() string
 }
 
 type Inventory interface {
@@ -259,14 +279,25 @@ type ObjectVersion interface {
 	Created() time.Time
 }
 
+type ObjectVersionFS struct {
+	fsys FSCloser
+	ver  ObjectVersion
+}
+
+func (vfs *ObjectVersionFS) Open(name string) (fs.File, error) { return vfs.fsys.Open(name) }
+func (vfs *ObjectVersionFS) Close() error                      { return vfs.fsys.Close() }
+func (vfs *ObjectVersionFS) State() DigestMap                  { return vfs.ver.State() }
+func (vfs *ObjectVersionFS) Message() string                   { return vfs.ver.Message() }
+func (vfs *ObjectVersionFS) User() *User                       { return vfs.ver.User() }
+func (vfs *ObjectVersionFS) Created() time.Time                { return vfs.ver.Created() }
+
 // User is a generic user information struct
 type User struct {
 	Name    string `json:"name"`
 	Address string `json:"address,omitempty"`
 }
 
-type ObjectVersionFS interface {
-	ObjectVersion
-	OpenFile(ctx context.Context, name string) (fs.File, error)
-	Close() error
+type FSCloser interface {
+	fs.FS
+	io.Closer
 }

@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"path"
-	"time"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/validation"
@@ -65,9 +64,10 @@ type FunObject struct {
 	inv  *Inventory
 }
 
-func (o *FunObject) FS() ocfl.FS { return o.fs }
+func (o FunObject) Close() error { return nil }
 
-func (o *FunObject) Path() string { return o.path }
+func (o *FunObject) FS() ocfl.FS  { return o.fs }
+func (o *FunObject) Exists() bool { return o.inv != nil }
 
 func (o *FunObject) Inventory() ocfl.Inventory {
 	if o.inv == nil {
@@ -76,9 +76,11 @@ func (o *FunObject) Inventory() ocfl.Inventory {
 	return &inventory{inv: *o.inv}
 }
 
-func (o *FunObject) Exists() bool {
-	return o.inv != nil
+func (o *FunObject) StateFS(ctx context.Context, state ocfl.DigestMap) ocfl.FSCloser {
+	return &versionFS{ctx: ctx, obj: o, state: state}
 }
+
+func (o *FunObject) Path() string { return o.path }
 
 // Object represents an existing OCFL v1.x object. Use GetObject() to initialize
 // new Objects.
@@ -187,21 +189,15 @@ func Objects(ctx context.Context, fsys ocfl.FS, dir string) ObjectSeq {
 type ObjectSeq func(yield func(*Object, error) bool)
 
 type versionFS struct {
-	fs       ocfl.FS
-	path     string
-	manifest ocfl.DigestMap
-	version  Version
+	ctx   context.Context
+	obj   *FunObject
+	state ocfl.DigestMap
 }
 
-func (vfs versionFS) State() ocfl.DigestMap { return vfs.version.State }
-func (vfs versionFS) Message() string       { return vfs.version.Message }
-func (vfs versionFS) Created() time.Time    { return vfs.version.Created }
-func (vfs versionFS) User() *ocfl.User      { return vfs.version.User }
-func (vfs versionFS) Close() error          { return nil }
-func (vfs *versionFS) OpenFile(ctx context.Context, logical string) (fs.File, error) {
-	// if version.State.
-	digest := vfs.version.State.GetDigest(logical)
-	realNames := vfs.manifest[digest]
+func (vfs versionFS) Close() error { return nil }
+func (vfs *versionFS) Open(logical string) (fs.File, error) {
+	digest := vfs.state.GetDigest(logical)
+	realNames := vfs.obj.inv.Manifest[digest]
 	if digest == "" || len(realNames) < 1 {
 		return nil, &fs.PathError{
 			Err:  fs.ErrNotExist,
@@ -217,7 +213,7 @@ func (vfs *versionFS) OpenFile(ctx context.Context, logical string) (fs.File, er
 			Path: logical,
 		}
 	}
-	f, err := vfs.fs.OpenFile(ctx, path.Join(vfs.path, realName))
+	f, err := vfs.obj.fs.OpenFile(vfs.ctx, path.Join(vfs.obj.path, realName))
 	if err != nil {
 		err = fmt.Errorf("opening file with logical path %q: %w", logical, err)
 		return nil, err

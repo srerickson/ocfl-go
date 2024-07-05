@@ -3,6 +3,7 @@ package ocfl_test
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"testing"
 
 	"github.com/carlmjohnson/be"
@@ -26,6 +27,7 @@ func testObjectExample(t *testing.T) {
 	// open new object in ocfl v1.0 mode
 	obj, err := ocfl.OpenObject(ctx, tmpFS, "new-object-01", ocfl.ObjectUseOCFL(ocflv1_0))
 	be.NilErr(t, err)
+	defer be.NilErr(t, obj.Close())
 
 	be.False(t, obj.Exists())                  // the object doesn't exist yet
 	be.Equal(t, ocfl.Spec1_0, obj.UsingSpec()) // the object was opened in ocfl v1.0 mode.
@@ -68,10 +70,23 @@ func testObjectExample(t *testing.T) {
 	be.Equal(t, ocfl.Spec1_1, obj.Inventory().Spec())
 	be.Nonzero(t, obj.Inventory().Version(2).State().PathMap()["new-data.csv"])
 
-	// Other things to do:
+	// TODO
+	// read content from an object
+	vfs, err := obj.OpenVersion(ctx, 0)
+	be.NilErr(t, err)
+	entries, err := fs.ReadDir(vfs, ".")
+	be.NilErr(t, err)
+	be.Equal(t, 2, len(entries))
+	gotBytes, err := fs.ReadFile(vfs, "new-data.csv")
+	be.NilErr(t, err)
+	be.Equal(t, "1,2,3", string(gotBytes))
+
+	// obj.OpenVer
+
+	// validate new-object-01
 	// create another new object that forks new-object-01
 	// roll-back an object to a previous version
-	// interact with an object's extensions
+	// interact with an object's extensions: list them, add an extension, remove an extension.
 }
 
 // OpenObject unit tests
