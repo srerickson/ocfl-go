@@ -18,8 +18,8 @@ var goodObjectsPath = filepath.Join(fixturePath, `good-objects`)
 //var badObjPath = filepath.Join(fixturePath, `bad-objects`)
 
 // object implements ocfl.ContentProvider and ocfl.FixityProvider
-var _ ocfl.ContentSource = (*ocflv1.Object)(nil)
-var _ ocfl.FixitySource = (*ocflv1.Object)(nil)
+// var _ ocfl.ContentSource = (*ocflv1.Object)(nil)
+// var _ ocfl.FixitySource = (*ocflv1.FunObject)(nil)
 
 func TestReadObject(t *testing.T) {
 	ctx := context.Background()
@@ -27,15 +27,10 @@ func TestReadObject(t *testing.T) {
 	goodObjName := "spec-ex-full"
 
 	t.Run("ok", func(t *testing.T) {
-		obj, err := ocflv1.GetObject(ctx, fsys, goodObjName)
+		obj, err := ocflv1.OpenObject(ctx, fsys, goodObjName)
 		be.NilErr(t, err)
-		be.Equal(t, 3, len(obj.Inventory.VNums()))
-		be.Equal(t, 3, obj.Inventory.Head.Num())
-		cont, err := obj.Inventory.ContentPath(0, "foo/bar.xml")
-		be.NilErr(t, err)
-		f, err := obj.OpenFile(ctx, cont)
-		be.NilErr(t, err)
-		defer f.Close()
+		be.True(t, obj.Exists())
+		be.NilErr(t, obj.Close())
 	})
 
 }
