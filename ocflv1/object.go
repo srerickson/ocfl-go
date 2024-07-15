@@ -63,6 +63,7 @@ func OpenObject(ctx context.Context, fsys ocfl.FS, dir string) (*FunObject, erro
 	return obj, nil
 }
 
+// TODO: This is the new object
 type FunObject struct {
 	fs   ocfl.FS
 	path string
