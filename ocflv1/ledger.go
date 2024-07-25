@@ -57,7 +57,7 @@ type digestInfo struct {
 	locs   map[ocfl.VNum]locFlag
 }
 
-func (l *pathLedger) addInventory(inv *Inventory, isRoot bool) error {
+func (l *pathLedger) addInventory(inv *RawInventory, isRoot bool) error {
 	alg := inv.DigestAlgorithm
 	ver := inv.Head
 	flag := inRootInv

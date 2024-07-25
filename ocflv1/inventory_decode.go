@@ -89,12 +89,12 @@ func (inv decodeInventory) contentDirectory() string {
 // asInventory converts inv to an Inventory. If the inv cannot be converted due
 // to nil values, the returned validation.Result includes fatal errors. Otherwise,
 // the validation.Result is nil.
-func (inv decodeInventory) asInventory() (*Inventory, *validation.Result) {
+func (inv decodeInventory) asInventory() (*RawInventory, *validation.Result) {
 	result := inv.validateNils()
 	if result.Err() != nil {
 		return nil, result
 	}
-	newInv := &Inventory{
+	newInv := &RawInventory{
 		ID:               *inv.ID,
 		Type:             *inv.Type,
 		Head:             *inv.Head,
@@ -115,7 +115,7 @@ func (inv decodeInventory) asInventory() (*Inventory, *validation.Result) {
 // inv cannot be converted, or if the new Inventory is not valid, the returned
 // validation.Result will include fatal errors. The result is always non-nil and
 // has no associated Logger (errors have not been logged).
-func (inv decodeInventory) asValidInventory() (*Inventory, *validation.Result) {
+func (inv decodeInventory) asValidInventory() (*RawInventory, *validation.Result) {
 	newInv, result := inv.asInventory()
 	if err := result.Err(); err != nil {
 		return nil, result

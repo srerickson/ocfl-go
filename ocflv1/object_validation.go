@@ -15,7 +15,7 @@ import (
 	"github.com/srerickson/ocfl-go/validation"
 )
 
-func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ValidationOption) (*FunObject, *validation.Result) {
+func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ValidationOption) (*Object, *validation.Result) {
 	opts, result := validationSetup(vops)
 	vldr := objectValidator{
 		Result:   result,
@@ -29,7 +29,7 @@ func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...Vali
 	if err := result.Err(); err != nil {
 		return nil, result
 	}
-	obj := &FunObject{fs: fsys, path: root, inv: vldr.rootInv}
+	obj := &Object{fs: fsys, path: root, inv: vldr.rootInv}
 	return obj, result
 }
 
@@ -41,7 +41,7 @@ type objectValidator struct {
 	Root string  // required
 
 	// entries belows are state set during validation
-	rootInv  *Inventory // TODO: remove, state instead
+	rootInv  *RawInventory // TODO: remove, state instead
 	root     *ocfl.ObjectRoot
 	ledger   *pathLedger
 	verSpecs map[ocfl.VNum]ocfl.Spec

@@ -35,6 +35,7 @@ func commit(ctx context.Context, obj ocfl.SpecObject, commit *ocfl.Commit, newSp
 	if err != nil {
 		return err
 	}
+	newInv.Type = newSpec.AsInvType()
 
 	// switch {
 	// case obj.Exists():
@@ -198,7 +199,7 @@ func (c CommitError) Unwrap() error {
 
 // xferMap returns a DigestMap that is a subset of the inventory
 // manifest for the digests and paths of new content
-func xferMap(inv *Inventory) (ocfl.DigestMap, error) {
+func xferMap(inv *RawInventory) (ocfl.DigestMap, error) {
 	pm := ocfl.PathMap{}
 	var err error
 	inv.Manifest.EachPath(func(pth, dig string) bool {

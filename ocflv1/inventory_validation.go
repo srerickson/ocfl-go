@@ -22,7 +22,7 @@ import (
 // result includes no fatal errors (it may include warning errors). The returned
 // validation.Result is not associated with a logger, and no errors in the result
 // have been logged.
-func (inv *Inventory) Validate() *validation.Result {
+func (inv *RawInventory) Validate() *validation.Result {
 	result := validation.NewResult(-1)
 	if inv.Type.Empty() {
 		err := errors.New("missing required field: 'type'")
@@ -177,7 +177,7 @@ func (inv *Inventory) Validate() *validation.Result {
 }
 
 // ValidateInventory fully validates an inventory at path name in fsys.
-func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, vops ...ValidationOption) (*Inventory, *validation.Result) {
+func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, vops ...ValidationOption) (*RawInventory, *validation.Result) {
 	opts, invResult := validationSetup(vops)
 	lgr := opts.Logger
 	ocflV := opts.FallbackOCFL
@@ -213,7 +213,7 @@ func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, vops ...V
 	return inv, invResult
 }
 
-func ValidateInventoryReader(ctx context.Context, reader io.Reader, vops ...ValidationOption) (*Inventory, *validation.Result) {
+func ValidateInventoryReader(ctx context.Context, reader io.Reader, vops ...ValidationOption) (*RawInventory, *validation.Result) {
 	opts, result := validationSetup(vops)
 	lgr := opts.Logger
 	var decInv decodeInventory

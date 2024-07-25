@@ -22,8 +22,8 @@ var (
 	ErrVersionNotFound     = errors.New("version not found in inventory")
 )
 
-// Inventory represents contents of an OCFL v1.x inventory.json file
-type Inventory struct {
+// RawInventory represents contents of an OCFL v1.x inventory.json file
+type RawInventory struct {
 	ID               string                    `json:"id"`
 	Type             ocfl.InvType              `json:"type"`
 	DigestAlgorithm  string                    `json:"digestAlgorithm"`
@@ -47,8 +47,8 @@ type Version struct {
 
 // UnmarshalJSON decodes the inventory and sets inv's
 // digest value for the bytes b.
-func (inv *Inventory) UnmarshalJSON(b []byte) error {
-	type invAlias Inventory
+func (inv *RawInventory) UnmarshalJSON(b []byte) error {
+	type invAlias RawInventory
 	var alias invAlias
 	if err := json.Unmarshal(b, &alias); err != nil {
 		return err
@@ -60,7 +60,7 @@ func (inv *Inventory) UnmarshalJSON(b []byte) error {
 		}
 		alias.digest = d.String()
 	}
-	*inv = Inventory(alias)
+	*inv = RawInventory(alias)
 	if inv.ContentDirectory == "" {
 		inv.ContentDirectory = contentDir
 	}
@@ -69,7 +69,7 @@ func (inv *Inventory) UnmarshalJSON(b []byte) error {
 
 // VNums returns a sorted slice of VNums corresponding to the keys in the
 // inventory's 'versions' block.
-func (inv Inventory) VNums() []ocfl.VNum {
+func (inv RawInventory) VNums() []ocfl.VNum {
 	vnums := make([]ocfl.VNum, len(inv.Versions))
 	i := 0
 	for v := range inv.Versions {
@@ -83,14 +83,14 @@ func (inv Inventory) VNums() []ocfl.VNum {
 // Digest of Inventory's source json using the inventory digest. If the
 // Inventory wasn't decoded using ValidateInventory or ValidateInventoryReader,
 // an empty string is returned.
-func (inv Inventory) Digest() string {
+func (inv RawInventory) Digest() string {
 	return inv.digest
 }
 
 // ContentPath resolves the logical path from the version state with number v to
 // a content path (i.e., a manifest path). The content path is relative to the
 // object's root directory. If v is zero, the inventories head version is used.
-func (inv Inventory) ContentPath(v int, logical string) (string, error) {
+func (inv RawInventory) ContentPath(v int, logical string) (string, error) {
 	ver := inv.Version(v)
 	if ver == nil {
 		return "", ErrVersionNotFound
@@ -108,7 +108,7 @@ func (inv Inventory) ContentPath(v int, logical string) (string, error) {
 
 // Version returns the version entry from the entry with number v. If v is 0,
 // the head version is used. If no version entry exists, nil is returned
-func (inv Inventory) Version(v int) *Version {
+func (inv RawInventory) Version(v int) *Version {
 	if inv.Versions == nil {
 		return nil
 	}
@@ -119,7 +119,7 @@ func (inv Inventory) Version(v int) *Version {
 }
 
 // GetFixity implements ocfl.FixitySource for Inventory
-func (inv Inventory) GetFixity(digest string) ocfl.DigestSet {
+func (inv RawInventory) GetFixity(digest string) ocfl.DigestSet {
 	paths := inv.Manifest[digest]
 	if len(paths) < 1 {
 		return nil
@@ -140,7 +140,7 @@ func (inv Inventory) GetFixity(digest string) ocfl.DigestSet {
 // WriteInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
 // fsys. The digest is calculated using alg and the inventory sidecar is also written to
 // dir/inventory.alg
-func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs ...string) error {
+func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *RawInventory, dirs ...string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -197,8 +197,8 @@ func readInventorySidecar(ctx context.Context, fsys ocfl.FS, name string) (diges
 }
 
 // NextInventory ...
-func NewInventory(commit *ocfl.Commit, prev ocfl.Inventory) (*Inventory, error) {
-	newInv := &Inventory{
+func NewInventory(commit *ocfl.Commit, prev ocfl.Inventory) (*RawInventory, error) {
+	newInv := &RawInventory{
 		ID:               commit.ID,
 		DigestAlgorithm:  commit.Stage.DigestAlgorithm,
 		ContentDirectory: contentDir,
@@ -211,7 +211,7 @@ func NewInventory(commit *ocfl.Commit, prev ocfl.Inventory) (*Inventory, error) 
 			return nil, err
 		}
 		newInv.ID = prev.ID()
-		newInv.ContentDirectory = prevInv.inv.ContentDirectory
+		newInv.ContentDirectory = prevInv.raw.ContentDirectory
 		var err error
 		newInv.Head, err = prev.Head().Next()
 		if err != nil {
@@ -236,7 +236,7 @@ func NewInventory(commit *ocfl.Commit, prev ocfl.Inventory) (*Inventory, error) 
 			if err != nil {
 				return nil, fmt.Errorf("in existing inventory %s state: %w", vnum, err)
 			}
-			if prevVer.User != nil {
+			if prevVer.User() != nil {
 				newVer.User = &ocfl.User{
 					Name:    prevVer.User().Name,
 					Address: prevVer.User().Address,
@@ -245,8 +245,8 @@ func NewInventory(commit *ocfl.Commit, prev ocfl.Inventory) (*Inventory, error) 
 			newInv.Versions[vnum] = newVer
 		}
 		// transfer fixity
-		newInv.Fixity = make(map[string]ocfl.DigestMap, len(prevInv.inv.Fixity))
-		for alg, m := range prevInv.inv.Fixity {
+		newInv.Fixity = make(map[string]ocfl.DigestMap, len(prevInv.raw.Fixity))
+		for alg, m := range prevInv.raw.Fixity {
 			newInv.Fixity[alg], err = m.Normalize()
 			if err != nil {
 				return nil, fmt.Errorf("in existing inventory %s fixity: %w", alg, err)
@@ -325,7 +325,7 @@ type logicalState struct {
 	state    ocfl.DigestMap
 }
 
-func (inv *Inventory) logicalState(i int) logicalState {
+func (inv *RawInventory) logicalState(i int) logicalState {
 	var state ocfl.DigestMap
 	if v := inv.Version(i); v != nil {
 		state = v.State
@@ -369,20 +369,20 @@ func (a logicalState) Eq(b logicalState) bool {
 
 // inventory implements ocfl.Inventory
 type inventory struct {
-	inv Inventory
+	raw RawInventory
 }
 
-func (inv *inventory) UnmarshalJSON(b []byte) error           { return json.Unmarshal(b, &inv.inv) }
-func (inv *inventory) MarshalJSON() ([]byte, error)           { return json.Marshal(inv.inv) }
-func (inv *inventory) GetFixity(digest string) ocfl.DigestSet { return inv.inv.GetFixity(digest) }
-func (inv *inventory) ContentDirectory() string               { return inv.inv.ContentDirectory }
-func (inv *inventory) DigestAlgorithm() string                { return inv.inv.DigestAlgorithm }
-func (inv *inventory) Head() ocfl.VNum                        { return inv.inv.Head }
-func (inv *inventory) ID() string                             { return inv.inv.ID }
-func (inv *inventory) Manifest() ocfl.DigestMap               { return inv.inv.Manifest }
-func (inv *inventory) Spec() ocfl.Spec                        { return inv.inv.Type.Spec }
+func (inv *inventory) UnmarshalJSON(b []byte) error           { return json.Unmarshal(b, &inv.raw) }
+func (inv *inventory) MarshalJSON() ([]byte, error)           { return json.Marshal(inv.raw) }
+func (inv *inventory) GetFixity(digest string) ocfl.DigestSet { return inv.raw.GetFixity(digest) }
+func (inv *inventory) ContentDirectory() string               { return inv.raw.ContentDirectory }
+func (inv *inventory) DigestAlgorithm() string                { return inv.raw.DigestAlgorithm }
+func (inv *inventory) Head() ocfl.VNum                        { return inv.raw.Head }
+func (inv *inventory) ID() string                             { return inv.raw.ID }
+func (inv *inventory) Manifest() ocfl.DigestMap               { return inv.raw.Manifest }
+func (inv *inventory) Spec() ocfl.Spec                        { return inv.raw.Type.Spec }
 func (inv *inventory) Version(i int) ocfl.ObjectVersion {
-	v := inv.inv.Version(i)
+	v := inv.raw.Version(i)
 	if v == nil {
 		return nil
 	}
