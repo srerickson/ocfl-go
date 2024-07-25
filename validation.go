@@ -1,9 +1,14 @@
 package ocfl
 
-import "github.com/hashicorp/go-multierror"
+import (
+	"log/slog"
+
+	"github.com/hashicorp/go-multierror"
+)
 
 type Validation struct {
 	SkipDigests bool
+	Logger      *slog.Logger
 }
 
 type ValidationResult struct {

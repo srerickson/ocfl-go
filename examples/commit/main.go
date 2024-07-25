@@ -74,13 +74,14 @@ func main() {
 		err := errors.New("object exists and 'new' flag is set")
 		quit(err)
 	}
-	stage, err := ocfl.StageDir(ctx, ocfl.DirFS(srcDir), ".", alg)
+	_, err = ocfl.StageDir(ctx, ocfl.DirFS(srcDir), ".", alg)
 	if err != nil {
 		quit(err)
 	}
-	err = store.Commit(ctx, id, stage,
-		ocflv1.WithMessage(msg),
-		ocflv1.WithUser(&user))
+	// FIXME
+	// err = store.Commit(ctx, id, stage,
+	// 	ocflv1.WithMessage(msg),
+	// 	ocflv1.WithUser(&user))
 	if err != nil {
 		quit(err)
 	}

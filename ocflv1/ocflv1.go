@@ -3,7 +3,6 @@ package ocflv1
 
 import (
 	"context"
-	"errors"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/validation"
@@ -58,18 +57,11 @@ func (imp OCFL) OpenObject(ctx context.Context, fsys ocfl.FS, path string) (ocfl
 	return obj, nil
 }
 
-func (imp OCFL) Commit(ctx context.Context, obj ocfl.SpecObject, commit *ocfl.Commit) (ocfl.SpecObject, error) {
-	writeFS, ok := obj.FS().(ocfl.WriteFS)
-	if !ok {
-		return nil, errors.New("object's backing file system doesn't support write operations")
-	}
-	err := Commit(ctx, writeFS, obj.Path(), commit.ID, commit.Stage,
-		WithUser(&commit.User),
-		WithMessage(commit.Message),
-		WithOCFLSpec(imp.spec),
-		WithAllowUnchanged(commit.AllowUnchanged),
-		WithHEAD(commit.NewHEAD),
-	)
+// Commits creates or updates an object by adding a new object version based
+// on the implementation.
+func (imp OCFL) Commit(ctx context.Context, obj ocfl.SpecObject, c *ocfl.Commit) (ocfl.SpecObject, error) {
+	//
+	err := commit(ctx, obj, c, imp.spec)
 	if err != nil {
 		return nil, err
 	}

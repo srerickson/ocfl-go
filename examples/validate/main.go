@@ -42,6 +42,11 @@ func validate(root string, isStore bool, logger *slog.Logger) error {
 		result := ocflv1.ValidateStore(ctx, fsys, ".", ocflv1.ValidationLogger(logger))
 		return result.Err()
 	}
-	_, result := ocflv1.ValidateObject(ctx, fsys, ".", ocflv1.ValidationLogger(logger))
+	obj, err := ocfl.OpenObject(ctx, fsys, ".")
+	if err != nil {
+		return err
+	}
+
+	result := obj.Validate(ctx, &ocfl.Validation{Logger: logger})
 	return result.Err()
 }

@@ -15,6 +15,8 @@ import (
 	"github.com/srerickson/ocfl-go/validation"
 )
 
+// TODO: Store to ocfl.Store
+
 var (
 	ErrLayoutUndefined = errors.New("storage root layout is undefined")
 	ErrEmptyDirs       = errors.New("storage root includes empty directories")
@@ -89,26 +91,6 @@ func InitStore(ctx context.Context, fsys ocfl.WriteFS, root string, conf *InitSt
 	return nil
 }
 
-// Commit creates or updates the object with the given id using the contents of stage. The returned
-// error is always a CommitError
-func (s Store) Commit(ctx context.Context, id string, stage *ocfl.Stage, opts ...CommitOption) error {
-	writeFS, ok := s.fsys.(ocfl.WriteFS)
-	if !ok {
-		return &CommitError{Err: fmt.Errorf("storage root backend is read-only")}
-	}
-	if s.Layout == nil {
-		err := fmt.Errorf("commit requires a storage root layout: %w", ErrLayoutUndefined)
-		return &CommitError{Err: err}
-	}
-	objPath, err := s.Layout.Resolve(id)
-	if err != nil {
-		return &CommitError{Err: fmt.Errorf("cannot commit id '%s': %w", id, err)}
-	}
-	// include the storage root spec so it can be checked during commit.
-	opts = append(opts, withStoreSpec(s.spec))
-	return Commit(ctx, writeFS, path.Join(s.rootDir, objPath), id, stage, opts...)
-}
-
 // GetStore returns a *Store for the OCFL Storage Root at root in fsys. The path
 // root must be a directory/prefix with storage root declaration file.
 func GetStore(ctx context.Context, fsys ocfl.FS, root string) (*Store, error) {
@@ -178,10 +160,10 @@ func (s *Store) Spec() ocfl.Spec {
 	return s.spec
 }
 
-// Object returns a function iterator that yield objects in the storage root
-func (s Store) Objects(ctx context.Context) ObjectSeq {
-	return Objects(ctx, s.fsys, s.rootDir)
-}
+// // Object returns a function iterator that yield objects in the storage root
+// func (s Store) Objects(ctx context.Context) ObjectSeq {
+// 	return Objects(ctx, s.fsys, s.rootDir)
+// }
 
 // Validate performs complete validation on the store
 func (s *Store) Validate(ctx context.Context, opts ...ValidationOption) *validation.Result {
@@ -201,7 +183,7 @@ func (s *Store) ResolveID(id string) (string, error) {
 }
 
 // GetObjectPath returns an Object for the given path relative to the storage root.
-func (s *Store) GetObjectPath(ctx context.Context, p string) (*Object, error) {
+func (s *Store) GetObjectPath(ctx context.Context, p string) (*FunObject, error) {
 	return GetObject(ctx, s.fsys, path.Join(s.rootDir, p))
 }
 
@@ -209,7 +191,7 @@ func (s *Store) GetObjectPath(ctx context.Context, p string) (*Object, error) {
 // extension (if defined). The store layout is set during GetStore() if the
 // storage root includes an ocfl_layout.json file. Otherwise, it can be set
 // using, SetLayout().
-func (s *Store) GetObject(ctx context.Context, id string) (*Object, error) {
+func (s *Store) GetObject(ctx context.Context, id string) (*FunObject, error) {
 	pth, err := s.ResolveID(id)
 	if err != nil {
 		return nil, err

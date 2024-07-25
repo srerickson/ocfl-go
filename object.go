@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"path"
 	"time"
+
+	"log/slog"
 )
 
 // OpenObject returns a new Object reference for managing the OCFL object at
@@ -68,6 +70,8 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	}
 	useOCFL := obj.ocfl
 	if !commit.Upgrade.Empty() {
+		//
+
 		var err error
 		useOCFL, err = obj.config.GetSpec(commit.Upgrade)
 		if err != nil {
@@ -217,10 +221,13 @@ type Commit struct {
 	User    User   // required
 
 	// advanced options
-	Created        time.Time // time.Now is used, if not set
-	Upgrade        Spec      // used to upgrade object to newer OCFL
-	NewHEAD        int       // enforces new object version number
-	AllowUnchanged bool
+	Created         time.Time // time.Now is used, if not set
+	Upgrade         Spec      // upgrade existing object to newer OCFL Spec
+	NewHEAD         int       // enforces new object version number
+	AllowUnchanged  bool
+	ContentPathFunc RemapFunc
+
+	Logger *slog.Logger
 }
 
 type ObjectOption func(*Object)
@@ -274,6 +281,7 @@ type SpecObject interface {
 
 type Inventory interface {
 	FixitySource
+	ContentDirectory() string
 	DigestAlgorithm() string
 	Head() VNum
 	ID() string

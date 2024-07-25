@@ -25,6 +25,7 @@ import (
 func TestObject(t *testing.T) {
 	t.Run("Example", testObjectExample)
 	t.Run("Open", testOpenObject)
+	t.Run("Commit", testObjectCommit)
 	t.Run("ValidateFixtures", testValidateFixtures)
 }
 
@@ -186,6 +187,29 @@ func testOpenObject(t *testing.T) {
 		})
 		i++
 	}
+}
+
+func testObjectCommit(t *testing.T) {
+	ctx := context.Background()
+	// TODO
+	t.Run("minimal", func(t *testing.T) {
+		fsys, err := local.NewFS(t.TempDir())
+		be.NilErr(t, err)
+		obj, err := ocfl.OpenObject(ctx, fsys, ".")
+		be.NilErr(t, err)
+		be.False(t, obj.Exists())
+		commit := &ocfl.Commit{
+			ID:      "new-object",
+			Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: ocfl.SHA256},
+			Message: "new object",
+			User: ocfl.User{
+				Name: "Anna Karenina",
+			},
+		}
+		be.NilErr(t, obj.Commit(ctx, commit))
+		be.True(t, obj.Exists())
+	})
+	// t.Run("unchanged returs error")
 }
 
 func testValidateFixtures(t *testing.T) {
