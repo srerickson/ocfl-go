@@ -212,11 +212,29 @@ func NewInventory(commit *ocfl.Commit, prev ocfl.Inventory) (*RawInventory, erro
 		}
 		newInv.ID = prev.ID()
 		newInv.ContentDirectory = prevInv.raw.ContentDirectory
+		newInv.Type = prevInv.raw.Type
+
 		var err error
 		newInv.Head, err = prev.Head().Next()
 		if err != nil {
 			return nil, fmt.Errorf("existing inventory's version scheme doesn't support additional versions: %w", err)
 		}
+		if !commit.Spec.Empty() {
+			// new inventory spec must be >= prev
+			if commit.Spec.Cmp(prev.Spec()) < 0 {
+				err = fmt.Errorf("new inventory's OCFL spec can't be lower than the existing inventory's (%s)", prev.Spec())
+				return nil, err
+			}
+			newInv.Type = commit.Spec.AsInvType()
+		}
+		if !commit.AllowUnchanged {
+			lastV := prev.Version(0)
+			if lastV.State().Eq(commit.Stage.State) {
+				err := errors.New("version state unchanged")
+				return nil, err
+			}
+		}
+
 		// copy and normalize all digests in the inventory. If we don't do this
 		// non-normalized digests in previous version states might cause
 		// problems since the updated manifest/fixity will be normalized.
@@ -254,14 +272,16 @@ func NewInventory(commit *ocfl.Commit, prev ocfl.Inventory) (*RawInventory, erro
 		}
 	default:
 		// FIXME: how whould padding be set for new inventories?
-		newInv.Head = ocfl.V(0, 1)
+		newInv.Head = ocfl.V(1, 0)
 		newInv.Manifest = ocfl.DigestMap{}
 		newInv.Fixity = map[string]ocfl.DigestMap{}
 		newInv.Versions = map[ocfl.VNum]*Version{}
+		newInv.Type = commit.Spec.AsInvType()
 	}
 
 	// add new version
 	newVersion := &Version{
+		State:   commit.Stage.State,
 		Created: commit.Created,
 		Message: commit.Message,
 		User:    &commit.User,
@@ -315,6 +335,7 @@ func NewInventory(commit *ocfl.Commit, prev ocfl.Inventory) (*RawInventory, erro
 	}
 	// check that resulting inventory is valid
 	if err := newInv.Validate().Err(); err != nil {
+		fmt.Println(newInv)
 		return nil, fmt.Errorf("generated inventory is not valid: %w", err)
 	}
 	return newInv, nil

@@ -52,8 +52,7 @@ func (imp OCFL) OpenObject(ctx context.Context, fsys ocfl.FS, path string) (ocfl
 // Commits creates or updates an object by adding a new object version based
 // on the implementation.
 func (imp OCFL) Commit(ctx context.Context, obj ocfl.SpecObject, c *ocfl.Commit) (ocfl.SpecObject, error) {
-	//
-	err := commit(ctx, obj, c, imp.spec)
+	err := commit(ctx, obj, c)
 	if err != nil {
 		return nil, err
 	}

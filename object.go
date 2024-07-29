@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"log/slog"
+
+	"github.com/hashicorp/go-multierror"
 )
 
 // OpenObject returns a new Object reference for managing the OCFL object at
@@ -37,10 +39,9 @@ func OpenObject(ctx context.Context, fsys FS, path string, opts ...func(*Object)
 		}
 		switch {
 		case rootState == nil || rootState.Empty():
-			obj.ocfl, err = ocflRegister.Latest()
-			if err != nil {
-				return nil, fmt.Errorf("with latest OCFL spec: %w", err)
-			}
+			// path doesn't exist or is empty
+			obj.specObj = &uninitializedObject{fs: fsys, path: path}
+			return obj, nil
 		case rootState.HasNamaste():
 			obj.ocfl, err = ocflRegister.Get(rootState.Spec)
 			if err != nil {
@@ -69,11 +70,9 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 		return errors.New("object's backing file system doesn't support write operations")
 	}
 	useOCFL := obj.ocfl
-	if !commit.Upgrade.Empty() {
-		//
-
+	if !commit.Spec.Empty() {
 		var err error
-		useOCFL, err = obj.config.GetSpec(commit.Upgrade)
+		useOCFL, err = obj.config.GetSpec(commit.Spec)
 		if err != nil {
 			return err
 		}
@@ -120,8 +119,6 @@ func (obj *Object) FS() FS { return obj.specObj.FS() }
 func (obj *Object) Inventory() Inventory { return obj.specObj.Inventory() }
 
 func (obj *Object) Path() string { return obj.specObj.Path() }
-
-func (obj *Object) UsingSpec() Spec { return obj.ocfl.Spec() }
 
 // func (obj *Object) ID() string { return obj.id }
 
@@ -222,7 +219,7 @@ type Commit struct {
 
 	// advanced options
 	Created         time.Time // time.Now is used, if not set
-	Upgrade         Spec      // upgrade existing object to newer OCFL Spec
+	Spec            Spec      // OCFL specification version for the new object version
 	NewHEAD         int       // enforces new object version number
 	AllowUnchanged  bool
 	ContentPathFunc RemapFunc
@@ -318,4 +315,44 @@ type User struct {
 type FSCloser interface {
 	fs.FS
 	io.Closer
+}
+
+type uninitializedObject struct {
+	fs   FS
+	path string
+}
+
+// Close closes the object, freeing allocated resources.
+func (o *uninitializedObject) Close() error { return nil }
+
+// Exists return bool indicating if the object exists or not
+func (o *uninitializedObject) Exists() bool {
+	return false
+}
+
+// FS for accessing object contents
+func (o *uninitializedObject) FS() FS {
+	return o.fs
+}
+
+func (o *uninitializedObject) Inventory() Inventory {
+	return nil
+}
+
+// Path returns the object's path relative to its FS()
+func (o *uninitializedObject) Path() string {
+	return o.path
+}
+
+func (o *uninitializedObject) Validate(_ context.Context, _ *Validation) *ValidationResult {
+	result := &ValidationResult{Fatal: &multierror.Error{}}
+	result.Fatal = multierror.Append(result.Fatal, fmt.Errorf("empty or missing path: %s: %w", o.path, ErrNamasteNotExist))
+	return result
+}
+
+// VersionFS returns a value that implements an io/fs.FS for
+// accessing the logical contents of the object version state
+// with the index v.
+func (o *uninitializedObject) VersionFS(ctx context.Context, v int) FSCloser {
+	return nil
 }

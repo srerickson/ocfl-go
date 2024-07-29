@@ -19,7 +19,7 @@ import (
 // The digest algorithm for the object version is taken from the stage. For
 // object updates, the stage's algorithm must match the existing object's digest
 // algorithm. The error returned by commit is always a CommitError.
-func commit(ctx context.Context, obj ocfl.SpecObject, commit *ocfl.Commit, newSpec ocfl.Spec) (err error) {
+func commit(ctx context.Context, obj ocfl.SpecObject, commit *ocfl.Commit) (err error) {
 	writeFS, ok := obj.FS().(ocfl.WriteFS)
 	if !ok {
 		return errors.New("object's backing file system doesn't support write operations")
@@ -33,9 +33,8 @@ func commit(ctx context.Context, obj ocfl.SpecObject, commit *ocfl.Commit, newSp
 	}
 	newInv, err := NewInventory(commit, obj.Inventory())
 	if err != nil {
-		return err
+		return &CommitError{Err: err}
 	}
-	newInv.Type = newSpec.AsInvType()
 
 	// switch {
 	// case obj.Exists():
@@ -144,13 +143,24 @@ func commit(ctx context.Context, obj ocfl.SpecObject, commit *ocfl.Commit, newSp
 	}
 
 	// File changes start here
-	// TODO: replace existing object declaration if spec is changing
-
-	// Mutate object: new object declaration if necessary
-	if !obj.Exists() {
-		logger.DebugContext(ctx, "initializing new OCFL object")
-		decl := ocfl.Namaste{Type: ocfl.NamasteTypeObject, Version: newInv.Type.Spec}
-		if err = ocfl.WriteDeclaration(ctx, writeFS, obj.Path(), decl); err != nil {
+	// 1. create or update NAMASTE object declaration
+	var oldSpec ocfl.Spec
+	if obj.Inventory() != nil {
+		oldSpec = obj.Inventory().Spec()
+	}
+	newSpec := newInv.Type.Spec
+	switch {
+	case obj.Exists() && oldSpec != newSpec:
+		oldDecl := ocfl.Namaste{Type: ocfl.NamasteTypeObject, Version: oldSpec}
+		logger.DebugContext(ctx, "deleting previous OCFL object declaration", "name", oldDecl)
+		if err = writeFS.Remove(ctx, path.Join(obj.Path(), oldDecl.Name())); err != nil {
+			return &CommitError{Err: err, Dirty: true}
+		}
+		fallthrough
+	case !obj.Exists():
+		newDecl := ocfl.Namaste{Type: ocfl.NamasteTypeObject, Version: newSpec}
+		logger.DebugContext(ctx, "writing new OCFL object declaration", "name", newDecl)
+		if err = ocfl.WriteDeclaration(ctx, writeFS, obj.Path(), newDecl); err != nil {
 			return &CommitError{Err: err, Dirty: true}
 		}
 	}

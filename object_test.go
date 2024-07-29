@@ -30,19 +30,17 @@ func TestObject(t *testing.T) {
 }
 
 func testObjectExample(t *testing.T) {
-	ocflv1_0 := ocfl.MustGetOCFL(ocfl.Spec1_0)
 	// ocflv1_1 := ocfl.MustGetOCFL(ocfl.Spec1_1)
 	ctx := context.Background()
 	tmpFS, err := local.NewFS(t.TempDir())
 	be.NilErr(t, err)
 
 	// open new object in ocfl v1.0 mode
-	obj, err := ocfl.OpenObject(ctx, tmpFS, "new-object-01", ocfl.ObjectUseOCFL(ocflv1_0))
+	obj, err := ocfl.OpenObject(ctx, tmpFS, "new-object-01")
 	be.NilErr(t, err)
 	defer be.NilErr(t, obj.Close())
 
-	be.False(t, obj.Exists())                  // the object doesn't exist yet
-	be.Equal(t, ocfl.Spec1_0, obj.UsingSpec()) // the object was opened in ocfl v1.0 mode.
+	be.False(t, obj.Exists()) // the object doesn't exist yet
 
 	// commit new object version from bytes:
 	v1Content := map[string][]byte{
@@ -51,6 +49,7 @@ func testObjectExample(t *testing.T) {
 	stage, err := ocfl.StageBytes(v1Content, ocfl.SHA512, ocfl.MD5)
 	be.NilErr(t, err)
 	err = obj.Commit(ctx, &ocfl.Commit{
+		Spec:    ocfl.Spec1_0,
 		ID:      "new-object-01",
 		Stage:   stage,
 		User:    ocfl.User{Name: "Mx. Robot"},
@@ -61,7 +60,7 @@ func testObjectExample(t *testing.T) {
 
 	// object has expected inventory values
 	be.Equal(t, "new-object-01", obj.Inventory().ID())
-	be.Nonzero(t, obj.Inventory().Version(0).State().PathMap()["README.txt"])
+	be.Nonzero(t, obj.Inventory().Version(1).State().PathMap()["README.txt"])
 
 	// commit a new version and upgrade to OCFL v1.1
 	v2Content := map[string][]byte{
@@ -76,10 +75,9 @@ func testObjectExample(t *testing.T) {
 		Stage:   stage,
 		User:    ocfl.User{Name: "Dr. Robot"},
 		Message: "second version",
-		Upgrade: ocfl.Spec1_1,
+		Spec:    ocfl.Spec1_1,
 	})
 	be.NilErr(t, err)
-	be.Equal(t, ocfl.Spec1_1, obj.UsingSpec())
 	be.Equal(t, ocfl.Spec1_1, obj.Inventory().Spec())
 	be.Nonzero(t, obj.Inventory().Version(2).State().PathMap()["new-data.csv"])
 
@@ -105,7 +103,7 @@ func testObjectExample(t *testing.T) {
 	result := obj.Validate(ctx, nil)
 
 	// FIXME
-	be.NilErr(t, result.Fatal)
+	be.NilErr(t, result.Fatal.ErrorOrNil())
 	// be.NilErr(t, result.Warning)
 
 	// TODO
@@ -205,6 +203,7 @@ func testObjectCommit(t *testing.T) {
 			User: ocfl.User{
 				Name: "Anna Karenina",
 			},
+			Spec: ocfl.Spec1_0,
 		}
 		be.NilErr(t, obj.Commit(ctx, commit))
 		be.True(t, obj.Exists())
