@@ -7,7 +7,7 @@ import (
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/backend/memfs"
+	"github.com/srerickson/ocfl-go/backend/local"
 )
 
 func TestSpecCmp(t *testing.T) {
@@ -102,28 +102,22 @@ func TestParseInventoryType(t *testing.T) {
 
 func TestWriteSpecFile(t *testing.T) {
 	ctx := context.Background()
-	fsys := memfs.New()
-	test := func(spec ocfl.Spec) {
+	fsys, err := local.NewFS(t.TempDir())
+	be.NilErr(t, err)
+	test := func(t *testing.T, spec ocfl.Spec) {
 		name, err := ocfl.WriteSpecFile(ctx, fsys, "dir1", spec)
-		if err != nil {
-			t.Fatal(err)
-		}
+		be.NilErr(t, err)
 		f, err := fsys.OpenFile(ctx, name)
-		if err != nil {
-			t.Fatalf("file doesn't exist: %s", name)
-		}
-		defer f.Close()
+		be.NilErr(t, err)
+		defer be.NilErr(t, f.Close())
 		// again
 		_, err = ocfl.WriteSpecFile(ctx, fsys, "dir1", spec)
-		if err == nil {
-			t.Fatal("expected an error")
-		}
+		be.True(t, err != nil)
+
 	}
-	test(ocfl.Spec1_0)
-	test(ocfl.Spec1_1)
+	test(t, ocfl.Spec1_0)
+	test(t, ocfl.Spec1_1)
 	// expect an error
-	_, err := ocfl.WriteSpecFile(ctx, fsys, "dir1", ocfl.Spec("3.0"))
-	if err == nil {
-		t.Fatal("expected an error")
-	}
+	_, err = ocfl.WriteSpecFile(ctx, fsys, "dir1", ocfl.Spec("3.0"))
+	be.True(t, err != nil)
 }
