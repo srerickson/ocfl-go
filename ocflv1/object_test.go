@@ -29,7 +29,6 @@ func TestReadObject(t *testing.T) {
 	t.Run("ok", func(t *testing.T) {
 		obj, err := ocflv1.OpenObject(ctx, fsys, goodObjName)
 		be.NilErr(t, err)
-		be.True(t, obj.Exists())
 		be.NilErr(t, obj.Close())
 	})
 

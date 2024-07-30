@@ -90,7 +90,7 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 
 func (obj *Object) Close() error { return obj.specObj.Close() }
 
-func (obj *Object) Exists() bool { return obj.specObj.Exists() }
+func (obj *Object) Exists() bool { return ObjectExists(obj.specObj) }
 
 // ExtensionNames returns the names of directories in the object's
 // extensions directory. The ObjectRoot's State is initialized if it is
@@ -262,8 +262,6 @@ func ObjectUseOCFL(ocfl OCFL) ObjectOption {
 type SpecObject interface {
 	// Close closes the object, freeing allocated resources.
 	Close() error
-	// Exists return bool indicating if the object exists or not
-	Exists() bool
 	// FS for accessing object contents
 	FS() FS
 	Inventory() Inventory
@@ -273,12 +271,11 @@ type SpecObject interface {
 	// VersionFS returns a value that implements an io/fs.FS for
 	// accessing the logical contents of the object version state
 	// with the index v.
-	VersionFS(ctx context.Context, v int) FSCloser
+	VersionFS(ctx context.Context, v int) fs.FS
 }
 
 type Inventory interface {
 	FixitySource
-	ContentDirectory() string
 	DigestAlgorithm() string
 	Head() VNum
 	ID() string
@@ -295,26 +292,26 @@ type ObjectVersion interface {
 }
 
 type ObjectVersionFS struct {
-	fsys FSCloser
+	fsys fs.FS
 	ver  ObjectVersion
 }
 
 func (vfs *ObjectVersionFS) Open(name string) (fs.File, error) { return vfs.fsys.Open(name) }
-func (vfs *ObjectVersionFS) Close() error                      { return vfs.fsys.Close() }
-func (vfs *ObjectVersionFS) State() DigestMap                  { return vfs.ver.State() }
-func (vfs *ObjectVersionFS) Message() string                   { return vfs.ver.Message() }
-func (vfs *ObjectVersionFS) User() *User                       { return vfs.ver.User() }
-func (vfs *ObjectVersionFS) Created() time.Time                { return vfs.ver.Created() }
+func (vfs *ObjectVersionFS) Close() error {
+	if closer, isCloser := vfs.fsys.(io.Closer); isCloser {
+		return closer.Close()
+	}
+	return nil
+}
+func (vfs *ObjectVersionFS) State() DigestMap   { return vfs.ver.State() }
+func (vfs *ObjectVersionFS) Message() string    { return vfs.ver.Message() }
+func (vfs *ObjectVersionFS) User() *User        { return vfs.ver.User() }
+func (vfs *ObjectVersionFS) Created() time.Time { return vfs.ver.Created() }
 
 // User is a generic user information struct
 type User struct {
 	Name    string `json:"name"`
 	Address string `json:"address,omitempty"`
-}
-
-type FSCloser interface {
-	fs.FS
-	io.Closer
 }
 
 type uninitializedObject struct {
@@ -325,24 +322,13 @@ type uninitializedObject struct {
 // Close closes the object, freeing allocated resources.
 func (o *uninitializedObject) Close() error { return nil }
 
-// Exists return bool indicating if the object exists or not
-func (o *uninitializedObject) Exists() bool {
-	return false
-}
-
 // FS for accessing object contents
-func (o *uninitializedObject) FS() FS {
-	return o.fs
-}
+func (o *uninitializedObject) FS() FS { return o.fs }
 
-func (o *uninitializedObject) Inventory() Inventory {
-	return nil
-}
+func (o *uninitializedObject) Inventory() Inventory { return nil }
 
 // Path returns the object's path relative to its FS()
-func (o *uninitializedObject) Path() string {
-	return o.path
-}
+func (o *uninitializedObject) Path() string { return o.path }
 
 func (o *uninitializedObject) Validate(_ context.Context, _ *Validation) *ValidationResult {
 	result := &ValidationResult{Fatal: &multierror.Error{}}
@@ -353,6 +339,28 @@ func (o *uninitializedObject) Validate(_ context.Context, _ *Validation) *Valida
 // VersionFS returns a value that implements an io/fs.FS for
 // accessing the logical contents of the object version state
 // with the index v.
-func (o *uninitializedObject) VersionFS(ctx context.Context, v int) FSCloser {
-	return nil
+func (o *uninitializedObject) VersionFS(ctx context.Context, v int) fs.FS { return nil }
+
+func ObjectExists(obj SpecObject) bool {
+	if _, isEmpty := obj.(*uninitializedObject); isEmpty {
+		return false
+	}
+	return true
+}
+
+// Commit error wraps an error from a commit.
+type CommitError struct {
+	Err error // The wrapped error
+
+	// Dirty indicates the object may be incomplete or invalid as a result of
+	// the error.
+	Dirty bool
+}
+
+func (c CommitError) Error() string {
+	return c.Err.Error()
+}
+
+func (c CommitError) Unwrap() error {
+	return c.Err
 }

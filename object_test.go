@@ -30,16 +30,14 @@ func TestObject(t *testing.T) {
 }
 
 func testObjectExample(t *testing.T) {
-	// ocflv1_1 := ocfl.MustGetOCFL(ocfl.Spec1_1)
 	ctx := context.Background()
 	tmpFS, err := local.NewFS(t.TempDir())
 	be.NilErr(t, err)
 
-	// open new object in ocfl v1.0 mode
+	// open new-object-01, which doesn't exist
 	obj, err := ocfl.OpenObject(ctx, tmpFS, "new-object-01")
 	be.NilErr(t, err)
 	defer be.NilErr(t, obj.Close())
-
 	be.False(t, obj.Exists()) // the object doesn't exist yet
 
 	// commit new object version from bytes:
@@ -100,14 +98,10 @@ func testObjectExample(t *testing.T) {
 	be.Equal(t, "1,2,3", string(gotBytes))
 
 	// check that the object is valid
-	result := obj.Validate(ctx, nil)
-
-	// FIXME
-	be.NilErr(t, result.Fatal.ErrorOrNil())
+	be.NilErr(t, obj.Validate(ctx, nil).Fatal.ErrorOrNil())
 	// be.NilErr(t, result.Warning)
 
 	// TODO
-	// validate new-object-01
 	// create another new object that forks new-object-01
 	// roll-back an object to a previous version
 	// interact with an object's extensions: list them, add an extension, remove an extension.
@@ -170,7 +164,7 @@ func testOpenObject(t *testing.T) {
 			path: "1.1/bad-objects/E003_E063_empty",
 			opts: []func(*ocfl.Object){ocfl.ObjectUseOCFL(ocfl.MustGetOCFL(ocfl.Spec1_1))},
 			expect: func(t *testing.T, _ *ocfl.Object, err error) {
-				be.NilErr(t, err)
+				be.Nonzero(t, err)
 			},
 		},
 	}
@@ -189,8 +183,7 @@ func testOpenObject(t *testing.T) {
 
 func testObjectCommit(t *testing.T) {
 	ctx := context.Background()
-	// TODO
-	t.Run("minimal", func(t *testing.T) {
+	t.Run("create minimal", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
 		obj, err := ocfl.OpenObject(ctx, fsys, ".")
@@ -207,8 +200,31 @@ func testObjectCommit(t *testing.T) {
 		}
 		be.NilErr(t, obj.Commit(ctx, commit))
 		be.True(t, obj.Exists())
+		be.NilErr(t, obj.Validate(ctx, nil).Fatal.ErrorOrNil())
 	})
-	// t.Run("unchanged returs error")
+	t.Run("update fixtures", testUpdateFixtures)
+}
+
+func testUpdateFixtures(t *testing.T) {
+	ctx := context.Background()
+	for _, spec := range []string{`1.0`, `1.1`} {
+		fixturesDir := filepath.Join(`testdata`, `object-fixtures`, spec, `good-objects`)
+		fixtures, err := os.ReadDir(fixturesDir)
+		be.NilErr(t, err)
+		for _, dir := range fixtures {
+			fixture := filepath.Join(fixturesDir, dir.Name())
+			t.Run(fixture, func(t *testing.T) {
+				objPath := "test-object"
+				tmpFS, err := local.NewFS(t.TempDir())
+				be.NilErr(t, err)
+				be.NilErr(t, copyFixture(fixture, tmpFS, objPath))
+				obj, err := ocfl.OpenObject(ctx, tmpFS, objPath)
+				be.NilErr(t, err)
+				be.NilErr(t, obj.Commit(ctx, &ocfl.Commit{}))
+				be.NilErr(t, obj.Validate(ctx, nil).Fatal.ErrorOrNil())
+			})
+		}
+	}
 }
 
 func testValidateFixtures(t *testing.T) {
@@ -352,3 +368,26 @@ func fixtureExpectedErrs(name string, errs ...error) (bool, string) {
 // 		t.Fatal(err)
 // 	}
 // }
+
+// creates a temporary directory and copies files from directory dir
+// in fsys to the temporary directory. This is used to create writable
+// object copies from fixtures
+func copyFixture(fixture string, tmpFS ocfl.WriteFS, tmpDir string) error {
+	ctx := context.Background()
+	fixFS := os.DirFS(fixture)
+	return fs.WalkDir(fixFS, ".", func(name string, info fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		f, err := fixFS.Open(name)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = tmpFS.Write(ctx, path.Join(tmpDir, name), f)
+		return err
+	})
+}

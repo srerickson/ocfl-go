@@ -37,25 +37,20 @@ func OpenObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) 
 	var inv *RawInventory
 	invFile, err := fsys.OpenFile(ctx, path.Join(dir, inventoryFile))
 	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			return nil, err
-		}
-		// additional checks in inventory doesn't exist?
+		return nil, err
 	}
-	if invFile != nil {
-		defer func() {
-			if closeErr := invFile.Close(); closeErr != nil {
-				err = errors.Join(err, invFile.Close())
-			}
-		}()
-		bytes, err := io.ReadAll(invFile)
-		if err != nil {
-			return nil, err
+	defer func() {
+		if closeErr := invFile.Close(); closeErr != nil {
+			err = errors.Join(err, invFile.Close())
 		}
-		inv = &RawInventory{}
-		if err := json.Unmarshal(bytes, inv); err != nil {
-			return nil, err
-		}
+	}()
+	bytes, err := io.ReadAll(invFile)
+	if err != nil {
+		return nil, err
+	}
+	inv = &RawInventory{}
+	if err := json.Unmarshal(bytes, inv); err != nil {
+		return nil, err
 	}
 	// inventory may be nil
 	obj := &Object{fs: fsys, path: dir, inv: inv}
@@ -71,8 +66,7 @@ type Object struct {
 
 func (o Object) Close() error { return nil }
 
-func (o *Object) FS() ocfl.FS  { return o.fs }
-func (o *Object) Exists() bool { return o.inv != nil }
+func (o *Object) FS() ocfl.FS { return o.fs }
 
 func (o *Object) Inventory() ocfl.Inventory {
 	if o.inv == nil {
@@ -89,7 +83,7 @@ func (o *Object) Validate(ctx context.Context, opts *ocfl.Validation) *ocfl.Vali
 	return result
 }
 
-func (o *Object) VersionFS(ctx context.Context, i int) ocfl.FSCloser {
+func (o *Object) VersionFS(ctx context.Context, i int) fs.FS {
 	ver := o.inv.Version(i)
 	if ver == nil {
 		return nil
@@ -133,7 +127,6 @@ type versionFS struct {
 	regMode fs.FileMode
 }
 
-func (vfs versionFS) Close() error { return nil }
 func (vfs *versionFS) Open(logical string) (fs.File, error) {
 	if !fs.ValidPath(logical) {
 		return nil, &fs.PathError{
@@ -204,7 +197,6 @@ func (vfs *versionFS) openDir(dir string) (fs.File, error) {
 			children[name] = entry
 		}
 	}
-
 	if len(children) < 1 {
 		return nil, &fs.PathError{
 			Op:   "open",
