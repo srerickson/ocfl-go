@@ -218,10 +218,36 @@ func testUpdateFixtures(t *testing.T) {
 				tmpFS, err := local.NewFS(t.TempDir())
 				be.NilErr(t, err)
 				be.NilErr(t, copyFixture(fixture, tmpFS, objPath))
+
 				obj, err := ocfl.OpenObject(ctx, tmpFS, objPath)
 				be.NilErr(t, err)
-				be.NilErr(t, obj.Commit(ctx, &ocfl.Commit{}))
+				defer be.NilErr(t, obj.Close())
+
+				// new stage from the existing version and add a new file
+				currentVersion, err := obj.OpenVersion(ctx, 0)
+				defer be.NilErr(t, currentVersion.Close())
+				be.NilErr(t, err)
+				newContent, err := ocfl.StageBytes(map[string][]byte{
+					"a-new-file": []byte("new stuff"),
+				}, currentVersion.DigestAlgorithm())
+				be.NilErr(t, err)
+				stage := currentVersion.Stage()
+				be.NilErr(t, stage.Overlay(newContent))
+
+				// do commit
+				be.NilErr(t, obj.Commit(ctx, &ocfl.Commit{
+					Stage:   stage,
+					Message: "update",
+					User:    ocfl.User{Name: "Tristram Shandy"},
+				}))
 				be.NilErr(t, obj.Validate(ctx, nil).Fatal.ErrorOrNil())
+				// check content
+				newVersion, err := obj.OpenVersion(ctx, 0)
+				be.NilErr(t, err)
+				defer be.NilErr(t, newVersion.Close())
+				cont, err := fs.ReadFile(newVersion, "a-new-file")
+				be.NilErr(t, err)
+				be.Equal(t, "new stuff", string(cont))
 			})
 		}
 	}

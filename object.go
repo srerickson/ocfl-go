@@ -193,18 +193,31 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 	if !obj.Exists() {
 		return nil, ErrNamasteNotExist
 	}
-	ver := obj.Inventory().Version(i)
+	inv := obj.Inventory()
+	if inv == nil {
+		// FIXME; better error
+		return nil, errors.New("object is missing an inventory")
+	}
+	if i == 0 {
+		i = inv.Head().num
+	}
+	ver := inv.Version(i)
 	if ver == nil {
 		// FIXME; better error
 		return nil, errors.New("version not found")
 	}
-
-	vfs := obj.specObj.VersionFS(ctx, i)
-	if vfs == nil {
+	ioFS := obj.specObj.VersionFS(ctx, i)
+	if ioFS == nil {
 		// FIXME; better error
 		return nil, errors.New("version not found")
 	}
-	return &ObjectVersionFS{fsys: vfs, ver: ver}, nil
+	vfs := &ObjectVersionFS{
+		fsys: ioFS,
+		ver:  ver,
+		num:  i,
+		inv:  inv,
+	}
+	return vfs, nil
 }
 
 func (obj *Object) Validate(ctx context.Context, opts *Validation) *ValidationResult {
@@ -294,7 +307,23 @@ type ObjectVersion interface {
 type ObjectVersionFS struct {
 	fsys fs.FS
 	ver  ObjectVersion
+	inv  Inventory
+	num  int
 }
+
+func (vfs *ObjectVersionFS) GetContent(digest string) (FS, string) {
+	dm := vfs.State()
+	if dm == nil {
+		return nil, ""
+	}
+	pths := dm[digest]
+	if len(pths) < 1 {
+		return nil, ""
+	}
+	return &ioFS{FS: vfs.fsys}, pths[0]
+}
+
+func (vfs *ObjectVersionFS) DigestAlgorithm() string { return vfs.inv.DigestAlgorithm() }
 
 func (vfs *ObjectVersionFS) Open(name string) (fs.File, error) { return vfs.fsys.Open(name) }
 func (vfs *ObjectVersionFS) Close() error {
@@ -307,6 +336,15 @@ func (vfs *ObjectVersionFS) State() DigestMap   { return vfs.ver.State() }
 func (vfs *ObjectVersionFS) Message() string    { return vfs.ver.Message() }
 func (vfs *ObjectVersionFS) User() *User        { return vfs.ver.User() }
 func (vfs *ObjectVersionFS) Created() time.Time { return vfs.ver.Created() }
+
+func (vfs *ObjectVersionFS) Stage() *Stage {
+	return &Stage{
+		State:           vfs.State().Clone(),
+		DigestAlgorithm: vfs.inv.DigestAlgorithm(),
+		FixitySource:    vfs.inv,
+		ContentSource:   vfs,
+	}
+}
 
 // User is a generic user information struct
 type User struct {
