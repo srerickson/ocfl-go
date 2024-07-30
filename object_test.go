@@ -101,8 +101,19 @@ func testObjectExample(t *testing.T) {
 	be.NilErr(t, obj.Validate(ctx, nil).Fatal.ErrorOrNil())
 	// be.NilErr(t, result.Warning)
 
+	// create a new object by forking new-object-01
+	forkID := "new-object-02"
+	fork := &ocfl.Commit{
+		ID:      forkID,
+		Stage:   vfs.Stage(),
+		Message: vfs.Message(),
+		User:    *vfs.User(),
+	}
+	forkObj, err := ocfl.OpenObject(ctx, tmpFS, forkID)
+	be.NilErr(t, err)
+	be.NilErr(t, forkObj.Commit(ctx, fork))
+	be.NilErr(t, forkObj.Validate(ctx, nil).Fatal.ErrorOrNil())
 	// TODO
-	// create another new object that forks new-object-01
 	// roll-back an object to a previous version
 	// interact with an object's extensions: list them, add an extension, remove an extension.
 }

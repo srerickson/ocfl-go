@@ -69,8 +69,17 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	if _, isWriteFS := obj.specObj.FS().(WriteFS); !isWriteFS {
 		return errors.New("object's backing file system doesn't support write operations")
 	}
-	useOCFL := obj.ocfl
-	if !commit.Spec.Empty() {
+	var useOCFL OCFL
+	switch {
+	case commit.Spec.Empty():
+		switch {
+		case obj.Exists():
+			useOCFL = obj.ocfl
+		default:
+			useOCFL = defaultOCFLs.latest
+		}
+		commit.Spec = useOCFL.Spec()
+	default:
 		var err error
 		useOCFL, err = obj.config.GetSpec(commit.Spec)
 		if err != nil {
@@ -281,9 +290,8 @@ type SpecObject interface {
 	// Path returns the object's path relative to its FS()
 	Path() string
 	Validate(context.Context, *Validation) *ValidationResult
-	// VersionFS returns a value that implements an io/fs.FS for
-	// accessing the logical contents of the object version state
-	// with the index v.
+	// VersionFS returns an io/fs.FS for accessing the logical contents of the
+	// object version state with the index v.
 	VersionFS(ctx context.Context, v int) fs.FS
 }
 
@@ -323,19 +331,19 @@ func (vfs *ObjectVersionFS) GetContent(digest string) (FS, string) {
 	return &ioFS{FS: vfs.fsys}, pths[0]
 }
 
-func (vfs *ObjectVersionFS) DigestAlgorithm() string { return vfs.inv.DigestAlgorithm() }
-
-func (vfs *ObjectVersionFS) Open(name string) (fs.File, error) { return vfs.fsys.Open(name) }
 func (vfs *ObjectVersionFS) Close() error {
 	if closer, isCloser := vfs.fsys.(io.Closer); isCloser {
 		return closer.Close()
 	}
 	return nil
 }
-func (vfs *ObjectVersionFS) State() DigestMap   { return vfs.ver.State() }
-func (vfs *ObjectVersionFS) Message() string    { return vfs.ver.Message() }
-func (vfs *ObjectVersionFS) User() *User        { return vfs.ver.User() }
-func (vfs *ObjectVersionFS) Created() time.Time { return vfs.ver.Created() }
+func (vfs *ObjectVersionFS) Created() time.Time                { return vfs.ver.Created() }
+func (vfs *ObjectVersionFS) DigestAlgorithm() string           { return vfs.inv.DigestAlgorithm() }
+func (vfs *ObjectVersionFS) State() DigestMap                  { return vfs.ver.State() }
+func (vfs *ObjectVersionFS) Message() string                   { return vfs.ver.Message() }
+func (vfs *ObjectVersionFS) Num() int                          { return vfs.num }
+func (vfs *ObjectVersionFS) Open(name string) (fs.File, error) { return vfs.fsys.Open(name) }
+func (vfs *ObjectVersionFS) User() *User                       { return vfs.ver.User() }
 
 func (vfs *ObjectVersionFS) Stage() *Stage {
 	return &Stage{

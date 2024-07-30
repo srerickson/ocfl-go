@@ -335,7 +335,6 @@ func NewInventory(commit *ocfl.Commit, prev ocfl.Inventory) (*RawInventory, erro
 	}
 	// check that resulting inventory is valid
 	if err := newInv.Validate().Err(); err != nil {
-		fmt.Println(newInv)
 		return nil, fmt.Errorf("generated inventory is not valid: %w", err)
 	}
 	return newInv, nil
