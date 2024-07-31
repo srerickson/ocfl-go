@@ -26,6 +26,13 @@ var (
 	ErrObjRootStructure   = errors.New("object includes invalid files or directories")
 )
 
+// Object implements ocfl.Object for OCFL v1.x objects
+type Object struct {
+	fs   ocfl.FS
+	path string
+	inv  *RawInventory
+}
+
 func OpenObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) {
 	if !fs.ValidPath(dir) {
 		return nil, &fs.PathError{
@@ -55,13 +62,6 @@ func OpenObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) 
 	// inventory may be nil
 	obj := &Object{fs: fsys, path: dir, inv: inv}
 	return obj, nil
-}
-
-// TODO: This is the new object
-type Object struct {
-	fs   ocfl.FS
-	path string
-	inv  *RawInventory
 }
 
 func (o Object) Close() error { return nil }
@@ -111,7 +111,7 @@ func (o *Object) VersionFS(ctx context.Context, i int) fs.FS {
 	return &versionFS{
 		ctx:     ctx,
 		obj:     o,
-		state:   ver.State,
+		paths:   ver.State.PathMap(),
 		created: ver.Created,
 		regMode: regfileType,
 	}
@@ -122,7 +122,7 @@ func (o *Object) Path() string { return o.path }
 type versionFS struct {
 	ctx     context.Context
 	obj     *Object
-	state   ocfl.DigestMap
+	paths   ocfl.PathMap
 	created time.Time
 	regMode fs.FileMode
 }
@@ -138,8 +138,7 @@ func (vfs *versionFS) Open(logical string) (fs.File, error) {
 	if logical == "." {
 		return vfs.openDir(".")
 	}
-
-	digest := vfs.state.GetDigest(logical)
+	digest := vfs.paths[logical]
 	if digest == "" {
 		// name doesn't exist in state.
 		// try opening as a directory
@@ -176,26 +175,24 @@ func (vfs *versionFS) openDir(dir string) (fs.File, error) {
 		prefix = ""
 	}
 	children := map[string]*vfsDirEntry{}
-	for _, paths := range vfs.state {
-		for _, p := range paths {
-			if !strings.HasPrefix(p, prefix) {
-				continue
-			}
-			name, _, isdir := strings.Cut(strings.TrimPrefix(p, prefix), "/")
-			if _, exists := children[name]; exists {
-				continue
-			}
-			entry := &vfsDirEntry{
-				name:    name,
-				mode:    vfs.regMode,
-				created: vfs.created,
-				open:    func() (fs.File, error) { return vfs.Open(path.Join(dir, name)) },
-			}
-			if isdir {
-				entry.mode = entry.mode | fs.ModeDir | fs.ModeIrregular
-			}
-			children[name] = entry
+	for p := range vfs.paths {
+		if !strings.HasPrefix(p, prefix) {
+			continue
 		}
+		name, _, isdir := strings.Cut(strings.TrimPrefix(p, prefix), "/")
+		if _, exists := children[name]; exists {
+			continue
+		}
+		entry := &vfsDirEntry{
+			name:    name,
+			mode:    vfs.regMode,
+			created: vfs.created,
+			open:    func() (fs.File, error) { return vfs.Open(path.Join(dir, name)) },
+		}
+		if isdir {
+			entry.mode = entry.mode | fs.ModeDir | fs.ModeIrregular
+		}
+		children[name] = entry
 	}
 	if len(children) < 1 {
 		return nil, &fs.PathError{

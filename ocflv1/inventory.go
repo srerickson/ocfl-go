@@ -33,7 +33,7 @@ type RawInventory struct {
 	Versions         map[ocfl.VNum]*Version    `json:"versions"`
 	Fixity           map[string]ocfl.DigestMap `json:"fixity,omitempty"`
 
-	// digest of raw inventory using DigestAlgorithm, set during json unmarshal
+	// digest of raw inventory using DigestAlgorithm, set during json marshal/unmarshal
 	digest string
 }
 
@@ -65,6 +65,22 @@ func (inv *RawInventory) UnmarshalJSON(b []byte) error {
 		inv.ContentDirectory = contentDir
 	}
 	return nil
+}
+
+func (inv *RawInventory) MarshalJSON() ([]byte, error) {
+	type invAlias RawInventory
+	alias := (*invAlias)(inv)
+	byts, err := json.Marshal(alias)
+	if err != nil {
+		return nil, err
+	}
+	if d := ocfl.NewDigester(inv.DigestAlgorithm); d != nil {
+		if _, err := io.Copy(d, bytes.NewReader(byts)); err != nil {
+			return nil, err
+		}
+		inv.digest = d.String()
+	}
+	return byts, nil
 }
 
 // VNums returns a sorted slice of VNums corresponding to the keys in the
@@ -137,10 +153,10 @@ func (inv RawInventory) GetFixity(digest string) ocfl.DigestSet {
 	return set
 }
 
-// WriteInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
+// writeInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
 // fsys. The digest is calculated using alg and the inventory sidecar is also written to
 // dir/inventory.alg
-func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *RawInventory, dirs ...string) error {
+func writeInventory(ctx context.Context, fsys ocfl.WriteFS, inv *RawInventory, dirs ...string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -197,7 +213,17 @@ func readInventorySidecar(ctx context.Context, fsys ocfl.FS, name string) (diges
 }
 
 // NextInventory ...
-func NewInventory(commit *ocfl.Commit, prev ocfl.Inventory) (*RawInventory, error) {
+func buildInventory(prev ocfl.Inventory, commit *ocfl.Commit) (*RawInventory, error) {
+	if commit.Stage == nil {
+		return nil, errors.New("commit is missing new version state")
+	}
+	if commit.Stage.DigestAlgorithm == "" {
+		return nil, errors.New("commit has no digest algorithm")
+
+	}
+	if commit.Stage.State == nil {
+		commit.Stage.State = ocfl.DigestMap{}
+	}
 	newInv := &RawInventory{
 		ID:               commit.ID,
 		DigestAlgorithm:  commit.Stage.DigestAlgorithm,

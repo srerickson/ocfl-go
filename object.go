@@ -14,17 +14,27 @@ import (
 	"github.com/hashicorp/go-multierror"
 )
 
+type Object struct {
+	specObj ObjectReader
+	opts    objectOptions
+}
+
+type objectOptions struct {
+	globals Config // global settings
+	ocfl    OCFL   // the OCFL implementation used to open the object
+}
+
 // OpenObject returns a new Object reference for managing the OCFL object at
 // path in fs. The object doesn't need to exist when OpenObject is called.
-func OpenObject(ctx context.Context, fsys FS, path string, opts ...func(*Object)) (*Object, error) {
+func OpenObject(ctx context.Context, fsys FS, path string, opts ...ObjectOption) (*Object, error) {
 	if !fs.ValidPath(path) {
 		return nil, fmt.Errorf("invalid object path: %q: %w", path, fs.ErrInvalid)
 	}
 	obj := &Object{}
 	for _, optFn := range opts {
-		optFn(obj)
+		optFn(&obj.opts)
 	}
-	if obj.ocfl == nil {
+	if obj.opts.ocfl == nil {
 		// check for object declaration in object root
 		entries, err := fsys.ReadDir(ctx, path)
 		if err != nil {
@@ -33,36 +43,26 @@ func OpenObject(ctx context.Context, fsys FS, path string, opts ...func(*Object)
 			}
 		}
 		rootState := ParseObjectRootDir(entries)
-		ocflRegister := obj.config.OCFLs
-		if ocflRegister == nil {
-			ocflRegister = &defaultOCFLs
-		}
 		switch {
-		case rootState == nil || rootState.Empty():
-			// path doesn't exist or is empty
+		case rootState.Empty():
+			// open as new/uninitialized object w/o an OCFL spec.
 			obj.specObj = &uninitializedObject{fs: fsys, path: path}
 			return obj, nil
 		case rootState.HasNamaste():
-			obj.ocfl, err = ocflRegister.Get(rootState.Spec)
+			obj.opts.ocfl, err = obj.opts.globals.GetSpec(rootState.Spec)
 			if err != nil {
 				return nil, fmt.Errorf("with OCFL spec found in object root %q: %w", rootState.Spec, err)
 			}
 		default:
-			return nil, fmt.Errorf("can't identify an OCFL specification for the object: %w", ErrObjectNamasteNotExist)
+			return nil, fmt.Errorf("directory is not an OCFL object: %w", ErrObjectNamasteNotExist)
 		}
 	}
 	var err error
-	obj.specObj, err = obj.ocfl.OpenObject(ctx, fsys, path)
+	obj.specObj, err = obj.opts.ocfl.OpenObject(ctx, fsys, path)
 	if err != nil {
 		return nil, err
 	}
 	return obj, nil
-}
-
-type Object struct {
-	specObj SpecObject
-	ocfl    OCFL // OCFL Spec used to open/commit specObj
-	config  Config
 }
 
 func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
@@ -74,14 +74,14 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	case commit.Spec.Empty():
 		switch {
 		case obj.Exists():
-			useOCFL = obj.ocfl
+			useOCFL = obj.opts.ocfl
 		default:
 			useOCFL = defaultOCFLs.latest
 		}
 		commit.Spec = useOCFL.Spec()
 	default:
 		var err error
-		useOCFL, err = obj.config.GetSpec(commit.Spec)
+		useOCFL, err = obj.opts.globals.GetSpec(commit.Spec)
 		if err != nil {
 			return err
 		}
@@ -90,10 +90,10 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	if err != nil {
 		return err
 	}
-	if obj.ocfl != useOCFL {
-		obj.ocfl = useOCFL
-	}
 	obj.specObj = newSpecObj
+	if obj.opts.ocfl != useOCFL {
+		obj.opts.ocfl = useOCFL
+	}
 	return nil
 }
 
@@ -249,7 +249,24 @@ type Commit struct {
 	Logger *slog.Logger
 }
 
-type ObjectOption func(*Object)
+// Commit error wraps an error from a commit.
+type CommitError struct {
+	Err error // The wrapped error
+
+	// Dirty indicates the object may be incomplete or invalid as a result of
+	// the error.
+	Dirty bool
+}
+
+func (c CommitError) Error() string {
+	return c.Err.Error()
+}
+
+func (c CommitError) Unwrap() error {
+	return c.Err
+}
+
+type ObjectOption func(*objectOptions)
 
 // func ObjectMustExist() ObjectOptionsFunc {
 // 	return func(opt *ObjectOptions) {
@@ -258,7 +275,7 @@ type ObjectOption func(*Object)
 // }
 
 func ObjectUseOCFL(ocfl OCFL) ObjectOption {
-	return func(opt *Object) {
+	return func(opt *objectOptions) {
 		opt.ocfl = ocfl
 	}
 }
@@ -281,7 +298,7 @@ func ObjectUseOCFL(ocfl OCFL) ObjectOption {
 // 	}
 // }
 
-type SpecObject interface {
+type ObjectReader interface {
 	// Close closes the object, freeing allocated resources.
 	Close() error
 	// FS for accessing object contents
@@ -310,6 +327,12 @@ type ObjectVersion interface {
 	User() *User
 	Message() string
 	Created() time.Time
+}
+
+// User is a generic user information struct
+type User struct {
+	Name    string `json:"name"`
+	Address string `json:"address,omitempty"`
 }
 
 type ObjectVersionFS struct {
@@ -354,12 +377,6 @@ func (vfs *ObjectVersionFS) Stage() *Stage {
 	}
 }
 
-// User is a generic user information struct
-type User struct {
-	Name    string `json:"name"`
-	Address string `json:"address,omitempty"`
-}
-
 type uninitializedObject struct {
 	fs   FS
 	path string
@@ -387,26 +404,9 @@ func (o *uninitializedObject) Validate(_ context.Context, _ *Validation) *Valida
 // with the index v.
 func (o *uninitializedObject) VersionFS(ctx context.Context, v int) fs.FS { return nil }
 
-func ObjectExists(obj SpecObject) bool {
+func ObjectExists(obj ObjectReader) bool {
 	if _, isEmpty := obj.(*uninitializedObject); isEmpty {
 		return false
 	}
 	return true
-}
-
-// Commit error wraps an error from a commit.
-type CommitError struct {
-	Err error // The wrapped error
-
-	// Dirty indicates the object may be incomplete or invalid as a result of
-	// the error.
-	Dirty bool
-}
-
-func (c CommitError) Error() string {
-	return c.Err.Error()
-}
-
-func (c CommitError) Unwrap() error {
-	return c.Err
 }

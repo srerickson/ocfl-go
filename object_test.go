@@ -134,7 +134,7 @@ func testOpenObject(t *testing.T) {
 		ctx    context.Context
 		fs     ocfl.FS
 		path   string
-		opts   []func(*ocfl.Object)
+		opts   []ocfl.ObjectOption
 		expect func(*testing.T, *ocfl.Object, error)
 	}
 	testCases := map[string]testCase{
@@ -173,7 +173,7 @@ func testOpenObject(t *testing.T) {
 			ctx:  ctx,
 			fs:   fsys,
 			path: "1.1/bad-objects/E003_E063_empty",
-			opts: []func(*ocfl.Object){ocfl.ObjectUseOCFL(ocfl.MustGetOCFL(ocfl.Spec1_1))},
+			opts: []ocfl.ObjectOption{ocfl.ObjectUseOCFL(ocfl.MustGetOCFL(ocfl.Spec1_1))},
 			expect: func(t *testing.T, _ *ocfl.Object, err error) {
 				be.Nonzero(t, err)
 			},

@@ -40,7 +40,7 @@ type OCFL struct {
 
 func (imp OCFL) Spec() ocfl.Spec { return imp.spec }
 
-func (imp OCFL) OpenObject(ctx context.Context, fsys ocfl.FS, path string) (ocfl.SpecObject, error) {
+func (imp OCFL) OpenObject(ctx context.Context, fsys ocfl.FS, path string) (ocfl.ObjectReader, error) {
 	obj, err := OpenObject(ctx, fsys, path)
 	if err != nil {
 		return nil, err
@@ -51,11 +51,14 @@ func (imp OCFL) OpenObject(ctx context.Context, fsys ocfl.FS, path string) (ocfl
 
 // Commits creates or updates an object by adding a new object version based
 // on the implementation.
-func (imp OCFL) Commit(ctx context.Context, obj ocfl.SpecObject, c *ocfl.Commit) (ocfl.SpecObject, error) {
-	err := commit(ctx, obj, c)
+func (imp OCFL) Commit(ctx context.Context, obj ocfl.ObjectReader, c *ocfl.Commit) (ocfl.ObjectReader, error) {
+	newInv, err := doCommit(ctx, obj, c)
 	if err != nil {
 		return nil, err
 	}
-	// FIXME: Commit should just return this
-	return OpenObject(ctx, obj.FS(), obj.Path())
+	return &Object{
+		inv:  newInv,
+		fs:   obj.FS(),
+		path: obj.Path(),
+	}, nil
 }
