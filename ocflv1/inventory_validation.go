@@ -28,11 +28,11 @@ func (inv *RawInventory) Validate() *ocfl.Validation {
 	}
 	if inv.ID == "" {
 		err := errors.New("missing required field: 'id'")
-		result.AddFatal(ec(err, codes.E036.Ref(inv.Type.Spec)))
+		result.AddFatal(ec(err, codes.E036(inv.Type.Spec)))
 	}
 	if inv.Head.IsZero() {
 		err := errors.New("missing required field: 'head'")
-		result.AddFatal(ec(err, codes.E036.Ref(inv.Type.Spec)))
+		result.AddFatal(ec(err, codes.E036(inv.Type.Spec)))
 	}
 	if inv.ContentDirectory == "" {
 		inv.ContentDirectory = contentDir
@@ -43,45 +43,45 @@ func (inv *RawInventory) Validate() *ocfl.Validation {
 	}
 	if u, err := url.ParseRequestURI(inv.ID); err != nil || u.Scheme == "" {
 		err := fmt.Errorf(`object ID is not a URI: %s`, inv.ID)
-		result.AddWarn(ec(err, codes.W005.Ref(inv.Type.Spec)))
+		result.AddWarn(ec(err, codes.W005(inv.Type.Spec)))
 	}
 	switch inv.DigestAlgorithm {
 	case ocfl.SHA512:
 		break
 	case ocfl.SHA256:
 		err := fmt.Errorf(`'digestAlgorithm' is %q`, ocfl.SHA256)
-		result.AddWarn(ec(err, codes.W004.Ref(inv.Type.Spec)))
+		result.AddWarn(ec(err, codes.W004(inv.Type.Spec)))
 	default:
 		err := fmt.Errorf(`'digestAlgorithm' is not %q or %q`, ocfl.SHA512, ocfl.SHA256)
-		result.AddFatal(ec(err, codes.E025.Ref(inv.Type.Spec)))
+		result.AddFatal(ec(err, codes.E025(inv.Type.Spec)))
 	}
 	if err := inv.Head.Valid(); err != nil {
 		// this shouldn't ever trigger since the invalid condition is caught during unmarshal.
 		err = fmt.Errorf("head is invalid: %w", err)
-		result.AddFatal(ec(err, codes.E011.Ref(inv.Type.Spec)))
+		result.AddFatal(ec(err, codes.E011(inv.Type.Spec)))
 	}
 	if strings.Contains(inv.ContentDirectory, "/") {
 		err := errors.New("contentDirectory contains '/'")
-		result.AddFatal(ec(err, codes.E017.Ref(inv.Type.Spec)))
+		result.AddFatal(ec(err, codes.E017(inv.Type.Spec)))
 	}
 	if inv.ContentDirectory == "." || inv.ContentDirectory == ".." {
 		err := errors.New("contentDirectory is '.' or '..'")
-		result.AddFatal(ec(err, codes.E017.Ref(inv.Type.Spec)))
+		result.AddFatal(ec(err, codes.E017(inv.Type.Spec)))
 	}
 	if inv.Manifest == nil {
 		err := errors.New("missing required field 'manifest'")
-		result.AddFatal(ec(err, codes.E041.Ref(inv.Type.Spec)))
+		result.AddFatal(ec(err, codes.E041(inv.Type.Spec)))
 	}
 	if err := inv.Manifest.Valid(); err != nil {
 		var dcErr *ocfl.MapDigestConflictErr
 		var pcErr *ocfl.MapPathConflictErr
 		var piErr *ocfl.MapPathInvalidErr
 		if errors.As(err, &dcErr) {
-			err = ec(err, codes.E096.Ref(inv.Type.Spec))
+			err = ec(err, codes.E096(inv.Type.Spec))
 		} else if errors.As(err, &pcErr) {
-			err = ec(err, codes.E101.Ref(inv.Type.Spec))
+			err = ec(err, codes.E101(inv.Type.Spec))
 		} else if errors.As(err, &piErr) {
-			err = ec(err, codes.E099.Ref(inv.Type.Spec))
+			err = ec(err, codes.E099(inv.Type.Spec))
 		}
 		result.AddFatal(err)
 	}
@@ -89,17 +89,17 @@ func (inv *RawInventory) Validate() *ocfl.Validation {
 	var versionNums ocfl.VNums = maps.Keys(inv.Versions)
 	if err := versionNums.Valid(); err != nil {
 		if errors.Is(err, ocfl.ErrVerEmpty) {
-			err = ec(err, codes.E008.Ref(inv.Type.Spec))
+			err = ec(err, codes.E008(inv.Type.Spec))
 		} else if errors.Is(err, ocfl.ErrVNumMissing) {
-			err = ec(err, codes.E010.Ref(inv.Type.Spec))
+			err = ec(err, codes.E010(inv.Type.Spec))
 		} else if errors.Is(err, ocfl.ErrVNumPadding) {
-			err = ec(err, codes.E012.Ref(inv.Type.Spec))
+			err = ec(err, codes.E012(inv.Type.Spec))
 		}
 		result.AddFatal(err)
 	}
 	if versionNums.Head() != inv.Head {
 		err := fmt.Errorf(`version head not most recent version: %s`, inv.Head)
-		result.AddFatal(ec(err, codes.E040.Ref(inv.Type.Spec)))
+		result.AddFatal(ec(err, codes.E040(inv.Type.Spec)))
 	}
 	// version state
 	for vname, ver := range inv.Versions {
@@ -109,11 +109,11 @@ func (inv *RawInventory) Validate() *ocfl.Validation {
 			var pcErr *ocfl.MapPathConflictErr
 			var piErr *ocfl.MapPathInvalidErr
 			if errors.As(err, &dcErr) {
-				err = ec(err, codes.E050.Ref(inv.Type.Spec))
+				err = ec(err, codes.E050(inv.Type.Spec))
 			} else if errors.As(err, &pcErr) {
-				err = ec(err, codes.E095.Ref(inv.Type.Spec))
+				err = ec(err, codes.E095(inv.Type.Spec))
 			} else if errors.As(err, &piErr) {
-				err = ec(err, codes.E052.Ref(inv.Type.Spec))
+				err = ec(err, codes.E052(inv.Type.Spec))
 			}
 			result.AddFatal(err)
 		}
@@ -121,26 +121,26 @@ func (inv *RawInventory) Validate() *ocfl.Validation {
 		for _, digest := range ver.State.Digests() {
 			if len(inv.Manifest[digest]) == 0 {
 				err := fmt.Errorf("digest in %s state not in manifest: %s", vname, digest)
-				result.AddFatal(ec(err, codes.E050.Ref(inv.Type.Spec)))
+				result.AddFatal(ec(err, codes.E050(inv.Type.Spec)))
 			}
 		}
 		// version message
 		if ver.Message == "" {
 			err := fmt.Errorf("version %s missing recommended field: 'message'", vname)
-			result.AddWarn(ec(err, codes.W007.Ref(inv.Type.Spec)))
+			result.AddWarn(ec(err, codes.W007(inv.Type.Spec)))
 		}
 		if ver.User != nil {
 			if ver.User.Name == "" {
 				err := fmt.Errorf("version %s user missing required field: 'name'", vname)
-				result.AddFatal(ec(err, codes.E054.Ref(inv.Type.Spec)))
+				result.AddFatal(ec(err, codes.E054(inv.Type.Spec)))
 			}
 			if ver.User.Address == "" {
 				err := fmt.Errorf("version %s user missing recommended field: 'address'", vname)
-				result.AddWarn(ec(err, codes.W008.Ref(inv.Type.Spec)))
+				result.AddWarn(ec(err, codes.W008(inv.Type.Spec)))
 			}
 			if u, err := url.ParseRequestURI(ver.User.Address); err != nil || u.Scheme == "" {
 				err := fmt.Errorf("version %s user address is not a URI", vname)
-				result.AddWarn(ec(err, codes.W009.Ref(inv.Type.Spec)))
+				result.AddWarn(ec(err, codes.W009(inv.Type.Spec)))
 			}
 		}
 	}
@@ -155,7 +155,7 @@ func (inv *RawInventory) Validate() *ocfl.Validation {
 		}
 		if !found {
 			err := fmt.Errorf("digest in manifest not used in version state: %s", digest)
-			result.AddFatal(ec(err, codes.E107.Ref(inv.Type.Spec)))
+			result.AddFatal(ec(err, codes.E107(inv.Type.Spec)))
 		}
 	}
 	//fixity
@@ -166,11 +166,11 @@ func (inv *RawInventory) Validate() *ocfl.Validation {
 			var piErr *ocfl.MapPathInvalidErr
 			var pcErr *ocfl.MapPathConflictErr
 			if errors.As(err, &dcErr) {
-				err = ec(err, codes.E097.Ref(inv.Type.Spec))
+				err = ec(err, codes.E097(inv.Type.Spec))
 			} else if errors.As(err, &piErr) {
-				err = ec(err, codes.E099.Ref(inv.Type.Spec))
+				err = ec(err, codes.E099(inv.Type.Spec))
 			} else if errors.As(err, &pcErr) {
-				err = ec(err, codes.E101.Ref(inv.Type.Spec))
+				err = ec(err, codes.E101(inv.Type.Spec))
 			}
 			result.AddFatal(err)
 		}
@@ -182,7 +182,7 @@ func (inv *RawInventory) Validate() *ocfl.Validation {
 func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, ocflV ocfl.Spec) (inv *RawInventory, result *ocfl.Validation) {
 	f, err := fsys.OpenFile(ctx, name)
 	if err != nil {
-		result.AddFatal(ec(err, codes.E063.Ref(ocflV)))
+		result.AddFatal(ec(err, codes.E063(ocflV)))
 		return nil, result
 	}
 	defer func() {
@@ -200,9 +200,9 @@ func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, ocflV ocf
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvSidecarContents):
-			result.AddFatal(ec(err, codes.E061.Ref(ocflV)))
+			result.AddFatal(ec(err, codes.E061(ocflV)))
 		default:
-			result.AddFatal(ec(err, codes.E058.Ref(ocflV)))
+			result.AddFatal(ec(err, codes.E058(ocflV)))
 		}
 		return
 	}
@@ -210,7 +210,7 @@ func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, ocflV ocf
 		shortSum := inv.jsonDigest[:6]
 		shortExp := expSum[:6]
 		err := fmt.Errorf("inventory's checksum (%s) doen't match expected value in sidecar (%s): %s", shortSum, shortExp, name)
-		result.AddFatal(ec(err, codes.E060.Ref(ocflV)))
+		result.AddFatal(ec(err, codes.E060(ocflV)))
 	}
 	return
 }

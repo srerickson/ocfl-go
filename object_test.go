@@ -18,7 +18,6 @@ import (
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/local"
 	"github.com/srerickson/ocfl-go/ocflv1"
-	"github.com/srerickson/ocfl-go/validation"
 	"golang.org/x/exp/maps"
 )
 
@@ -342,9 +341,9 @@ func fixtureExpectedErrs(name string, errs ...error) (bool, string) {
 	var gotExpected bool
 	for _, e := range errs {
 		var c = "??"
-		var err validation.ErrorCode
-		if errors.As(e, &err) && err.OCFLRef() != nil {
-			c = err.OCFLRef().Code
+		var vErr *ocfl.ValidationError
+		if errors.As(e, &vErr) && vErr.Ref != nil {
+			c = vErr.Ref.Code
 			gotCodes[c] = true
 			if expCodes[c] {
 				gotExpected = true

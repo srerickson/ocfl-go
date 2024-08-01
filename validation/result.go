@@ -76,7 +76,7 @@ func (r *Result) AddWarn(err error) *Result {
 func (r *Result) LogFatal(logger *slog.Logger, err error) *Result {
 	if err != nil {
 		r.AddFatal(err)
-		r.logType(logger, err, fatal)
+		r.logType(logger, err, true)
 	}
 	return r
 }
@@ -86,7 +86,7 @@ func (r *Result) LogFatal(logger *slog.Logger, err error) *Result {
 func (r *Result) LogWarn(logger *slog.Logger, err error) *Result {
 	if err != nil {
 		r.AddWarn(err)
-		r.logType(logger, err, warn)
+		r.logType(logger, err, false)
 	}
 	return r
 }
@@ -148,26 +148,20 @@ func (r *Result) Merge(src *Result) {
 // LogAll logs all errs in the in reset to the logger
 func (r *Result) LogAll(logger *slog.Logger) {
 	for _, err := range r.warn {
-		r.logType(logger, err, warn)
+		r.logType(logger, err, false)
 	}
 	for _, err := range r.fatal {
-		r.logType(logger, err, fatal)
+		r.logType(logger, err, true)
 	}
 }
 
-func (r *Result) logType(logger *slog.Logger, err error, typ string) {
+func (r *Result) logType(logger *slog.Logger, err error, fatal bool) {
 	if logger == nil {
 		return
 	}
-	vals := []interface{}{}
-	if vErr, ok := err.(ErrorCode); ok {
-		if ref := vErr.OCFLRef(); ref != nil {
-			vals = append(vals, "ocfl_err", ref.Code)
-		}
-	}
-	if typ == fatal {
-		logger.Error(err.Error(), vals...)
+	if fatal {
+		logger.Error(err.Error())
 		return
 	}
-	logger.Warn(err.Error(), vals...)
+	logger.Warn(err.Error())
 }

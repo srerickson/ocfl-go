@@ -10,7 +10,6 @@ import (
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/logging"
-	"github.com/srerickson/ocfl-go/validation"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -25,13 +24,6 @@ const (
 	descriptionKey      = `description`
 	extensionKey        = `extension`
 	extensionConfigFile = "config.json"
-)
-
-var (
-	ocflv1_0 = ocfl.Spec1_0
-
-	// shorthand
-	ec = validation.NewErrorCode
 )
 
 func Enable() {
@@ -193,4 +185,14 @@ func copyContent(ctx context.Context, c *copyContentOpts) error {
 		}
 	}
 	return grp.Wait()
+}
+
+func ec(err error, code *ocfl.SpecErrCode) error {
+	if code == nil {
+		return err
+	}
+	return &ocfl.ValidationError{
+		Err: err,
+		Ref: code,
+	}
 }

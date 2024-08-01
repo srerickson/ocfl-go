@@ -32,7 +32,7 @@ type validationOptions struct {
 
 func defaultValidationOptions() *validationOptions {
 	return &validationOptions{
-		FallbackOCFL: ocflv1_0,
+		FallbackOCFL: ocfl.Spec1_0,
 		MaxErrs:      100,
 		Logger:       logging.DisabledLogger(),
 	}
