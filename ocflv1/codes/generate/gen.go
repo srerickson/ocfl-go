@@ -6,43 +6,43 @@ package main
 // go run gen.go > ../codes.go
 
 import (
+	_ "embed"
 	"encoding/csv"
 	"fmt"
 	"log"
 	"os"
 	"strings"
 	"text/template"
-
-	"github.com/srerickson/ocfl-go"
 )
 
+//go:embed codes-ocflv1.0.csv
+var codes1_0 string
+
+//go:embed codes-ocflv1.1.csv
+var codes1_1 string
+
 var specs = map[string]string{
-	"1.0": "codes-ocflv1.0.csv",
-	"1.1": "codes-ocflv1.1.csv",
+	"1.0": codes1_0,
+	"1.1": codes1_1,
 }
 
-type Spec struct {
+type SpecRef struct {
 	Description string // code description
 	URL         string // URL to spect
 }
 
-type CodeInfo struct {
+type CodeEntry struct {
 	Num     string
 	Comment string
-	Specs   map[ocfl.Spec]Spec
+	Specs   map[string]SpecRef
 }
 
 func main() {
 	tpl := template.Must(template.ParseFiles(`codes_gen.go.tmpl`))
-	codes := map[string]*CodeInfo{}
+	codes := map[string]*CodeEntry{}
 
-	for specnum, file := range specs {
-		f, err := os.Open(file)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer f.Close()
-		reader := csv.NewReader(f)
+	for specnum, raw := range specs {
+		reader := csv.NewReader(strings.NewReader(raw))
 		rows, err := reader.ReadAll()
 		for _, row := range rows {
 			// cleanup
@@ -53,25 +53,18 @@ func main() {
 			num := row[0]
 			desc := row[1]
 			url := row[2]
-			comment := fmt.Sprintf("%s: %s", row[0], row[1])
-			if code := codes[num]; code != nil {
-				code.Specs[ocfl.Spec(specnum)] = Spec{
-					Description: desc,
-					URL:         url,
+			comment := fmt.Sprintf("%s: %s", num, desc)
+			if codes[num] == nil {
+				codes[num] = &CodeEntry{
+					Num:     num,
+					Comment: comment,
+					Specs:   map[string]SpecRef{},
 				}
-				continue
 			}
-			codes[num] = &CodeInfo{
-				Num:     num,
-				Comment: comment,
-				Specs: map[ocfl.Spec]Spec{
-					ocfl.Spec(specnum): {
-						Description: desc,
-						URL:         url,
-					},
-				},
+			codes[num].Specs[specnum] = SpecRef{
+				Description: desc,
+				URL:         url,
 			}
-
 		}
 		if err != nil {
 			log.Fatal(err)
