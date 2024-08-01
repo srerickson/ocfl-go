@@ -35,8 +35,8 @@ var (
 // version of the OCFL specification.
 type OCFL interface {
 	Spec() Spec
-	OpenObject(ctx context.Context, fsys FS, path string) (ObjectReader, error)
-	Commit(ctx context.Context, obj ObjectReader, commit *Commit) (ObjectReader, error)
+	NewReadObject(ctx context.Context, fsys FS, path string) (ReadObject, error)
+	Commit(ctx context.Context, obj ReadObject, commit *Commit) (ReadObject, error)
 	// OpenVersion(ctx context.Context, obj *Object, i int) (ObjectVersionFS, error)
 	// OpenObject(context.Context, *ObjectRoot, ...func(*ObjectOptions)) (*Object, error)
 	// SorageRoot

@@ -42,7 +42,7 @@ func validate(root string, isStore bool, logger *slog.Logger) error {
 		result := ocflv1.ValidateStore(ctx, fsys, ".", ocflv1.ValidationLogger(logger))
 		return result.Err()
 	}
-	obj, err := ocfl.OpenObject(ctx, fsys, ".")
+	obj, err := ocfl.NewObject(ctx, fsys, ".")
 	if err != nil {
 		return err
 	}

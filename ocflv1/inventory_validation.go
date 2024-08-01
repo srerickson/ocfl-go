@@ -203,8 +203,8 @@ func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, vops ...V
 		}
 		return nil, invResult.LogFatal(lgr, ec(err, codes.E058.Ref(ocflV)))
 	}
-	if !strings.EqualFold(inv.digest, expSum) {
-		shortSum := inv.digest[:6]
+	if !strings.EqualFold(inv.jsonDigest, expSum) {
+		shortSum := inv.jsonDigest[:6]
 		shortExp := expSum[:6]
 		err := fmt.Errorf("inventory's checksum (%s) doen't match expected value in sidecar (%s): %s", shortSum, shortExp, name)
 		invResult.LogFatal(lgr, ec(err, codes.E060.Ref(ocflV)))
@@ -240,7 +240,7 @@ func ValidateInventoryReader(ctx context.Context, reader io.Reader, vops ...Vali
 	if err := result.Err(); err != nil {
 		return nil, result
 	}
-	inv.digest = sum
+	inv.jsonDigest = sum
 	return inv, result
 }
 

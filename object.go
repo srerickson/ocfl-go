@@ -15,8 +15,8 @@ import (
 )
 
 type Object struct {
-	specObj ObjectReader
-	opts    objectOptions
+	reader ReadObject
+	opts   objectOptions
 }
 
 type objectOptions struct {
@@ -24,9 +24,9 @@ type objectOptions struct {
 	ocfl    OCFL   // the OCFL implementation used to open the object
 }
 
-// OpenObject returns a new Object reference for managing the OCFL object at
-// path in fs. The object doesn't need to exist when OpenObject is called.
-func OpenObject(ctx context.Context, fsys FS, path string, opts ...ObjectOption) (*Object, error) {
+// NewObject returns an *Object reference for managing the OCFL object at
+// path in fsys. The object doesn't need to exist when NewObject is called.
+func NewObject(ctx context.Context, fsys FS, path string, opts ...ObjectOption) (*Object, error) {
 	if !fs.ValidPath(path) {
 		return nil, fmt.Errorf("invalid object path: %q: %w", path, fs.ErrInvalid)
 	}
@@ -46,7 +46,7 @@ func OpenObject(ctx context.Context, fsys FS, path string, opts ...ObjectOption)
 		switch {
 		case rootState.Empty():
 			// open as new/uninitialized object w/o an OCFL spec.
-			obj.specObj = &uninitializedObject{fs: fsys, path: path}
+			obj.reader = &uninitializedObject{fs: fsys, path: path}
 			return obj, nil
 		case rootState.HasNamaste():
 			obj.opts.ocfl, err = obj.opts.globals.GetSpec(rootState.Spec)
@@ -58,7 +58,7 @@ func OpenObject(ctx context.Context, fsys FS, path string, opts ...ObjectOption)
 		}
 	}
 	var err error
-	obj.specObj, err = obj.opts.ocfl.OpenObject(ctx, fsys, path)
+	obj.reader, err = obj.opts.ocfl.NewReadObject(ctx, fsys, path)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func OpenObject(ctx context.Context, fsys FS, path string, opts ...ObjectOption)
 }
 
 func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
-	if _, isWriteFS := obj.specObj.FS().(WriteFS); !isWriteFS {
+	if _, isWriteFS := obj.reader.FS().(WriteFS); !isWriteFS {
 		return errors.New("object's backing file system doesn't support write operations")
 	}
 	var useOCFL OCFL
@@ -86,20 +86,18 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 			return err
 		}
 	}
-	newSpecObj, err := useOCFL.Commit(ctx, obj.specObj, commit)
+	newSpecObj, err := useOCFL.Commit(ctx, obj.reader, commit)
 	if err != nil {
 		return err
 	}
-	obj.specObj = newSpecObj
+	obj.reader = newSpecObj
 	if obj.opts.ocfl != useOCFL {
 		obj.opts.ocfl = useOCFL
 	}
 	return nil
 }
 
-func (obj *Object) Close() error { return obj.specObj.Close() }
-
-func (obj *Object) Exists() bool { return ObjectExists(obj.specObj) }
+func (obj *Object) Exists() bool { return ObjectExists(obj.reader) }
 
 // ExtensionNames returns the names of directories in the object's
 // extensions directory. The ObjectRoot's State is initialized if it is
@@ -123,11 +121,11 @@ func (obj Object) ExtensionNames(ctx context.Context) ([]string, error) {
 	return names, err
 }
 
-func (obj *Object) FS() FS { return obj.specObj.FS() }
+func (obj *Object) FS() FS { return obj.reader.FS() }
 
-func (obj *Object) Inventory() Inventory { return obj.specObj.Inventory() }
+func (obj *Object) Inventory() Inventory { return obj.reader.Inventory() }
 
-func (obj *Object) Path() string { return obj.specObj.Path() }
+func (obj *Object) Path() string { return obj.reader.Path() }
 
 // func (obj *Object) ID() string { return obj.id }
 
@@ -197,7 +195,7 @@ func (obj *Object) Path() string { return obj.specObj.Path() }
 // }
 
 // OpenVersion returns an ObjectVersionFS for the version with the given
-// index (1...HEAD).
+// index (1...HEAD). If i is 0, the most recent version is used.
 func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, error) {
 	if !obj.Exists() {
 		return nil, ErrNamasteNotExist
@@ -215,7 +213,7 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 		// FIXME; better error
 		return nil, errors.New("version not found")
 	}
-	ioFS := obj.specObj.VersionFS(ctx, i)
+	ioFS := obj.reader.VersionFS(ctx, i)
 	if ioFS == nil {
 		// FIXME; better error
 		return nil, errors.New("version not found")
@@ -230,7 +228,7 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 }
 
 func (obj *Object) Validate(ctx context.Context, opts *Validation) *ValidationResult {
-	return obj.specObj.Validate(ctx, opts)
+	return obj.reader.Validate(ctx, opts)
 }
 
 type Commit struct {
@@ -298,12 +296,12 @@ func ObjectUseOCFL(ocfl OCFL) ObjectOption {
 // 	}
 // }
 
-type ObjectReader interface {
-	// Close closes the object, freeing allocated resources.
-	Close() error
+type ReadObject interface {
+	// Inventory returns the object's inventory or nil if
+	// the object hasn't been created yet.
+	Inventory() Inventory
 	// FS for accessing object contents
 	FS() FS
-	Inventory() Inventory
 	// Path returns the object's path relative to its FS()
 	Path() string
 	Validate(context.Context, *Validation) *ValidationResult
@@ -382,9 +380,6 @@ type uninitializedObject struct {
 	path string
 }
 
-// Close closes the object, freeing allocated resources.
-func (o *uninitializedObject) Close() error { return nil }
-
 // FS for accessing object contents
 func (o *uninitializedObject) FS() FS { return o.fs }
 
@@ -404,7 +399,7 @@ func (o *uninitializedObject) Validate(_ context.Context, _ *Validation) *Valida
 // with the index v.
 func (o *uninitializedObject) VersionFS(ctx context.Context, v int) fs.FS { return nil }
 
-func ObjectExists(obj ObjectReader) bool {
+func ObjectExists(obj ReadObject) bool {
 	if _, isEmpty := obj.(*uninitializedObject); isEmpty {
 		return false
 	}

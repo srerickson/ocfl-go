@@ -102,7 +102,7 @@ func (inv decodeInventory) asInventory() (*RawInventory, *validation.Result) {
 		DigestAlgorithm:  *inv.DigestAlgorithm,
 		Manifest:         inv.Manifest.DigestMap,
 		Fixity:           inv.Fixity,
-		digest:           inv.digest,
+		jsonDigest:       inv.digest,
 	}
 	newInv.Versions = make(map[ocfl.VNum]*Version, len(inv.Versions))
 	for num, ver := range inv.Versions {

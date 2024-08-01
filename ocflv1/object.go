@@ -26,14 +26,14 @@ var (
 	ErrObjRootStructure   = errors.New("object includes invalid files or directories")
 )
 
-// Object implements ocfl.Object for OCFL v1.x objects
-type Object struct {
+// ReadObject implements ocfl.ReadObject for OCFL v1.x objects
+type ReadObject struct {
 	fs   ocfl.FS
 	path string
 	inv  *RawInventory
 }
 
-func OpenObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) {
+func NewReadObject(ctx context.Context, fsys ocfl.FS, dir string) (obj *ReadObject, err error) {
 	if !fs.ValidPath(dir) {
 		return nil, &fs.PathError{
 			Op:   "open",
@@ -41,10 +41,9 @@ func OpenObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) 
 			Err:  fs.ErrInvalid,
 		}
 	}
-	var inv *RawInventory
 	invFile, err := fsys.OpenFile(ctx, path.Join(dir, inventoryFile))
 	if err != nil {
-		return nil, err
+		return
 	}
 	defer func() {
 		if closeErr := invFile.Close(); closeErr != nil {
@@ -53,29 +52,26 @@ func OpenObject(ctx context.Context, fsys ocfl.FS, dir string) (*Object, error) 
 	}()
 	bytes, err := io.ReadAll(invFile)
 	if err != nil {
-		return nil, err
+		return
 	}
-	inv = &RawInventory{}
-	if err := json.Unmarshal(bytes, inv); err != nil {
-		return nil, err
+	inv := &RawInventory{}
+	if err = json.Unmarshal(bytes, inv); err != nil {
+		return
 	}
-	// inventory may be nil
-	obj := &Object{fs: fsys, path: dir, inv: inv}
-	return obj, nil
+	obj = &ReadObject{fs: fsys, path: dir, inv: inv}
+	return
 }
 
-func (o Object) Close() error { return nil }
+func (o *ReadObject) FS() ocfl.FS { return o.fs }
 
-func (o *Object) FS() ocfl.FS { return o.fs }
-
-func (o *Object) Inventory() ocfl.Inventory {
+func (o *ReadObject) Inventory() ocfl.Inventory {
 	if o.inv == nil {
 		return nil
 	}
 	return &inventory{raw: *o.inv}
 }
 
-func (o *Object) Validate(ctx context.Context, opts *ocfl.Validation) *ocfl.ValidationResult {
+func (o *ReadObject) Validate(ctx context.Context, opts *ocfl.Validation) *ocfl.ValidationResult {
 	_, r := ValidateObject(ctx, o.fs, o.path)
 	result := &ocfl.ValidationResult{}
 	result.Fatal = multierror.Append(result.Fatal, r.Fatal()...)
@@ -83,7 +79,7 @@ func (o *Object) Validate(ctx context.Context, opts *ocfl.Validation) *ocfl.Vali
 	return result
 }
 
-func (o *Object) VersionFS(ctx context.Context, i int) fs.FS {
+func (o *ReadObject) VersionFS(ctx context.Context, i int) fs.FS {
 	ver := o.inv.Version(i)
 	if ver == nil {
 		return nil
@@ -117,11 +113,11 @@ func (o *Object) VersionFS(ctx context.Context, i int) fs.FS {
 	}
 }
 
-func (o *Object) Path() string { return o.path }
+func (o *ReadObject) Path() string { return o.path }
 
 type versionFS struct {
 	ctx     context.Context
-	obj     *Object
+	obj     *ReadObject
 	paths   ocfl.PathMap
 	created time.Time
 	regMode fs.FileMode

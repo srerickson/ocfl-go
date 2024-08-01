@@ -15,7 +15,7 @@ import (
 	"github.com/srerickson/ocfl-go/validation"
 )
 
-func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ValidationOption) (*Object, *validation.Result) {
+func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ValidationOption) (*ReadObject, *validation.Result) {
 	opts, result := validationSetup(vops)
 	vldr := objectValidator{
 		Result:   result,
@@ -29,7 +29,7 @@ func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...Vali
 	if err := result.Err(); err != nil {
 		return nil, result
 	}
-	obj := &Object{fs: fsys, path: root, inv: vldr.rootInv}
+	obj := &ReadObject{fs: fsys, path: root, inv: vldr.rootInv}
 	return obj, result
 }
 
@@ -264,7 +264,7 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, vn oc
 	}
 	// Is this the HEAD version directory?
 	if vn == vldr.rootInv.Head {
-		if dirInv.digest == vldr.rootInv.digest {
+		if dirInv.jsonDigest == vldr.rootInv.jsonDigest {
 			return nil // don't need to validate any further
 		}
 		err := fmt.Errorf("inventory in last version (%s) is not same as root inventory", vn)

@@ -27,9 +27,8 @@ func TestReadObject(t *testing.T) {
 	goodObjName := "spec-ex-full"
 
 	t.Run("ok", func(t *testing.T) {
-		obj, err := ocflv1.OpenObject(ctx, fsys, goodObjName)
+		_, err := ocflv1.NewReadObject(ctx, fsys, goodObjName)
 		be.NilErr(t, err)
-		be.NilErr(t, obj.Close())
 	})
 
 }

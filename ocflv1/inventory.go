@@ -33,8 +33,8 @@ type RawInventory struct {
 	Versions         map[ocfl.VNum]*Version    `json:"versions"`
 	Fixity           map[string]ocfl.DigestMap `json:"fixity,omitempty"`
 
-	// digest of raw inventory using DigestAlgorithm, set during json marshal/unmarshal
-	digest string
+	// jsonDigest of raw inventory using DigestAlgorithm, set during json marshal/unmarshal
+	jsonDigest string
 }
 
 // Version represents object version state and metadata
@@ -58,7 +58,7 @@ func (inv *RawInventory) UnmarshalJSON(b []byte) error {
 		if _, err := io.Copy(d, bytes.NewReader(b)); err != nil {
 			return err
 		}
-		alias.digest = d.String()
+		alias.jsonDigest = d.String()
 	}
 	*inv = RawInventory(alias)
 	if inv.ContentDirectory == "" {
@@ -74,12 +74,14 @@ func (inv *RawInventory) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if d := ocfl.NewDigester(inv.DigestAlgorithm); d != nil {
-		if _, err := io.Copy(d, bytes.NewReader(byts)); err != nil {
-			return nil, err
-		}
-		inv.digest = d.String()
+	digester := ocfl.NewDigester(inv.DigestAlgorithm)
+	if digester == nil {
+		return nil, fmt.Errorf("inventory digest algorithm %q: %w", inv.DigestAlgorithm, ocfl.ErrUnknownAlg)
 	}
+	if _, err := io.Copy(digester, bytes.NewReader(byts)); err != nil {
+		return nil, err
+	}
+	inv.jsonDigest = digester.String()
 	return byts, nil
 }
 
@@ -100,7 +102,7 @@ func (inv RawInventory) VNums() []ocfl.VNum {
 // Inventory wasn't decoded using ValidateInventory or ValidateInventoryReader,
 // an empty string is returned.
 func (inv RawInventory) Digest() string {
-	return inv.digest
+	return inv.jsonDigest
 }
 
 // ContentPath resolves the logical path from the version state with number v to
@@ -160,24 +162,15 @@ func writeInventory(ctx context.Context, fsys ocfl.WriteFS, inv *RawInventory, d
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	digester := ocfl.NewDigester(inv.DigestAlgorithm)
-	if digester == nil {
-		return fmt.Errorf("%w: %q", ocfl.ErrUnknownAlg, inv.DigestAlgorithm)
-	}
 	byts, err := json.Marshal(inv)
 	if err != nil {
 		return fmt.Errorf("encoding inventory: %w", err)
 	}
-	_, err = io.Copy(digester, bytes.NewReader(byts))
-	if err != nil {
-		return err
-	}
-	invDigest := digester.String()
 	// write inventory.json and sidecar
 	for _, dir := range dirs {
 		invFile := path.Join(dir, inventoryFile)
 		sideFile := invFile + "." + inv.DigestAlgorithm
-		sideContent := invDigest + " " + inventoryFile + "\n"
+		sideContent := inv.jsonDigest + " " + inventoryFile + "\n"
 		_, err = fsys.Write(ctx, invFile, bytes.NewReader(byts))
 		if err != nil {
 			return fmt.Errorf("write inventory failed: %w", err)
