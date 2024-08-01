@@ -178,7 +178,7 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 	return vfs, nil
 }
 
-func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) *ValidationResult {
+func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) *Validation {
 	return obj.reader.Validate(ctx, opts...)
 }
 
@@ -296,8 +296,8 @@ func (o *uninitializedObject) Inventory() Inventory { return nil }
 // Path returns the object's path relative to its FS()
 func (o *uninitializedObject) Path() string { return o.path }
 
-func (o *uninitializedObject) Validate(_ context.Context, _ ...ValidationOption) *ValidationResult {
-	result := &ValidationResult{}
+func (o *uninitializedObject) Validate(_ context.Context, _ ...ValidationOption) *Validation {
+	result := &Validation{}
 	result.AddFatal(fmt.Errorf("empty or missing path: %s: %w", o.path, ErrNamasteNotExist))
 	return result
 }

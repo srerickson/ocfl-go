@@ -34,7 +34,7 @@ var (
 	ec = validation.NewErrorCode
 )
 
-func init() {
+func Enable() {
 	ocfl.RegisterOCLF(&OCFL{spec: ocfl.Spec1_0})
 	ocfl.RegisterOCLF(&OCFL{spec: ocfl.Spec1_1})
 }

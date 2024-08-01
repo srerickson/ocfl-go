@@ -17,12 +17,13 @@ import (
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/local"
-	_ "github.com/srerickson/ocfl-go/ocflv1"
+	"github.com/srerickson/ocfl-go/ocflv1"
 	"github.com/srerickson/ocfl-go/validation"
 	"golang.org/x/exp/maps"
 )
 
 func TestObject(t *testing.T) {
+	ocflv1.Enable()
 	t.Run("Example", testObjectExample)
 	t.Run("Open", testOpenObject)
 	t.Run("Commit", testObjectCommit)

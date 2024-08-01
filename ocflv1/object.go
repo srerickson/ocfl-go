@@ -70,9 +70,9 @@ func (o *ReadObject) Inventory() ocfl.Inventory {
 	return &inventory{raw: *o.inv}
 }
 
-func (o *ReadObject) Validate(ctx context.Context, opts ...ocfl.ValidationOption) *ocfl.ValidationResult {
+func (o *ReadObject) Validate(ctx context.Context, opts ...ocfl.ValidationOption) *ocfl.Validation {
 	_, r := ValidateObject(ctx, o.fs, o.path)
-	result := &ocfl.ValidationResult{}
+	result := &ocfl.Validation{}
 	result.AddFatal(r.Fatal()...)
 	result.AddWarn(r.Warn()...)
 	return result

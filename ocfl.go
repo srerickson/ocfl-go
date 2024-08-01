@@ -177,7 +177,7 @@ type ReadObject interface {
 	FS() FS
 	// Path returns the object's path relative to its FS()
 	Path() string
-	Validate(context.Context, ...ValidationOption) *ValidationResult
+	Validate(context.Context, ...ValidationOption) *Validation
 	// VersionFS returns an io/fs.FS for accessing the logical contents of the
 	// object version state with the index v.
 	VersionFS(ctx context.Context, v int) fs.FS
