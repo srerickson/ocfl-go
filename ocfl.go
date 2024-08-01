@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const (
@@ -166,4 +167,41 @@ func XferConcurrency() int {
 // during a commit operation.
 func SetXferConcurrency(i int) {
 	commitConcurrency.Store(int32(i))
+}
+
+type ReadObject interface {
+	// Inventory returns the object's inventory or nil if
+	// the object hasn't been created yet.
+	Inventory() Inventory
+	// FS for accessing object contents
+	FS() FS
+	// Path returns the object's path relative to its FS()
+	Path() string
+	Validate(context.Context, ...ValidationOption) *ValidationResult
+	// VersionFS returns an io/fs.FS for accessing the logical contents of the
+	// object version state with the index v.
+	VersionFS(ctx context.Context, v int) fs.FS
+}
+
+type Inventory interface {
+	FixitySource
+	DigestAlgorithm() string
+	Head() VNum
+	ID() string
+	Manifest() DigestMap
+	Spec() Spec
+	Version(int) ObjectVersion
+}
+
+type ObjectVersion interface {
+	State() DigestMap
+	User() *User
+	Message() string
+	Created() time.Time
+}
+
+// User is a generic user information struct
+type User struct {
+	Name    string `json:"name"`
+	Address string `json:"address,omitempty"`
 }

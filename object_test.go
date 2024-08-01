@@ -97,7 +97,7 @@ func testObjectExample(t *testing.T) {
 	be.Equal(t, "1,2,3", string(gotBytes))
 
 	// check that the object is valid
-	be.NilErr(t, obj.Validate(ctx, nil).Fatal.ErrorOrNil())
+	be.NilErr(t, obj.Validate(ctx).Err())
 	// be.NilErr(t, result.Warning)
 
 	// create a new object by forking new-object-01
@@ -111,7 +111,7 @@ func testObjectExample(t *testing.T) {
 	forkObj, err := ocfl.NewObject(ctx, tmpFS, forkID)
 	be.NilErr(t, err)
 	be.NilErr(t, forkObj.Commit(ctx, fork))
-	be.NilErr(t, forkObj.Validate(ctx, nil).Fatal.ErrorOrNil())
+	be.NilErr(t, forkObj.Validate(ctx).Err())
 	// TODO
 	// roll-back an object to a previous version
 	// interact with an object's extensions: list them, add an extension, remove an extension.
@@ -210,7 +210,7 @@ func testObjectCommit(t *testing.T) {
 		}
 		be.NilErr(t, obj.Commit(ctx, commit))
 		be.True(t, obj.Exists())
-		be.NilErr(t, obj.Validate(ctx, nil).Fatal.ErrorOrNil())
+		be.NilErr(t, obj.Validate(ctx).Err())
 	})
 	t.Run("update fixtures", testUpdateFixtures)
 }
@@ -249,7 +249,7 @@ func testUpdateFixtures(t *testing.T) {
 					Message: "update",
 					User:    ocfl.User{Name: "Tristram Shandy"},
 				}))
-				be.NilErr(t, obj.Validate(ctx, nil).Fatal.ErrorOrNil())
+				be.NilErr(t, obj.Validate(ctx).Err())
 				// check content
 				newVersion, err := obj.OpenVersion(ctx, 0)
 				be.NilErr(t, err)
@@ -278,19 +278,9 @@ func testValidateFixtures(t *testing.T) {
 					t.Run(dir.Name(), func(t *testing.T) {
 						obj, err := ocfl.NewObject(ctx, fsys, dir.Name())
 						be.NilErr(t, err)
-						result := obj.Validate(ctx, nil)
-						if result.Err() != nil {
-							t.Error(`should be valid but got errors`)
-							for _, err := range result.Fatal.Errors {
-								t.Errorf("\t - err: %s", err.Error())
-							}
-						}
-						if result.Warning.Len() > 0 {
-							t.Error(`should be no warnings`)
-							for _, err := range result.Warning.Errors {
-								t.Errorf("\t - warn: %s", err.Error())
-							}
-						}
+						result := obj.Validate(ctx)
+						be.NilErr(t, result.Err())
+						be.NilErr(t, result.WarnErr())
 					})
 				}
 			})
@@ -310,12 +300,9 @@ func testValidateFixtures(t *testing.T) {
 							}
 							return
 						}
-						result := obj.Validate(ctx, nil)
-						if result.Err() == nil {
-							t.Error(`validated but shouldn't`)
-							return
-						}
-						if ok, desc := fixtureExpectedErrs(dir.Name(), result.Fatal.Errors...); !ok {
+						result := obj.Validate(ctx)
+						be.Nonzero(t, result.Err())
+						if ok, desc := fixtureExpectedErrs(dir.Name(), result.Errors()...); !ok {
 							t.Log(path.Join(spec, dir.Name())+":", desc)
 						}
 					})
@@ -329,14 +316,9 @@ func testValidateFixtures(t *testing.T) {
 					t.Run(dir.Name(), func(t *testing.T) {
 						obj, err := ocfl.NewObject(ctx, fsys, dir.Name())
 						be.NilErr(t, err)
-						result := obj.Validate(ctx, nil)
-						if result.Err() != nil {
-							t.Error(`should be valid, but got errors:`)
-							for _, err := range result.Fatal.Errors {
-								t.Logf("\t - err: %s", err.Error())
-							}
-						}
-						be.Nonzero(t, result.Warning.Len())
+						result := obj.Validate(ctx)
+						be.NilErr(t, result.Err())
+						be.Nonzero(t, result.WarnErr())
 					})
 				}
 			})

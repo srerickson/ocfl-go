@@ -47,6 +47,6 @@ func validate(root string, isStore bool, logger *slog.Logger) error {
 		return err
 	}
 
-	result := obj.Validate(ctx, &ocfl.Validation{Logger: logger})
+	result := obj.Validate(ctx, &ocfl.ValidateOptions{Logger: logger})
 	return result.Err()
 }

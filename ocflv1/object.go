@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
 	"github.com/srerickson/ocfl-go"
 	"golang.org/x/exp/slices"
 )
@@ -71,11 +70,11 @@ func (o *ReadObject) Inventory() ocfl.Inventory {
 	return &inventory{raw: *o.inv}
 }
 
-func (o *ReadObject) Validate(ctx context.Context, opts *ocfl.Validation) *ocfl.ValidationResult {
+func (o *ReadObject) Validate(ctx context.Context, opts ...ocfl.ValidationOption) *ocfl.ValidationResult {
 	_, r := ValidateObject(ctx, o.fs, o.path)
 	result := &ocfl.ValidationResult{}
-	result.Fatal = multierror.Append(result.Fatal, r.Fatal()...)
-	result.Warning = multierror.Append(result.Warning, r.Warn()...)
+	result.AddFatal(r.Fatal()...)
+	result.AddWarn(r.Warn()...)
 	return result
 }
 
