@@ -7,13 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/url"
 	"strings"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/ocflv1/codes"
-	"github.com/srerickson/ocfl-go/validation"
 	"golang.org/x/exp/maps"
 )
 
@@ -22,8 +20,8 @@ import (
 // result includes no fatal errors (it may include warning errors). The returned
 // validation.Result is not associated with a logger, and no errors in the result
 // have been logged.
-func (inv *RawInventory) Validate() *validation.Result {
-	result := validation.NewResult(-1)
+func (inv *RawInventory) Validate() *ocfl.Validation {
+	result := &ocfl.Validation{}
 	if inv.Type.Empty() {
 		err := errors.New("missing required field: 'type'")
 		result.AddFatal(err)
@@ -69,6 +67,10 @@ func (inv *RawInventory) Validate() *validation.Result {
 	if inv.ContentDirectory == "." || inv.ContentDirectory == ".." {
 		err := errors.New("contentDirectory is '.' or '..'")
 		result.AddFatal(ec(err, codes.E017.Ref(inv.Type.Spec)))
+	}
+	if inv.Manifest == nil {
+		err := errors.New("missing required field 'manifest'")
+		result.AddFatal(ec(err, codes.E041.Ref(inv.Type.Spec)))
 	}
 	if err := inv.Manifest.Valid(); err != nil {
 		var dcErr *ocfl.MapDigestConflictErr
@@ -177,96 +179,76 @@ func (inv *RawInventory) Validate() *validation.Result {
 }
 
 // ValidateInventory fully validates an inventory at path name in fsys.
-func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, vops ...ValidationOption) (*RawInventory, *validation.Result) {
-	opts, invResult := validationSetup(vops)
-	lgr := opts.Logger
-	ocflV := opts.FallbackOCFL
+func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, ocflV ocfl.Spec) (inv *RawInventory, result *ocfl.Validation) {
 	f, err := fsys.OpenFile(ctx, name)
 	if err != nil {
-		return nil, invResult.LogFatal(lgr, ec(err, codes.E063.Ref(ocflV)))
+		result.AddFatal(ec(err, codes.E063.Ref(ocflV)))
+		return nil, result
 	}
-	defer f.Close()
-	invOpts := []ValidationOption{
-		copyValidationOptions(opts),
-		appendResult(invResult),
-	}
-	inv, _ := ValidateInventoryReader(ctx, f, invOpts...)
-	if invResult.Err() != nil {
-		return nil, invResult
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			result.AddFatal(closeErr)
+		}
+	}()
+	inv, result = ValidateInventoryReader(ctx, f, ocflV)
+	if result.Err() != nil {
+		return
 	}
 	ocflV = inv.Type.Spec
 	side := name + "." + inv.DigestAlgorithm
 	expSum, err := readInventorySidecar(ctx, fsys, side)
 	if err != nil {
-		if errors.Is(err, ErrInvSidecarContents) {
-			return nil, invResult.LogFatal(lgr, ec(err, codes.E061.Ref(ocflV)))
+		switch {
+		case errors.Is(err, ErrInvSidecarContents):
+			result.AddFatal(ec(err, codes.E061.Ref(ocflV)))
+		default:
+			result.AddFatal(ec(err, codes.E058.Ref(ocflV)))
 		}
-		return nil, invResult.LogFatal(lgr, ec(err, codes.E058.Ref(ocflV)))
+		return
 	}
 	if !strings.EqualFold(inv.jsonDigest, expSum) {
 		shortSum := inv.jsonDigest[:6]
 		shortExp := expSum[:6]
 		err := fmt.Errorf("inventory's checksum (%s) doen't match expected value in sidecar (%s): %s", shortSum, shortExp, name)
-		invResult.LogFatal(lgr, ec(err, codes.E060.Ref(ocflV)))
-		return nil, invResult
+		result.AddFatal(ec(err, codes.E060.Ref(ocflV)))
 	}
-	return inv, invResult
+	return
 }
 
-func ValidateInventoryReader(ctx context.Context, reader io.Reader, vops ...ValidationOption) (*RawInventory, *validation.Result) {
-	opts, result := validationSetup(vops)
-	lgr := opts.Logger
-	var decInv decodeInventory
-	sum, err := readDigestInventory(ctx, reader, &decInv)
+func ValidateInventoryReader(ctx context.Context, reader io.Reader, spec ocfl.Spec) (*RawInventory, *ocfl.Validation) {
+	inv, err := readDigestInventory(ctx, reader)
 	if err != nil {
-		var decErr *InvDecodeError
-		if errors.As(err, &decErr) {
-			if decErr.ocflV.Empty() {
-				decErr.ocflV = opts.FallbackOCFL
-			}
-			return nil, result.LogFatal(lgr, err)
-		} else if errors.Is(err, fs.ErrNotExist) {
-			result.LogFatal(lgr, ec(err, codes.E063.Ref(opts.FallbackOCFL)))
-			return nil, result
-		}
-		result.LogFatal(lgr, ec(err, codes.E034.Ref(opts.FallbackOCFL)))
+		result := &ocfl.Validation{}
+		result.AddFatal(err)
 		return nil, result
 	}
-	// validate inventory and merge/log results. Use Log here because
-	// asValidInventory doesn't do logging
-	inv, invResult := decInv.asValidInventory()
-	invResult.LogAll(lgr)
-	result.Merge(invResult)
-	if err := result.Err(); err != nil {
-		return nil, result
-	}
-	inv.jsonDigest = sum
-	return inv, result
+	return inv, inv.Validate()
 }
 
 // readDigestInventory reads and decodes the contents of file into the value
 // pointed to by inv; it also digests the contents of the reader using the
 // digest algorithm alg, returning the digest string.
-func readDigestInventory(ctx context.Context, reader io.Reader, inv *decodeInventory) (string, error) {
+func readDigestInventory(ctx context.Context, reader io.Reader) (*RawInventory, error) {
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return nil, err
 	}
 	byt, err := io.ReadAll(reader)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if err := json.Unmarshal(byt, inv); err != nil {
-		return "", err
+	dec := json.NewDecoder(bytes.NewReader(byt))
+	dec.DisallowUnknownFields()
+	inv := &RawInventory{}
+	if err := dec.Decode(inv); err != nil {
+		return nil, err
 	}
-	if inv.DigestAlgorithm == nil {
-		return "", errors.New("missing digest algorithm")
-	}
-	digester := ocfl.NewDigester(*inv.DigestAlgorithm)
+	digester := ocfl.NewDigester(inv.DigestAlgorithm)
 	if digester == nil {
-		return "", fmt.Errorf("%w: %q", ocfl.ErrUnknownAlg, *inv.DigestAlgorithm)
+		return nil, fmt.Errorf("%w: %q", ocfl.ErrUnknownAlg, inv.DigestAlgorithm)
 	}
 	if _, err := io.Copy(digester, bytes.NewReader(byt)); err != nil {
-		return "", err
+		return nil, err
 	}
-	return digester.String(), nil
+	inv.jsonDigest = digester.String()
+	return inv, nil
 }

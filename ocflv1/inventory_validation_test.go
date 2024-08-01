@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/matryer/is"
+	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/ocflv1"
 	"github.com/srerickson/ocfl-go/validation"
 )
@@ -589,7 +590,7 @@ func TestValidateInventory(t *testing.T) {
 		t.Run(test.description, func(t *testing.T) {
 			is := is.New(t)
 			reader := strings.NewReader(test.data)
-			_, result := ocflv1.ValidateInventoryReader(ctx, reader)
+			_, result := ocflv1.ValidateInventoryReader(ctx, reader, ocfl.Spec1_0)
 			if test.valid {
 				is.NoErr(result.Err())
 			} else {
@@ -599,12 +600,6 @@ func TestValidateInventory(t *testing.T) {
 					var eCode validation.ErrorCode
 					if !errors.As(err, &eCode) {
 						t.Errorf(`err is not an ErrorCode: %v`, err)
-					}
-					var decodeErr *ocflv1.InvDecodeError
-					if errors.As(err, &decodeErr) {
-						if decodeErr.Field == "" {
-							t.Errorf(`decode error has not Field value: %v`, err)
-						}
 					}
 				}
 			}
@@ -619,18 +614,12 @@ func FuzzValidateInventory(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		reader := bytes.NewReader(b)
-		_, result := ocflv1.ValidateInventoryReader(ctx, reader)
+		_, result := ocflv1.ValidateInventoryReader(ctx, reader, ocfl.Spec1_0)
 		err := result.Err()
 		if err != nil {
 			var eCode validation.ErrorCode
 			if !errors.As(err, &eCode) {
 				t.Errorf(`err is not an ErrorCode: %v`, err)
-			}
-			var decodeErr *ocflv1.InvDecodeError
-			if errors.As(err, &decodeErr) {
-				if decodeErr.Field == "" {
-					t.Errorf(`decode error has not Field value: %v`, err)
-				}
 			}
 		}
 	})

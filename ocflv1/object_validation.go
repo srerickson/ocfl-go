@@ -164,7 +164,9 @@ func (vldr *objectValidator) validateRootInventory(ctx context.Context) error {
 	if lgr != nil {
 		opts = append(opts, ValidationLogger(lgr.With("inventory_file", name)))
 	}
-	inv, _ := ValidateInventory(ctx, vldr.FS, name, opts...)
+	inv, r := ValidateInventory(ctx, vldr.FS, name, ocflV)
+	vldr.AddFatal(r.Err())
+	vldr.AddWarn(r.WarnErr())
 	if err := vldr.Err(); err != nil {
 		return err
 	}
@@ -252,7 +254,9 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, vn oc
 	if lgr != nil {
 		opts = append(opts, ValidationLogger(lgr.With("inventory_file", name)))
 	}
-	dirInv, _ := ValidateInventory(ctx, vldr.FS, name, opts...)
+	dirInv, result := ValidateInventory(ctx, vldr.FS, name, ocfl.Spec(""))
+	vldr.AddFatal(result.Err())
+	vldr.AddWarn(result.WarnErr())
 	if err := vldr.Err(); err != nil {
 		return err
 	}
