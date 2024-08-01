@@ -34,6 +34,14 @@ func (inv *RawInventory) Validate() *ocfl.Validation {
 		err := errors.New("missing required field: 'head'")
 		result.AddFatal(ec(err, codes.E036(inv.Type.Spec)))
 	}
+	if inv.Manifest == nil {
+		err := errors.New("missing required field 'manifest'")
+		result.AddFatal(ec(err, codes.E041(inv.Type.Spec)))
+	}
+	if inv.Versions == nil {
+		err := errors.New("missing required field 'versions'")
+		result.AddFatal(ec(err, codes.E041(inv.Type.Spec)))
+	}
 	if inv.ContentDirectory == "" {
 		inv.ContentDirectory = contentDir
 	}
@@ -68,10 +76,6 @@ func (inv *RawInventory) Validate() *ocfl.Validation {
 		err := errors.New("contentDirectory is '.' or '..'")
 		result.AddFatal(ec(err, codes.E017(inv.Type.Spec)))
 	}
-	if inv.Manifest == nil {
-		err := errors.New("missing required field 'manifest'")
-		result.AddFatal(ec(err, codes.E041(inv.Type.Spec)))
-	}
 	if err := inv.Manifest.Valid(); err != nil {
 		var dcErr *ocfl.MapDigestConflictErr
 		var pcErr *ocfl.MapPathConflictErr
@@ -103,6 +107,38 @@ func (inv *RawInventory) Validate() *ocfl.Validation {
 	}
 	// version state
 	for vname, ver := range inv.Versions {
+		if ver == nil {
+			err := fmt.Errorf(`missing required version block for %q`, vname)
+			result.AddFatal(ec(err, codes.E048(inv.Type.Spec)))
+			continue
+		}
+		if ver.Created.IsZero() {
+			err := fmt.Errorf(`version %s missing required field: 'created'`, vname)
+			result.AddFatal(ec(err, codes.E048(inv.Type.Spec)))
+		}
+		if ver.Message == "" {
+			err := fmt.Errorf("version %s missing recommended field: 'message'", vname)
+			result.AddWarn(ec(err, codes.W007(inv.Type.Spec)))
+		}
+		if ver.User != nil {
+			if ver.User.Name == "" {
+				err := fmt.Errorf("version %s user missing required field: 'name'", vname)
+				result.AddFatal(ec(err, codes.E054(inv.Type.Spec)))
+			}
+			if ver.User.Address == "" {
+				err := fmt.Errorf("version %s user missing recommended field: 'address'", vname)
+				result.AddWarn(ec(err, codes.W008(inv.Type.Spec)))
+			}
+			if u, err := url.ParseRequestURI(ver.User.Address); err != nil || u.Scheme == "" {
+				err := fmt.Errorf("version %s user address is not a URI", vname)
+				result.AddWarn(ec(err, codes.W009(inv.Type.Spec)))
+			}
+		}
+		if ver.State == nil {
+			err := fmt.Errorf(`version %s missing required field: 'state'`, vname)
+			result.AddFatal(ec(err, codes.E048(inv.Type.Spec)))
+			continue
+		}
 		err := ver.State.Valid()
 		if err != nil {
 			var dcErr *ocfl.MapDigestConflictErr
@@ -122,25 +158,6 @@ func (inv *RawInventory) Validate() *ocfl.Validation {
 			if len(inv.Manifest[digest]) == 0 {
 				err := fmt.Errorf("digest in %s state not in manifest: %s", vname, digest)
 				result.AddFatal(ec(err, codes.E050(inv.Type.Spec)))
-			}
-		}
-		// version message
-		if ver.Message == "" {
-			err := fmt.Errorf("version %s missing recommended field: 'message'", vname)
-			result.AddWarn(ec(err, codes.W007(inv.Type.Spec)))
-		}
-		if ver.User != nil {
-			if ver.User.Name == "" {
-				err := fmt.Errorf("version %s user missing required field: 'name'", vname)
-				result.AddFatal(ec(err, codes.E054(inv.Type.Spec)))
-			}
-			if ver.User.Address == "" {
-				err := fmt.Errorf("version %s user missing recommended field: 'address'", vname)
-				result.AddWarn(ec(err, codes.W008(inv.Type.Spec)))
-			}
-			if u, err := url.ParseRequestURI(ver.User.Address); err != nil || u.Scheme == "" {
-				err := fmt.Errorf("version %s user address is not a URI", vname)
-				result.AddWarn(ec(err, codes.W009(inv.Type.Spec)))
 			}
 		}
 	}
@@ -225,9 +242,8 @@ func ValidateInventoryReader(ctx context.Context, reader io.Reader, spec ocfl.Sp
 	return inv, inv.Validate()
 }
 
-// readDigestInventory reads and decodes the contents of file into the value
-// pointed to by inv; it also digests the contents of the reader using the
-// digest algorithm alg, returning the digest string.
+// readDigestInventory reads the inventory and sets its digest value using
+// the digest algorithm
 func readDigestInventory(ctx context.Context, reader io.Reader) (*RawInventory, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
