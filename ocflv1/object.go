@@ -71,11 +71,8 @@ func (o *ReadObject) Inventory() ocfl.Inventory {
 }
 
 func (o *ReadObject) Validate(ctx context.Context, opts ...ocfl.ValidationOption) *ocfl.Validation {
-	_, r := ValidateObject(ctx, o.fs, o.path)
-	result := &ocfl.Validation{}
-	result.AddFatal(r.Fatal()...)
-	result.AddWarn(r.Warn()...)
-	return result
+	_, r := ValidateObject(ctx, o.fs, o.path, opts...)
+	return r
 }
 
 func (o *ReadObject) VersionFS(ctx context.Context, i int) fs.FS {

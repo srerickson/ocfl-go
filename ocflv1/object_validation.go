@@ -15,17 +15,24 @@ import (
 	"github.com/srerickson/ocfl-go/validation"
 )
 
-func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ValidationOption) (*ReadObject, *validation.Result) {
-	opts, result := validationSetup(vops)
+func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ocfl.ValidationOption) (*ReadObject, *ocfl.Validation) {
+	v := ocfl.NewValidation(vops...)
 	vldr := objectValidator{
-		Result:   result,
-		opts:     opts,
+		Result: validation.NewResult(-1),
+		opts: &validationOptions{
+			Logger:       v.Logger(),
+			SkipDigests:  v.SkipDigests(),
+			FallbackOCFL: ocfl.Spec1_1,
+		},
 		FS:       fsys,
 		Root:     root,
 		ledger:   &pathLedger{},
 		verSpecs: map[ocfl.VNum]ocfl.Spec{},
 	}
 	vldr.validate(ctx)
+	result := &ocfl.Validation{}
+	result.AddFatal(vldr.Result.Fatal()...)
+	result.AddWarn(vldr.Result.Warn()...)
 	if err := result.Err(); err != nil {
 		return nil, result
 	}

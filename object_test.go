@@ -318,7 +318,8 @@ func testValidateFixtures(t *testing.T) {
 						be.NilErr(t, err)
 						result := obj.Validate(ctx)
 						be.NilErr(t, result.Err())
-						be.Nonzero(t, result.WarnErr())
+						t.Log(result.WarnErr())
+						be.True(t, len(result.WarnErrors()) > 0)
 					})
 				}
 			})
@@ -342,8 +343,8 @@ func fixtureExpectedErrs(name string, errs ...error) (bool, string) {
 	for _, e := range errs {
 		var c = "??"
 		var vErr *ocfl.ValidationError
-		if errors.As(e, &vErr) && vErr.Ref != nil {
-			c = vErr.Ref.Code
+		if errors.As(e, &vErr) && vErr.Code != nil {
+			c = vErr.Code.Code
 			gotCodes[c] = true
 			if expCodes[c] {
 				gotExpected = true

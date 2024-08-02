@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/matryer/is"
-	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
@@ -587,7 +586,7 @@ func TestValidateInventory(t *testing.T) {
 		t.Run(test.description, func(t *testing.T) {
 			is := is.New(t)
 			reader := strings.NewReader(test.data)
-			_, result := ocflv1.ValidateInventoryReader(ctx, reader, ocfl.Spec1_0)
+			_, result := ocflv1.ValidateInventoryReader(ctx, reader)
 			if test.valid {
 				is.NoErr(result.Err())
 			} else {

@@ -187,12 +187,12 @@ func copyContent(ctx context.Context, c *copyContentOpts) error {
 	return grp.Wait()
 }
 
-func ec(err error, code *ocfl.SpecErrCode) error {
+func ec(err error, code *ocfl.ValidationCode) error {
 	if code == nil {
 		return err
 	}
 	return &ocfl.ValidationError{
-		Err: err,
-		Ref: code,
+		Err:  err,
+		Code: code,
 	}
 }

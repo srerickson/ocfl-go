@@ -7,19 +7,18 @@ import "github.com/srerickson/ocfl-go"
 {{- range $code, $element := . }}
 
 // {{ $element.Comment }}
-func {{ $code -}}(spec ocfl.Spec) *ocfl.SpecErrCode {
+func {{ $code -}}(spec ocfl.Spec) *ocfl.ValidationCode {
 	switch spec {
 	{{- range $spec, $ref := $element.Specs }}
 	case ocfl.Spec("{{ $spec -}}"):
-		return &ocfl.SpecErrCode{
-			Spec:		 spec,
-			Code:		 "{{ $code }}",
+		return &ocfl.ValidationCode{
+			Spec:        spec,
+			Code:        "{{ $code }}",
 			Description: "{{ $ref.Description }}",
-			URL:		 "{{ $ref.URL }}",
+			URL:         "{{ $ref.URL }}",
 		}
 	{{- end }}
 	default:
 		return nil
 	}
-}
-{{ end }}
+}{{ end }}
