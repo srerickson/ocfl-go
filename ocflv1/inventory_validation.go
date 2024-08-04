@@ -43,9 +43,6 @@ func (inv *RawInventory) Validate(opts ...ocfl.ValidationOption) *ocfl.Validatio
 		err := errors.New("missing required field 'versions'")
 		result.AddFatal(ec(err, codes.E041(ocflV)))
 	}
-	if inv.ContentDirectory == "" {
-		inv.ContentDirectory = contentDir
-	}
 	// don't continue if there are fatal errors
 	if result.Err() != nil {
 		return result
@@ -200,7 +197,7 @@ func (inv *RawInventory) Validate(opts ...ocfl.ValidationOption) *ocfl.Validatio
 func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, ocflV ocfl.Spec) (inv *RawInventory, result *ocfl.Validation) {
 	f, err := fsys.OpenFile(ctx, name)
 	if err != nil {
-		result.AddFatal(ec(err, codes.E063(ocflV)))
+		result.AddFatal(err)
 		return nil, result
 	}
 	defer func() {
@@ -216,12 +213,11 @@ func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, ocflV ocf
 	side := name + "." + inv.DigestAlgorithm
 	expSum, err := readInventorySidecar(ctx, fsys, side)
 	if err != nil {
-		switch {
-		case errors.Is(err, ErrInvSidecarContents):
+		if errors.Is(err, ErrInvSidecarContents) {
 			result.AddFatal(ec(err, codes.E061(ocflV)))
-		default:
-			result.AddFatal(ec(err, codes.E058(ocflV)))
+			return
 		}
+		result.AddFatal(ec(err, codes.E058(ocflV)))
 		return
 	}
 	if !strings.EqualFold(inv.jsonDigest, expSum) {

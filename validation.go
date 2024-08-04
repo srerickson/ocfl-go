@@ -8,10 +8,50 @@ import (
 
 // Validation is used to configure and track results from a validation process.
 type Validation struct {
-	logger      *slog.Logger
-	skipDigests bool
-	fatal       *multierror.Error
-	warn        *multierror.Error
+	logger *slog.Logger
+	// skipDigests bool
+	fatal *multierror.Error
+	warn  *multierror.Error
+	files map[string]*validationFileInfo
+}
+
+func (v *Validation) AddInventoryFiles(inv Inventory) error {
+	if v.files == nil {
+		v.files = map[string]*validationFileInfo{}
+	}
+	primaryAlg := inv.DigestAlgorithm()
+	var err error
+	inv.Manifest().EachPath(func(name string, primaryDigest string) bool {
+		allDigests := inv.GetFixity(primaryDigest)
+		allDigests[primaryAlg] = primaryDigest
+		current := v.files[name]
+		if current == nil {
+			v.files[name] = &validationFileInfo{
+				expected: allDigests,
+			}
+			return true
+		}
+		for alg, newDigest := range allDigests {
+			currDigest := current.expected[alg]
+			if currDigest == "" {
+				current.expected[alg] = newDigest
+				continue
+			}
+			if currDigest == newDigest {
+				continue
+			}
+			// digest conflict
+			err = &DigestErr{
+				Name:     name,
+				Alg:      alg,
+				Got:      newDigest,
+				Expected: currDigest,
+			}
+			return false
+		}
+		return true
+	})
+	return err
 }
 
 // AddErrors adds v2's fatal and warning errors from to v.
@@ -58,15 +98,15 @@ func (v *Validation) Logger() *slog.Logger {
 func (v *Validation) Options() ValidationOption {
 	return func(v2 *Validation) {
 		v2.logger = v.logger
-		v2.skipDigests = v.skipDigests
+		// v2.skipDigests = v.skipDigests
 	}
 }
 
 // SkipDigests returns true if the validation is configured to skip digest
 // checks. It is false by default.
-func (v *Validation) SkipDigests() bool {
-	return v.skipDigests
-}
+// func (v *Validation) SkipDigests() bool {
+// 	return v.skipDigests
+// }
 
 // WarnErr returns an error wrapping all the validation's warning errors, or nil
 // if there are none.
@@ -97,11 +137,11 @@ func NewValidation(opts ...ValidationOption) *Validation {
 
 type ValidationOption func(*Validation)
 
-func ValidationSkipDigest() ValidationOption {
-	return func(opts *Validation) {
-		opts.skipDigests = true
-	}
-}
+// func ValidationSkipDigest() ValidationOption {
+// 	return func(opts *Validation) {
+// 		opts.skipDigests = true
+// 	}
+// }
 
 func ValidationLogger(logger *slog.Logger) ValidationOption {
 	return func(v *Validation) {
@@ -131,4 +171,9 @@ func (ver *ValidationError) Error() string {
 
 func (ver *ValidationError) Unwrap() error {
 	return ver.Err
+}
+
+type validationFileInfo struct {
+	expected DigestSet
+	exists   bool
 }
