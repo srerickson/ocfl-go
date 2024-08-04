@@ -15,6 +15,65 @@ import (
 	"github.com/srerickson/ocfl-go/validation"
 )
 
+func validateVersion(ctx context.Context, obj ocfl.ReadObject, ver ocfl.VNum, prev ocfl.Inventory, opts ...ocfl.ValidationOption) (vldr *ocfl.Validation) {
+	vldr = ocfl.NewValidation(opts...)
+	fsys := obj.FS()
+	vDir := path.Join(obj.Path(), ver.String())
+	rootInv := obj.Inventory()
+	// what spec does the version use? Assume 1.0 or previous version's spec
+	// unless there is an inventory file. In that case, get the spec from the
+	// inventory.
+	ocflV := ocfl.Spec1_0
+	if prev != nil {
+		ocflV = prev.Spec()
+	}
+	// read the contents of the version directory
+	entries, err := fsys.ReadDir(ctx, vDir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		vldr.AddFatal(err)
+		return
+	}
+	if len(entries) < 1 {
+		// the version directory doesn't exist or it's empty
+		err := fmt.Errorf("missing %s inventory file: %s", ver.String())
+		vldr.AddWarn(ec(err, codes.W010(ocflV)))
+		return
+	}
+	info := parseVersionDirState(entries)
+	for _, f := range info.extraFiles {
+		err := fmt.Errorf(`unexpected file in %s: %s`, ver, f)
+		vldr.AddFatal(ec(err, codes.E015(ocflV)))
+	}
+	if info.hasInventory {
+		invName := path.Join(vDir, inventoryFile)
+		inv, invValid := ValidateInventory(ctx, fsys, invName, ocflV)
+		// would be nice to add prefix to these errors
+		vldr.AddErrors(invValid)
+		verInv = inv
+		//
+	}
+	for _, d := range info.dirs {
+		// directory SHOULD only be content directory
+		if d != rootInv.ContentDirectory() {
+			err := fmt.Errorf(`extra directory in %s: %s`, ver, d)
+			vldr.AddWarn(ec(err, codes.W002(ocflV)))
+		}
+		// add version content directory to validation state
+		added, err := vldr.walkVersionContent(ctx, ver)
+		if err != nil {
+			vldr.AddFatal(err)
+			return err
+		}
+		if added == 0 {
+			// content directory exists but it's empty
+			err := fmt.Errorf("content directory (%s) contains no files", contDir)
+			vldr.AddFatal(ec(err, codes.E016(ocflV)))
+		}
+		continue
+	}
+	return vldr
+}
+
 func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ocfl.ValidationOption) (*ReadObject, *ocfl.Validation) {
 	v := ocfl.NewValidation(vops...)
 	vldr := objectValidator{
@@ -211,7 +270,7 @@ func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum)
 		vldr.LogFatal(lgr, err)
 		return err
 	}
-	info := newVersionDirInfo(entries)
+	info := parseVersionDirState(entries)
 	for _, f := range info.extraFiles {
 		err := fmt.Errorf(`unexpected file in %s: %s`, ver, f)
 		vldr.LogFatal(lgr, ec(err, codes.E015(ocflV)))
@@ -249,50 +308,28 @@ func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum)
 	return vldr.Err()
 }
 
-func (vldr *objectValidator) validateVersionInventory(ctx context.Context, vn ocfl.VNum) error {
-	lgr := vldr.opts.Logger
-	vDir := path.Join(vldr.Root, vn.String())
-	name := path.Join(vDir, inventoryFile)
-	opts := []ValidationOption{
-		copyValidationOptions(vldr.opts),
-		appendResult(vldr.Result),
-		FallbackOCFL(vldr.root.State.Spec),
-	}
-	if lgr != nil {
-		opts = append(opts, ValidationLogger(lgr.With("inventory_file", name)))
-	}
-	dirInv, result := ValidateInventory(ctx, vldr.FS, name, ocfl.Spec(""))
-	vldr.AddFatal(result.Err())
-	vldr.AddWarn(result.WarnErr())
-	if err := vldr.Err(); err != nil {
-		return err
-	}
-	// add the version inventory's OCFL version to validations state (E103)
-	vldr.verSpecs[vn] = dirInv.Type.Spec
-	if err := vldr.ledger.addInventory(dirInv, false); err != nil {
-		// err indicates inventory reports different digest from a previous inventory
-		vldr.LogFatal(lgr, ec(err, codes.E066(dirInv.Type.Spec)))
-	}
+func validateVersionInventory(ctx context.Context, vldr *ocfl.Validation, dirInv *RawInventory, prev ocfl.Inventory, rootInv ocfl.Inventory) error {
+
 	// Is this the HEAD version directory?
-	if vn == vldr.rootInv.Head {
-		if dirInv.jsonDigest == vldr.rootInv.jsonDigest {
+	if dirInv.Head == rootInv.Head() {
+		if dirInv.jsonDigest == rootInv.jsonDigest {
 			return nil // don't need to validate any further
 		}
-		err := fmt.Errorf("inventory in last version (%s) is not same as root inventory", vn)
-		vldr.LogFatal(lgr, ec(err, codes.E064(dirInv.Type.Spec)))
+		err := fmt.Errorf("inventory in last version (%s) is not same as root inventory", dirInv.Head.String())
+		vldr.AddFatal(ec(err, codes.E064(dirInv.Type.Spec)))
 	}
 	//
 	// remaining validations should check consistency between version inventory
 	// and root inventory
 	//
 	// check expected values specified in conf
-	if vldr.rootInv.ID != dirInv.ID {
+	if rootInv.ID() != dirInv.ID {
 		err := fmt.Errorf("unexpected id: %s", dirInv.ID)
-		vldr.LogFatal(lgr, ec(err, codes.E037(dirInv.Type.Spec)))
+		vldr.AddFatal(ec(err, codes.E037(dirInv.Type.Spec)))
 	}
-	if vldr.rootInv.ContentDirectory != dirInv.ContentDirectory {
-		err := fmt.Errorf("contentDirectory is '%s', but expected '%s'", dirInv.ContentDirectory, vldr.rootInv.ContentDirectory)
-		vldr.LogFatal(lgr, ec(err, codes.E019(dirInv.Type.Spec)))
+	if rootInv.ContentDirectory() != dirInv.ContentDirectory {
+		err := fmt.Errorf("contentDirectory is '%s', but expected '%s'", dirInv.ContentDirectory, rootInv.ContentDirectory())
+		vldr.AddFatal(ec(err, codes.E019(dirInv.Type.Spec)))
 	}
 	if vn != dirInv.Head {
 		err := fmt.Errorf("inventory head is %s, expected %s", dirInv.Head, vn)
@@ -303,8 +340,8 @@ func (vldr *objectValidator) validateVersionInventory(ctx context.Context, vn oc
 	// Because the digest algorithm can change between versions, we're comparing
 	// the set of logical paths, and their correspondance to
 	for v, ver := range dirInv.Versions {
-		rootVer := vldr.rootInv.Versions[v]
-		rootLogicalState := vldr.rootInv.logicalState(v.Num())
+		rootVer := rootInv.Version(v.Num())
+		rootLogicalState := rootInv.logicalState(v.Num())
 		dirLogicalState := dirInv.logicalState(v.Num())
 		if !dirLogicalState.Eq(rootLogicalState) {
 			err := fmt.Errorf("logical state for version %d in root inventory doesn't match that in %s/%s", v.Num(), vn, inventoryFile)
@@ -484,15 +521,15 @@ func (vldr *objectValidator) walkVersionContent(ctx context.Context, ver ocfl.VN
 	return added, iterErr
 }
 
-type versionDirInfo struct {
+type versionDirState struct {
 	hasInventory bool
 	// sidecarAlg   string
 	extraFiles []string
 	dirs       []string
 }
 
-func newVersionDirInfo(entries []fs.DirEntry) versionDirInfo {
-	var info versionDirInfo
+func parseVersionDirState(entries []fs.DirEntry) versionDirState {
+	var info versionDirState
 	for _, e := range entries {
 		if e.Type().IsRegular() {
 			if e.Name() == inventoryFile {

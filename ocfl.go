@@ -185,6 +185,7 @@ type ReadObject interface {
 
 type Inventory interface {
 	FixitySource
+	ContentDirectory() string
 	DigestAlgorithm() string
 	Head() VNum
 	ID() string

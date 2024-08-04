@@ -411,15 +411,29 @@ type inventory struct {
 	raw RawInventory
 }
 
-func (inv *inventory) UnmarshalJSON(b []byte) error           { return json.Unmarshal(b, &inv.raw) }
-func (inv *inventory) MarshalJSON() ([]byte, error)           { return json.Marshal(inv.raw) }
+func (inv *inventory) UnmarshalJSON(b []byte) error { return json.Unmarshal(b, &inv.raw) }
+
+func (inv *inventory) MarshalJSON() ([]byte, error) { return json.Marshal(inv.raw) }
+
 func (inv *inventory) GetFixity(digest string) ocfl.DigestSet { return inv.raw.GetFixity(digest) }
-func (inv *inventory) ContentDirectory() string               { return inv.raw.ContentDirectory }
-func (inv *inventory) DigestAlgorithm() string                { return inv.raw.DigestAlgorithm }
-func (inv *inventory) Head() ocfl.VNum                        { return inv.raw.Head }
-func (inv *inventory) ID() string                             { return inv.raw.ID }
-func (inv *inventory) Manifest() ocfl.DigestMap               { return inv.raw.Manifest }
-func (inv *inventory) Spec() ocfl.Spec                        { return inv.raw.Type.Spec }
+
+func (inv *inventory) ContentDirectory() string {
+	if c := inv.raw.ContentDirectory; c != "" {
+		return c
+	}
+	return contentDir
+}
+
+func (inv *inventory) DigestAlgorithm() string { return inv.raw.DigestAlgorithm }
+
+func (inv *inventory) Head() ocfl.VNum { return inv.raw.Head }
+
+func (inv *inventory) ID() string { return inv.raw.ID }
+
+func (inv *inventory) Manifest() ocfl.DigestMap { return inv.raw.Manifest }
+
+func (inv *inventory) Spec() ocfl.Spec { return inv.raw.Type.Spec }
+
 func (inv *inventory) Version(i int) ocfl.ObjectVersion {
 	v := inv.raw.Version(i)
 	if v == nil {
