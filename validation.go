@@ -9,16 +9,28 @@ import (
 
 // Validation is used to configure and track results from a validation process.
 type Validation struct {
-	logger *slog.Logger
-	// skipDigests bool
-	fatal *multierror.Error
-	warn  *multierror.Error
+	logger      *slog.Logger
+	skipDigests bool
+	fatal       *multierror.Error
+	warn        *multierror.Error
 
 	// not sure if this belongs here.
 	files map[string]*validationFileInfo
 }
 
-func (v *Validation) AddInventoryFiles(inv Inventory) error {
+// AddContentExists sets the existence status for a content file in the
+// validation state.
+func (v *Validation) AddContentExists(name string) {
+	if v.files == nil {
+		v.files = map[string]*validationFileInfo{}
+	}
+	if v.files[name] == nil {
+		v.files[name] = &validationFileInfo{}
+	}
+	v.files[name].exists = true
+}
+
+func (v *Validation) AddInventory(inv Inventory) error {
 	if v.files == nil {
 		v.files = map[string]*validationFileInfo{}
 	}
@@ -96,9 +108,9 @@ func (v *Validation) Options() ValidationOption {
 
 // SkipDigests returns true if the validation is configured to skip digest
 // checks. It is false by default.
-// func (v *Validation) SkipDigests() bool {
-// 	return v.skipDigests
-// }
+func (v *Validation) SkipDigests() bool {
+	return v.skipDigests
+}
 
 // WarnErr returns an error wrapping all the validation's warning errors, or nil
 // if there are none.
@@ -129,11 +141,11 @@ func NewValidation(opts ...ValidationOption) *Validation {
 
 type ValidationOption func(*Validation)
 
-// func ValidationSkipDigest() ValidationOption {
-// 	return func(opts *Validation) {
-// 		opts.skipDigests = true
-// 	}
-// }
+func ValidationSkipDigest() ValidationOption {
+	return func(opts *Validation) {
+		opts.skipDigests = true
+	}
+}
 
 func ValidationLogger(logger *slog.Logger) ValidationOption {
 	return func(v *Validation) {

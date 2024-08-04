@@ -15,64 +15,6 @@ import (
 	"github.com/srerickson/ocfl-go/validation"
 )
 
-func validateVersion(ctx context.Context, obj ocfl.ReadObject, ver ocfl.VNum, prev ocfl.Inventory, opts ...ocfl.ValidationOption) (vldr *ocfl.Validation) {
-	vldr = ocfl.NewValidation(opts...)
-	fsys := obj.FS()
-	vDir := path.Join(obj.Path(), ver.String())
-	// what spec does the version use? Assume 1.0 or previous version's spec
-	// unless there is an inventory file. In that case, get the spec from the
-	// inventory.
-	ocflV := ocfl.Spec1_0
-	if prev != nil {
-		ocflV = prev.Spec()
-	}
-	// read the contents of the version directory
-	entries, err := fsys.ReadDir(ctx, vDir)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		vldr.AddFatal(err)
-		return
-	}
-	if len(entries) < 1 {
-		// the version directory doesn't exist or it's empty
-		err := fmt.Errorf("missing %s inventory file: %s", ver.String())
-		vldr.AddWarn(ec(err, codes.W010(ocflV)))
-		return
-	}
-	info := parseVersionDirState(entries)
-	for _, f := range info.extraFiles {
-		err := fmt.Errorf(`unexpected file in %s: %s`, ver, f)
-		vldr.AddFatal(ec(err, codes.E015(ocflV)))
-	}
-	if info.hasInventory {
-		invName := path.Join(vDir, inventoryFile)
-		inv, invValid := ValidateInventory(ctx, fsys, invName, ocflV)
-		// would be nice to add prefix to these errors
-		vldr.AddErrors(invValid)
-		verInv = inv
-		//
-	}
-	for _, d := range info.dirs {
-		// directory SHOULD only be content directory
-		if d != rootInv.ContentDirectory() {
-			err := fmt.Errorf(`extra directory in %s: %s`, ver, d)
-			vldr.AddWarn(ec(err, codes.W002(ocflV)))
-		}
-		// add version content directory to validation state
-		added, err := vldr.walkVersionContent(ctx, ver)
-		if err != nil {
-			vldr.AddFatal(err)
-			return err
-		}
-		if added == 0 {
-			// content directory exists but it's empty
-			err := fmt.Errorf("content directory (%s) contains no files", contDir)
-			vldr.AddFatal(ec(err, codes.E016(ocflV)))
-		}
-		continue
-	}
-	return vldr
-}
-
 func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ocfl.ValidationOption) (*ReadObject, *ocfl.Validation) {
 	v := ocfl.NewValidation(vops...)
 	vldr := objectValidator{
@@ -518,30 +460,4 @@ func (vldr *objectValidator) walkVersionContent(ctx context.Context, ver ocfl.VN
 		return true
 	})
 	return added, iterErr
-}
-
-type versionDirState struct {
-	hasInventory bool
-	// sidecarAlg   string
-	extraFiles []string
-	dirs       []string
-}
-
-func parseVersionDirState(entries []fs.DirEntry) versionDirState {
-	var info versionDirState
-	for _, e := range entries {
-		if e.Type().IsRegular() {
-			if e.Name() == inventoryFile {
-				info.hasInventory = true
-				continue
-			}
-			if strings.HasPrefix(e.Name(), inventoryFile+".") {
-				continue
-			}
-			info.extraFiles = append(info.extraFiles, e.Name())
-			continue
-		}
-		info.dirs = append(info.dirs, e.Name())
-	}
-	return info
 }

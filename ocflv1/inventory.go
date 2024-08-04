@@ -364,17 +364,6 @@ type logicalState struct {
 	state    ocfl.DigestMap
 }
 
-func (inv *RawInventory) logicalState(i int) logicalState {
-	var state ocfl.DigestMap
-	if v := inv.Version(i); v != nil {
-		state = v.State
-	}
-	return logicalState{
-		manifest: inv.Manifest,
-		state:    state,
-	}
-}
-
 func (a logicalState) Eq(b logicalState) bool {
 	if a.state == nil || b.state == nil || a.manifest == nil || b.manifest == nil {
 		return false
