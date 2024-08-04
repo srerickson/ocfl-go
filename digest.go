@@ -150,19 +150,24 @@ func (md MultiDigester) Sums() DigestSet {
 // Set is a set of digest results
 type DigestSet map[string]string
 
-// Validate digests reader and return an error if the resulting digest for any
-// algorithm in s doesn't match the value in s.
-func (s DigestSet) Validate(reader io.Reader) (err error) {
-	digester := NewMultiDigester(maps.Keys(s)...)
-	if _, err = io.Copy(digester, reader); err != nil {
-		return err
+func (s DigestSet) Add(s2 DigestSet) error {
+	for alg, newDigest := range s2 {
+		currDigest := s[alg]
+		if currDigest == "" {
+			s[alg] = newDigest
+			continue
+		}
+		if strings.EqualFold(currDigest, newDigest) {
+			continue
+		}
+		// digest conflict
+		return &DigestError{
+			Alg:      alg,
+			Got:      newDigest,
+			Expected: currDigest,
+		}
 	}
-	result := digester.Sums()
-	conflicts := result.ConflictWith(s)
-	for _, a := range conflicts {
-		err = errors.Join(err, &DigestErr{Alg: a, Expected: s[a], Got: result[a]})
-	}
-	return err
+	return nil
 }
 
 // ConflictWith returns keys in s with values that do not match the corresponding
@@ -177,15 +182,30 @@ func (s DigestSet) ConflictWith(other DigestSet) []string {
 	return keys
 }
 
-// DigestErr is returned when content's digest conflicts with an expected value
-type DigestErr struct {
+// Validate digests reader and return an error if the resulting digest for any
+// algorithm in s doesn't match the value in s.
+func (s DigestSet) Validate(reader io.Reader) (err error) {
+	digester := NewMultiDigester(maps.Keys(s)...)
+	if _, err = io.Copy(digester, reader); err != nil {
+		return err
+	}
+	result := digester.Sums()
+	conflicts := result.ConflictWith(s)
+	for _, a := range conflicts {
+		err = errors.Join(err, &DigestError{Alg: a, Expected: s[a], Got: result[a]})
+	}
+	return err
+}
+
+// DigestError is returned when content's digest conflicts with an expected value
+type DigestError struct {
 	Name     string // Content path
 	Alg      string // Digest algorithm
 	Got      string // Calculated digest
 	Expected string // Expected digest
 }
 
-func (e DigestErr) Error() string {
+func (e DigestError) Error() string {
 	if e.Name == "" {
 		return fmt.Sprintf("unexpected %s value: %q, expected=%q", e.Alg, e.Got, e.Expected)
 	}

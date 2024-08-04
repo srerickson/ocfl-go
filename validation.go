@@ -1,6 +1,7 @@
 package ocfl
 
 import (
+	"errors"
 	"log/slog"
 
 	"github.com/hashicorp/go-multierror"
@@ -12,6 +13,8 @@ type Validation struct {
 	// skipDigests bool
 	fatal *multierror.Error
 	warn  *multierror.Error
+
+	// not sure if this belongs here.
 	files map[string]*validationFileInfo
 }
 
@@ -20,7 +23,7 @@ func (v *Validation) AddInventoryFiles(inv Inventory) error {
 		v.files = map[string]*validationFileInfo{}
 	}
 	primaryAlg := inv.DigestAlgorithm()
-	var err error
+	allErrors := &multierror.Error{}
 	inv.Manifest().EachPath(func(name string, primaryDigest string) bool {
 		allDigests := inv.GetFixity(primaryDigest)
 		allDigests[primaryAlg] = primaryDigest
@@ -31,27 +34,16 @@ func (v *Validation) AddInventoryFiles(inv Inventory) error {
 			}
 			return true
 		}
-		for alg, newDigest := range allDigests {
-			currDigest := current.expected[alg]
-			if currDigest == "" {
-				current.expected[alg] = newDigest
-				continue
+		if err := current.expected.Add(allDigests); err != nil {
+			var digestError *DigestError
+			if errors.As(err, &digestError) {
+				digestError.Name = name
 			}
-			if currDigest == newDigest {
-				continue
-			}
-			// digest conflict
-			err = &DigestErr{
-				Name:     name,
-				Alg:      alg,
-				Got:      newDigest,
-				Expected: currDigest,
-			}
-			return false
+			allErrors = multierror.Append(allErrors, err)
 		}
 		return true
 	})
-	return err
+	return allErrors.ErrorOrNil()
 }
 
 // AddErrors adds v2's fatal and warning errors from to v.

@@ -19,7 +19,6 @@ func validateVersion(ctx context.Context, obj ocfl.ReadObject, ver ocfl.VNum, pr
 	vldr = ocfl.NewValidation(opts...)
 	fsys := obj.FS()
 	vDir := path.Join(obj.Path(), ver.String())
-	rootInv := obj.Inventory()
 	// what spec does the version use? Assume 1.0 or previous version's spec
 	// unless there is an inventory file. In that case, get the spec from the
 	// inventory.
@@ -79,8 +78,8 @@ func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ocfl
 	vldr := objectValidator{
 		Result: validation.NewResult(-1),
 		opts: &validationOptions{
-			Logger:       v.Logger(),
-			SkipDigests:  v.SkipDigests(),
+			Logger: v.Logger(),
+			// SkipDigests:  v.SkipDigests(),
 			FallbackOCFL: ocfl.Spec1_1,
 		},
 		FS:       fsys,
