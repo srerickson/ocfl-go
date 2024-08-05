@@ -59,6 +59,10 @@ func validateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum,
 		vldr.AddInventory(&inventory{raw: *inv})
 		verSpec = inv.Type.Spec
 		if prev != nil {
+
+			// err := fmt.Errorf("%s uses a lower version of the OCFL spec than %s (%s < %s)", vnum, prevVer, vnumSpec, prevSpec)
+			// vldr.LogFatal(lgr, ec(err, codes.E103(ocflV)))
+
 			// the version content directory must be the same
 			// the ocfl spec must >=
 			// check that all version states in prev match the corresponding

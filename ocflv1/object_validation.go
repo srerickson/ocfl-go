@@ -6,127 +6,49 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
-	"reflect"
 	"strings"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/extension"
 	"github.com/srerickson/ocfl-go/ocflv1/codes"
-	"github.com/srerickson/ocfl-go/validation"
 )
 
 func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ocfl.ValidationOption) (*ReadObject, *ocfl.Validation) {
 	v := ocfl.NewValidation(vops...)
-	vldr := objectValidator{
-		Result: validation.NewResult(-1),
-		opts: &validationOptions{
-			Logger: v.Logger(),
-			// SkipDigests:  v.SkipDigests(),
-			FallbackOCFL: ocfl.Spec1_1,
-		},
-		FS:       fsys,
-		Root:     root,
-		ledger:   &pathLedger{},
-		verSpecs: map[ocfl.VNum]ocfl.Spec{},
-	}
-	vldr.validate(ctx)
-	result := &ocfl.Validation{}
-	result.AddFatal(vldr.Result.Fatal()...)
-	result.AddWarn(vldr.Result.Warn()...)
-	if err := result.Err(); err != nil {
-		return nil, result
-	}
-	obj := &ReadObject{fs: fsys, path: root, inv: vldr.rootInv}
-	return obj, result
-}
-
-// objectValidator represents state of an object validation process
-type objectValidator struct {
-	*validation.Result
-	opts *validationOptions
-	FS   ocfl.FS // required
-	Root string  // required
-
-	// entries belows are state set during validation
-	rootInv  *RawInventory // TODO: remove, state instead
-	root     *ocfl.ObjectRoot
-	ledger   *pathLedger
-	verSpecs map[ocfl.VNum]ocfl.Spec
-}
-
-// ValidateObject performs complete validation of the object at path p in fsys.
-func (vldr *objectValidator) validate(ctx context.Context) *validation.Result {
-	lgr := vldr.opts.Logger
-	obj, err := ocfl.GetObjectRoot(ctx, vldr.FS, vldr.Root)
+	// read root contents
+	rootState, err := ocfl.GetObjectRoot(ctx, fsys, root)
 	if err != nil {
-		return vldr.LogFatal(lgr, err)
+		v.AddFatal(err)
 	}
-	vldr.root = obj
-	ocflV := vldr.root.State.Spec
-	switch ocflV {
-	case ocfl.Spec1_0:
-		fallthrough
-	case ocfl.Spec1_1:
-		if err := vldr.validateRoot(ctx); err != nil {
-			return vldr.Result
-		}
-		for _, vnum := range vldr.root.State.VersionDirs {
-			if err := vldr.validateVersion(ctx, vnum); err != nil {
-				return vldr.Result
-			}
-			// check version inventory uses OCFL spec that is >= spec used in previous inventory
-			if vnumSpec, exists := vldr.verSpecs[vnum]; exists {
-				var prevVer = vnum
-				for {
-					var err error
-					prevVer, err = prevVer.Prev()
-					if err != nil {
-						break
-					}
-					if prevSpec, exists := vldr.verSpecs[prevVer]; exists {
-						if prevSpec.Cmp(vnumSpec) > 0 {
-							err := fmt.Errorf("%s uses a lower version of the OCFL spec than %s (%s < %s)", vnum, prevVer, vnumSpec, prevSpec)
-							vldr.LogFatal(lgr, ec(err, codes.E103(ocflV)))
-						}
-						break
-					}
-				}
-			}
-		}
-		if err := vldr.validateExtensionsDir(ctx); err != nil {
-			return vldr.Result
-		}
-		if err := vldr.validatePathLedger(ctx); err != nil {
-			return vldr.Result
-		}
-	default:
-		err := fmt.Errorf("%w: %s", ErrOCFLVersion, ocflV)
-		return vldr.LogFatal(lgr, err)
+	validateRootState(ctx, rootState, v)
+	validateExtensionsDir(ctx, rootState, v)
+	var obj *ReadObject
+	if v.Err() != nil {
+		obj = &ReadObject{fs: fsys, path: root}
 	}
-	return vldr.Result
+	return obj, v
 }
 
-// validateRoot fully validates the object root contents
-func (vldr *objectValidator) validateRoot(ctx context.Context) error {
-	ocflV := vldr.root.State.Spec
-	lgr := vldr.opts.Logger
-	if err := vldr.root.ValidateNamaste(ctx, ocflV); err != nil {
+// validateRootState fully validates the object root contents
+func validateRootState(ctx context.Context, root *ocfl.ObjectRoot, vldr *ocfl.Validation) {
+	ocflV := root.State.Spec
+	if err := root.ValidateNamaste(ctx, ocflV); err != nil {
 		err = ec(err, codes.E007(ocflV))
-		vldr.LogFatal(lgr, err)
+		vldr.AddFatal(err)
 	}
-	for _, name := range vldr.root.State.Invalid {
+	for _, name := range root.State.Invalid {
 		err := fmt.Errorf(`%w: %s`, ErrObjRootStructure, name)
-		vldr.LogFatal(lgr, ec(err, codes.E001(ocflV)))
+		vldr.AddFatal(ec(err, codes.E001(ocflV)))
 	}
-	if !vldr.root.State.HasInventory() {
+	if !root.State.HasInventory() {
 		err := fmt.Errorf(`%w: not found`, ErrInventoryNotExist)
-		vldr.LogFatal(lgr, ec(err, codes.E063(ocflV)))
+		vldr.AddFatal(ec(err, codes.E063(ocflV)))
 	}
-	if !vldr.root.State.HasSidecar() {
+	if !root.State.HasSidecar() {
 		err := fmt.Errorf(`inventory sidecar: %w`, fs.ErrNotExist)
-		vldr.LogFatal(lgr, ec(err, codes.E058(ocflV)))
+		vldr.AddFatal(ec(err, codes.E058(ocflV)))
 	}
-	err := vldr.root.State.VersionDirs.Valid()
+	err := root.State.VersionDirs.Valid()
 	if err != nil {
 		if errors.Is(err, ocfl.ErrVerEmpty) {
 			err = ec(err, codes.E008(ocflV))
@@ -135,13 +57,13 @@ func (vldr *objectValidator) validateRoot(ctx context.Context) error {
 		} else if errors.Is(err, ocfl.ErrVNumMissing) {
 			err = ec(err, codes.E010(ocflV))
 		}
-		vldr.LogFatal(lgr, err)
+		vldr.AddFatal(err)
 	}
-	if err == nil && vldr.root.State.VersionDirs.Padding() > 0 {
+	if err == nil && root.State.VersionDirs.Padding() > 0 {
 		err := errors.New("version directory names are zero-padded")
-		vldr.LogWarn(lgr, ec(err, codes.W001(ocflV)))
+		vldr.AddWarn(ec(err, codes.W001(ocflV)))
 	}
-	return vldr.validateRootInventory(ctx)
+	return
 }
 
 // func (vldr *objectValidator) validateNamaste(ctx context.Context) error {
@@ -159,7 +81,7 @@ func (vldr *objectValidator) validateRoot(ctx context.Context) error {
 // 	return vldr.Err()
 // }
 
-func (vldr *objectValidator) validateRootInventory(ctx context.Context) error {
+func validateRootInventory(ctx context.Context) error {
 	ocflV := vldr.root.State.Spec
 	lgr := vldr.opts.Logger
 	name := path.Join(vldr.Root, inventoryFile)
@@ -199,139 +121,28 @@ func (vldr *objectValidator) validateRootInventory(ctx context.Context) error {
 	return nil
 }
 
-func (vldr *objectValidator) validateVersion(ctx context.Context, ver ocfl.VNum) error {
-	ocflV := vldr.root.State.Spec // assumed ocfl version (until inventory is decoded)
-	lgr := vldr.opts.Logger
-	if lgr != nil {
-		lgr = lgr.With("version", ver.String())
-	}
-	vDir := path.Join(vldr.Root, ver.String())
-	entries, err := vldr.FS.ReadDir(ctx, vDir)
-	if err != nil {
-		vldr.LogFatal(lgr, err)
-		return err
-	}
-	info := parseVersionDirState(entries)
-	for _, f := range info.extraFiles {
-		err := fmt.Errorf(`unexpected file in %s: %s`, ver, f)
-		vldr.LogFatal(lgr, ec(err, codes.E015(ocflV)))
-	}
-	for _, d := range info.dirs {
-		// directory must be content directory
-		if contDir := vldr.rootInv.ContentDirectory; d == contDir {
-			// add version content directory to validation state
-			added, err := vldr.walkVersionContent(ctx, ver)
-			if err != nil {
-				vldr.LogFatal(lgr, err)
-				return err
-			}
-			if added == 0 {
-				// content directory exists but it's empty
-				err := fmt.Errorf("content directory (%s) contains no files", contDir)
-				vldr.LogFatal(lgr, ec(err, codes.E016(ocflV)))
-			}
-			continue
-		}
-		err := fmt.Errorf(`extra directory in %s: %s`, ver, d)
-		vldr.LogWarn(lgr, ec(err, codes.W002(ocflV)))
-	}
-	if info.hasInventory {
-		// if !algorithms[info.] {
-		// 	err := fmt.Errorf("%w: %s", ErrDigestAlg, info.asidecarAlg
-		// 	vldr.LogFatal(lgr, ec(err, codes.E025(ocflV)))
-		// }
-		if err := vldr.validateVersionInventory(ctx, ver); err != nil {
-			return err
-		}
-	} else {
-		vldr.LogWarn(lgr, ec(errors.New("missing version inventory"), codes.W010(ocflV)))
-	}
-	return vldr.Err()
-}
-
-func validateVersionInventory(ctx context.Context, vldr *ocfl.Validation, dirInv *RawInventory, prev ocfl.Inventory, rootInv ocfl.Inventory) error {
-
-	// Is this the HEAD version directory?
-	if dirInv.Head == rootInv.Head() {
-		if dirInv.jsonDigest == rootInv.jsonDigest {
-			return nil // don't need to validate any further
-		}
-		err := fmt.Errorf("inventory in last version (%s) is not same as root inventory", dirInv.Head.String())
-		vldr.AddFatal(ec(err, codes.E064(dirInv.Type.Spec)))
-	}
-	//
-	// remaining validations should check consistency between version inventory
-	// and root inventory
-	//
-	// check expected values specified in conf
-	if rootInv.ID() != dirInv.ID {
-		err := fmt.Errorf("unexpected id: %s", dirInv.ID)
-		vldr.AddFatal(ec(err, codes.E037(dirInv.Type.Spec)))
-	}
-	if rootInv.ContentDirectory() != dirInv.ContentDirectory {
-		err := fmt.Errorf("contentDirectory is '%s', but expected '%s'", dirInv.ContentDirectory, rootInv.ContentDirectory())
-		vldr.AddFatal(ec(err, codes.E019(dirInv.Type.Spec)))
-	}
-	if vn != dirInv.Head {
-		err := fmt.Errorf("inventory head is %s, expected %s", dirInv.Head, vn)
-		vldr.LogFatal(lgr, ec(err, codes.E040(dirInv.Type.Spec)))
-	}
-	// confirm that each version's logical state in the version directory
-	// inventory matches the corresponding logical state in the root inventory.
-	// Because the digest algorithm can change between versions, we're comparing
-	// the set of logical paths, and their correspondance to
-	for v, ver := range dirInv.Versions {
-		rootVer := rootInv.Version(v.Num())
-		rootLogicalState := rootInv.logicalState(v.Num())
-		dirLogicalState := dirInv.logicalState(v.Num())
-		if !dirLogicalState.Eq(rootLogicalState) {
-			err := fmt.Errorf("logical state for version %d in root inventory doesn't match that in %s/%s", v.Num(), vn, inventoryFile)
-			vldr.LogFatal(lgr, ec(err, codes.E066(dirInv.Type.Spec)))
-		}
-		if ver.Message != rootVer.Message {
-			err := fmt.Errorf(`message for version %s differs from root inventory`, v)
-			vldr.LogWarn(lgr, ec(err, codes.W011(dirInv.Type.Spec)))
-		}
-		if !reflect.DeepEqual(ver.User, rootVer.User) {
-			err := fmt.Errorf(`user information for version %s differs from root inventory`, v)
-			vldr.LogWarn(lgr, ec(err, codes.W011(dirInv.Type.Spec)))
-		}
-		if ver.Created != rootVer.Created {
-			err := fmt.Errorf(`timestamp for version %s differs from root inventory`, v)
-			vldr.LogWarn(lgr, ec(err, codes.W011(dirInv.Type.Spec)))
-		}
-	}
-	return vldr.Err()
-}
-
-func (vldr *objectValidator) validateExtensionsDir(ctx context.Context) error {
-	lgr := vldr.opts.Logger
-	extDir := path.Join(vldr.Root, extensionsDir)
-	items, err := vldr.FS.ReadDir(ctx, extDir)
-	if lgr != nil {
-		lgr = lgr.With("dir", extensionsDir)
-	}
-	ocflV := vldr.root.State.Spec
+func validateExtensionsDir(ctx context.Context, root *ocfl.ObjectRoot, vldr *ocfl.Validation) {
+	ocflV := root.State.Spec
+	extDir := path.Join(root.Path, extensionsDir)
+	items, err := root.FS.ReadDir(ctx, extDir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil
+			return
 		}
-		vldr.LogFatal(lgr, err)
-		return err
+		vldr.AddFatal(err)
 	}
 	for _, i := range items {
 		if !i.IsDir() {
 			err := fmt.Errorf(`unexpected file: %s`, i.Name())
-			vldr.LogFatal(lgr, ec(err, codes.E067(ocflV)))
+			vldr.AddFatal(ec(err, codes.E067(ocflV)))
 			continue
 		}
 		_, err := extension.Get(i.Name())
 		if err != nil {
 			// unknow extension
-			vldr.LogWarn(lgr, ec(fmt.Errorf("%w: %s", err, i.Name()), codes.W013(ocflV)))
+			vldr.AddWarn(ec(fmt.Errorf("%w: %s", err, i.Name()), codes.W013(ocflV)))
 		}
 	}
-	return nil
 }
 
 // validatePathLedger validates the pathLedger. Before running
@@ -441,23 +252,4 @@ func (vldr *objectValidator) validatePathLedger(ctx context.Context) error {
 		return err
 	}
 	return nil
-}
-
-func (vldr *objectValidator) walkVersionContent(ctx context.Context, ver ocfl.VNum) (int, error) {
-	contDir := path.Join(vldr.Root, ver.String(), vldr.rootInv.ContentDirectory)
-	var added int
-	var iterErr error
-	ocfl.Files(ctx, vldr.FS, contDir)(func(info ocfl.FileInfo, err error) bool {
-		if err != nil {
-			iterErr = err
-			return false
-		}
-		// convert fs-relative path to object-relative path
-		name := info.Path
-		objPath := strings.TrimPrefix(name, vldr.Root+"/")
-		vldr.ledger.addPathExists(objPath, ver)
-		added++
-		return true
-	})
-	return added, iterErr
 }
