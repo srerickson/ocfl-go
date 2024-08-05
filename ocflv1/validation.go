@@ -24,7 +24,7 @@ func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ocfl
 	validateRootState(ctx, rootState, v)
 	ocflV := rootState.State.Spec
 
-	inv, invValidation := ValidateInventory(ctx, fsys, path.Join(root, inventoryFile), ocflV)
+	inv, invValidation := ValidateInventory(ctx, fsys, path.Join(root, inventoryFile))
 	v.AddErrors(invValidation)
 	if inv == nil {
 		return nil, v
@@ -40,9 +40,14 @@ func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ocfl
 		// v.AddFatal(ec(fmt.Errorf("inventory versions don't include %s", expHead), codes.E046(ocflV)))
 	}
 	validateExtensionsDir(ctx, rootState, v)
-	var obj *ReadObject
 	if v.Err() != nil {
-		obj = &ReadObject{fs: fsys, path: root}
+		return nil, v
+	}
+	obj := &ReadObject{fs: fsys, path: root, inv: inv}
+
+	var prev ocfl.ReadInventory
+	for _, vnum := range inv.Head.AsHead() {
+		prev = validateVersion(ctx, obj, vnum, prev, v)
 	}
 	return obj, v
 }
@@ -81,7 +86,6 @@ func validateRootState(ctx context.Context, root *ocfl.ObjectRoot, vldr *ocfl.Va
 		err := errors.New("version directory names are zero-padded")
 		vldr.AddWarn(ec(err, codes.W001(ocflV)))
 	}
-	return
 }
 
 // func (vldr *objectValidator) validateNamaste(ctx context.Context) error {
@@ -234,7 +238,7 @@ func validateExtensionsDir(ctx context.Context, root *ocfl.ObjectRoot, vldr *ocf
 
 // validateVersion fully validates an ocfl v1.x version directory for ver in the object.
 // the previous inventory may be nil.
-func validateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum, prev ocfl.Inventory, vldr *ocfl.Validation) {
+func validateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum, prev ocfl.ReadInventory, vldr *ocfl.Validation) ocfl.ReadInventory {
 	fsys := obj.FS()
 	vDir := path.Join(obj.Path(), dirNum.String())
 	// isHead := obj.Inventory().Head() == dirNum
@@ -251,22 +255,24 @@ func validateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum,
 	entries, err := fsys.ReadDir(ctx, vDir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		vldr.AddFatal(err)
-		return
+		return nil
 	}
 	if len(entries) < 1 {
 		// the version directory doesn't exist or it's empty
 		err := fmt.Errorf("missing %s/inventory.json", dirNum.String())
 		vldr.AddWarn(ec(err, codes.W010(verSpec)))
-		return
+		return nil
 	}
 	info := parseVersionDirState(entries)
 	for _, f := range info.extraFiles {
 		err := fmt.Errorf(`unexpected file in %s: %s`, dirNum, f)
 		vldr.AddFatal(ec(err, codes.E015(verSpec)))
 	}
+	var inv *Inventory
 	if info.hasInventory {
 		invName := path.Join(vDir, inventoryFile)
-		inv, invValid := ValidateInventory(ctx, fsys, invName, verSpec)
+		var invValid *ocfl.Validation
+		inv, invValid = ValidateInventory(ctx, fsys, invName)
 		if inv.ContentDirectory != "" {
 			verContentDir = inv.ContentDirectory
 		}
@@ -275,7 +281,7 @@ func validateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum,
 
 		// would be nice to add prefix to these errors
 		vldr.AddErrors(invValid)
-		vldr.AddInventory(&inventory{raw: *inv})
+		vldr.AddInventory(&readInventory{raw: *inv})
 		verSpec = inv.Type.Spec
 		if prev != nil {
 
@@ -338,7 +344,7 @@ func validateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum,
 		})
 		if iterErr != nil {
 			vldr.AddFatal(err)
-			return
+			return nil
 		}
 		if added == 0 {
 			// content directory exists but it's empty
@@ -346,7 +352,7 @@ func validateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum,
 			vldr.AddFatal(ec(err, codes.E016(verSpec)))
 		}
 	}
-	return
+	return inv.Inventory()
 }
 
 type versionDirState struct {

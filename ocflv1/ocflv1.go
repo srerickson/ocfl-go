@@ -130,7 +130,7 @@ func (imp OCFL) Commit(ctx context.Context, obj ocfl.ReadObject, commit *ocfl.Co
 
 // newContentMap returns a DigestMap that is a subset of the inventory
 // manifest for the digests and paths of new content
-func newContentMap(inv *RawInventory) (ocfl.DigestMap, error) {
+func newContentMap(inv *Inventory) (ocfl.DigestMap, error) {
 	pm := ocfl.PathMap{}
 	var err error
 	inv.Manifest.EachPath(func(pth, dig string) bool {

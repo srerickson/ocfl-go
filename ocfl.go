@@ -172,7 +172,7 @@ func SetXferConcurrency(i int) {
 type ReadObject interface {
 	// Inventory returns the object's inventory or nil if
 	// the object hasn't been created yet.
-	Inventory() Inventory
+	Inventory() ReadInventory
 	// FS for accessing object contents
 	FS() FS
 	// Path returns the object's path relative to its FS()
@@ -183,9 +183,10 @@ type ReadObject interface {
 	VersionFS(ctx context.Context, v int) fs.FS
 }
 
-type Inventory interface {
+type ReadInventory interface {
 	FixitySource
 	ContentDirectory() string
+	Digest() string
 	DigestAlgorithm() string
 	Head() VNum
 	ID() string

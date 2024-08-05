@@ -29,7 +29,7 @@ var (
 type ReadObject struct {
 	fs   ocfl.FS
 	path string
-	inv  *RawInventory
+	inv  *Inventory
 }
 
 func NewReadObject(ctx context.Context, fsys ocfl.FS, dir string) (obj *ReadObject, err error) {
@@ -53,7 +53,7 @@ func NewReadObject(ctx context.Context, fsys ocfl.FS, dir string) (obj *ReadObje
 	if err != nil {
 		return
 	}
-	inv := &RawInventory{}
+	inv := &Inventory{}
 	if err = json.Unmarshal(bytes, inv); err != nil {
 		return
 	}
@@ -63,11 +63,11 @@ func NewReadObject(ctx context.Context, fsys ocfl.FS, dir string) (obj *ReadObje
 
 func (o *ReadObject) FS() ocfl.FS { return o.fs }
 
-func (o *ReadObject) Inventory() ocfl.Inventory {
+func (o *ReadObject) Inventory() ocfl.ReadInventory {
 	if o.inv == nil {
 		return nil
 	}
-	return &inventory{raw: *o.inv}
+	return &readInventory{raw: *o.inv}
 }
 
 func (o *ReadObject) Validate(ctx context.Context, opts ...ocfl.ValidationOption) *ocfl.Validation {

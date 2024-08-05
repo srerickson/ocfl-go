@@ -30,7 +30,7 @@ func (v *Validation) AddContentExists(name string) {
 	v.files[name].exists = true
 }
 
-func (v *Validation) AddInventory(inv Inventory) error {
+func (v *Validation) AddInventory(inv ReadInventory) error {
 	if v.files == nil {
 		v.files = map[string]*validationFileInfo{}
 	}

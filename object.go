@@ -137,7 +137,7 @@ func (obj *Object) FS() FS {
 	return obj.reader.FS()
 }
 
-func (obj *Object) Inventory() Inventory {
+func (obj *Object) Inventory() ReadInventory {
 	return obj.reader.Inventory()
 }
 
@@ -236,7 +236,7 @@ func (c CommitError) Unwrap() error {
 type ObjectVersionFS struct {
 	fsys fs.FS
 	ver  ObjectVersion
-	inv  Inventory
+	inv  ReadInventory
 	num  int
 }
 
@@ -291,7 +291,7 @@ type uninitializedObject struct {
 // FS for accessing object contents
 func (o *uninitializedObject) FS() FS { return o.fs }
 
-func (o *uninitializedObject) Inventory() Inventory { return nil }
+func (o *uninitializedObject) Inventory() ReadInventory { return nil }
 
 // Path returns the object's path relative to its FS()
 func (o *uninitializedObject) Path() string { return o.path }
