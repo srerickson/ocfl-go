@@ -60,9 +60,12 @@ func (v *Validation) AddInventory(inv Inventory) error {
 
 // AddErrors adds v2's fatal and warning errors from to v.
 func (v *Validation) AddErrors(v2 *Validation) {
-	v.fatal = multierror.Append(v.fatal, v2.fatal.Errors...)
-	v.warn = multierror.Append(v.warn, v2.warn.Errors...)
-	// v.skipDigests = v.skipDigests && v2.skipDigests
+	if v2.fatal != nil {
+		v.fatal = multierror.Append(v.fatal, v2.fatal.Errors...)
+	}
+	if v2.warn != nil {
+		v.warn = multierror.Append(v.warn, v2.warn.Errors...)
+	}
 }
 
 // AddFatal adds fatal errors to the validation

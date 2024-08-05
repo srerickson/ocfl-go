@@ -1,166 +1,604 @@
 package ocflv1_test
 
 import (
+	"context"
+	"strings"
 	"testing"
 
-	"github.com/srerickson/ocfl-go"
+	"github.com/matryer/is"
+	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
-func TestNewInventory(t *testing.T) {
-	// ctx := context.Background()
-	// base, validation := ocflv1.ValidateInventoryReader(ctx, strings.NewReader(testInv))
-	// if err := validation.Err(); err != nil {
-	// 	t.Fatal("test inventory isn't valid:", err)
-	// }
-	// // new version state
-	// version := &ocflv1.Version{State: ocfl.DigestMap{
-	// 	"abc": []string{"newfile.txt"},
-	// }}
-	// // fixity values that should be added to new inventory
-	// fixity := fixitySource{
-	// 	// md5 for existing content: v1/content/foo/bar.xml
-	// 	"7dcc352f96c56dc5b094b2492c2866afeb12136a78f0143431ae247d02f02497bbd733e0536d34ec9703eba14c6017ea9f5738322c1d43169f8c77785947ac31": ocfl.DigestSet{
-	// 		"md5": "184f84e28cbe75e050e9c25ea7f2e939",
-	// 	},
-	// 	// fake digest for new content
-	// 	"abc": {
-	// 		"sha256": "def",
-	// 		"md5":    "ghi",
-	// 		"sha1":   "jkl",
-	// 	},
-	// }
-	// commit := &ocfl.Commit{}
-	// result, err := ocflv1.NewInventory(commit, &o)
-	// if err != nil {
-	// 	t.Fatal(err)
-	// }
-	// if len(result.Fixity[ocfl.SHA256]) < 1 {
-	// 	t.Fatal("missing fixity block")
-	// }
-	// if len(result.Manifest) != len(base.Manifest)+1 {
-	// 	t.Fatal("new inventory should have one additional manifest entry")
-	// }
-	// if len(result.Manifest["abc"]) < 1 {
-	// 	t.Fatal("expected manifest entry for new file")
-	// }
-	// for digest := range result.Manifest {
-	// 	set := result.GetFixity(digest)
-	// 	if set[ocfl.MD5] == "" {
-	// 		t.Fatal("missing md5")
-	// 	}
-	// 	if set[ocfl.SHA1] == "" {
-	// 		t.Fatal("missing sha1")
-	// 	}
-	// }
+type testInventory struct {
+	valid       bool
+	description string
+	data        string
 }
 
-type fixitySource map[string]ocfl.DigestSet
-
-func (f fixitySource) GetFixity(digest string) ocfl.DigestSet {
-	return f[digest]
+var testInventories = []testInventory{
+	// Good inventories
+	{
+		valid:       true,
+		description: `minimal`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"head": "v1",
+			"id": "http://example.org/minimal_no_content",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	},
+	{
+		valid:       true,
+		description: `minimal_contentDirectory`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"head": "v1",
+			"contentDirectory": "cont",
+			"id": "http://example.org/minimal_no_content",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	},
+	{
+		valid:       true,
+		description: `one_version`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"head": "v1",
+			"id": "ark:123/abc",
+			"manifest": {
+			  "43a43fe8a8a082d3b5343dfaf2fd0c8b8e370675b1f376e92e9994612c33ea255b11298269d72f797399ebb94edeefe53df243643676548f584fb8603ca53a0f": [
+				"v1/content/a_file.txt"
+			  ]
+			},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "An version with one file",
+				"state": {
+				  "43a43fe8a8a082d3b5343dfaf2fd0c8b8e370675b1f376e92e9994612c33ea255b11298269d72f797399ebb94edeefe53df243643676548f584fb8603ca53a0f": [
+					"a_file.txt"
+				  ]
+				},
+				"user": {
+				  "address": "mailto:a_person@example.org",
+				  "name": "A Person"
+				}
+			  }
+			}
+		  }`,
+	},
+	// Bad inventories
+	{
+		valid:       false,
+		description: `missing_id`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"head": "v1",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	}, {
+		valid:       false,
+		description: `bad_digestAlgorithm`,
+		data: `{
+			"digestAlgorithm": "sha51",
+			"head": "v1",
+			"id": "http://example.org/minimal_no_content",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	}, {
+		valid:       false,
+		description: `missing_digestAlgorithm`,
+		data: `{
+			"head": "v1",
+			"id": "http://example.org/minimal_no_content",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	}, {
+		valid:       false,
+		description: `null_id`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"id": null,
+			"head": "v1",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	},
+	{
+		valid:       false,
+		description: `missing_type`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"id": "ark:123/abc",
+			"head": "v1",
+			"manifest": {},
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	},
+	{
+		valid:       false,
+		description: `bad_type`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"id": "ark:123/abc",
+			"head": "v1",
+			"type": "https://ocfl.io",
+			"manifest": {},
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	},
+	{
+		valid:       false,
+		description: `bad_contentDirectory`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"id": "ark:123/abc",
+			"head": "v1",
+			"contentDirectory": "..",
+			"type": "https://ocfl.io",
+			"manifest": {},
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	},
+	{
+		valid:       false,
+		description: `missing_head`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"id": "ark:123/abc",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	},
+	{
+		valid:       false,
+		description: `bad_head_format`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"id": "ark:123/abc",
+			"head": "v1.0",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	},
+	{
+		valid:       false,
+		description: `bad_head_not_last`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"id": "ark:123/abc",
+			"head": "v1",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "version 1",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  },
+			  "v2": {
+				"created": "2019-02-01T02:03:04Z",
+				"message": "version 1",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	},
+	{
+		valid:       false,
+		description: `missing_manifest`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"id": "ark:123/abc",
+			"head": "v1",
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	},
+	{
+		valid:       false,
+		description: `bad_manifest`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"id": "ark:123/abc",
+			"head": "v1",
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"manifest": 12,
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	},
+	{
+		valid:       false,
+		description: `missing_versions`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"id": "ark:123/abc",
+			"head": "v1",
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"manifest": {}
+		  }`,
+	},
+	{
+		valid:       false,
+		description: `bad_versions_empty`,
+		data: `{
+				"digestAlgorithm": "sha512",
+				"id": "ark:123/abc",
+				"head": "v1",
+				"type": "https://ocfl.io/1.0/spec/#inventory",
+				"manifest": {},
+				"versions": {}
+			  }`,
+	},
+	{
+		valid:       false,
+		description: `bad_versions_missingv1`,
+		data: `{
+				"digestAlgorithm": "sha512",
+				"id": "ark:123/abc",
+				"head": "v2",
+				"type": "https://ocfl.io/1.0/spec/#inventory",
+				"manifest": {},
+				"versions": {
+					"v2": {
+						"created": "2019-01-01T02:03:04Z",
+						"message": "One version and no content",
+						"state": { },
+						"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+					}	
+				}
+			  }`,
+	},
+	{
+		valid:       false,
+		description: `bad_versions_padding`,
+		data: `{
+				"digestAlgorithm": "sha512",
+				"id": "ark:123/abc",
+				"head": "v02",
+				"type": "https://ocfl.io/1.0/spec/#inventory",
+				"manifest": {},
+				"versions": {
+					"v1": {
+						"created": "2019-01-01T02:03:04Z",
+						"message": "One version and no content",
+						"state": { },
+						"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+					},
+					"v02": {
+						"created": "2019-01-01T02:03:04Z",
+						"message": "One version and no content",
+						"state": { },
+						"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+					}	
+				}
+			  }`,
+	},
+	{
+		valid:       false,
+		description: `bad_manifest_digestconflict`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"head": "v2",
+			"id": "uri:something451",
+			"manifest": {
+			  "10c4f059fc9235474c75c5e4b48837d1fcd93f6bca273c1153deb568096e1ec18fe5cd13467e550ca9dcfe8d4f81b2f71d5951a169cbfb321445a9a3211be708": [
+				"v2/content/a_file.txt"
+			  ],
+			  "10C4F059FC9235474C75C5E4B48837D1FCD93F6BCA273C1153DEB568096E1EC18FE5CD13467E550CA9DCFE8D4F81B2F71D5951A169CBFB321445A9A3211BE708": [
+				"v1/content/a_file.txt"
+			  ]
+			},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T01:01:01Z",
+				"state": {
+				  "10C4F059FC9235474C75C5E4B48837D1FCD93F6BCA273C1153DEB568096E1EC18FE5CD13467E550CA9DCFE8D4F81B2F71D5951A169CBFB321445A9A3211BE708": [
+					"a_file.txt"
+				  ]
+				},
+				"message": "Store version 1",
+				"user": {
+				  "name": "Sombody",
+				  "address": "https://orcid.org/0000-0000-0000-0000"
+				}
+			  },
+			  "v2": {
+				"created": "2019-01-01T02:02:02Z",
+				"state": {
+				  "10c4f059fc9235474c75c5e4b48837d1fcd93f6bca273c1153deb568096e1ec18fe5cd13467e550ca9dcfe8d4f81b2f71d5951a169cbfb321445a9a3211be708": [
+					"a_file.txt"
+				  ]
+				},
+				"message": "Store version 2",
+				"user": {
+				  "name": "Sombody",
+				  "address": "https://orcid.org/0000-0000-0000-0000"
+				}
+			  }
+			}
+		  }`,
+	},
+	{
+		valid:       false,
+		description: `bad_manifest_basepathconflict`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"head": "v3",
+			"id": "uri:something451",
+			"manifest": {
+			  "10c4f059fc9235474c75c5e4b48837d1fcd93f6bca273c1153deb568096e1ec18fe5cd13467e550ca9dcfe8d4f81b2f71d5951a169cbfb321445a9a3211be708": [
+				"v1/content/a_file/name.txt"
+			  ],
+			  "43a43fe8a8a082d3b5343dfaf2fd0c8b8e370675b1f376e92e9994612c33ea255b11298269d72f797399ebb94edeefe53df243643676548f584fb8603ca53a0f": [
+				"v1/content/a_file"
+			  ],
+			  "8ed2115b36fe2d4db1b5ddad63f0deb13db339d3ff17f69fafb8cc8e9a20b89add82933d544b5512350a7f85cfae7e7235409c364060653e39ef9b18a81976fb": [
+				"v2/content/a_file.txt"
+			  ]
+			},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T01:01:01Z",
+				"state": {
+				  "43a43fe8a8a082d3b5343dfaf2fd0c8b8e370675b1f376e92e9994612c33ea255b11298269d72f797399ebb94edeefe53df243643676548f584fb8603ca53a0f": [
+					"a_file.txt"
+				  ]
+				},
+				"message": "Store version 1",
+				"user": {
+				  "name": "Sombody",
+				  "address": "https://orcid.org/0000-0000-0000-0000"
+				}
+			  },
+			  "v2": {
+				"created": "2019-01-01T02:02:02Z",
+				"state": {
+				  "10c4f059fc9235474c75c5e4b48837d1fcd93f6bca273c1153deb568096e1ec18fe5cd13467e550ca9dcfe8d4f81b2f71d5951a169cbfb321445a9a3211be708": [
+					"a_file.txt"
+				  ]
+				},
+				"message": "Store version 2",
+				"user": {
+				  "name": "Sombody",
+				  "address": "https://orcid.org/0000-0000-0000-0000"
+				}
+			  },
+			  "v3": {
+				"created": "2019-01-01T03:03:03Z",
+				"state": {
+				  "8ed2115b36fe2d4db1b5ddad63f0deb13db339d3ff17f69fafb8cc8e9a20b89add82933d544b5512350a7f85cfae7e7235409c364060653e39ef9b18a81976fb": [
+					"a_file.txt"
+				  ]
+				},
+				"message": "Store version 1",
+				"user": {
+				  "name": "Sombody",
+				  "address": "https://orcid.org/0000-0000-0000-0000"
+				}
+			  }
+			}
+		  }
+		  `,
+	},
+	{
+		valid:       false,
+		description: `missing_version_state`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"head": "v1",
+			"id": "http://example.org/minimal_no_content",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	},
+	{
+		valid:       false,
+		description: `null_version_block`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"head": "v1",
+			"id": "http://example.org/minimal_no_content",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": null
+			}
+		  }`,
+	},
+	{
+		valid:       false,
+		description: `missing_version_created`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"head": "v1",
+			"id": "http://example.org/minimal_no_content",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"state": {},
+				"message": "One version and no content",
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+	},
+	{
+		valid:       false,
+		description: `missing_version_user_name`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"head": "v1",
+			"id": "http://example.org/minimal_no_content",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"state": {},
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"user": { "address": "mailto:Person_A@example.org"}
+			  }
+			}
+		  }`,
+	},
+	{
+		valid:       false,
+		description: `empty_version_user_name`,
+		data: `{
+			"digestAlgorithm": "sha512",
+			"head": "v1",
+			"id": "http://example.org/minimal_no_content",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"state": {},
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"user": { "address": "mailto:Person_A@example.org", "name": ""}
+			  }
+			}
+		  }`,
+	},
 }
 
-var testInv = `{
-  "digestAlgorithm": "sha512",
-  "fixity": {
-    "md5": {
-      "2673a7b11a70bc7ff960ad8127b4adeb": [
-        "v2/content/foo/bar.xml"
-      ],
-      "c289c8ccd4bab6e385f5afdd89b5bda2": [
-        "v1/content/image.tiff"
-      ],
-      "d41d8cd98f00b204e9800998ecf8427e": [
-        "v1/content/empty.txt"
-      ]
-    },
-    "sha1": {
-      "66709b068a2faead97113559db78ccd44712cbf2": [
-        "v1/content/foo/bar.xml"
-      ],
-      "a6357c99ecc5752931e133227581e914968f3b9c": [
-        "v2/content/foo/bar.xml"
-      ],
-      "b9c7ccc6154974288132b63c15db8d2750716b49": [
-        "v1/content/image.tiff"
-      ],
-      "da39a3ee5e6b4b0d3255bfef95601890afd80709": [
-        "v1/content/empty.txt"
-      ]
-    }
-  },
-  "head": "v3",
-  "id": "ark:/12345/bcd987",
-  "manifest": {
-    "4d27c86b026ff709b02b05d126cfef7ec3aed5f83f5e98df7d7592f7a44bd1dc7f29509cff06b884158baa36a2bbeda11ab8a64b56585a70f5ce1fa96e26eb53": [
-      "v2/content/foo/bar.xml"
-    ],
-    "7dcc352f96c56dc5b094b2492c2866afeb12136a78f0143431ae247d02f02497bbd733e0536d34ec9703eba14c6017ea9f5738322c1d43169f8c77785947ac31": [
-      "v1/content/foo/bar.xml"
-    ],
-    "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e": [
-      "v1/content/empty.txt"
-    ],
-    "ffccf6baa21809716f31563fafb9f333c09c336bb7400088f17e4ff307f98fc9b14a577f92f3285913b7f53a6d5cf004503cf839aada1c885ac69336cbfb862e": [
-      "v1/content/image.tiff"
-    ]
-  },
-  "type": "https://ocfl.io/1.0/spec/#inventory",
-  "versions": {
-    "v1": {
-      "created": "2018-01-01T01:01:01Z",
-      "message": "Initial import",
-      "state": {
-        "7dcc352f96c56dc5b094b2492c2866afeb12136a78f0143431ae247d02f02497bbd733e0536d34ec9703eba14c6017ea9f5738322c1d43169f8c77785947ac31": [
-          "foo/bar.xml"
-        ],
-        "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e": [
-          "empty.txt"
-        ],
-        "ffccf6baa21809716f31563fafb9f333c09c336bb7400088f17e4ff307f98fc9b14a577f92f3285913b7f53a6d5cf004503cf839aada1c885ac69336cbfb862e": [
-          "image.tiff"
-        ]
-      },
-      "user": {
-        "address": "mailto:alice@example.com",
-        "name": "Alice"
-      }
-    },
-    "v2": {
-      "created": "2018-02-02T02:02:02Z",
-      "message": "Fix bar.xml, remove image.tiff, add empty2.txt",
-      "state": {
-        "4d27c86b026ff709b02b05d126cfef7ec3aed5f83f5e98df7d7592f7a44bd1dc7f29509cff06b884158baa36a2bbeda11ab8a64b56585a70f5ce1fa96e26eb53": [
-          "foo/bar.xml"
-        ],
-        "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e": [
-          "empty.txt",
-          "empty2.txt"
-        ]
-      },
-      "user": {
-        "address": "mailto:bob@example.com",
-        "name": "Bob"
-      }
-    },
-    "v3": {
-      "created": "2018-03-03T03:03:03Z",
-      "message": "Reinstate image.tiff, delete empty.txt",
-      "state": {
-        "4d27c86b026ff709b02b05d126cfef7ec3aed5f83f5e98df7d7592f7a44bd1dc7f29509cff06b884158baa36a2bbeda11ab8a64b56585a70f5ce1fa96e26eb53": [
-          "foo/bar.xml"
-        ],
-        "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e": [
-          "empty2.txt"
-        ],
-        "ffccf6baa21809716f31563fafb9f333c09c336bb7400088f17e4ff307f98fc9b14a577f92f3285913b7f53a6d5cf004503cf839aada1c885ac69336cbfb862e": [
-          "image.tiff"
-        ]
-      },
-      "user": {
-        "address": "mailto:cecilia@example.com",
-        "name": "Cecilia"
-      }
-    }
-  }
-}`
+func TestValidateInventory(t *testing.T) {
+	ctx := context.Background()
+	for _, test := range testInventories {
+		t.Run(test.description, func(t *testing.T) {
+			is := is.New(t)
+			reader := strings.NewReader(test.data)
+			_, result := ocflv1.ValidateInventoryReader(ctx, reader)
+			if test.valid {
+				is.NoErr(result.Err())
+			} else {
+				err := result.Err()
+				is.True(err != nil)
+				// if err != nil {
+				// 	var eCode validation.ErrorCode
+				// 	if !errors.As(err, &eCode) {
+				// 		t.Errorf(`err is not an ErrorCode: %v`, err)
+				// 	}
+				// }
+			}
+		})
+	}
+}
