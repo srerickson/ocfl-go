@@ -13,11 +13,12 @@ import (
 )
 
 type Object struct {
-	reader ReadObject
-	opts   objectOptions
+	reader  ReadObject
+	globals Config // global settings
+	ocfl    OCFL   // the OCFL implementation used to open the object
 }
 
-type ObjectOption func(*objectOptions)
+type ObjectOption func(*Object)
 
 // func ObjectMustExist() ObjectOptionsFunc {
 // 	return func(opt *ObjectOptions) {
@@ -26,14 +27,9 @@ type ObjectOption func(*objectOptions)
 // }
 
 func ObjectUseOCFL(ocfl OCFL) ObjectOption {
-	return func(opt *objectOptions) {
+	return func(opt *Object) {
 		opt.ocfl = ocfl
 	}
-}
-
-type objectOptions struct {
-	globals Config // global settings
-	ocfl    OCFL   // the OCFL implementation used to open the object
 }
 
 // NewObject returns an *Object reference for managing the OCFL object at
@@ -44,9 +40,9 @@ func NewObject(ctx context.Context, fsys FS, path string, opts ...ObjectOption) 
 	}
 	obj := &Object{}
 	for _, optFn := range opts {
-		optFn(&obj.opts)
+		optFn(obj)
 	}
-	if obj.opts.ocfl == nil {
+	if obj.ocfl == nil {
 		// check for object declaration in object root
 		entries, err := fsys.ReadDir(ctx, path)
 		if err != nil {
@@ -61,7 +57,7 @@ func NewObject(ctx context.Context, fsys FS, path string, opts ...ObjectOption) 
 			obj.reader = &uninitializedObject{fs: fsys, path: path}
 			return obj, nil
 		case rootState.HasNamaste():
-			obj.opts.ocfl, err = obj.opts.globals.GetSpec(rootState.Spec)
+			obj.ocfl, err = obj.globals.GetSpec(rootState.Spec)
 			if err != nil {
 				return nil, fmt.Errorf("with OCFL spec found in object root %q: %w", rootState.Spec, err)
 			}
@@ -70,7 +66,7 @@ func NewObject(ctx context.Context, fsys FS, path string, opts ...ObjectOption) 
 		}
 	}
 	var err error
-	obj.reader, err = obj.opts.ocfl.NewReadObject(ctx, fsys, path)
+	obj.reader, err = obj.ocfl.NewReadObject(ctx, fsys, path)
 	if err != nil {
 		return nil, err
 	}
@@ -86,14 +82,14 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	case commit.Spec.Empty():
 		switch {
 		case obj.Exists():
-			useOCFL = obj.opts.ocfl
+			useOCFL = obj.ocfl
 		default:
 			useOCFL = defaultOCFLs.latest
 		}
 		commit.Spec = useOCFL.Spec()
 	default:
 		var err error
-		useOCFL, err = obj.opts.globals.GetSpec(commit.Spec)
+		useOCFL, err = obj.globals.GetSpec(commit.Spec)
 		if err != nil {
 			return err
 		}
@@ -103,8 +99,8 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 		return err
 	}
 	obj.reader = newSpecObj
-	if obj.opts.ocfl != useOCFL {
-		obj.opts.ocfl = useOCFL
+	if obj.ocfl != useOCFL {
+		obj.ocfl = useOCFL
 	}
 	return nil
 }
@@ -178,8 +174,36 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 	return vfs, nil
 }
 
-func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) *Validation {
-	return obj.reader.Validate(ctx, opts...)
+func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) (v *Validation) {
+	// the object may not exist
+	v = NewValidation(opts...)
+	objPath := obj.reader.Path()
+	if !obj.Exists() {
+		err := fmt.Errorf("not an existing OCFL object: %s: %w", objPath, ErrNamasteNotExist)
+		v.AddFatal(err)
+		return
+	}
+	// confirm that the object root has all necessary files
+	// and directories
+	if err := obj.reader.ValidateRoot(ctx, v); err != nil {
+		return
+	}
+	var prev ReadInventory
+	for _, vnum := range obj.Inventory().Head().AsHead() {
+		var err error
+		// TODO: read inventory and guess spec
+		var vSpec Spec
+		vOCFL, err := obj.globals.GetSpec(vSpec)
+		if err != nil {
+			v.AddFatal(err)
+		}
+		prev, err = vOCFL.ValidateVersion(ctx, obj.reader, vnum, prev, v)
+		if err != nil {
+			break
+		}
+	}
+	// validate object history: call
+	return
 }
 
 type Commit struct {
@@ -296,10 +320,10 @@ func (o *uninitializedObject) Inventory() ReadInventory { return nil }
 // Path returns the object's path relative to its FS()
 func (o *uninitializedObject) Path() string { return o.path }
 
-func (o *uninitializedObject) Validate(_ context.Context, _ ...ValidationOption) *Validation {
-	result := &Validation{}
-	result.AddFatal(fmt.Errorf("empty or missing path: %s: %w", o.path, ErrNamasteNotExist))
-	return result
+func (o *uninitializedObject) ValidateRoot(_ context.Context, v *Validation) error {
+	err := fmt.Errorf("empty or missing path: %s: %w", o.path, ErrNamasteNotExist)
+	v.AddFatal(err)
+	return err
 }
 
 // VersionFS returns a value that implements an io/fs.FS for

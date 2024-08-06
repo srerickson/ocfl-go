@@ -33,7 +33,7 @@ const (
 	maxObjectRootStateInvalid = 8
 )
 
-// ObjectRoot represents an OCFL object root directory.
+// ObjectRoot represents an OCFL object root directory. DEPRECATED.
 type ObjectRoot struct {
 	// FS is the FS for accessing the object's contents.
 	FS FS
@@ -54,7 +54,7 @@ type ObjectRoot struct {
 // with an initialized State. The object declaration is not read or fully
 // validated. The returned ObjectRoot State will have the HasNamaste flag set,
 // but other flags expected for a complete object root may not be set (e.g., if
-// the inventory is missing).
+// the inventory is missing). DEPRECATED.
 func GetObjectRoot(ctx context.Context, fsys FS, dir string) (*ObjectRoot, error) {
 	obj := &ObjectRoot{
 		FS:   fsys,

@@ -392,7 +392,7 @@ func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, result *o
 }
 
 func ValidateInventoryBytes(raw []byte, vld *ocfl.Validation) (*Inventory, error) {
-	inv, err := readDigestInventory(raw)
+	inv, err := NewInventory(raw)
 	if err != nil {
 		vld.AddFatal(err)
 		return nil, err
@@ -403,9 +403,9 @@ func ValidateInventoryBytes(raw []byte, vld *ocfl.Validation) (*Inventory, error
 	return inv, nil
 }
 
-// readDigestInventory reads the inventory and sets its digest value using
+// NewInventory reads the inventory and sets its digest value using
 // the digest algorithm
-func readDigestInventory(byt []byte) (*Inventory, error) {
+func NewInventory(byt []byte) (*Inventory, error) {
 	dec := json.NewDecoder(bytes.NewReader(byt))
 	dec.DisallowUnknownFields()
 	var inv Inventory

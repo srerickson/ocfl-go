@@ -128,12 +128,8 @@ func (imp OCFL) Commit(ctx context.Context, obj ocfl.ReadObject, commit *ocfl.Co
 	}, nil
 }
 
-func (imp *OCFL) ValidateInventory(raw []byte, vld *ocfl.Validation) (ocfl.ReadInventory, error) {
-	inv, err := ValidateInventoryBytes(raw, vld)
-	if err != nil {
-		return nil, err
-	}
-	return inv.Inventory(), nil
+func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum, prev ocfl.ReadInventory, vldr *ocfl.Validation) (ocfl.ReadInventory, error) {
+	return validateVersion(ctx, obj, dirNum, prev, vldr)
 }
 
 // newContentMap returns a DigestMap that is a subset of the inventory

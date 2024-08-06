@@ -3,7 +3,6 @@ package ocflv1
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +12,8 @@ import (
 	"time"
 
 	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/extension"
+	"github.com/srerickson/ocfl-go/ocflv1/codes"
 	"golang.org/x/exp/slices"
 )
 
@@ -40,22 +41,22 @@ func NewReadObject(ctx context.Context, fsys ocfl.FS, dir string) (obj *ReadObje
 			Err:  fs.ErrInvalid,
 		}
 	}
-	invFile, err := fsys.OpenFile(ctx, path.Join(dir, inventoryFile))
+	f, err := fsys.OpenFile(ctx, path.Join(dir, inventoryFile))
 	if err != nil {
 		return
 	}
 	defer func() {
-		if closeErr := invFile.Close(); closeErr != nil {
-			err = errors.Join(err, invFile.Close())
+		if closeErr := f.Close(); closeErr != nil {
+			err = errors.Join(err, f.Close())
 		}
 	}()
-	bytes, err := io.ReadAll(invFile)
+	byts, err := io.ReadAll(f)
 	if err != nil {
 		return
 	}
-	inv := &Inventory{}
-	if err = json.Unmarshal(bytes, inv); err != nil {
-		return
+	inv, err := NewInventory(byts)
+	if err != nil {
+		return nil, err
 	}
 	obj = &ReadObject{fs: fsys, path: dir, inv: inv}
 	return
@@ -70,9 +71,124 @@ func (o *ReadObject) Inventory() ocfl.ReadInventory {
 	return &readInventory{raw: *o.inv}
 }
 
-func (o *ReadObject) Validate(ctx context.Context, opts ...ocfl.ValidationOption) *ocfl.Validation {
-	_, r := ValidateObject(ctx, o.fs, o.path, opts...)
-	return r
+func (o *ReadObject) ValidateRoot(ctx context.Context, vldr *ocfl.Validation) error {
+	if err := o.validateObjectRootState(ctx, vldr); err != nil {
+		return err
+	}
+	if err := o.validateDeclaration(ctx, vldr); err != nil {
+		return err
+	}
+	if err := o.validateInventory(ctx, vldr); err != nil {
+		return err
+	}
+	if err := o.validateExtensionsDir(ctx, vldr); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (o *ReadObject) validateDeclaration(ctx context.Context, v *ocfl.Validation) error {
+	ocflV := o.inv.Type.Spec
+	decl := ocfl.Namaste{Type: ocfl.NamasteTypeObject, Version: ocflV}
+	name := path.Join(o.path, decl.Name())
+	err := ocfl.ValidateNamaste(ctx, o.fs, name)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			err = fmt.Errorf("%s: %w", name, ocfl.ErrObjectNamasteNotExist)
+		}
+		v.AddFatal(err)
+		return err
+	}
+	return nil
+}
+
+func (o *ReadObject) validateInventory(ctx context.Context, vldr *ocfl.Validation) error {
+	if err := o.inv.Validate(vldr); err != nil {
+		return err
+	}
+	ocflV := o.inv.Type.Spec
+	expSum, err := readInventorySidecar(ctx, o.fs, inventoryFile+"."+o.inv.DigestAlgorithm)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvSidecarContents):
+			vldr.AddFatal(ec(err, codes.E061(ocflV)))
+		default:
+			vldr.AddFatal(ec(err, codes.E058(ocflV)))
+		}
+		return err
+	}
+	if !strings.EqualFold(o.inv.jsonDigest, expSum) {
+		shortSum := o.inv.jsonDigest[:6]
+		shortExp := expSum[:6]
+		err := fmt.Errorf("root inventory's checksum (%s) doen't match expected value in sidecar (%s)", shortSum, shortExp)
+		vldr.AddFatal(ec(err, codes.E060(ocflV)))
+		return err
+	}
+	return nil
+}
+
+func (o *ReadObject) validateObjectRootState(ctx context.Context, vldr *ocfl.Validation) error {
+	ocflV := o.inv.Type.Spec
+	entries, err := o.fs.ReadDir(ctx, o.path)
+	if err != nil {
+		vldr.AddFatal(err)
+		return err
+	}
+	state := ocfl.ParseObjectRootDir(entries)
+	for _, name := range state.Invalid {
+		err := fmt.Errorf(`%w: %s`, ErrObjRootStructure, name)
+		vldr.AddFatal(ec(err, codes.E001(ocflV)))
+	}
+	if !state.HasInventory() {
+		err := fmt.Errorf(`%w: not found`, ErrInventoryNotExist)
+		vldr.AddFatal(ec(err, codes.E063(ocflV)))
+	}
+	if !state.HasSidecar() {
+		err := fmt.Errorf(`inventory sidecar: %w`, fs.ErrNotExist)
+		vldr.AddFatal(ec(err, codes.E058(ocflV)))
+	}
+	err = state.VersionDirs.Valid()
+	if err != nil {
+		if errors.Is(err, ocfl.ErrVerEmpty) {
+			err = ec(err, codes.E008(ocflV))
+		} else if errors.Is(err, ocfl.ErrVNumPadding) {
+			err = ec(err, codes.E011(ocflV))
+		} else if errors.Is(err, ocfl.ErrVNumMissing) {
+			err = ec(err, codes.E010(ocflV))
+		}
+		vldr.AddFatal(err)
+	}
+	if err == nil && state.VersionDirs.Padding() > 0 {
+		err := errors.New("version directory names are zero-padded")
+		vldr.AddWarn(ec(err, codes.W001(ocflV)))
+	}
+	return vldr.Err()
+}
+
+func (o *ReadObject) validateExtensionsDir(ctx context.Context, vldr *ocfl.Validation) error {
+	ocflV := o.inv.Type.Spec
+	extDir := path.Join(o.path, extensionsDir)
+	items, err := o.fs.ReadDir(ctx, extDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		vldr.AddFatal(err)
+		return err
+	}
+	for _, i := range items {
+		if !i.IsDir() {
+			err := fmt.Errorf(`unexpected file: %s`, i.Name())
+			vldr.AddFatal(ec(err, codes.E067(ocflV)))
+			continue
+		}
+		_, err := extension.Get(i.Name())
+		if err != nil {
+			// unknow extension
+			vldr.AddWarn(ec(fmt.Errorf("%w: %s", err, i.Name()), codes.W013(ocflV)))
+		}
+	}
+	return vldr.Err()
 }
 
 func (o *ReadObject) VersionFS(ctx context.Context, i int) fs.FS {

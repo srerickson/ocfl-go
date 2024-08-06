@@ -38,11 +38,11 @@ type OCFL interface {
 	Spec() Spec
 	NewReadObject(ctx context.Context, fsys FS, path string) (ReadObject, error)
 	Commit(ctx context.Context, obj ReadObject, commit *Commit) (ReadObject, error)
-	ValidateInventory(raw []byte, vld *Validation) (ReadInventory, error)
 	// OpenVersion(ctx context.Context, obj *Object, i int) (ObjectVersionFS, error)
 	// OpenObject(context.Context, *ObjectRoot, ...func(*ObjectOptions)) (*Object, error)
 	// SorageRoot
 	// Validate
+	ValidateVersion(ctx context.Context, obj ReadObject, vnum VNum, prev ReadInventory, vldr *Validation) (ReadInventory, error)
 }
 
 type Config struct {
@@ -178,7 +178,7 @@ type ReadObject interface {
 	FS() FS
 	// Path returns the object's path relative to its FS()
 	Path() string
-	Validate(context.Context, ...ValidationOption) *Validation
+	ValidateRoot(context.Context, *Validation) error
 	// VersionFS returns an io/fs.FS for accessing the logical contents of the
 	// object version state with the index v.
 	VersionFS(ctx context.Context, v int) fs.FS
