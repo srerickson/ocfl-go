@@ -14,19 +14,24 @@ import (
 	"github.com/srerickson/ocfl-go/ocflv1/codes"
 )
 
-func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ocfl.ValidationOption) (*ReadObject, *ocfl.Validation) {
+func ValidateObject(ctx context.Context, fsys ocfl.FS, dir string, vops ...ocfl.ValidationOption) (*ReadObject, *ocfl.Validation) {
 	v := ocfl.NewValidation(vops...)
 	// read root contents
-	rootState, err := ocfl.GetObjectRoot(ctx, fsys, root)
+	root, err := ocfl.GetObjectRoot(ctx, fsys, dir)
 	if err != nil {
 		v.AddFatal(err)
+		return nil, v
 	}
-	validateRootState(ctx, rootState, v)
-	ocflV := rootState.State.Spec
-
-	inv, invValidation := ValidateInventory(ctx, fsys, path.Join(root, inventoryFile))
-	v.AddErrors(invValidation)
-	if inv == nil {
+	ocflV := root.State.Spec
+	if err := root.ValidateNamaste(ctx, ocflV); err != nil {
+		err = ec(err, codes.E007(ocflV))
+		v.AddFatal(err)
+	}
+	if err := validateRootState(root.State, v); err != nil {
+		return nil, v
+	}
+	inv, err := ValidateInventory(ctx, fsys, path.Join(dir, inventoryFile), v)
+	if err != nil {
 		return nil, v
 	}
 	// inventory has same OCFL version as declaration
@@ -35,16 +40,15 @@ func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ocfl
 		v.AddFatal(ec(err, codes.E038(ocflV)))
 	}
 	// Inventory head/versions are consitent with Object Root
-	if expHead := rootState.State.VersionDirs.Head(); expHead != inv.Head {
+	if expHead := root.State.VersionDirs.Head(); expHead != inv.Head {
 		v.AddFatal(ec(fmt.Errorf("root inventory 'head' is not %s", expHead), codes.E040(ocflV)))
 		// v.AddFatal(ec(fmt.Errorf("inventory versions don't include %s", expHead), codes.E046(ocflV)))
 	}
-	validateExtensionsDir(ctx, rootState, v)
+	validateExtensionsDir(ctx, root, v)
 	if v.Err() != nil {
 		return nil, v
 	}
-	obj := &ReadObject{fs: fsys, path: root, inv: inv}
-
+	obj := &ReadObject{fs: fsys, path: dir, inv: inv}
 	var prev ocfl.ReadInventory
 	for _, vnum := range inv.Head.AsHead() {
 		prev = validateVersion(ctx, obj, vnum, prev, v)
@@ -53,25 +57,21 @@ func ValidateObject(ctx context.Context, fsys ocfl.FS, root string, vops ...ocfl
 }
 
 // validateRootState fully validates the object root contents
-func validateRootState(ctx context.Context, root *ocfl.ObjectRoot, vldr *ocfl.Validation) {
-	ocflV := root.State.Spec
-	if err := root.ValidateNamaste(ctx, ocflV); err != nil {
-		err = ec(err, codes.E007(ocflV))
-		vldr.AddFatal(err)
-	}
-	for _, name := range root.State.Invalid {
+func validateRootState(state *ocfl.ObjectRootState, vldr *ocfl.Validation) error {
+	ocflV := state.Spec
+	for _, name := range state.Invalid {
 		err := fmt.Errorf(`%w: %s`, ErrObjRootStructure, name)
 		vldr.AddFatal(ec(err, codes.E001(ocflV)))
 	}
-	if !root.State.HasInventory() {
+	if !state.HasInventory() {
 		err := fmt.Errorf(`%w: not found`, ErrInventoryNotExist)
 		vldr.AddFatal(ec(err, codes.E063(ocflV)))
 	}
-	if !root.State.HasSidecar() {
+	if !state.HasSidecar() {
 		err := fmt.Errorf(`inventory sidecar: %w`, fs.ErrNotExist)
 		vldr.AddFatal(ec(err, codes.E058(ocflV)))
 	}
-	err := root.State.VersionDirs.Valid()
+	err := state.VersionDirs.Valid()
 	if err != nil {
 		if errors.Is(err, ocfl.ErrVerEmpty) {
 			err = ec(err, codes.E008(ocflV))
@@ -82,10 +82,11 @@ func validateRootState(ctx context.Context, root *ocfl.ObjectRoot, vldr *ocfl.Va
 		}
 		vldr.AddFatal(err)
 	}
-	if err == nil && root.State.VersionDirs.Padding() > 0 {
+	if err == nil && state.VersionDirs.Padding() > 0 {
 		err := errors.New("version directory names are zero-padded")
 		vldr.AddWarn(ec(err, codes.W001(ocflV)))
 	}
+	return vldr.Err()
 }
 
 // func (vldr *objectValidator) validateNamaste(ctx context.Context) error {
@@ -268,23 +269,16 @@ func validateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum,
 		err := fmt.Errorf(`unexpected file in %s: %s`, dirNum, f)
 		vldr.AddFatal(ec(err, codes.E015(verSpec)))
 	}
-	var inv *Inventory
+	var versionInv ocfl.ReadInventory
 	if info.hasInventory {
 		invName := path.Join(vDir, inventoryFile)
-		var invValid *ocfl.Validation
-		inv, invValid = ValidateInventory(ctx, fsys, invName)
-		if inv.ContentDirectory != "" {
-			verContentDir = inv.ContentDirectory
+		inv, err := ValidateInventory(ctx, fsys, invName, vldr)
+		if err == nil {
+			verSpec = versionInv.Spec()
+			verContentDir = versionInv.ContentDirectory()
 		}
-
-		// if isHead, check that digests match with root inventory
-
 		// would be nice to add prefix to these errors
-		vldr.AddErrors(invValid)
-		vldr.AddInventory(&readInventory{raw: *inv})
-		verSpec = inv.Type.Spec
-		if prev != nil {
-
+		if inv != nil && prev != nil {
 			// err := fmt.Errorf("%s uses a lower version of the OCFL spec than %s (%s < %s)", vnum, prevVer, vnumSpec, prevSpec)
 			// vldr.LogFatal(lgr, ec(err, codes.E103(ocflV)))
 
@@ -293,11 +287,11 @@ func validateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum,
 			// check that all version states in prev match the corresponding
 			// version state in this inventory
 			for _, v := range prev.Head().AsHead() {
-				versionThis := inv.Versions[v]
+				versionThis := versionInv.Version(v.Num())
 				versionPrev := prev.Version(v.Num())
 				vLogicalStateThis := logicalState{
-					state:    versionThis.State,
-					manifest: inv.Manifest,
+					state:    versionThis.State(),
+					manifest: versionInv.Manifest(),
 				}
 				vLogicalStatePrev := logicalState{
 					state:    versionPrev.State(),
@@ -307,7 +301,7 @@ func validateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum,
 					err := fmt.Errorf("%s/inventory.json has different logical state in its %s version block than the previous inventory.json", dirNum, v)
 					vldr.AddFatal(ec(err, codes.E066(verSpec)))
 				}
-				if versionThis.Message != versionPrev.Message() {
+				if versionThis.Message() != versionPrev.Message() {
 					err := fmt.Errorf("%s/inventory.json has different 'message' in its %s version block than the previous inventory.json", dirNum, v)
 					vldr.AddWarn(ec(err, codes.W011(verSpec)))
 				}
@@ -315,7 +309,7 @@ func validateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum,
 					err := fmt.Errorf("%s/inventory.json has different 'user' in its %s version block than the previous inventory.json", dirNum, v)
 					vldr.AddWarn(ec(err, codes.W011(verSpec)))
 				}
-				if versionThis.Created != versionPrev.Created() {
+				if versionThis.Created() != versionPrev.Created() {
 					err := fmt.Errorf("%s/inventory.json has different 'created' in its %s version block than the previous inventory.json", dirNum, v)
 					vldr.AddWarn(ec(err, codes.W011(verSpec)))
 				}
@@ -352,7 +346,10 @@ func validateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum,
 			vldr.AddFatal(ec(err, codes.E016(verSpec)))
 		}
 	}
-	return inv.Inventory()
+	if versionInv == nil {
+		return nil
+	}
+	return versionInv
 }
 
 type versionDirState struct {

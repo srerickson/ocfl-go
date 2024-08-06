@@ -128,6 +128,14 @@ func (imp OCFL) Commit(ctx context.Context, obj ocfl.ReadObject, commit *ocfl.Co
 	}, nil
 }
 
+func (imp *OCFL) ValidateInventory(raw []byte, vld *ocfl.Validation) (ocfl.ReadInventory, error) {
+	inv, err := ValidateInventoryBytes(raw, vld)
+	if err != nil {
+		return nil, err
+	}
+	return inv.Inventory(), nil
+}
+
 // newContentMap returns a DigestMap that is a subset of the inventory
 // manifest for the digests and paths of new content
 func newContentMap(inv *Inventory) (ocfl.DigestMap, error) {

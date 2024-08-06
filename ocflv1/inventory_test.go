@@ -1,11 +1,10 @@
 package ocflv1_test
 
 import (
-	"context"
-	"strings"
 	"testing"
 
-	"github.com/matryer/is"
+	"github.com/carlmjohnson/be"
+	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
@@ -581,23 +580,14 @@ var testInventories = []testInventory{
 }
 
 func TestValidateInventory(t *testing.T) {
-	ctx := context.Background()
 	for _, test := range testInventories {
 		t.Run(test.description, func(t *testing.T) {
-			is := is.New(t)
-			reader := strings.NewReader(test.data)
-			_, result := ocflv1.ValidateInventoryReader(ctx, reader)
+			vldr := ocfl.NewValidation()
+			_, err := ocflv1.ValidateInventoryBytes([]byte(test.data), vldr)
 			if test.valid {
-				is.NoErr(result.Err())
+				be.NilErr(t, err)
 			} else {
-				err := result.Err()
-				is.True(err != nil)
-				// if err != nil {
-				// 	var eCode validation.ErrorCode
-				// 	if !errors.As(err, &eCode) {
-				// 		t.Errorf(`err is not an ErrorCode: %v`, err)
-				// 	}
-				// }
+				be.True(t, err == nil)
 			}
 		})
 	}

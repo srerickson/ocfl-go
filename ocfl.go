@@ -38,6 +38,7 @@ type OCFL interface {
 	Spec() Spec
 	NewReadObject(ctx context.Context, fsys FS, path string) (ReadObject, error)
 	Commit(ctx context.Context, obj ReadObject, commit *Commit) (ReadObject, error)
+	ValidateInventory(raw []byte, vld *Validation) (ReadInventory, error)
 	// OpenVersion(ctx context.Context, obj *Object, i int) (ObjectVersionFS, error)
 	// OpenObject(context.Context, *ObjectRoot, ...func(*ObjectOptions)) (*Object, error)
 	// SorageRoot

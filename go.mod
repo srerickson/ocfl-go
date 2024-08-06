@@ -10,7 +10,6 @@ require (
 	github.com/carlmjohnson/be v0.23.2
 	github.com/carlmjohnson/deque v0.23.1
 	github.com/hashicorp/go-multierror v1.1.1
-	github.com/matryer/is v1.4.0
 	golang.org/x/crypto v0.25.0
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
 	golang.org/x/sync v0.7.0

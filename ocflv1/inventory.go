@@ -163,76 +163,91 @@ func (inv Inventory) Inventory() ocfl.ReadInventory {
 }
 
 // Validate validates the inventory. It only checks the inventory's structure
-// and internal consistency. The inventory is valid if the returned validation
-// result includes no fatal errors (it may include warning errors). The returned
-// validation.Result is not associated with a logger, and no errors in the result
-// have been logged.
-func (inv *Inventory) Validate(opts ...ocfl.ValidationOption) *ocfl.Validation {
-	result := ocfl.NewValidation(opts...)
+// and internal consistency. The inventory's digests are added to validation
+func (inv *Inventory) Validate(vld *ocfl.Validation) error {
+	if vld == nil {
+		vld = ocfl.NewValidation()
+	}
 	if inv.Type.Empty() {
 		err := errors.New("missing required field: 'type'")
-		result.AddFatal(err)
+		vld.AddFatal(err)
 	}
 	ocflV := inv.Type.Spec
 	if inv.ID == "" {
 		err := errors.New("missing required field: 'id'")
-		result.AddFatal(ec(err, codes.E036(ocflV)))
+		vld.AddFatal(ec(err, codes.E036(ocflV)))
 	}
 	if inv.Head.IsZero() {
 		err := errors.New("missing required field: 'head'")
-		result.AddFatal(ec(err, codes.E036(ocflV)))
+		vld.AddFatal(ec(err, codes.E036(ocflV)))
 	}
 	if inv.Manifest == nil {
 		err := errors.New("missing required field 'manifest'")
-		result.AddFatal(ec(err, codes.E041(ocflV)))
+		vld.AddFatal(ec(err, codes.E041(ocflV)))
 	}
 	if inv.Versions == nil {
 		err := errors.New("missing required field 'versions'")
-		result.AddFatal(ec(err, codes.E041(ocflV)))
-	}
-	// don't continue if there are fatal errors
-	if result.Err() != nil {
-		return result
+		vld.AddFatal(ec(err, codes.E041(ocflV)))
 	}
 	if u, err := url.ParseRequestURI(inv.ID); err != nil || u.Scheme == "" {
 		err := fmt.Errorf(`object ID is not a URI: %s`, inv.ID)
-		result.AddWarn(ec(err, codes.W005(ocflV)))
+		vld.AddWarn(ec(err, codes.W005(ocflV)))
 	}
 	switch inv.DigestAlgorithm {
 	case ocfl.SHA512:
 		break
 	case ocfl.SHA256:
 		err := fmt.Errorf(`'digestAlgorithm' is %q`, ocfl.SHA256)
-		result.AddWarn(ec(err, codes.W004(ocflV)))
+		vld.AddWarn(ec(err, codes.W004(ocflV)))
 	default:
 		err := fmt.Errorf(`'digestAlgorithm' is not %q or %q`, ocfl.SHA512, ocfl.SHA256)
-		result.AddFatal(ec(err, codes.E025(ocflV)))
+		vld.AddFatal(ec(err, codes.E025(ocflV)))
 	}
 	if err := inv.Head.Valid(); err != nil {
 		// this shouldn't ever trigger since the invalid condition is caught during unmarshal.
 		err = fmt.Errorf("head is invalid: %w", err)
-		result.AddFatal(ec(err, codes.E011(ocflV)))
+		vld.AddFatal(ec(err, codes.E011(ocflV)))
 	}
 	if strings.Contains(inv.ContentDirectory, "/") {
 		err := errors.New("contentDirectory contains '/'")
-		result.AddFatal(ec(err, codes.E017(ocflV)))
+		vld.AddFatal(ec(err, codes.E017(ocflV)))
 	}
 	if inv.ContentDirectory == "." || inv.ContentDirectory == ".." {
 		err := errors.New("contentDirectory is '.' or '..'")
-		result.AddFatal(ec(err, codes.E017(ocflV)))
+		vld.AddFatal(ec(err, codes.E017(ocflV)))
 	}
-	if err := inv.Manifest.Valid(); err != nil {
-		var dcErr *ocfl.MapDigestConflictErr
-		var pcErr *ocfl.MapPathConflictErr
-		var piErr *ocfl.MapPathInvalidErr
-		if errors.As(err, &dcErr) {
-			err = ec(err, codes.E096(ocflV))
-		} else if errors.As(err, &pcErr) {
-			err = ec(err, codes.E101(ocflV))
-		} else if errors.As(err, &piErr) {
-			err = ec(err, codes.E099(ocflV))
+	if inv.Manifest != nil {
+		err := inv.Manifest.Valid()
+		if err != nil {
+			var dcErr *ocfl.MapDigestConflictErr
+			var pcErr *ocfl.MapPathConflictErr
+			var piErr *ocfl.MapPathInvalidErr
+			if errors.As(err, &dcErr) {
+				err = ec(err, codes.E096(ocflV))
+			} else if errors.As(err, &pcErr) {
+				err = ec(err, codes.E101(ocflV))
+			} else if errors.As(err, &piErr) {
+				err = ec(err, codes.E099(ocflV))
+			}
+			vld.AddFatal(err)
 		}
-		result.AddFatal(err)
+		// check that each manifest entry is used in at least one state
+		for _, digest := range inv.Manifest.Digests() {
+			var found bool
+			for _, version := range inv.Versions {
+				if version == nil {
+					continue
+				}
+				if len(version.State[digest]) > 0 {
+					found = true
+					break
+				}
+			}
+			if !found {
+				err := fmt.Errorf("digest in manifest not used in version state: %s", digest)
+				vld.AddFatal(ec(err, codes.E107(ocflV)))
+			}
+		}
 	}
 	// version names
 	var versionNums ocfl.VNums = maps.Keys(inv.Versions)
@@ -244,44 +259,44 @@ func (inv *Inventory) Validate(opts ...ocfl.ValidationOption) *ocfl.Validation {
 		} else if errors.Is(err, ocfl.ErrVNumPadding) {
 			err = ec(err, codes.E012(ocflV))
 		}
-		result.AddFatal(err)
+		vld.AddFatal(err)
 	}
 	if versionNums.Head() != inv.Head {
 		err := fmt.Errorf(`version head not most recent version: %s`, inv.Head)
-		result.AddFatal(ec(err, codes.E040(ocflV)))
+		vld.AddFatal(ec(err, codes.E040(ocflV)))
 	}
 	// version state
 	for vname, ver := range inv.Versions {
 		if ver == nil {
 			err := fmt.Errorf(`missing required version block for %q`, vname)
-			result.AddFatal(ec(err, codes.E048(ocflV)))
+			vld.AddFatal(ec(err, codes.E048(ocflV)))
 			continue
 		}
 		if ver.Created.IsZero() {
 			err := fmt.Errorf(`version %s missing required field: 'created'`, vname)
-			result.AddFatal(ec(err, codes.E048(ocflV)))
+			vld.AddFatal(ec(err, codes.E048(ocflV)))
 		}
 		if ver.Message == "" {
 			err := fmt.Errorf("version %s missing recommended field: 'message'", vname)
-			result.AddWarn(ec(err, codes.W007(ocflV)))
+			vld.AddWarn(ec(err, codes.W007(ocflV)))
 		}
 		if ver.User != nil {
 			if ver.User.Name == "" {
 				err := fmt.Errorf("version %s user missing required field: 'name'", vname)
-				result.AddFatal(ec(err, codes.E054(ocflV)))
+				vld.AddFatal(ec(err, codes.E054(ocflV)))
 			}
 			if ver.User.Address == "" {
 				err := fmt.Errorf("version %s user missing recommended field: 'address'", vname)
-				result.AddWarn(ec(err, codes.W008(ocflV)))
+				vld.AddWarn(ec(err, codes.W008(ocflV)))
 			}
 			if u, err := url.ParseRequestURI(ver.User.Address); err != nil || u.Scheme == "" {
 				err := fmt.Errorf("version %s user address is not a URI", vname)
-				result.AddWarn(ec(err, codes.W009(ocflV)))
+				vld.AddWarn(ec(err, codes.W009(ocflV)))
 			}
 		}
 		if ver.State == nil {
 			err := fmt.Errorf(`version %s missing required field: 'state'`, vname)
-			result.AddFatal(ec(err, codes.E048(ocflV)))
+			vld.AddFatal(ec(err, codes.E048(ocflV)))
 			continue
 		}
 		err := ver.State.Valid()
@@ -296,30 +311,17 @@ func (inv *Inventory) Validate(opts ...ocfl.ValidationOption) *ocfl.Validation {
 			} else if errors.As(err, &piErr) {
 				err = ec(err, codes.E052(ocflV))
 			}
-			result.AddFatal(err)
+			vld.AddFatal(err)
 		}
 		// check that each state digest appears in manifest
 		for _, digest := range ver.State.Digests() {
 			if len(inv.Manifest[digest]) == 0 {
 				err := fmt.Errorf("digest in %s state not in manifest: %s", vname, digest)
-				result.AddFatal(ec(err, codes.E050(ocflV)))
+				vld.AddFatal(ec(err, codes.E050(ocflV)))
 			}
 		}
 	}
-	// check that each manifest entry is used in at least one state
-	for _, digest := range inv.Manifest.Digests() {
-		var found bool
-		for _, version := range inv.Versions {
-			if len(version.State[digest]) > 0 {
-				found = true
-				break
-			}
-		}
-		if !found {
-			err := fmt.Errorf("digest in manifest not used in version state: %s", digest)
-			result.AddFatal(ec(err, codes.E107(ocflV)))
-		}
-	}
+
 	//fixity
 	for _, fixity := range inv.Fixity {
 		err := fixity.Valid()
@@ -334,32 +336,44 @@ func (inv *Inventory) Validate(opts ...ocfl.ValidationOption) *ocfl.Validation {
 			} else if errors.As(err, &pcErr) {
 				err = ec(err, codes.E101(ocflV))
 			}
-			result.AddFatal(err)
+			vld.AddFatal(err)
 		}
 	}
-	return result
+	// add the version to the validation
+	if err := vld.AddInventory(inv.Inventory()); err != nil {
+		err = fmt.Errorf("the inventor's digests conflict with previous values: %w", err)
+		vld.AddFatal(err)
+	}
+	return vld.Err()
 }
 
 // ValidateInventory fully validates an inventory at path name in fsys.
-func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string) (inv *Inventory, result *ocfl.Validation) {
+func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, result *ocfl.Validation) (inv *Inventory, err error) {
 	f, err := fsys.OpenFile(ctx, name)
 	if err != nil {
 		result.AddFatal(err)
-		return nil, result
+		return
 	}
 	defer func() {
 		if closeErr := f.Close(); closeErr != nil {
 			result.AddFatal(closeErr)
+			err = errors.Join(err, closeErr)
 		}
 	}()
-	inv, result = ValidateInventoryReader(ctx, f)
-	if result.Err() != nil {
+	byts, err := io.ReadAll(f)
+	if err != nil {
+		result.AddFatal(err)
+		return
+	}
+	inv, err = ValidateInventoryBytes(byts, result)
+	if err != nil {
 		return
 	}
 	ocflV := inv.Type.Spec
 	side := name + "." + inv.DigestAlgorithm
 	expSum, err := readInventorySidecar(ctx, fsys, side)
 	if err != nil {
+		inv = nil
 		if errors.Is(err, ErrInvSidecarContents) {
 			result.AddFatal(ec(err, codes.E061(ocflV)))
 			return
@@ -368,38 +382,34 @@ func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string) (inv *Inv
 		return
 	}
 	if !strings.EqualFold(inv.jsonDigest, expSum) {
+		inv = nil
 		shortSum := inv.jsonDigest[:6]
 		shortExp := expSum[:6]
-		err := fmt.Errorf("inventory's checksum (%s) doen't match expected value in sidecar (%s): %s", shortSum, shortExp, name)
+		err = fmt.Errorf("inventory's checksum (%s) doen't match expected value in sidecar (%s): %s", shortSum, shortExp, name)
 		result.AddFatal(ec(err, codes.E060(ocflV)))
 	}
 	return
 }
 
-func ValidateInventoryReader(ctx context.Context, reader io.Reader) (*Inventory, *ocfl.Validation) {
-	inv, err := readDigestInventory(ctx, reader)
+func ValidateInventoryBytes(raw []byte, vld *ocfl.Validation) (*Inventory, error) {
+	inv, err := readDigestInventory(raw)
 	if err != nil {
-		result := &ocfl.Validation{}
-		result.AddFatal(err)
-		return nil, result
+		vld.AddFatal(err)
+		return nil, err
 	}
-	return inv, inv.Validate()
+	if err := inv.Validate(vld); err != nil {
+		return nil, err
+	}
+	return inv, nil
 }
 
 // readDigestInventory reads the inventory and sets its digest value using
 // the digest algorithm
-func readDigestInventory(ctx context.Context, reader io.Reader) (*Inventory, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	byt, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, err
-	}
+func readDigestInventory(byt []byte) (*Inventory, error) {
 	dec := json.NewDecoder(bytes.NewReader(byt))
 	dec.DisallowUnknownFields()
-	inv := &Inventory{}
-	if err := dec.Decode(inv); err != nil {
+	var inv Inventory
+	if err := dec.Decode(&inv); err != nil {
 		return nil, err
 	}
 	digester := ocfl.NewDigester(inv.DigestAlgorithm)
@@ -410,7 +420,7 @@ func readDigestInventory(ctx context.Context, reader io.Reader) (*Inventory, err
 		return nil, err
 	}
 	inv.jsonDigest = digester.String()
-	return inv, nil
+	return &inv, nil
 }
 
 // writeInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
@@ -611,7 +621,7 @@ func buildInventory(prev ocfl.ReadInventory, commit *ocfl.Commit) (*Inventory, e
 		}
 	}
 	// check that resulting inventory is valid
-	if err := newInv.Validate().Err(); err != nil {
+	if err := newInv.Validate(nil); err != nil {
 		return nil, fmt.Errorf("generated inventory is not valid: %w", err)
 	}
 	return newInv, nil
