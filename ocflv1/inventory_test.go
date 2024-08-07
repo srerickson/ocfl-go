@@ -582,7 +582,7 @@ var testInventories = []testInventory{
 func TestValidateInventory(t *testing.T) {
 	for _, test := range testInventories {
 		t.Run(test.description, func(t *testing.T) {
-			vldr := ocfl.NewValidation()
+			vldr := ocfl.NewObjectValidation()
 			_, err := ocflv1.ValidateInventoryBytes([]byte(test.data), vldr)
 			if test.valid {
 				be.NilErr(t, err)

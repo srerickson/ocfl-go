@@ -165,7 +165,7 @@ func (inv Inventory) Inventory() ocfl.ReadInventory {
 
 // Validate validates the inventory. It only checks the inventory's structure
 // and internal consistency. The inventory's digests are added to validation
-func (inv *Inventory) Validate(vld *ocfl.Validation) error {
+func (inv *Inventory) Validate(vld *ocfl.ObjectValidation) error {
 	var fatal, warn []error
 	if inv.Type.Empty() {
 		err := errors.New("missing required field: 'type'")
@@ -339,7 +339,7 @@ func (inv *Inventory) Validate(vld *ocfl.Validation) error {
 	}
 	// add the version to the validation
 	if vld != nil {
-		if err := vld.AddInventory(inv.Inventory()); err != nil {
+		if err := vld.AddInventoryDigests(inv.Inventory()); err != nil {
 			err = fmt.Errorf("the inventor's digests conflict with previous values: %w", err)
 			fatal = append(fatal, err)
 		}
@@ -353,7 +353,7 @@ func (inv *Inventory) Validate(vld *ocfl.Validation) error {
 }
 
 // ValidateInventory fully validates an inventory at path name in fsys.
-func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, result *ocfl.Validation) (inv *Inventory, err error) {
+func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, result *ocfl.ObjectValidation) (inv *Inventory, err error) {
 	f, err := fsys.OpenFile(ctx, name)
 	if err != nil {
 		result.AddFatal(err)
@@ -396,7 +396,7 @@ func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, result *o
 	return
 }
 
-func ValidateInventoryBytes(raw []byte, vld *ocfl.Validation) (*Inventory, error) {
+func ValidateInventoryBytes(raw []byte, vld *ocfl.ObjectValidation) (*Inventory, error) {
 	inv, err := NewInventory(raw)
 	if err != nil {
 		vld.AddFatal(err)

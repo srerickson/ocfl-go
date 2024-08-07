@@ -343,8 +343,8 @@ func fixtureExpectedErrs(name string, errs ...error) (bool, string) {
 	for _, e := range errs {
 		var c = "??"
 		var vErr *ocfl.ValidationError
-		if errors.As(e, &vErr) && vErr.Code != nil {
-			c = vErr.Code.Code
+		if errors.As(e, &vErr) {
+			c = vErr.ValidationCode.Code
 			gotCodes[c] = true
 			if expCodes[c] {
 				gotExpected = true

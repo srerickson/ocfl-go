@@ -142,7 +142,7 @@ func (imp OCFL) Commit(ctx context.Context, obj ocfl.ReadObject, commit *ocfl.Co
 	}, nil
 }
 
-func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum, inv ocfl.ReadInventory, vldr *ocfl.Validation) error {
+func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum, inv ocfl.ReadInventory, vldr *ocfl.ObjectValidation) error {
 	fsys := obj.FS()
 	vDir := path.Join(obj.Path(), dirNum.String())
 	verSpec := imp.spec
@@ -216,7 +216,7 @@ func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum
 				return false
 			}
 			// convert fs-relative path to object-relative path
-			vldr.AddContentExists(strings.TrimPrefix(info.Path, obj.Path()+"/"))
+			vldr.AddExistingContent(strings.TrimPrefix(info.Path, obj.Path()+"/"))
 			added++
 			return true
 		})
@@ -297,7 +297,7 @@ func ec(err error, code *ocfl.ValidationCode) error {
 		return err
 	}
 	return &ocfl.ValidationError{
-		Err:  err,
-		Code: code,
+		Err:            err,
+		ValidationCode: *code,
 	}
 }

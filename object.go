@@ -175,9 +175,9 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 	return vfs, nil
 }
 
-func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) (v *Validation) {
+func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) (v *ObjectValidation) {
 	// the object may not exist
-	v = NewValidation(opts...)
+	v = NewObjectValidation(opts...)
 	objPath := obj.reader.Path()
 	if !obj.Exists() {
 		err := fmt.Errorf("not an existing OCFL object: %s: %w", objPath, ErrNamasteNotExist)
@@ -325,7 +325,7 @@ func (o *uninitializedObject) Inventory() ReadInventory { return nil }
 // Path returns the object's path relative to its FS()
 func (o *uninitializedObject) Path() string { return o.path }
 
-func (o *uninitializedObject) ValidateHead(_ context.Context, v *Validation) error {
+func (o *uninitializedObject) ValidateHead(_ context.Context, v *ObjectValidation) error {
 	err := fmt.Errorf("empty or missing path: %s: %w", o.path, ErrNamasteNotExist)
 	if v != nil {
 		v.AddFatal(err)
@@ -333,7 +333,7 @@ func (o *uninitializedObject) ValidateHead(_ context.Context, v *Validation) err
 	return err
 }
 
-func (o *uninitializedObject) ValidateContent(_ context.Context, v *Validation) error {
+func (o *uninitializedObject) ValidateContent(_ context.Context, v *ObjectValidation) error {
 	return nil
 }
 

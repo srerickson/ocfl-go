@@ -43,7 +43,7 @@ type OCFL interface {
 	// OpenObject(context.Context, *ObjectRoot, ...func(*ObjectOptions)) (*Object, error)
 	// SorageRoot
 	// Validate
-	ValidateVersion(ctx context.Context, obj ReadObject, vnum VNum, versionInv ReadInventory, vldr *Validation) error
+	ValidateVersion(ctx context.Context, obj ReadObject, vnum VNum, versionInv ReadInventory, vldr *ObjectValidation) error
 }
 
 type Config struct {
@@ -179,8 +179,8 @@ type ReadObject interface {
 	FS() FS
 	// Path returns the object's path relative to its FS()
 	Path() string
-	ValidateHead(context.Context, *Validation) error
-	ValidateContent(context.Context, *Validation) error
+	ValidateHead(context.Context, *ObjectValidation) error
+	ValidateContent(context.Context, *ObjectValidation) error
 	// VersionFS returns an io/fs.FS for accessing the logical contents of the
 	// object version state with the index v.
 	VersionFS(ctx context.Context, v int) fs.FS

@@ -71,7 +71,7 @@ func (o *ReadObject) Inventory() ocfl.ReadInventory {
 	return &readInventory{raw: *o.inv}
 }
 
-func (o *ReadObject) ValidateHead(ctx context.Context, vldr *ocfl.Validation) error {
+func (o *ReadObject) ValidateHead(ctx context.Context, vldr *ocfl.ObjectValidation) error {
 	if err := o.validateObjectRootState(ctx, vldr); err != nil {
 		return err
 	}
@@ -87,7 +87,7 @@ func (o *ReadObject) ValidateHead(ctx context.Context, vldr *ocfl.Validation) er
 	return nil
 }
 
-func (o *ReadObject) validateDeclaration(ctx context.Context, v *ocfl.Validation) error {
+func (o *ReadObject) validateDeclaration(ctx context.Context, v *ocfl.ObjectValidation) error {
 	ocflV := o.inv.Type.Spec
 	decl := ocfl.Namaste{Type: ocfl.NamasteTypeObject, Version: ocflV}
 	name := path.Join(o.path, decl.Name())
@@ -102,7 +102,7 @@ func (o *ReadObject) validateDeclaration(ctx context.Context, v *ocfl.Validation
 	return nil
 }
 
-func (o *ReadObject) validateInventory(ctx context.Context, vldr *ocfl.Validation) error {
+func (o *ReadObject) validateInventory(ctx context.Context, vldr *ocfl.ObjectValidation) error {
 	if err := o.inv.Validate(vldr); err != nil {
 		return err
 	}
@@ -130,14 +130,16 @@ func (o *ReadObject) validateInventory(ctx context.Context, vldr *ocfl.Validatio
 	return nil
 }
 
-func (o *ReadObject) ValidateContent(ctx context.Context, v *ocfl.Validation) error {
-	// missing content files
-	// extra content files
-	// content with wrong digests
+func (o *ReadObject) ValidateContent(ctx context.Context, v *ocfl.ObjectValidation) error {
+	v.MissingContent()(func(name string) bool {
+		err := fmt.Errorf("missing content: %s", name)
+		v.AddFatal(ec(err, codes.E092(o.inv.Type.Spec)))
+		return true
+	})
 	return nil
 }
 
-func (o *ReadObject) validateObjectRootState(ctx context.Context, vldr *ocfl.Validation) error {
+func (o *ReadObject) validateObjectRootState(ctx context.Context, vldr *ocfl.ObjectValidation) error {
 	ocflV := o.inv.Type.Spec
 	entries, err := o.fs.ReadDir(ctx, o.path)
 	if err != nil {
@@ -175,7 +177,7 @@ func (o *ReadObject) validateObjectRootState(ctx context.Context, vldr *ocfl.Val
 	return vldr.Err()
 }
 
-func (o *ReadObject) validateExtensionsDir(ctx context.Context, vldr *ocfl.Validation) error {
+func (o *ReadObject) validateExtensionsDir(ctx context.Context, vldr *ocfl.ObjectValidation) error {
 	ocflV := o.inv.Type.Spec
 	extDir := path.Join(o.path, extensionsDir)
 	items, err := o.fs.ReadDir(ctx, extDir)
