@@ -189,7 +189,8 @@ func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum
 				err := fmt.Errorf("%s/inventory.json has different 'message' in its %s version block than the previous inventory.json", dirNum, v)
 				vldr.AddWarn(ec(err, codes.W011(verSpec)))
 			}
-			if !reflect.DeepEqual(versionThis.User, versionPrev.User()) {
+
+			if !reflect.DeepEqual(versionThis.User(), versionPrev.User()) {
 				err := fmt.Errorf("%s/inventory.json has different 'user' in its %s version block than the previous inventory.json", dirNum, v)
 				vldr.AddWarn(ec(err, codes.W011(verSpec)))
 			}

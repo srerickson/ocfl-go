@@ -587,7 +587,7 @@ func TestValidateInventory(t *testing.T) {
 			if test.valid {
 				be.NilErr(t, err)
 			} else {
-				be.True(t, err == nil)
+				be.True(t, err != nil)
 			}
 		})
 	}
