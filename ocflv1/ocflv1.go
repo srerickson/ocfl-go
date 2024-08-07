@@ -5,11 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path"
+	"reflect"
 	"strings"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/logging"
+	"github.com/srerickson/ocfl-go/ocflv1/codes"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -38,7 +41,18 @@ type OCFL struct {
 
 func (imp OCFL) Spec() ocfl.Spec { return imp.spec }
 
-func (imp OCFL) NewReadObject(ctx context.Context, fsys ocfl.FS, path string) (ocfl.ReadObject, error) {
+func (imp OCFL) NewReadInventory(raw []byte) (ocfl.ReadInventory, error) {
+	inv, err := NewInventory(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := inv.Validate(nil); err != nil {
+		return nil, err
+	}
+	return inv.Inventory(), nil
+}
+
+func (imp OCFL) NewReadObject(ctx context.Context, fsys ocfl.FS, path string, inv ocfl.ReadInventory) (ocfl.ReadObject, error) {
 	obj, err := NewReadObject(ctx, fsys, path)
 	if err != nil {
 		return nil, err
@@ -128,8 +142,94 @@ func (imp OCFL) Commit(ctx context.Context, obj ocfl.ReadObject, commit *ocfl.Co
 	}, nil
 }
 
-func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum, prev ocfl.ReadInventory, vldr *ocfl.Validation) (ocfl.ReadInventory, error) {
-	return validateVersion(ctx, obj, dirNum, prev, vldr)
+func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum, inv ocfl.ReadInventory, vldr *ocfl.Validation) error {
+	fsys := obj.FS()
+	vDir := path.Join(obj.Path(), dirNum.String())
+	verSpec := imp.spec
+	headInv := obj.Inventory() // headInv is assumed to be valid
+	entries, err := fsys.ReadDir(ctx, vDir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		vldr.AddFatal(err)
+		return err
+	}
+	if len(entries) < 1 {
+		// the version directory doesn't exist or it's empty
+		err := fmt.Errorf("missing %s/inventory.json", dirNum.String())
+		vldr.AddWarn(ec(err, codes.W010(verSpec)))
+	}
+	info := parseVersionDirState(entries)
+	for _, f := range info.extraFiles {
+		err := fmt.Errorf(`unexpected file in %s: %s`, dirNum, f)
+		vldr.AddFatal(ec(err, codes.E015(verSpec)))
+	}
+	if inv != nil {
+		// err := fmt.Errorf("%s uses a lower version of the OCFL spec than %s (%s < %s)", vnum, prevVer, vnumSpec, prevSpec)
+		// vldr.LogFatal(lgr, ec(err, codes.E103(ocflV)))
+
+		// the version content directory must be the same
+		// the ocfl spec must >=
+		// check that all version states in prev match the corresponding
+		// version state in this inventory
+		for _, v := range inv.Head().AsHead() {
+			versionThis := inv.Version(v.Num())
+			versionPrev := headInv.Version(v.Num())
+			vLogicalStateThis := logicalState{
+				state:    versionThis.State(),
+				manifest: inv.Manifest(),
+			}
+			vLogicalStatePrev := logicalState{
+				state:    versionPrev.State(),
+				manifest: headInv.Manifest(),
+			}
+			if !vLogicalStateThis.Eq(vLogicalStatePrev) {
+				err := fmt.Errorf("%s/inventory.json has different logical state in its %s version block than the previous inventory.json", dirNum, v)
+				vldr.AddFatal(ec(err, codes.E066(verSpec)))
+			}
+			if versionThis.Message() != versionPrev.Message() {
+				err := fmt.Errorf("%s/inventory.json has different 'message' in its %s version block than the previous inventory.json", dirNum, v)
+				vldr.AddWarn(ec(err, codes.W011(verSpec)))
+			}
+			if !reflect.DeepEqual(versionThis.User, versionPrev.User()) {
+				err := fmt.Errorf("%s/inventory.json has different 'user' in its %s version block than the previous inventory.json", dirNum, v)
+				vldr.AddWarn(ec(err, codes.W011(verSpec)))
+			}
+			if versionThis.Created() != versionPrev.Created() {
+				err := fmt.Errorf("%s/inventory.json has different 'created' in its %s version block than the previous inventory.json", dirNum, v)
+				vldr.AddWarn(ec(err, codes.W011(verSpec)))
+			}
+		}
+	}
+	for _, d := range info.dirs {
+		// directory SHOULD only be content directory
+		if d != headInv.ContentDirectory() {
+			err := fmt.Errorf(`extra directory in %s: %s`, dirNum, d)
+			vldr.AddWarn(ec(err, codes.W002(verSpec)))
+			continue
+		}
+		// add version content directory to validation state
+		var added int
+		var iterErr error
+		ocfl.Files(ctx, fsys, path.Join(vDir, headInv.ContentDirectory()))(func(info ocfl.FileInfo, err error) bool {
+			if err != nil {
+				iterErr = err
+				return false
+			}
+			// convert fs-relative path to object-relative path
+			vldr.AddContentExists(strings.TrimPrefix(info.Path, obj.Path()+"/"))
+			added++
+			return true
+		})
+		if iterErr != nil {
+			vldr.AddFatal(iterErr)
+			return iterErr
+		}
+		if added == 0 {
+			// content directory exists but it's empty
+			err := fmt.Errorf("content directory (%s) contains no files", headInv.ContentDirectory())
+			vldr.AddFatal(ec(err, codes.E016(verSpec)))
+		}
+	}
+	return nil
 }
 
 // newContentMap returns a DigestMap that is a subset of the inventory

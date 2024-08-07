@@ -36,13 +36,14 @@ var (
 // version of the OCFL specification.
 type OCFL interface {
 	Spec() Spec
-	NewReadObject(ctx context.Context, fsys FS, path string) (ReadObject, error)
+	NewReadInventory(raw []byte) (ReadInventory, error)
+	NewReadObject(ctx context.Context, fsys FS, path string, inv ReadInventory) (ReadObject, error)
 	Commit(ctx context.Context, obj ReadObject, commit *Commit) (ReadObject, error)
 	// OpenVersion(ctx context.Context, obj *Object, i int) (ObjectVersionFS, error)
 	// OpenObject(context.Context, *ObjectRoot, ...func(*ObjectOptions)) (*Object, error)
 	// SorageRoot
 	// Validate
-	ValidateVersion(ctx context.Context, obj ReadObject, vnum VNum, prev ReadInventory, vldr *Validation) (ReadInventory, error)
+	ValidateVersion(ctx context.Context, obj ReadObject, vnum VNum, versionInv ReadInventory, vldr *Validation) error
 }
 
 type Config struct {

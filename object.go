@@ -2,6 +2,7 @@ package ocfl
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -66,7 +67,7 @@ func NewObject(ctx context.Context, fsys FS, path string, opts ...ObjectOption) 
 		}
 	}
 	var err error
-	obj.reader, err = obj.ocfl.NewReadObject(ctx, fsys, path)
+	obj.reader, err = obj.ocfl.NewReadObject(ctx, fsys, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -188,19 +189,23 @@ func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) (v *V
 	if err := obj.reader.ValidateRoot(ctx, v); err != nil {
 		return
 	}
-	var prev ReadInventory
+	versionOCFL, err := obj.globals.GetSpec(Spec1_0)
+	if err != nil {
+		err = fmt.Errorf("validation cannot continue due to unexpcted error: %w", err)
+		v.AddFatal(err)
+		return
+	}
 	for _, vnum := range obj.Inventory().Head().AsHead() {
-		var err error
-		// TODO: read inventory and guess spec
-		var vSpec Spec
-		vOCFL, err := obj.globals.GetSpec(vSpec)
-		if err != nil {
-			v.AddFatal(err)
+		verInv, nextOCFL, err := obj.readInventory(ctx, vnum.String())
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			v.AddFatal(fmt.Errorf("reading %s/inventory.json: %w", vnum, err))
+			continue
 		}
-		prev, err = vOCFL.ValidateVersion(ctx, obj.reader, vnum, prev, v)
-		if err != nil {
-			break
+		if nextOCFL != nil {
+			// nextOCFL should be >= versionOCFL
+			versionOCFL = nextOCFL
 		}
+		versionOCFL.ValidateVersion(ctx, obj.reader, vnum, verInv, v)
 	}
 	// validate object history: call
 	return
@@ -397,3 +402,36 @@ func (o *uninitializedObject) VersionFS(ctx context.Context, v int) fs.FS { retu
 // 	}
 // 	return obj.FS().ReadDir(ctx, name)
 // }
+
+func (obj *Object) readInventory(ctx context.Context, dir string) (inv ReadInventory, invOCFL OCFL, err error) {
+	fsys := obj.FS()
+	if obj.FS() == nil {
+		err = errors.New("object was not initialized or does not exist")
+		return
+	}
+	f, err := fsys.OpenFile(ctx, path.Join(obj.Path(), dir, inventoryFile))
+	if err != nil {
+		return
+	}
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	raw, err := io.ReadAll(f)
+	if err != nil {
+		return
+	}
+	invFields := struct {
+		Type InvType `json:"type"`
+	}{}
+	if err = json.Unmarshal(raw, &invFields); err != nil {
+		return
+	}
+	invOCFL, err = obj.globals.GetSpec(invFields.Type.Spec)
+	if err != nil {
+		return
+	}
+	inv, err = invOCFL.NewReadInventory(raw)
+	return
+}

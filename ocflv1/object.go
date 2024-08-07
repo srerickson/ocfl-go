@@ -107,7 +107,7 @@ func (o *ReadObject) validateInventory(ctx context.Context, vldr *ocfl.Validatio
 		return err
 	}
 	ocflV := o.inv.Type.Spec
-	expSum, err := readInventorySidecar(ctx, o.fs, inventoryFile+"."+o.inv.DigestAlgorithm)
+	expSum, err := readInventorySidecar(ctx, o.fs, path.Join(o.path, inventoryFile+"."+o.inv.DigestAlgorithm))
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvSidecarContents):
