@@ -534,7 +534,7 @@ func buildInventory(prev ocfl.ReadInventory, commit *ocfl.Commit) (*Inventory, e
 		if err != nil {
 			return nil, fmt.Errorf("in existing inventory manifest: %w", err)
 		}
-		versions := prev.Head().AsHead()
+		versions := prev.Head().Lineage()
 		newInv.Versions = make(map[ocfl.VNum]*Version, len(versions))
 		for _, vnum := range versions {
 			prevVer := prev.Version(vnum.Num())

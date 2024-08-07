@@ -170,7 +170,7 @@ func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum
 		// the ocfl spec must >=
 		// check that all version states in prev match the corresponding
 		// version state in this inventory
-		for _, v := range inv.Head().AsHead() {
+		for _, v := range inv.Head().Lineage() {
 			versionThis := inv.Version(v.Num())
 			versionPrev := headInv.Version(v.Num())
 			vLogicalStateThis := logicalState{

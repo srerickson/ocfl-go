@@ -71,7 +71,7 @@ func (o *ReadObject) Inventory() ocfl.ReadInventory {
 	return &readInventory{raw: *o.inv}
 }
 
-func (o *ReadObject) ValidateRoot(ctx context.Context, vldr *ocfl.Validation) error {
+func (o *ReadObject) ValidateHead(ctx context.Context, vldr *ocfl.Validation) error {
 	if err := o.validateObjectRootState(ctx, vldr); err != nil {
 		return err
 	}
@@ -107,13 +107,16 @@ func (o *ReadObject) validateInventory(ctx context.Context, vldr *ocfl.Validatio
 		return err
 	}
 	ocflV := o.inv.Type.Spec
-	expSum, err := readInventorySidecar(ctx, o.fs, path.Join(o.path, inventoryFile+"."+o.inv.DigestAlgorithm))
+	sidecar := path.Join(o.path, inventoryFile+"."+o.inv.DigestAlgorithm)
+	expSum, err := readInventorySidecar(ctx, o.fs, sidecar)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvSidecarContents):
 			vldr.AddFatal(ec(err, codes.E061(ocflV)))
-		default:
+		case errors.Is(err, fs.ErrNotExist):
 			vldr.AddFatal(ec(err, codes.E058(ocflV)))
+		default:
+			vldr.AddFatal(err)
 		}
 		return err
 	}
@@ -124,6 +127,13 @@ func (o *ReadObject) validateInventory(ctx context.Context, vldr *ocfl.Validatio
 		vldr.AddFatal(ec(err, codes.E060(ocflV)))
 		return err
 	}
+	return nil
+}
+
+func (o *ReadObject) ValidateContent(ctx context.Context, v *ocfl.Validation) error {
+	// missing content files
+	// extra content files
+	// content with wrong digests
 	return nil
 }
 

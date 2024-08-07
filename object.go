@@ -184,18 +184,18 @@ func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) (v *V
 		v.AddFatal(err)
 		return
 	}
-	// confirm that the object root has all necessary files
-	// and directories
-	if err := obj.reader.ValidateRoot(ctx, v); err != nil {
-		return
-	}
 	versionOCFL, err := obj.globals.GetSpec(Spec1_0)
 	if err != nil {
-		err = fmt.Errorf("validation cannot continue due to unexpcted error: %w", err)
+		err = fmt.Errorf("unexpected error during validation: %w", err)
 		v.AddFatal(err)
 		return
 	}
-	for _, vnum := range obj.Inventory().Head().AsHead() {
+	// confirm that the object root has all necessary files
+	// and directories
+	if err := obj.reader.ValidateHead(ctx, v); err != nil {
+		return
+	}
+	for _, vnum := range obj.Inventory().Head().Lineage() {
 		verInv, nextOCFL, err := obj.readInventory(ctx, vnum.String())
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			v.AddFatal(fmt.Errorf("reading %s/inventory.json: %w", vnum, err))
@@ -207,7 +207,7 @@ func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) (v *V
 		}
 		versionOCFL.ValidateVersion(ctx, obj.reader, vnum, verInv, v)
 	}
-	// validate object history: call
+	obj.reader.ValidateContent(ctx, v)
 	return
 }
 
@@ -325,10 +325,16 @@ func (o *uninitializedObject) Inventory() ReadInventory { return nil }
 // Path returns the object's path relative to its FS()
 func (o *uninitializedObject) Path() string { return o.path }
 
-func (o *uninitializedObject) ValidateRoot(_ context.Context, v *Validation) error {
+func (o *uninitializedObject) ValidateHead(_ context.Context, v *Validation) error {
 	err := fmt.Errorf("empty or missing path: %s: %w", o.path, ErrNamasteNotExist)
-	v.AddFatal(err)
+	if v != nil {
+		v.AddFatal(err)
+	}
 	return err
+}
+
+func (o *uninitializedObject) ValidateContent(_ context.Context, v *Validation) error {
+	return nil
 }
 
 // VersionFS returns a value that implements an io/fs.FS for
