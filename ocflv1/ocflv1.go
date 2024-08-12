@@ -163,6 +163,23 @@ func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum
 		vldr.AddFatal(ec(err, codes.E015(verSpec)))
 	}
 	if inv != nil {
+		if inv.ID() != headInv.ID() {
+			err = fmt.Errorf("%s/inventory.json: 'id' doesn't match value in root inventory", dirNum)
+			vldr.AddFatal(ec(err, codes.E037(verSpec)))
+		}
+		if inv.ContentDirectory() != headInv.ContentDirectory() {
+			err = fmt.Errorf("%s/inventory.json: 'contentDirectory' doesn't match value in root inventory", dirNum)
+			vldr.AddFatal(ec(err, codes.E019(verSpec)))
+		}
+		if inv.Head() == headInv.Head() {
+			// this is the root inventory
+			// FIXME: if this matches, we should be able to skip validations
+			if inv.Digest() != headInv.Digest() {
+				err := fmt.Errorf("%s/inventor.json is not the same as the root inventory", dirNum)
+				vldr.AddFatal(ec(err, codes.E064(verSpec)))
+			}
+		}
+
 		// err := fmt.Errorf("%s uses a lower version of the OCFL spec than %s (%s < %s)", vnum, prevVer, vnumSpec, prevSpec)
 		// vldr.LogFatal(lgr, ec(err, codes.E103(ocflV)))
 
@@ -171,33 +188,37 @@ func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum
 		// check that all version states in prev match the corresponding
 		// version state in this inventory
 		for _, v := range inv.Head().Lineage() {
-			versionThis := inv.Version(v.Num())
-			versionPrev := headInv.Version(v.Num())
-			vLogicalStateThis := logicalState{
-				state:    versionThis.State(),
+			thisVersion := inv.Version(v.Num())
+			headVersion := headInv.Version(v.Num())
+			thisVerState := logicalState{
+				state:    thisVersion.State(),
 				manifest: inv.Manifest(),
 			}
-			vLogicalStatePrev := logicalState{
-				state:    versionPrev.State(),
+			headVerState := logicalState{
+				state:    headVersion.State(),
 				manifest: headInv.Manifest(),
 			}
-			if !vLogicalStateThis.Eq(vLogicalStatePrev) {
+			if !thisVerState.Eq(headVerState) {
 				err := fmt.Errorf("%s/inventory.json has different logical state in its %s version block than the previous inventory.json", dirNum, v)
 				vldr.AddFatal(ec(err, codes.E066(verSpec)))
 			}
-			if versionThis.Message() != versionPrev.Message() {
+			if thisVersion.Message() != headVersion.Message() {
 				err := fmt.Errorf("%s/inventory.json has different 'message' in its %s version block than the previous inventory.json", dirNum, v)
 				vldr.AddWarn(ec(err, codes.W011(verSpec)))
 			}
 
-			if !reflect.DeepEqual(versionThis.User(), versionPrev.User()) {
+			if !reflect.DeepEqual(thisVersion.User(), headVersion.User()) {
 				err := fmt.Errorf("%s/inventory.json has different 'user' in its %s version block than the previous inventory.json", dirNum, v)
 				vldr.AddWarn(ec(err, codes.W011(verSpec)))
 			}
-			if versionThis.Created() != versionPrev.Created() {
+			if thisVersion.Created() != headVersion.Created() {
 				err := fmt.Errorf("%s/inventory.json has different 'created' in its %s version block than the previous inventory.json", dirNum, v)
 				vldr.AddWarn(ec(err, codes.W011(verSpec)))
 			}
+		}
+		if err := vldr.AddInventoryDigests(inv); err != nil {
+			err = fmt.Errorf("%s/inventory.json digests are inconsistent with other inventories: %w", dirNum, err)
+			vldr.AddFatal(ec(err, codes.E066(verSpec)))
 		}
 	}
 	for _, d := range info.dirs {

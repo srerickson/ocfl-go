@@ -301,7 +301,7 @@ func testValidateFixtures(t *testing.T) {
 							return
 						}
 						result := obj.Validate(ctx)
-						be.Nonzero(t, result.Err())
+						be.True(t, result.Err() != nil)
 						if ok, desc := fixtureExpectedErrs(dir.Name(), result.Errors()...); !ok {
 							t.Log(path.Join(spec, dir.Name())+":", desc)
 						}

@@ -136,6 +136,11 @@ func (v *ObjectValidation) AddExistingContent(name string) {
 	v.files[name].exists = true
 }
 
+// AddInventoryDigests adds digests from the inventory's manifest and fixity
+// entries to the object validation for later verification. An error is returned
+// if any name/digests entries in the inventory conflic with an existing
+// name/digest entry already added to the object validation. The returned error
+// wraps a slice of *DigestError values.
 func (v *ObjectValidation) AddInventoryDigests(inv ReadInventory) error {
 	if v.files == nil {
 		v.files = map[string]*validationFileInfo{}
@@ -164,11 +169,42 @@ func (v *ObjectValidation) AddInventoryDigests(inv ReadInventory) error {
 	return allErrors.ErrorOrNil()
 }
 
+// MissingContent returns an iterator the yields the names of files that appear
+// in an inventory added to the validation but were not marked as existing.
 func (v *ObjectValidation) MissingContent() func(func(name string) bool) {
 	return func(yield func(string) bool) {
 		for name, entry := range v.files {
 			if !entry.exists && len(entry.expected) > 0 {
 				if !yield(name) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// UnexpectedContent returns an iterator that yields the names of existing files
+// that were not included in an inventory manifest.
+func (v *ObjectValidation) UnexpectedContent() func(func(name string) bool) {
+	return func(yield func(string) bool) {
+		for name, entry := range v.files {
+			if entry.exists && len(entry.expected) == 0 {
+				if !yield(name) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// ExistingContent digests returns an iterator that yields the names and digests
+// of files that exist and were reference in the inventory added to the
+// valiation.
+func (v *ObjectValidation) ExistingContentDigests() func(func(name string, digests DigestSet) bool) {
+	return func(yield func(string, DigestSet) bool) {
+		for name, entry := range v.files {
+			if entry.exists && len(entry.expected) > 0 {
+				if !yield(name, entry.expected) {
 					return
 				}
 			}

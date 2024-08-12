@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/go-multierror"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/extension"
 	"github.com/srerickson/ocfl-go/ocflv1/codes"
@@ -71,6 +72,47 @@ func (o *ReadObject) Inventory() ocfl.ReadInventory {
 	return &readInventory{raw: *o.inv}
 }
 
+func (o *ReadObject) ValidateContent(ctx context.Context, v *ocfl.ObjectValidation) error {
+	errs := []error{}
+	ocflV := o.inv.Type.Spec
+	v.MissingContent()(func(name string) bool {
+		err := fmt.Errorf("missing content: %s", name)
+		errs = append(errs, ec(err, codes.E092(ocflV)))
+		return true
+	})
+	v.UnexpectedContent()(func(name string) bool {
+		err := fmt.Errorf("unexpected content: %s", name)
+		errs = append(errs, ec(err, codes.E023(ocflV)))
+		return true
+	})
+	if !v.SkipDigests() {
+		v.ExistingContentDigests()(func(name string, digests ocfl.DigestSet) bool {
+			// TODO concurrent digests
+			f, err := o.fs.OpenFile(ctx, path.Join(o.path, name))
+			if err != nil {
+				err = fmt.Errorf("unexpected error while validating digests: %w", err)
+				errs = append(errs, err)
+				return true
+			}
+			defer func() {
+				if closeErr := f.Close(); closeErr != nil {
+					errs = append(errs, closeErr)
+				}
+			}()
+			if err := digests.Validate(f); err != nil {
+				err = fmt.Errorf("validating digests for %q: %w", name, err)
+				errs = append(errs, ec(err, codes.E093(ocflV)))
+			}
+			return true
+		})
+	}
+	if len(errs) > 0 {
+		v.AddFatal(errs...)
+		return &multierror.Error{Errors: errs}
+	}
+	return nil
+}
+
 func (o *ReadObject) ValidateHead(ctx context.Context, vldr *ocfl.ObjectValidation) error {
 	if err := o.validateObjectRootState(ctx, vldr); err != nil {
 		return err
@@ -78,10 +120,17 @@ func (o *ReadObject) ValidateHead(ctx context.Context, vldr *ocfl.ObjectValidati
 	if err := o.validateDeclaration(ctx, vldr); err != nil {
 		return err
 	}
-	if err := o.validateInventory(ctx, vldr); err != nil {
+	if err := o.inv.Validate(&vldr.Validation); err != nil {
+		return err
+	}
+	if err := o.validateInventorySidecar(ctx, "", o.Inventory(), vldr); err != nil {
 		return err
 	}
 	if err := o.validateExtensionsDir(ctx, vldr); err != nil {
+		return err
+	}
+	if err := vldr.AddInventoryDigests(o.Inventory()); err != nil {
+		vldr.AddFatal(err)
 		return err
 	}
 	return nil
@@ -102,40 +151,31 @@ func (o *ReadObject) validateDeclaration(ctx context.Context, v *ocfl.ObjectVali
 	return nil
 }
 
-func (o *ReadObject) validateInventory(ctx context.Context, vldr *ocfl.ObjectValidation) error {
-	if err := o.inv.Validate(vldr); err != nil {
-		return err
-	}
-	ocflV := o.inv.Type.Spec
-	sidecar := path.Join(o.path, inventoryFile+"."+o.inv.DigestAlgorithm)
+// validate root inventory and sidecar file
+func (o *ReadObject) validateInventorySidecar(ctx context.Context, dir string, inv ocfl.ReadInventory, objVld *ocfl.ObjectValidation) error {
+	ocflV := inv.Spec()
+	invPath := path.Join(dir, inventoryFile)
+	sidecar := path.Join(o.path, invPath+"."+inv.DigestAlgorithm())
 	expSum, err := readInventorySidecar(ctx, o.fs, sidecar)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrInvSidecarContents):
-			vldr.AddFatal(ec(err, codes.E061(ocflV)))
+			objVld.AddFatal(ec(err, codes.E061(ocflV)))
 		case errors.Is(err, fs.ErrNotExist):
-			vldr.AddFatal(ec(err, codes.E058(ocflV)))
+			objVld.AddFatal(ec(err, codes.E058(ocflV)))
 		default:
-			vldr.AddFatal(err)
+			objVld.AddFatal(err)
 		}
 		return err
 	}
 	if !strings.EqualFold(o.inv.jsonDigest, expSum) {
 		shortSum := o.inv.jsonDigest[:6]
 		shortExp := expSum[:6]
-		err := fmt.Errorf("root inventory's checksum (%s) doen't match expected value in sidecar (%s)", shortSum, shortExp)
-		vldr.AddFatal(ec(err, codes.E060(ocflV)))
+		err := fmt.Errorf("%s digest (%s) doen't match expected value in sidecar (%s)", invPath, shortSum, shortExp)
+		objVld.AddFatal(ec(err, codes.E060(ocflV)))
 		return err
 	}
-	return nil
-}
 
-func (o *ReadObject) ValidateContent(ctx context.Context, v *ocfl.ObjectValidation) error {
-	v.MissingContent()(func(name string) bool {
-		err := fmt.Errorf("missing content: %s", name)
-		v.AddFatal(ec(err, codes.E092(o.inv.Type.Spec)))
-		return true
-	})
 	return nil
 }
 
@@ -208,7 +248,7 @@ func (o *ReadObject) VersionFS(ctx context.Context, i int) fs.FS {
 	if ver == nil {
 		return nil
 	}
-	// FIXME: This is a hacky way to wmake versionFS replicates the filemode of
+	// FIXME: This is a hack to make versionFS replicates the filemode of
 	// the undering FS. Open a random content file to get the file mode used by
 	// the underlying FS.
 	regfileType := fs.FileMode(0)
