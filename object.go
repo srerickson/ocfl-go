@@ -176,27 +176,35 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 }
 
 func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) (v *ObjectValidation) {
-	// the object may not exist
 	v = NewObjectValidation(opts...)
-	objPath := obj.reader.Path()
+	objPath := obj.Path()
+	objFS := obj.FS()
+	// the object may not exist
 	if !obj.Exists() {
 		err := fmt.Errorf("not an existing OCFL object: %s: %w", objPath, ErrNamasteNotExist)
 		v.AddFatal(err)
 		return
 	}
+	entries, err := objFS.ReadDir(ctx, objPath)
+	if err != nil {
+		v.AddFatal(err)
+		return
+	}
+	rootState := ParseObjectRootDir(entries)
+	// confirm that the object root has all necessary files and directories
+	if err := obj.reader.ValidateRoot(ctx, rootState, v); err != nil {
+		return
+	}
+	// validate versions using previous specs
 	versionOCFL, err := obj.globals.GetSpec(Spec1_0)
 	if err != nil {
 		err = fmt.Errorf("unexpected error during validation: %w", err)
 		v.AddFatal(err)
 		return
 	}
-	// confirm that the object root has all necessary files
-	// and directories
-	if err := obj.reader.ValidateHead(ctx, v); err != nil {
-		return
-	}
-	for _, vnum := range obj.Inventory().Head().Lineage() {
-		verInv, nextOCFL, err := obj.readInventory(ctx, vnum.String())
+	var prevInv ReadInventory
+	for _, vnum := range rootState.VersionDirs.Head().Lineage() {
+		nextInv, nextOCFL, err := obj.readInventory(ctx, vnum.String())
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			v.AddFatal(fmt.Errorf("reading %s/inventory.json: %w", vnum, err))
 			continue
@@ -205,7 +213,8 @@ func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) (v *O
 			// nextOCFL should be >= versionOCFL
 			versionOCFL = nextOCFL
 		}
-		versionOCFL.ValidateVersion(ctx, obj.reader, vnum, verInv, v)
+		versionOCFL.ValidateVersion(ctx, obj.reader, vnum, nextInv, prevInv, v)
+		prevInv = nextInv
 	}
 	obj.reader.ValidateContent(ctx, v)
 	return
@@ -325,7 +334,7 @@ func (o *uninitializedObject) Inventory() ReadInventory { return nil }
 // Path returns the object's path relative to its FS()
 func (o *uninitializedObject) Path() string { return o.path }
 
-func (o *uninitializedObject) ValidateHead(_ context.Context, v *ObjectValidation) error {
+func (o *uninitializedObject) ValidateRoot(_ context.Context, _ *ObjectRootState, v *ObjectValidation) error {
 	err := fmt.Errorf("empty or missing path: %s: %w", o.path, ErrNamasteNotExist)
 	if v != nil {
 		v.AddFatal(err)
