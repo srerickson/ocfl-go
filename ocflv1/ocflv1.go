@@ -163,71 +163,7 @@ func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum
 		vldr.AddWarn(ec(err, codes.W010(vSpec)))
 	}
 	if inv != nil {
-		validateInventorySidecar(ctx, obj, dirNum.String(), inv, vldr)
-		if inv.ID() != rootInv.ID() {
-			err = fmt.Errorf("%s/inventory.json: 'id' doesn't match value in root inventory", dirNum)
-			vldr.AddFatal(ec(err, codes.E037(vSpec)))
-		}
-		if inv.ContentDirectory() != rootInv.ContentDirectory() {
-			err = fmt.Errorf("%s/inventory.json: 'contentDirectory' doesn't match value in root inventory", dirNum)
-			vldr.AddFatal(ec(err, codes.E019(vSpec)))
-		}
-		if prev != nil && inv.Spec().Cmp(prev.Spec()) < 0 {
-			err := fmt.Errorf("%s/inventory.json uses an older OCFL specification than than the previous version", dirNum)
-			vldr.AddFatal(ec(err, codes.E103(vSpec)))
-		}
-		if inv.Head() != dirNum {
-			err := fmt.Errorf("%s/inventory.json: 'head' is not %s", dirNum, dirNum)
-			vldr.AddFatal(ec(err, codes.E040(vSpec)))
-		}
-		if inv.Head() == rootInv.Head() {
-			// this is the root inventory
-			// FIXME: if this matches, we should be able to skip validations
-			if inv.Digest() != rootInv.Digest() {
-				err := fmt.Errorf("%s/inventor.json is not the same as the root inventory", dirNum)
-				vldr.AddFatal(ec(err, codes.E064(vSpec)))
-			}
-		}
-		// err := fmt.Errorf("%s uses a lower version of the OCFL spec than %s (%s < %s)", vnum, prevVer, vnumSpec, prevSpec)
-		// vldr.LogFatal(lgr, ec(err, codes.E103(ocflV)))
-
-		// the version content directory must be the same
-		// the ocfl spec must >=
-		// check that all version states in prev match the corresponding
-		// version state in this inventory
-		for _, v := range inv.Head().Lineage() {
-			thisVersion := inv.Version(v.Num())
-			rootVersion := rootInv.Version(v.Num())
-			thisVerState := logicalState{
-				state:    thisVersion.State(),
-				manifest: inv.Manifest(),
-			}
-			rootVerState := logicalState{
-				state:    rootVersion.State(),
-				manifest: rootInv.Manifest(),
-			}
-			if !thisVerState.Eq(rootVerState) {
-				err := fmt.Errorf("%s/inventory.json has different logical state in its %s version block than the root inventory.json", dirNum, v)
-				vldr.AddFatal(ec(err, codes.E066(vSpec)))
-			}
-			if thisVersion.Message() != rootVersion.Message() {
-				err := fmt.Errorf("%s/inventory.json has different 'message' in its %s version block than the root inventory.json", dirNum, v)
-				vldr.AddWarn(ec(err, codes.W011(vSpec)))
-			}
-
-			if !reflect.DeepEqual(thisVersion.User(), rootVersion.User()) {
-				err := fmt.Errorf("%s/inventory.json has different 'user' in its %s version block than the root inventory.json", dirNum, v)
-				vldr.AddWarn(ec(err, codes.W011(vSpec)))
-			}
-			if thisVersion.Created() != rootVersion.Created() {
-				err := fmt.Errorf("%s/inventory.json has different 'created' in its %s version block than the root inventory.json", dirNum, v)
-				vldr.AddWarn(ec(err, codes.W011(vSpec)))
-			}
-		}
-		if err := vldr.AddInventoryDigests(inv); err != nil {
-			err = fmt.Errorf("%s/inventory.json digests are inconsistent with other inventories: %w", dirNum, err)
-			vldr.AddFatal(ec(err, codes.E066(vSpec)))
-		}
+		imp.validateVersionInventory(ctx, obj, dirNum, inv, vldr)
 	}
 	for _, d := range info.dirs {
 		// directory SHOULD only be content directory
@@ -260,6 +196,76 @@ func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum
 		}
 	}
 	return nil
+}
+
+func (imp OCFL) validateVersionInventory(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum, inv ocfl.ReadInventory, vldr *ocfl.ObjectValidation) {
+	rootInv := obj.Inventory()
+	vSpec := imp.spec
+	if dirNum == rootInv.Head() {
+		// inventory should match root inventory
+		if inv.Digest() == rootInv.Digest() {
+			return // we don't need to do anything
+		}
+		err := fmt.Errorf("%s/inventor.json is not the same as the root inventory: digests don't match", dirNum)
+		vldr.AddFatal(ec(err, codes.E064(vSpec)))
+	}
+	validateInventorySidecar(ctx, obj, dirNum.String(), inv, vldr)
+	if inv.ID() != rootInv.ID() {
+		err := fmt.Errorf("%s/inventory.json: 'id' doesn't match value in root inventory", dirNum)
+		vldr.AddFatal(ec(err, codes.E037(vSpec)))
+	}
+	if inv.ContentDirectory() != rootInv.ContentDirectory() {
+		err := fmt.Errorf("%s/inventory.json: 'contentDirectory' doesn't match value in root inventory", dirNum)
+		vldr.AddFatal(ec(err, codes.E019(vSpec)))
+	}
+	// if prev != nil && inv.Spec().Cmp(prev.Spec()) < 0 {
+	// 	err := fmt.Errorf("%s/inventory.json uses an older OCFL specification than than the previous version", dirNum)
+	// 	vldr.AddFatal(ec(err, codes.E103(vSpec)))
+	// }
+	if inv.Head() != dirNum {
+		err := fmt.Errorf("%s/inventory.json: 'head' does not matchs its directory (%s)", dirNum, dirNum)
+		vldr.AddFatal(ec(err, codes.E040(vSpec)))
+	}
+	// err := fmt.Errorf("%s uses a lower version of the OCFL spec than %s (%s < %s)", vnum, prevVer, vnumSpec, prevSpec)
+	// vldr.LogFatal(lgr, ec(err, codes.E103(ocflV)))
+
+	// the version content directory must be the same
+	// the ocfl spec must >=
+	// check that all version states in prev match the corresponding
+	// version state in this inventory
+	for _, v := range inv.Head().Lineage() {
+		thisVersion := inv.Version(v.Num())
+		rootVersion := rootInv.Version(v.Num())
+		thisVerState := logicalState{
+			state:    thisVersion.State(),
+			manifest: inv.Manifest(),
+		}
+		rootVerState := logicalState{
+			state:    rootVersion.State(),
+			manifest: rootInv.Manifest(),
+		}
+		if !thisVerState.Eq(rootVerState) {
+			err := fmt.Errorf("%s/inventory.json has different logical state in its %s version block than the root inventory.json", dirNum, v)
+			vldr.AddFatal(ec(err, codes.E066(vSpec)))
+		}
+		if thisVersion.Message() != rootVersion.Message() {
+			err := fmt.Errorf("%s/inventory.json has different 'message' in its %s version block than the root inventory.json", dirNum, v)
+			vldr.AddWarn(ec(err, codes.W011(vSpec)))
+		}
+
+		if !reflect.DeepEqual(thisVersion.User(), rootVersion.User()) {
+			err := fmt.Errorf("%s/inventory.json has different 'user' in its %s version block than the root inventory.json", dirNum, v)
+			vldr.AddWarn(ec(err, codes.W011(vSpec)))
+		}
+		if thisVersion.Created() != rootVersion.Created() {
+			err := fmt.Errorf("%s/inventory.json has different 'created' in its %s version block than the root inventory.json", dirNum, v)
+			vldr.AddWarn(ec(err, codes.W011(vSpec)))
+		}
+	}
+	if err := vldr.AddInventoryDigests(inv); err != nil {
+		err = fmt.Errorf("%s/inventory.json digests are inconsistent with other inventories: %w", dirNum, err)
+		vldr.AddFatal(ec(err, codes.E066(vSpec)))
+	}
 }
 
 // newContentMap returns a DigestMap that is a subset of the inventory
