@@ -36,7 +36,7 @@ var (
 type OCFL interface {
 	Spec() Spec
 	NewReadInventory(raw []byte) (ReadInventory, error)
-	NewReadObject(ctx context.Context, fsys FS, path string, inv ReadInventory) (ReadObject, error)
+	NewReadObject(fsys FS, path string, inv ReadInventory) ReadObject
 	Commit(ctx context.Context, obj ReadObject, commit *Commit) (ReadObject, error)
 	ValidateVersion(ctx context.Context, obj ReadObject, vnum VNum, versionInv ReadInventory, prevInv ReadInventory, vldr *ObjectValidation) error
 }

@@ -52,13 +52,12 @@ func (imp OCFL) NewReadInventory(raw []byte) (ocfl.ReadInventory, error) {
 	return inv.Inventory(), nil
 }
 
-func (imp OCFL) NewReadObject(ctx context.Context, fsys ocfl.FS, path string, inv ocfl.ReadInventory) (ocfl.ReadObject, error) {
-	obj, err := NewReadObject(ctx, fsys, path)
-	if err != nil {
-		return nil, err
+func (imp OCFL) NewReadObject(fsys ocfl.FS, path string, inv ocfl.ReadInventory) ocfl.ReadObject {
+	concreteInv, ok := inv.(*readInventory)
+	if !ok {
+		panic("inventory has wrong type")
 	}
-	// TODO: check obj spec?
-	return obj, nil
+	return &ReadObject{fs: fsys, path: path, inv: &concreteInv.raw}
 }
 
 // Commits creates or updates an object by adding a new object version based

@@ -7,19 +7,20 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/charmbracelet/log"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
-var (
-	objPath string
-	logger  = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-)
+var objPath string
 
 func main() {
 	ctx := context.Background()
 	ocflv1.Enable() // setup ocflv1
 	flag.Parse()
+	handl := log.New(os.Stderr)
+	handl.SetLevel(log.WarnLevel)
+	logger := slog.New(handl)
 	objPath = flag.Arg(0)
 	if objPath == "" {
 		logger.Error("missing required object root path argument")
@@ -34,6 +35,7 @@ func validateObject(ctx context.Context, root string, logger *slog.Logger) error
 	fsys := ocfl.NewFS(os.DirFS(root))
 	obj, err := ocfl.NewObject(ctx, fsys, ".")
 	if err != nil {
+		logger.Error(err.Error())
 		return err
 	}
 	result := obj.Validate(ctx, ocfl.ValidationLogger(logger))

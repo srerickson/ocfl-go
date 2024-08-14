@@ -172,7 +172,7 @@ func testOpenObject(t *testing.T) {
 			ctx:  ctx,
 			fs:   fsys,
 			path: "1.1/bad-objects/E003_E063_empty",
-			opts: []ocfl.ObjectOption{ocfl.ObjectUseOCFL(ocfl.MustGetOCFL(ocfl.Spec1_1))},
+			opts: []ocfl.ObjectOption{},
 			expect: func(t *testing.T, _ *ocfl.Object, err error) {
 				be.Nonzero(t, err)
 			},

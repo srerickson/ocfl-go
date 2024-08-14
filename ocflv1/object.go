@@ -30,35 +30,6 @@ type ReadObject struct {
 	inv  *Inventory
 }
 
-func NewReadObject(ctx context.Context, fsys ocfl.FS, dir string) (obj *ReadObject, err error) {
-	if !fs.ValidPath(dir) {
-		return nil, &fs.PathError{
-			Op:   "open",
-			Path: dir,
-			Err:  fs.ErrInvalid,
-		}
-	}
-	f, err := fsys.OpenFile(ctx, path.Join(dir, inventoryFile))
-	if err != nil {
-		return
-	}
-	defer func() {
-		if closeErr := f.Close(); closeErr != nil {
-			err = errors.Join(err, f.Close())
-		}
-	}()
-	byts, err := io.ReadAll(f)
-	if err != nil {
-		return
-	}
-	inv, err := NewInventory(byts)
-	if err != nil {
-		return nil, err
-	}
-	obj = &ReadObject{fs: fsys, path: dir, inv: inv}
-	return
-}
-
 func (o *ReadObject) FS() ocfl.FS { return o.fs }
 
 func (o *ReadObject) Inventory() ocfl.ReadInventory {
@@ -192,7 +163,7 @@ func (o *ReadObject) validateExtensionsDir(ctx context.Context, vldr *ocfl.Objec
 	var fatal, warn []error
 	for _, i := range items {
 		if !i.IsDir() {
-			err := fmt.Errorf(`unexpected file: %s`, i.Name())
+			err := fmt.Errorf(`extensions directory has invalid file: %s`, i.Name())
 			fatal = append(fatal, ec(err, codes.E067(ocflV)))
 			continue
 		}

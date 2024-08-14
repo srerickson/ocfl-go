@@ -26,8 +26,8 @@ const (
 	// named "extensions"
 	HasExtensions
 
-	inventoryFile    = "inventory.json"
-	sidecarPrefix    = inventoryFile + "."
+	inventoryBase    = "inventory.json"
+	sidecarPrefix    = inventoryBase + "."
 	objectDeclPrefix = "0=" + NamasteTypeObject
 
 	maxObjectRootStateInvalid = 8
@@ -118,7 +118,7 @@ func (obj ObjectRoot) ExtensionNames(ctx context.Context) ([]string, error) {
 // `v1` to unmarshall the object's v1 inventory. Set dir to `.` to unmarshal the
 // root inventory.
 func (obj ObjectRoot) UnmarshalInventory(ctx context.Context, dir string, v any) (err error) {
-	name := inventoryFile
+	name := inventoryBase
 	if dir != `.` {
 		name = dir + "/" + name
 	}
@@ -244,7 +244,7 @@ func ParseObjectRootDir(entries []fs.DirEntry) *ObjectRootState {
 			}
 		case validFileType(e.Type()):
 			switch {
-			case name == inventoryFile:
+			case name == inventoryBase:
 				state.Flags |= HasInventory
 			case strings.HasPrefix(name, sidecarPrefix):
 				if state.HasSidecar() {

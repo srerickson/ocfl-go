@@ -2,10 +2,12 @@ package ocfl
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -64,19 +66,46 @@ func ReadSidecarDigest(ctx context.Context, fsys FS, name string) (digest string
 	return
 }
 
-// func UnmarshalInventory(ctx context.Context, fsys FS, name string, inv ReadInventory) (err error) {
-// 	f, err := fsys.OpenFile(ctx, name)
-// 	if err != nil {
-// 		return
-// 	}
-// 	defer func() {
-// 		if closeErr := f.Close(); closeErr != nil {
-// 			err = errors.Join(err, closeErr)
-// 		}
-// 	}()
-// 	raw, err := io.ReadAll(f)
-// 	if err != nil {
-
-// 	}
-
-// }
+func readInventory(ctx context.Context, ocfls *OCLFRegister, fsys FS, name string) (ReadInventory, error) {
+	f, err := fsys.OpenFile(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	raw, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	invFields := struct {
+		Type InvType `json:"type"`
+	}{}
+	if err = json.Unmarshal(raw, &invFields); err != nil {
+		return nil, err
+	}
+	invOCFL, err := ocfls.Get(invFields.Type.Spec)
+	if err != nil {
+		return nil, err
+	}
+	inv, err := invOCFL.NewReadInventory(raw)
+	if err != nil {
+		return nil, err
+	}
+	expSum, err := ReadSidecarDigest(ctx, fsys, name+"."+inv.DigestAlgorithm())
+	if err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(expSum, inv.Digest()) {
+		err := &DigestError{
+			Name:     name,
+			Alg:      inv.DigestAlgorithm(),
+			Got:      inv.Digest(),
+			Expected: expSum,
+		}
+		return nil, err
+	}
+	return inv, nil
+}

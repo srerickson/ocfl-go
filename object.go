@@ -2,7 +2,6 @@ package ocfl
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,51 +26,52 @@ type ObjectOption func(*Object)
 // 	}
 // }
 
-func ObjectUseOCFL(ocfl OCFL) ObjectOption {
-	return func(opt *Object) {
-		opt.ocfl = ocfl
-	}
-}
+// func ObjectUseOCFL(ocfl OCFL) ObjectOption {
+// 	return func(opt *Object) {
+// 		opt.ocfl = ocfl
+// 	}
+// }
 
 // NewObject returns an *Object reference for managing the OCFL object at
 // path in fsys. The object doesn't need to exist when NewObject is called.
-func NewObject(ctx context.Context, fsys FS, path string, opts ...ObjectOption) (*Object, error) {
-	if !fs.ValidPath(path) {
-		return nil, fmt.Errorf("invalid object path: %q: %w", path, fs.ErrInvalid)
+func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (*Object, error) {
+	if !fs.ValidPath(dir) {
+		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
 	}
 	obj := &Object{}
 	for _, optFn := range opts {
 		optFn(obj)
 	}
-	if obj.ocfl == nil {
-		// check for object declaration in object root
-		entries, err := fsys.ReadDir(ctx, path)
-		if err != nil {
-			if !errors.Is(err, fs.ErrNotExist) {
-				return nil, fmt.Errorf("reading object root contents: %w", err)
-			}
-		}
-		rootState := ParseObjectRootDir(entries)
-		switch {
-		case rootState.Empty():
-			// open as new/uninitialized object w/o an OCFL spec.
-			obj.reader = &uninitializedObject{fs: fsys, path: path}
-			return obj, nil
-		case rootState.HasNamaste():
-			obj.ocfl, err = obj.globals.GetSpec(rootState.Spec)
-			if err != nil {
-				return nil, fmt.Errorf("with OCFL spec found in object root %q: %w", rootState.Spec, err)
-			}
-		default:
-			return nil, fmt.Errorf("directory is not an OCFL object: %w", ErrObjectNamasteNotExist)
-		}
-	}
-	var err error
-	obj.reader, err = obj.ocfl.NewReadObject(ctx, fsys, path, nil)
+	inv, err := readInventory(ctx, obj.ocfls(), fsys, path.Join(dir, inventoryBase))
 	if err != nil {
-		return nil, err
+		var pthError *fs.PathError
+		if !errors.As(err, &pthError) || path.Base(pthError.Path) != inventoryBase {
+			return nil, err
+		}
 	}
-	return obj, nil
+	if inv != nil {
+		obj.ocfl = obj.ocfls().MustGet(inv.Spec())
+		obj.reader = obj.ocfl.NewReadObject(fsys, dir, inv)
+		return obj, nil
+	}
+	// if inventory.json doesn't exist, try to open as uninitialized object
+	entries, err := fsys.ReadDir(ctx, dir)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("reading object root contents: %w", err)
+		}
+	}
+	rootState := ParseObjectRootDir(entries)
+	switch {
+	case rootState.Empty():
+		// open as new/uninitialized object w/o an OCFL spec.
+		obj.reader = &uninitializedObject{fs: fsys, path: dir}
+		return obj, nil
+	case rootState.HasNamaste():
+		return nil, fmt.Errorf("incomplete OCFL object: %s: %w", inventoryBase, fs.ErrNotExist)
+	default:
+		return nil, fmt.Errorf("directory is not an OCFL object: %w", ErrObjectNamasteNotExist)
+	}
 }
 
 func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
@@ -418,35 +418,20 @@ func (o *uninitializedObject) VersionFS(ctx context.Context, v int) fs.FS { retu
 // 	return obj.FS().ReadDir(ctx, name)
 // }
 
+func (obj *Object) ocfls() *OCLFRegister {
+	ocfls := obj.globals.OCFLs
+	if ocfls == nil {
+		ocfls = &defaultOCFLs
+	}
+	return ocfls
+}
+
 func (obj *Object) readInventory(ctx context.Context, dir string) (inv ReadInventory, invOCFL OCFL, err error) {
-	fsys := obj.FS()
-	if obj.FS() == nil {
-		err = errors.New("object was not initialized or does not exist")
-		return
-	}
-	f, err := fsys.OpenFile(ctx, path.Join(obj.Path(), dir, inventoryFile))
+	ocfls := obj.ocfls()
+	inv, err = readInventory(ctx, obj.ocfls(), obj.FS(), path.Join(obj.Path(), dir, inventoryBase))
 	if err != nil {
 		return
 	}
-	defer func() {
-		if closeErr := f.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-	}()
-	raw, err := io.ReadAll(f)
-	if err != nil {
-		return
-	}
-	invFields := struct {
-		Type InvType `json:"type"`
-	}{}
-	if err = json.Unmarshal(raw, &invFields); err != nil {
-		return
-	}
-	invOCFL, err = obj.globals.GetSpec(invFields.Type.Spec)
-	if err != nil {
-		return
-	}
-	inv, err = invOCFL.NewReadInventory(raw)
+	invOCFL = ocfls.MustGet(inv.Spec())
 	return
 }
