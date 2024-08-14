@@ -46,7 +46,7 @@ func (imp OCFL) NewReadInventory(raw []byte) (ocfl.ReadInventory, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := inv.Validate(nil); err != nil {
+	if err := inv.Validate(); err != nil {
 		return nil, err
 	}
 	return inv.Inventory(), nil
@@ -209,7 +209,7 @@ func (imp OCFL) validateVersionInventory(ctx context.Context, obj ocfl.ReadObjec
 		err := fmt.Errorf("%s/inventor.json is not the same as the root inventory: digests don't match", dirNum)
 		vldr.AddFatal(ec(err, codes.E064(vSpec)))
 	}
-	validateInventorySidecar(ctx, obj, dirNum.String(), inv, vldr)
+	validateInventory(ctx, obj, dirNum.String(), inv, vldr)
 	if inv.ID() != rootInv.ID() {
 		err := fmt.Errorf("%s/inventory.json: 'id' doesn't match value in root inventory", dirNum)
 		vldr.AddFatal(ec(err, codes.E037(vSpec)))

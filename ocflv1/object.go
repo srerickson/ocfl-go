@@ -123,7 +123,7 @@ func (o *ReadObject) ValidateRoot(ctx context.Context, state *ocfl.ObjectRootSta
 	if err := o.inv.Validate(&vldr.Validation); err != nil {
 		return err
 	}
-	if err := validateInventorySidecar(ctx, o, "", o.Inventory(), vldr); err != nil {
+	if err := validateInventory(ctx, o, "", o.Inventory(), vldr); err != nil {
 		return err
 	}
 	if err := o.validateExtensionsDir(ctx, vldr); err != nil {
@@ -409,7 +409,7 @@ func (dir *vfsDirFile) Stat() (fs.FileInfo, error) { return dir, nil }
 func (dir *vfsDirFile) Sys() any                   { return nil }
 
 // validate root inventory and sidecar file
-func validateInventorySidecar(ctx context.Context, o ocfl.ReadObject, dir string, inv ocfl.ReadInventory, objVld *ocfl.ObjectValidation) error {
+func validateInventory(ctx context.Context, o ocfl.ReadObject, dir string, inv ocfl.ReadInventory, objVld *ocfl.ObjectValidation) error {
 	ocflV := inv.Spec()
 	invPath := path.Join(dir, inventoryFile)
 	sidecar := path.Join(o.Path(), invPath+"."+inv.DigestAlgorithm())
@@ -430,6 +430,9 @@ func validateInventorySidecar(ctx context.Context, o ocfl.ReadObject, dir string
 		shortExp := expSum[:6]
 		err := fmt.Errorf("%s digest (%s) doen't match expected value in sidecar (%s)", invPath, shortSum, shortExp)
 		objVld.AddFatal(ec(err, codes.E060(ocflV)))
+		return err
+	}
+	if err := inv.Validate(&objVld.Validation); err != nil {
 		return err
 	}
 	return nil

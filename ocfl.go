@@ -191,6 +191,10 @@ type ReadInventory interface {
 	ID() string
 	Manifest() DigestMap
 	Spec() Spec
+	// Validate validates the internal structure of the inventory, adding
+	// errors and warnings to zero or more validations. The returned
+	// error wraps all fatal errors encountered.
+	Validate(...*Validation) error
 	Version(int) ObjectVersion
 }
 

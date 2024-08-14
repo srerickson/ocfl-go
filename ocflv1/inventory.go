@@ -163,9 +163,10 @@ func (inv Inventory) Inventory() ocfl.ReadInventory {
 	return &readInventory{raw: inv}
 }
 
-// Validate validates the inventory. It only checks the inventory's structure
-// and internal consistency.
-func (inv *Inventory) Validate(vld *ocfl.Validation) error {
+// Validate checks the inventory's structure and internal consistency. Errors
+// and warnings are added to any validations. The returned error wraps all fatal
+// errors.
+func (inv *Inventory) Validate(validations ...*ocfl.Validation) error {
 	var fatal, warn []error
 	if inv.Type.Empty() {
 		err := errors.New("missing required field: 'type'")
@@ -185,11 +186,11 @@ func (inv *Inventory) Validate(vld *ocfl.Validation) error {
 		fatal = append(fatal, ec(err, codes.E041(ocflV)))
 	}
 	if inv.Versions == nil {
-		err := errors.New("missing required field 'versions'")
+		err := errors.New("missing required field: 'versions'")
 		fatal = append(fatal, ec(err, codes.E041(ocflV)))
 	}
 	if u, err := url.ParseRequestURI(inv.ID); err != nil || u.Scheme == "" {
-		err := fmt.Errorf(`object ID is not a URI: %s`, inv.ID)
+		err := fmt.Errorf(`object ID is not a URI: %q`, inv.ID)
 		warn = append(warn, ec(err, codes.W005(ocflV)))
 	}
 	switch inv.DigestAlgorithm {
@@ -337,7 +338,7 @@ func (inv *Inventory) Validate(vld *ocfl.Validation) error {
 		}
 	}
 	// add the version to the validation
-	if vld != nil {
+	for _, vld := range validations {
 		vld.AddFatal(fatal...)
 		vld.AddWarn(warn...)
 	}
@@ -618,7 +619,7 @@ func buildInventory(prev ocfl.ReadInventory, commit *ocfl.Commit) (*Inventory, e
 		}
 	}
 	// check that resulting inventory is valid
-	if err := newInv.Validate(nil); err != nil {
+	if err := newInv.Validate(); err != nil {
 		return nil, fmt.Errorf("generated inventory is not valid: %w", err)
 	}
 	return newInv, nil
@@ -653,6 +654,8 @@ func (inv *readInventory) ID() string { return inv.raw.ID }
 func (inv *readInventory) Manifest() ocfl.DigestMap { return inv.raw.Manifest }
 
 func (inv *readInventory) Spec() ocfl.Spec { return inv.raw.Type.Spec }
+
+func (inv *readInventory) Validate(vs ...*ocfl.Validation) error { return inv.raw.Validate(vs...) }
 
 func (inv *readInventory) Version(i int) ocfl.ObjectVersion {
 	v := inv.raw.Version(i)
