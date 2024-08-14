@@ -321,50 +321,6 @@ func (inv *Inventory) Validate(validations ...*ocfl.Validation) error {
 	return multierror.Append(nil, fatal...).ErrorOrNil()
 }
 
-// ValidateInventory fully validates an inventory at path name in fsys.
-func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, result *ocfl.Validation) (inv *Inventory, err error) {
-	f, err := fsys.OpenFile(ctx, name)
-	if err != nil {
-		result.AddFatal(err)
-		return
-	}
-	defer func() {
-		if closeErr := f.Close(); closeErr != nil {
-			result.AddFatal(closeErr)
-			err = errors.Join(err, closeErr)
-		}
-	}()
-	byts, err := io.ReadAll(f)
-	if err != nil {
-		result.AddFatal(err)
-		return
-	}
-	inv, err = ValidateInventoryBytes(byts, result)
-	if err != nil {
-		return
-	}
-	ocflV := inv.Type.Spec
-	side := name + "." + inv.DigestAlgorithm
-	expSum, err := ocfl.ReadSidecarDigest(ctx, fsys, side)
-	if err != nil {
-		inv = nil
-		if errors.Is(err, ocfl.ErrInventorySidecarContents) {
-			result.AddFatal(ec(err, codes.E061(ocflV)))
-			return
-		}
-		result.AddFatal(ec(err, codes.E058(ocflV)))
-		return
-	}
-	if !strings.EqualFold(inv.jsonDigest, expSum) {
-		inv = nil
-		shortSum := inv.jsonDigest[:6]
-		shortExp := expSum[:6]
-		err = fmt.Errorf("inventory's checksum (%s) doen't match expected value in sidecar (%s): %s", shortSum, shortExp, name)
-		result.AddFatal(ec(err, codes.E060(ocflV)))
-	}
-	return
-}
-
 func ValidateInventoryBytes(raw []byte, vld *ocfl.Validation) (*Inventory, error) {
 	inv, err := NewInventory(raw)
 	if err != nil {
@@ -379,8 +335,8 @@ func ValidateInventoryBytes(raw []byte, vld *ocfl.Validation) (*Inventory, error
 
 // NewInventory reads the inventory and sets its digest value using
 // the digest algorithm
-func NewInventory(byt []byte) (*Inventory, error) {
-	dec := json.NewDecoder(bytes.NewReader(byt))
+func NewInventory(byts []byte) (*Inventory, error) {
+	dec := json.NewDecoder(bytes.NewReader(byts))
 	dec.DisallowUnknownFields()
 	var inv Inventory
 	if err := dec.Decode(&inv); err != nil {
@@ -390,7 +346,7 @@ func NewInventory(byt []byte) (*Inventory, error) {
 	if digester == nil {
 		return nil, fmt.Errorf("%w: %q", ocfl.ErrUnknownAlg, inv.DigestAlgorithm)
 	}
-	if _, err := io.Copy(digester, bytes.NewReader(byt)); err != nil {
+	if _, err := io.Copy(digester, bytes.NewReader(byts)); err != nil {
 		return nil, err
 	}
 	inv.jsonDigest = digester.String()
@@ -583,8 +539,6 @@ func buildInventory(prev ocfl.ReadInventory, commit *ocfl.Commit) (*Inventory, e
 type readInventory struct {
 	raw Inventory
 }
-
-func (inv *readInventory) UnmarshalJSON(b []byte) error { return json.Unmarshal(b, &inv.raw) }
 
 func (inv *readInventory) MarshalJSON() ([]byte, error) { return json.Marshal(inv.raw) }
 
