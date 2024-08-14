@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 const (
@@ -180,33 +179,4 @@ type ReadObject interface {
 	// VersionFS returns an io/fs.FS for accessing the logical contents of the
 	// object version state with the index v.
 	VersionFS(ctx context.Context, v int) fs.FS
-}
-
-type ReadInventory interface {
-	FixitySource
-	ContentDirectory() string
-	Digest() string
-	DigestAlgorithm() string
-	Head() VNum
-	ID() string
-	Manifest() DigestMap
-	Spec() Spec
-	// Validate validates the internal structure of the inventory, adding
-	// errors and warnings to zero or more validations. The returned
-	// error wraps all fatal errors encountered.
-	Validate(...*Validation) error
-	Version(int) ObjectVersion
-}
-
-type ObjectVersion interface {
-	State() DigestMap
-	User() *User
-	Message() string
-	Created() time.Time
-}
-
-// User is a generic user information struct
-type User struct {
-	Name    string `json:"name"`
-	Address string `json:"address,omitempty"`
 }

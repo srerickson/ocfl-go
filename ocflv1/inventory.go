@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/url"
 	"path"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -22,8 +21,7 @@ import (
 )
 
 var (
-	invSidecarContentsRexp = regexp.MustCompile(`^([a-fA-F0-9]+)\s+inventory\.json[\n]?$`)
-	ErrVersionNotFound     = errors.New("version not found in inventory")
+	ErrVersionNotFound = errors.New("version not found in inventory")
 )
 
 // Inventory represents raw contents of an OCFL v1.x inventory.json file
@@ -47,28 +45,6 @@ type Version struct {
 	State   ocfl.DigestMap `json:"state"`
 	Message string         `json:"message,omitempty"`
 	User    *ocfl.User     `json:"user,omitempty"`
-}
-
-// UnmarshalJSON decodes the inventory and sets inv's
-// digest value for the bytes b.
-func (inv *Inventory) UnmarshalJSON(b []byte) error {
-	type invAlias Inventory
-	var alias invAlias
-	if err := json.Unmarshal(b, &alias); err != nil {
-		return err
-	}
-	// digest json bytes
-	if d := ocfl.NewDigester(alias.DigestAlgorithm); d != nil {
-		if _, err := io.Copy(d, bytes.NewReader(b)); err != nil {
-			return err
-		}
-		alias.jsonDigest = d.String()
-	}
-	*inv = Inventory(alias)
-	if inv.ContentDirectory == "" {
-		inv.ContentDirectory = contentDir
-	}
-	return nil
 }
 
 func (inv *Inventory) MarshalJSON() ([]byte, error) {
@@ -369,10 +345,10 @@ func ValidateInventory(ctx context.Context, fsys ocfl.FS, name string, result *o
 	}
 	ocflV := inv.Type.Spec
 	side := name + "." + inv.DigestAlgorithm
-	expSum, err := readInventorySidecar(ctx, fsys, side)
+	expSum, err := ocfl.ReadSidecarDigest(ctx, fsys, side)
 	if err != nil {
 		inv = nil
-		if errors.Is(err, ErrInvSidecarContents) {
+		if errors.Is(err, ocfl.ErrInventorySidecarContents) {
 			result.AddFatal(ec(err, codes.E061(ocflV)))
 			return
 		}
@@ -447,28 +423,6 @@ func writeInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs
 		}
 	}
 	return nil
-}
-
-// readInventorySidecar parses the contents of file as an inventory sidecar, returning
-// the stored digest on succecss. An error is returned if the sidecar is not in the expected
-// format
-func readInventorySidecar(ctx context.Context, fsys ocfl.FS, name string) (digest string, err error) {
-	file, err := fsys.OpenFile(ctx, name)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-	cont, err := io.ReadAll(file)
-	if err != nil {
-		return
-	}
-	matches := invSidecarContentsRexp.FindSubmatch(cont)
-	if len(matches) != 2 {
-		err = fmt.Errorf("reading %s: %w", name, ErrInvSidecarContents)
-		return
-	}
-	digest = string(matches[1])
-	return
 }
 
 // NextInventory ...
@@ -655,7 +609,16 @@ func (inv *readInventory) Manifest() ocfl.DigestMap { return inv.raw.Manifest }
 
 func (inv *readInventory) Spec() ocfl.Spec { return inv.raw.Type.Spec }
 
-func (inv *readInventory) Validate(vs ...*ocfl.Validation) error { return inv.raw.Validate(vs...) }
+func (inv *readInventory) Validate(vs ...*ocfl.Validation) error {
+	if inv.raw.jsonDigest == "" {
+		err := errors.New("inventory was not initialized correctly: missing file digest value")
+		for _, v := range vs {
+			v.AddFatal(err)
+		}
+		return err
+	}
+	return inv.raw.Validate(vs...)
+}
 
 func (inv *readInventory) Version(i int) ocfl.ObjectVersion {
 	v := inv.raw.Version(i)

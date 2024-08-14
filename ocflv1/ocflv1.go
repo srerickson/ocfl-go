@@ -164,6 +164,10 @@ func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum
 	}
 	if inv != nil {
 		imp.validateVersionInventory(ctx, obj, dirNum, inv, vldr)
+		if prev != nil && inv.Spec().Cmp(prev.Spec()) < 0 {
+			err := fmt.Errorf("%s/inventory.json uses an older OCFL specification than than the previous version", dirNum)
+			vldr.AddFatal(ec(err, codes.E103(vSpec)))
+		}
 	}
 	for _, d := range info.dirs {
 		// directory SHOULD only be content directory
@@ -209,7 +213,9 @@ func (imp OCFL) validateVersionInventory(ctx context.Context, obj ocfl.ReadObjec
 		err := fmt.Errorf("%s/inventor.json is not the same as the root inventory: digests don't match", dirNum)
 		vldr.AddFatal(ec(err, codes.E064(vSpec)))
 	}
-	validateInventory(ctx, obj, dirNum.String(), inv, vldr)
+	if err := validateInventorySidecar(ctx, obj, dirNum.String(), inv, &vldr.Validation); err != nil {
+		return
+	}
 	if inv.ID() != rootInv.ID() {
 		err := fmt.Errorf("%s/inventory.json: 'id' doesn't match value in root inventory", dirNum)
 		vldr.AddFatal(ec(err, codes.E037(vSpec)))
