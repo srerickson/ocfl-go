@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/extension"
 	"github.com/srerickson/ocfl-go/ocflv1/codes"
@@ -39,17 +38,16 @@ func (o *ReadObject) Inventory() ocfl.ReadInventory {
 	return &readInventory{raw: *o.inv}
 }
 
-func (o *ReadObject) ValidateContent(ctx context.Context, v *ocfl.ObjectValidation) error {
-	errs := []error{}
+func (o *ReadObject) ValidateContent(ctx context.Context, v *ocfl.ObjectValidation) {
 	ocflV := o.inv.Type.Spec
 	v.MissingContent()(func(name string) bool {
 		err := fmt.Errorf("missing content: %s", name)
-		errs = append(errs, ec(err, codes.E092(ocflV)))
+		v.AddFatal(ec(err, codes.E092(ocflV)))
 		return true
 	})
 	v.UnexpectedContent()(func(name string) bool {
 		err := fmt.Errorf("unexpected content: %s", name)
-		errs = append(errs, ec(err, codes.E023(ocflV)))
+		v.AddFatal(ec(err, codes.E023(ocflV)))
 		return true
 	})
 	if !v.SkipDigests() {
@@ -58,45 +56,49 @@ func (o *ReadObject) ValidateContent(ctx context.Context, v *ocfl.ObjectValidati
 			f, err := o.fs.OpenFile(ctx, path.Join(o.path, name))
 			if err != nil {
 				err = fmt.Errorf("unexpected error while validating digests: %w", err)
-				errs = append(errs, err)
+				v.AddFatal(err)
 				return true
 			}
 			defer func() {
 				if closeErr := f.Close(); closeErr != nil {
-					errs = append(errs, closeErr)
+					v.AddFatal(closeErr)
 				}
 			}()
 			if err := digests.Validate(f); err != nil {
 				err = fmt.Errorf("validating digests for %q: %w", name, err)
-				errs = append(errs, ec(err, codes.E093(ocflV)))
+				v.AddFatal(ec(err, codes.E093(ocflV)))
 			}
 			return true
 		})
 	}
-	if len(errs) > 0 {
-		v.AddFatal(errs...)
-		return &multierror.Error{Errors: errs}
-	}
-	return nil
 }
 
-func (o *ReadObject) ValidateRoot(ctx context.Context, state *ocfl.ObjectRootState, vldr *ocfl.ObjectValidation) error {
-	ocflV := o.inv.Type.Spec
-	var fatal, warn []error
+func (o *ReadObject) ValidateRoot(ctx context.Context, state *ocfl.ObjectRootState, vldr *ocfl.ObjectValidation) {
 	if err := o.validateDeclaration(ctx); err != nil {
-		fatal = append(fatal, err)
+		vldr.AddFatal(err)
 	}
+	vldr.PrefixAdd("root contents", o.validateRootState(state))
+	vldr.PrefixAdd("inventory.json", o.inv.Validate())
+	vldr.PrefixAdd("extensions directory", o.validateExtensionsDir(ctx))
+	if err := vldr.AddInventoryDigests(o.Inventory()); err != nil {
+		vldr.AddFatal(err)
+	}
+}
+
+func (o ReadObject) validateRootState(state *ocfl.ObjectRootState) *ocfl.Validation {
+	ocflV := o.inv.Type.Spec
+	v := &ocfl.Validation{}
 	for _, name := range state.Invalid {
 		err := fmt.Errorf(`%w: %s`, ErrObjRootStructure, name)
-		fatal = append(fatal, ec(err, codes.E001(ocflV)))
+		v.AddFatal(ec(err, codes.E001(ocflV)))
 	}
 	if !state.HasInventory() {
 		err := fmt.Errorf(`root inventory.json: %w`, fs.ErrNotExist)
-		fatal = append(fatal, ec(err, codes.E063(ocflV)))
+		v.AddFatal(ec(err, codes.E063(ocflV)))
 	}
 	if !state.HasSidecar() {
 		err := fmt.Errorf(`root inventory.json sidecar: %w`, fs.ErrNotExist)
-		fatal = append(fatal, ec(err, codes.E058(ocflV)))
+		v.AddFatal(ec(err, codes.E058(ocflV)))
 	}
 	err := state.VersionDirs.Valid()
 	if err != nil {
@@ -107,32 +109,17 @@ func (o *ReadObject) ValidateRoot(ctx context.Context, state *ocfl.ObjectRootSta
 		} else if errors.Is(err, ocfl.ErrVNumMissing) {
 			err = ec(err, codes.E010(ocflV))
 		}
-		fatal = append(fatal, err)
+		v.AddFatal(err)
 	}
 	if err == nil && state.VersionDirs.Padding() > 0 {
 		err := errors.New("version directory names are zero-padded")
-		warn = append(warn, ec(err, codes.W001(ocflV)))
+		v.AddWarn(ec(err, codes.W001(ocflV)))
 	}
 	if vdirHead := state.VersionDirs.Head().Num(); vdirHead > o.inv.Head.Num() {
-		err := errors.New("roo")
-		fatal = append(fatal, ec(err, codes.E046(ocflV)))
+		err := errors.New("version directories don't reflect versions in inventory.json")
+		v.AddFatal(ec(err, codes.E046(ocflV)))
 	}
-	if err := vldr.AddInventoryDigests(o.Inventory()); err != nil {
-		fatal = append(fatal, err)
-	}
-	vldr.AddFatal(fatal...)
-	vldr.AddWarn(warn...)
-	// the following validation add errors to the validation object
-	if err := o.inv.Validate(&vldr.Validation); err != nil {
-		fatal = append(fatal, err)
-	}
-	if err := validateInventorySidecar(ctx, o, "", o.Inventory(), &vldr.Validation); err != nil {
-		fatal = append(fatal, err)
-	}
-	if err := o.validateExtensionsDir(ctx, vldr); err != nil {
-		fatal = append(fatal, err)
-	}
-	return multierror.Append(nil, fatal...).ErrorOrNil()
+	return v
 }
 
 func (o *ReadObject) validateDeclaration(ctx context.Context) error {
@@ -149,34 +136,32 @@ func (o *ReadObject) validateDeclaration(ctx context.Context) error {
 	return nil
 }
 
-func (o *ReadObject) validateExtensionsDir(ctx context.Context, vldr *ocfl.ObjectValidation) error {
+func (o *ReadObject) validateExtensionsDir(ctx context.Context) *ocfl.Validation {
 	ocflV := o.inv.Type.Spec
+	v := &ocfl.Validation{}
 	extDir := path.Join(o.path, extensionsDir)
 	items, err := o.fs.ReadDir(ctx, extDir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
-		vldr.AddFatal(err)
-		return err
+		v.AddFatal(err)
+		return v
 	}
-	var fatal, warn []error
 	for _, i := range items {
 		if !i.IsDir() {
-			err := fmt.Errorf(`extensions directory has invalid file: %s`, i.Name())
-			fatal = append(fatal, ec(err, codes.E067(ocflV)))
+			err := fmt.Errorf(`invalid file: %s`, i.Name())
+			v.AddFatal(ec(err, codes.E067(ocflV)))
 			continue
 		}
 		_, err := extension.Get(i.Name())
 		if err != nil {
 			// unknow extension
 			err := fmt.Errorf("%w: %s", err, i.Name())
-			warn = append(warn, ec(err, codes.W013(ocflV)))
+			v.AddWarn(ec(err, codes.W013(ocflV)))
 		}
 	}
-	vldr.AddFatal(fatal...)
-	vldr.AddWarn(warn...)
-	return multierror.Append(nil, fatal...).ErrorOrNil()
+	return v
 }
 
 func (o *ReadObject) VersionFS(ctx context.Context, i int) fs.FS {
@@ -373,36 +358,3 @@ func (dir *vfsDirFile) Read(_ []byte) (int, error) { return 0, nil }
 func (dir *vfsDirFile) Size() int64                { return 0 }
 func (dir *vfsDirFile) Stat() (fs.FileInfo, error) { return dir, nil }
 func (dir *vfsDirFile) Sys() any                   { return nil }
-
-// validate root inventory and sidecar file
-func validateInventorySidecar(ctx context.Context, o ocfl.ReadObject, dir string, inv ocfl.ReadInventory, v *ocfl.Validation) error {
-	ocflV := inv.Spec()
-	invPath := path.Join(dir, inventoryFile)
-	sidecar := path.Join(o.Path(), invPath+"."+inv.DigestAlgorithm())
-	expSum, err := ocfl.ReadSidecarDigest(ctx, o.FS(), sidecar)
-	if err != nil {
-		switch {
-		case errors.Is(err, ocfl.ErrInventorySidecarContents):
-			v.AddFatal(ec(err, codes.E061(ocflV)))
-		case errors.Is(err, fs.ErrNotExist):
-			v.AddFatal(ec(err, codes.E058(ocflV)))
-		default:
-			v.AddFatal(err)
-		}
-		return err
-	}
-	if !strings.EqualFold(inv.Digest(), expSum) {
-		err := ocfl.DigestError{
-			Name:     invPath,
-			Alg:      inv.DigestAlgorithm(),
-			Got:      inv.Digest(),
-			Expected: expSum,
-		}
-		v.AddFatal(ec(err, codes.E060(ocflV)))
-		return err
-	}
-	if err := inv.Validate(v); err != nil {
-		return err
-	}
-	return nil
-}

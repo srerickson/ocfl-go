@@ -175,7 +175,7 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 	return vfs, nil
 }
 
-func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) (v *ObjectValidation) {
+func (obj *Object) Validate(ctx context.Context, opts ...ObjectValidationOption) (v *ObjectValidation) {
 	v = NewObjectValidation(opts...)
 	objPath := obj.Path()
 	objFS := obj.FS()
@@ -191,8 +191,9 @@ func (obj *Object) Validate(ctx context.Context, opts ...ValidationOption) (v *O
 		return
 	}
 	rootState := ParseObjectRootDir(entries)
-	// confirm that the object root has all necessary files and directories
-	if err := obj.reader.ValidateRoot(ctx, rootState, v); err != nil {
+	obj.reader.ValidateRoot(ctx, rootState, v)
+	if v.Err() != nil {
+		// don't continue if object is invalid
 		return
 	}
 	// validate versions using previous specs
@@ -334,17 +335,14 @@ func (o *uninitializedObject) Inventory() ReadInventory { return nil }
 // Path returns the object's path relative to its FS()
 func (o *uninitializedObject) Path() string { return o.path }
 
-func (o *uninitializedObject) ValidateRoot(_ context.Context, _ *ObjectRootState, v *ObjectValidation) error {
+func (o *uninitializedObject) ValidateRoot(_ context.Context, _ *ObjectRootState, v *ObjectValidation) {
 	err := fmt.Errorf("empty or missing path: %s: %w", o.path, ErrNamasteNotExist)
 	if v != nil {
 		v.AddFatal(err)
 	}
-	return err
 }
 
-func (o *uninitializedObject) ValidateContent(_ context.Context, v *ObjectValidation) error {
-	return nil
-}
+func (o *uninitializedObject) ValidateContent(_ context.Context, v *ObjectValidation) {}
 
 // VersionFS returns a value that implements an io/fs.FS for
 // accessing the logical contents of the object version state

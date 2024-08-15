@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/carlmjohnson/be"
-	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
@@ -582,8 +581,8 @@ var testInventories = []testInventory{
 func TestValidateInventory(t *testing.T) {
 	for _, test := range testInventories {
 		t.Run(test.description, func(t *testing.T) {
-			vldr := ocfl.NewObjectValidation()
-			_, err := ocflv1.ValidateInventoryBytes([]byte(test.data), &vldr.Validation)
+			_, vldr := ocflv1.ValidateInventoryBytes([]byte(test.data))
+			err := vldr.Err()
 			if test.valid {
 				be.NilErr(t, err)
 			} else {

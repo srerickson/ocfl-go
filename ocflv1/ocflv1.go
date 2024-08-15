@@ -46,7 +46,7 @@ func (imp OCFL) NewReadInventory(raw []byte) (ocfl.ReadInventory, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := inv.Validate(); err != nil {
+	if err := inv.Validate().Err(); err != nil {
 		return nil, err
 	}
 	return inv.Inventory(), nil
@@ -162,7 +162,7 @@ func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum
 		vldr.AddWarn(ec(err, codes.W010(vSpec)))
 	}
 	if inv != nil {
-		imp.validateVersionInventory(ctx, obj, dirNum, inv, vldr)
+		imp.validateVersionInventory(obj, dirNum, inv, vldr)
 		if prev != nil && inv.Spec().Cmp(prev.Spec()) < 0 {
 			err := fmt.Errorf("%s/inventory.json uses an older OCFL specification than than the previous version", dirNum)
 			vldr.AddFatal(ec(err, codes.E103(vSpec)))
@@ -201,7 +201,7 @@ func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum
 	return nil
 }
 
-func (imp OCFL) validateVersionInventory(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum, inv ocfl.ReadInventory, vldr *ocfl.ObjectValidation) {
+func (imp OCFL) validateVersionInventory(obj ocfl.ReadObject, dirNum ocfl.VNum, inv ocfl.ReadInventory, vldr *ocfl.ObjectValidation) {
 	rootInv := obj.Inventory()
 	vSpec := imp.spec
 	if dirNum == rootInv.Head() {
@@ -212,9 +212,7 @@ func (imp OCFL) validateVersionInventory(ctx context.Context, obj ocfl.ReadObjec
 		err := fmt.Errorf("%s/inventor.json is not the same as the root inventory: digests don't match", dirNum)
 		vldr.AddFatal(ec(err, codes.E064(vSpec)))
 	}
-	if err := validateInventorySidecar(ctx, obj, dirNum.String(), inv, &vldr.Validation); err != nil {
-		return
-	}
+	vldr.PrefixAdd(dirNum.String()+"/inventory.json", inv.Validate())
 	if inv.ID() != rootInv.ID() {
 		err := fmt.Errorf("%s/inventory.json: 'id' doesn't match value in root inventory", dirNum)
 		vldr.AddFatal(ec(err, codes.E037(vSpec)))
