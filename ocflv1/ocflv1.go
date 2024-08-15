@@ -18,15 +18,14 @@ import (
 
 const (
 	// defaults
-	inventoryFile       = `inventory.json`
-	contentDir          = `content`
-	digestAlgorithm     = "sha512"
-	extensionsDir       = "extensions"
-	layoutName          = "ocfl_layout.json"
-	storeRoot           = ocfl.NamasteTypeStore
-	descriptionKey      = `description`
-	extensionKey        = `extension`
-	extensionConfigFile = "config.json"
+	inventoryFile = `inventory.json`
+	contentDir    = `content`
+	extensionsDir = "extensions"
+	// layoutName          = "ocfl_layout.json"
+	// storeRoot           = ocfl.NamasteTypeStore
+	// descriptionKey      = `description`
+	// extensionKey        = `extension`
+	// extensionConfigFile = "config.json"
 )
 
 func Enable() {
@@ -199,6 +198,36 @@ func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum
 		}
 	}
 	return nil
+}
+
+type versionDirState struct {
+	hasInventory bool
+	sidecarAlg   string
+	extraFiles   []string
+	dirs         []string
+}
+
+func parseVersionDirState(entries []fs.DirEntry) versionDirState {
+	var info versionDirState
+	for _, e := range entries {
+		if e.Type().IsDir() {
+			info.dirs = append(info.dirs, e.Name())
+			continue
+		}
+		if e.Type().IsRegular() || e.Type() == fs.ModeIrregular {
+			if e.Name() == inventoryFile {
+				info.hasInventory = true
+				continue
+			}
+			if strings.HasPrefix(e.Name(), inventoryFile+".") && info.sidecarAlg == "" {
+				info.sidecarAlg = strings.TrimPrefix(e.Name(), inventoryFile+".")
+				continue
+			}
+		}
+		// unexpected files
+		info.extraFiles = append(info.extraFiles, e.Name())
+	}
+	return info
 }
 
 func (imp OCFL) validateVersionInventory(obj ocfl.ReadObject, dirNum ocfl.VNum, inv ocfl.ReadInventory, vldr *ocfl.ObjectValidation) {
