@@ -28,11 +28,10 @@ const (
 )
 
 var (
-	_ ocfl.FS            = (*s3.BucketFS)(nil)
-	_ ocfl.CopyFS        = (*s3.BucketFS)(nil)
-	_ ocfl.WriteFS       = (*s3.BucketFS)(nil)
-	_ ocfl.ObjectRootsFS = (*s3.BucketFS)(nil)
-	_ ocfl.FilesFS       = (*s3.BucketFS)(nil)
+	_ ocfl.FS      = (*s3.BucketFS)(nil)
+	_ ocfl.CopyFS  = (*s3.BucketFS)(nil)
+	_ ocfl.WriteFS = (*s3.BucketFS)(nil)
+	_ ocfl.FilesFS = (*s3.BucketFS)(nil)
 )
 
 func TestOpenFile(t *testing.T) {
@@ -178,7 +177,7 @@ func TestReadDir(t *testing.T) {
 			},
 			expect: func(t *testing.T, entries []fs.DirEntry, err error) {
 				be.NilErr(t, err)
-				state := ocfl.ParseObjectRootDir(entries)
+				state := ocfl.ParseObjectDir(entries)
 				be.True(t, state.HasNamaste())
 				be.True(t, state.HasInventory())
 				be.True(t, state.HasSidecar())
@@ -429,191 +428,6 @@ func TestCopy(t *testing.T) {
 	}
 }
 
-func TestObjectRoots(t *testing.T) {
-	ctx := context.Background()
-	type testCase struct {
-		desc   string
-		mock   func(t *testing.T) *mock.S3API
-		bucket string
-		dir    string
-		expect func(*testing.T, *mock.S3API, []*ocfl.ObjectRoot, error)
-	}
-	cases := []testCase{
-		{
-			desc: "complete object in root",
-			dir:  ".",
-			mock: func(t *testing.T) *mock.S3API {
-				return mock.New(bucket,
-					&mock.Object{Key: "0=ocfl_object_1.0"},
-					&mock.Object{Key: "inventory.json"},
-					&mock.Object{Key: "inventory.json.sha512"},
-					&mock.Object{Key: "v1/contents/file.txt"},
-					&mock.Object{Key: "extensions/ext01/config.json"},
-				)
-			},
-			bucket: bucket,
-			expect: func(t *testing.T, state *mock.S3API, roots []*ocfl.ObjectRoot, err error) {
-				be.NilErr(t, err)
-				be.Equal(t, 1, len(roots))
-				obj := roots[0]
-				be.Nonzero(t, obj.FS)
-				be.Equal(t, ".", obj.Path)
-				be.Equal(t, "sha512", obj.State.SidecarAlg)
-				be.True(t, obj.State.HasInventory())
-				be.True(t, obj.State.HasSidecar())
-				be.True(t, obj.State.HasNamaste())
-				be.True(t, obj.State.HasExtensions())
-			},
-		}, {
-			desc: "complete object in subdir",
-			dir:  ".",
-			mock: func(t *testing.T) *mock.S3API {
-				return mock.New(bucket,
-					&mock.Object{Key: "a/b/0=ocfl_object_1.0"},
-					&mock.Object{Key: "a/b/inventory.json"},
-					&mock.Object{Key: "a/b/inventory.json.sha512"},
-					&mock.Object{Key: "a/b/v1/contents/file.txt"},
-					&mock.Object{Key: "a/b/v2/contents/file2.txt"},
-					&mock.Object{Key: "a/b/extensions/ext01/config.json"},
-				)
-			},
-			bucket: bucket,
-			expect: func(t *testing.T, state *mock.S3API, roots []*ocfl.ObjectRoot, err error) {
-				be.NilErr(t, err)
-				be.Equal(t, 1, len(roots))
-				obj := roots[0]
-				be.Nonzero(t, obj.FS)
-				be.Equal(t, "a/b", obj.Path)
-				be.Equal(t, "sha512", obj.State.SidecarAlg)
-				be.Equal(t, 2, len(obj.State.VersionDirs))
-				be.True(t, obj.State.HasInventory())
-				be.True(t, obj.State.HasSidecar())
-				be.True(t, obj.State.HasNamaste())
-				be.True(t, obj.State.HasExtensions())
-			},
-		}, {
-			desc: "full storage root",
-			dir:  ".",
-			mock: func(t *testing.T) *mock.S3API {
-				return mock.New(bucket, mock.StorageRoot(mockSeed, "a-root", 2001)...)
-			},
-			bucket: bucket,
-			expect: func(t *testing.T, state *mock.S3API, roots []*ocfl.ObjectRoot, err error) {
-				be.NilErr(t, err)
-				be.Equal(t, 2001, len(roots))
-				for _, obj := range roots {
-					be.Nonzero(t, obj.FS)
-					be.Equal(t, "sha512", obj.State.SidecarAlg)
-					be.True(t, obj.State.HasNamaste())
-					be.Equal(t, "1.1", string(obj.State.Spec))
-					be.True(t, obj.State.HasInventory())
-					be.True(t, obj.State.HasSidecar())
-					be.True(t, obj.State.HasNamaste())
-					be.True(t, obj.State.HasExtensions())
-					be.Equal(t, 1, len(obj.State.VersionDirs))
-				}
-
-			},
-		}, {
-			desc: "ignore duplicate namaste",
-			dir:  "a",
-			mock: func(t *testing.T) *mock.S3API {
-				return mock.New(bucket,
-					&mock.Object{Key: "a/0=ocfl_object_1.0"},
-					&mock.Object{Key: "a/0=ocfl_object_1.1"},
-				)
-			},
-			bucket: bucket,
-			expect: func(t *testing.T, state *mock.S3API, roots []*ocfl.ObjectRoot, err error) {
-				be.NilErr(t, err)
-				be.Equal(t, 1, len(roots))
-				obj := roots[0]
-				be.Equal(t, "1.0", obj.State.Spec)
-			},
-		}, {
-			desc: "ignore nested namaste",
-			dir:  ".",
-			mock: func(t *testing.T) *mock.S3API {
-				return mock.New(bucket,
-					&mock.Object{Key: "0=ocfl_object_1.0"},
-					&mock.Object{Key: "a/0=ocfl_object_1.1"},
-				)
-			},
-			bucket: bucket,
-			expect: func(t *testing.T, state *mock.S3API, roots []*ocfl.ObjectRoot, err error) {
-				be.NilErr(t, err)
-				be.Equal(t, 1, len(roots))
-				obj := roots[0]
-				be.Equal(t, "1.0", obj.State.Spec)
-			},
-		},
-		{
-			desc: "invalid path",
-			dir:  "../tmp",
-			mock: func(t *testing.T) *mock.S3API {
-				return mock.New(bucket)
-			},
-			bucket: bucket,
-			expect: func(t *testing.T, state *mock.S3API, roots []*ocfl.ObjectRoot, err error) {
-				isInvalidPathError(t, err)
-			},
-		},
-		{
-			desc: "non-conforming before namaste",
-			dir:  ".",
-			mock: func(t *testing.T) *mock.S3API {
-				return mock.New(bucket,
-					&mock.Object{Key: "00"},
-					&mock.Object{Key: "0=ocfl_object_1.0"},
-				)
-			},
-			bucket: bucket,
-			expect: func(t *testing.T, state *mock.S3API, roots []*ocfl.ObjectRoot, err error) {
-				be.NilErr(t, err)
-				be.Equal(t, 1, len(roots))
-				obj := roots[0]
-				be.Equal(t, 1, len(obj.State.Invalid))
-			},
-		},
-		{
-			desc: "non-conforming after namaste",
-			dir:  ".",
-			mock: func(t *testing.T) *mock.S3API {
-				return mock.New(bucket,
-					&mock.Object{Key: "0=ocfl_object_1.0"},
-					&mock.Object{Key: "file.txt"},
-				)
-			},
-			bucket: bucket,
-			expect: func(t *testing.T, state *mock.S3API, roots []*ocfl.ObjectRoot, err error) {
-				be.NilErr(t, err)
-				be.Equal(t, 1, len(roots))
-				obj := roots[0]
-				be.Equal(t, 1, len(obj.State.Invalid))
-			},
-		},
-	}
-	for i, tcase := range cases {
-		t.Run(strconv.Itoa(i)+"-"+tcase.desc, func(t *testing.T) {
-			var api *mock.S3API
-			if tcase.mock != nil {
-				api = tcase.mock(t)
-			}
-			fsys := s3.BucketFS{Bucket: tcase.bucket, S3: api}
-			roots := []*ocfl.ObjectRoot{}
-			var iterErr error
-			fsys.ObjectRoots(ctx, tcase.dir)(func(obj *ocfl.ObjectRoot, err error) bool {
-				if err != nil {
-					iterErr = err
-					return false
-				}
-				roots = append(roots, obj)
-				return true
-			})
-			tcase.expect(t, api, roots, iterErr)
-		})
-	}
-}
 func TestFiles(t *testing.T) {
 	ctx := context.Background()
 	type testCase struct {

@@ -13,18 +13,14 @@ import (
 )
 
 type Object struct {
-	reader  ReadObject
-	globals Config // global settings
-	ocfl    OCFL   // the OCFL implementation used to open the object
+	reader ReadObject
+	// global settings
+	globals Config
+	// the OCFL implementation used to open the object
+	ocfl OCFL
+	// object id used to open the object from the root
+	expectID string
 }
-
-type ObjectOption func(*Object)
-
-// func ObjectMustExist() ObjectOptionsFunc {
-// 	return func(opt *ObjectOptions) {
-// 		opt.MustExist = true
-// 	}
-// }
 
 // func ObjectUseOCFL(ocfl OCFL) ObjectOption {
 // 	return func(opt *Object) {
@@ -42,7 +38,7 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 	for _, optFn := range opts {
 		optFn(obj)
 	}
-	inv, err := readInventory(ctx, obj.ocfls(), fsys, path.Join(dir, inventoryBase))
+	inv, err := readInventory(ctx, obj.globals.OCFLs(), fsys, path.Join(dir, inventoryBase))
 	if err != nil {
 		var pthError *fs.PathError
 		if !errors.As(err, &pthError) || path.Base(pthError.Path) != inventoryBase {
@@ -50,8 +46,14 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 		}
 	}
 	if inv != nil {
-		obj.ocfl = obj.ocfls().MustGet(inv.Spec())
+		obj.ocfl = obj.globals.OCFLs().MustGet(inv.Spec())
 		obj.reader = obj.ocfl.NewReadObject(fsys, dir, inv)
+		// check that inventory has expected object ID
+		// if the expected object ID is known.
+		if obj.expectID != "" && inv.ID() != obj.expectID {
+			err := fmt.Errorf("object has unexpected ID: %q; expected: %q", inv.ID(), obj.expectID)
+			return nil, err
+		}
 		return obj, nil
 	}
 	// if inventory.json doesn't exist, try to open as uninitialized object
@@ -61,7 +63,7 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 			return nil, fmt.Errorf("reading object root contents: %w", err)
 		}
 	}
-	rootState := ParseObjectRootDir(entries)
+	rootState := ParseObjectDir(entries)
 	switch {
 	case rootState.Empty():
 		// open as new/uninitialized object w/o an OCFL spec.
@@ -78,6 +80,7 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	if _, isWriteFS := obj.reader.FS().(WriteFS); !isWriteFS {
 		return errors.New("object's backing file system doesn't support write operations")
 	}
+	// the OCFL implementation to use to create the new object version
 	var useOCFL OCFL
 	switch {
 	case commit.Spec.Empty():
@@ -94,6 +97,13 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 		if err != nil {
 			return err
 		}
+	}
+	// set commit's object id if we have an expected id and commit ID isn't set
+	if obj.expectID != "" && commit.ID != obj.expectID {
+		if commit.ID != "" {
+			return fmt.Errorf("commit includes unexpected object ID: %s; expected: %q", commit.ID, obj.expectID)
+		}
+		commit.ID = obj.expectID
 	}
 	newSpecObj, err := useOCFL.Commit(ctx, obj.reader, commit)
 	if err != nil {
@@ -190,7 +200,7 @@ func (obj *Object) Validate(ctx context.Context, opts ...ObjectValidationOption)
 		v.AddFatal(err)
 		return
 	}
-	rootState := ParseObjectRootDir(entries)
+	rootState := ParseObjectDir(entries)
 	obj.reader.ValidateRoot(ctx, rootState, v)
 	if v.Err() != nil {
 		// don't continue if object is invalid
@@ -218,6 +228,16 @@ func (obj *Object) Validate(ctx context.Context, opts ...ObjectValidationOption)
 		prevInv = nextInv
 	}
 	obj.reader.ValidateContent(ctx, v)
+	return
+}
+
+func (obj *Object) readInventory(ctx context.Context, dir string) (inv ReadInventory, invOCFL OCFL, err error) {
+	ocfls := obj.globals.OCFLs()
+	inv, err = readInventory(ctx, obj.globals.OCFLs(), obj.FS(), path.Join(obj.Path(), dir, inventoryBase))
+	if err != nil {
+		return
+	}
+	invOCFL = ocfls.MustGet(inv.Spec())
 	return
 }
 
@@ -253,24 +273,6 @@ func (c CommitError) Error() string {
 func (c CommitError) Unwrap() error {
 	return c.Err
 }
-
-// func ObjectSetID(id string) ObjectOption {
-// 	return func(opt *Object) {
-// 		opt.id = id
-// 	}
-// }
-
-// func ObjectMustNotExist() ObjectOptionsFunc {
-// 	return func(opt *ObjectOptions) {
-// 		opt.MustNotExist = true
-// 	}
-// }
-
-// func ObjectSkipRead() ObjectOptionsFunc {
-// 	return func(opt *ObjectOptions) {
-// 		opt.SkipRead = true
-// 	}
-// }
 
 type ObjectVersionFS struct {
 	fsys fs.FS
@@ -335,7 +337,7 @@ func (o *uninitializedObject) Inventory() ReadInventory { return nil }
 // Path returns the object's path relative to its FS()
 func (o *uninitializedObject) Path() string { return o.path }
 
-func (o *uninitializedObject) ValidateRoot(_ context.Context, _ *ObjectRootState, v *ObjectValidation) {
+func (o *uninitializedObject) ValidateRoot(_ context.Context, _ *ObjectState, v *ObjectValidation) {
 	err := fmt.Errorf("empty or missing path: %s: %w", o.path, ErrNamasteNotExist)
 	if v != nil {
 		v.AddFatal(err)
@@ -349,87 +351,39 @@ func (o *uninitializedObject) ValidateContent(_ context.Context, v *ObjectValida
 // with the index v.
 func (o *uninitializedObject) VersionFS(ctx context.Context, v int) fs.FS { return nil }
 
-// func (obj *Object) ID() string { return obj.id }
+type ObjectOption func(*Object)
 
-// ValidateNamaste reads and validates the contents of the OCFL object
-// declaration in the object root. The ObjectRoot's State is initialized if it
-// is nil.
-// func (obj *Object) ValidateNamaste(ctx context.Context) error {
-// 	decl := Namaste{Type: NamasteTypeObject, Version: obj.ocfl.Spec()}
-// 	name := path.Join(obj.Path(), decl.Name())
-// 	err := ValidateNamaste(ctx, obj.FS(), name)
-// 	if err != nil {
-// 		if errors.Is(err, fs.ErrNotExist) {
-// 			return fmt.Errorf("%s: %w", name, ErrObjectNamasteNotExist)
-// 		}
-// 		return err
-// 	}
-// 	return nil
-// }
-
-// UnmarshalInventory unmarshals the inventory.json file in the object root's
-// sub-directory, dir, into the value pointed to by v. For example, set dir to
-// `v1` to unmarshall the object's v1 inventory. Set dir to `.` to unmarshal the
-// root inventory.
-// func (obj Object) UnmarshalInventory(ctx context.Context, dir string, v any) (err error) {
-// 	name := inventoryFile
-// 	if dir != `.` {
-// 		name = dir + "/" + name
-// 	}
-// 	f, err := obj.OpenFile(ctx, name)
-// 	if err != nil {
-// 		return
-// 	}
-// 	defer func() {
-// 		if closeErr := f.Close(); closeErr != nil {
-// 			err = errors.Join(err, f.Close())
-// 		}
-// 	}()
-// 	bytes, err := io.ReadAll(f)
-// 	if err != nil {
-// 		return
-// 	}
-// 	err = json.Unmarshal(bytes, v)
-// 	return
-// }
-
-// // OpenFile opens a file using a name relative to the object root's path
-// func (obj *Object) OpenFile(ctx context.Context, name string) (fs.File, error) {
-// 	if obj.Path() != "." {
-// 		// using path.Join might hide potentially invalid values for
-// 		// obj.Path or name.
-// 		name = obj.Path() + "/" + name
-// 	}
-// 	return obj.FS().OpenFile(ctx, name)
-// }
-
-// ReadDir reads a directory using a name relative to the object root's dir.
-// func (obj *Object) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
-// 	if obj.Path() != "." {
-// 		switch {
-// 		case name == ".":
-// 			name = obj.Path()
-// 		default:
-// 			name = obj.Path() + "/" + name
-// 		}
-// 	}
-// 	return obj.FS().ReadDir(ctx, name)
-// }
-
-func (obj *Object) ocfls() *OCLFRegister {
-	ocfls := obj.globals.OCFLs
-	if ocfls == nil {
-		ocfls = &defaultOCFLs
+func objectExpectedID(id string) ObjectOption {
+	return func(o *Object) {
+		o.expectID = id
 	}
-	return ocfls
 }
 
-func (obj *Object) readInventory(ctx context.Context, dir string) (inv ReadInventory, invOCFL OCFL, err error) {
-	ocfls := obj.ocfls()
-	inv, err = readInventory(ctx, obj.ocfls(), obj.FS(), path.Join(obj.Path(), dir, inventoryBase))
-	if err != nil {
-		return
+// ObjectPaths searches dir in fsys (and its subdirectories) for OCFL object
+// declarations and returns an iterator that yields each object path it finds.
+func ObjectPaths(ctx context.Context, fsys FS, dir string) func(yield func(string, error) bool) {
+	return func(yield func(string, error) bool) {
+		objectPathsWalk(ctx, fsys, dir, yield)
 	}
-	invOCFL = ocfls.MustGet(inv.Spec())
-	return
+}
+
+func objectPathsWalk(ctx context.Context, fsys FS, dir string, yield func(string, error) bool) bool {
+	entries, err := fsys.ReadDir(ctx, dir)
+	if err != nil {
+		yield("", err)
+		return false
+	}
+	state := ParseObjectDir(entries)
+	if state.HasNamaste() {
+		return yield(dir, nil)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			subdir := path.Join(dir, e.Name())
+			if !objectPathsWalk(ctx, fsys, subdir, yield) {
+				return false
+			}
+		}
+	}
+	return true
 }

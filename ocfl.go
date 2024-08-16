@@ -31,6 +31,13 @@ var (
 	defaultOCFLs OCLFRegister
 )
 
+func GetOCFL(spec Spec) (OCFL, error) { return defaultOCFLs.Get(spec) }
+func MustGetOCFL(spec Spec) OCFL      { return defaultOCFLs.MustGet(spec) }
+func RegisterOCLF(imp OCFL) bool      { return defaultOCFLs.Set(imp) }
+func UnsetOCFL(spec Spec) bool        { return defaultOCFLs.Unset(spec) }
+func LatestOCFL() (OCFL, error)       { return defaultOCFLs.Latest() }
+func Implementations() []Spec         { return defaultOCFLs.Specs() }
+
 // OCFL is an interface implemented by types that implement a specific
 // version of the OCFL specification.
 type OCFL interface {
@@ -42,14 +49,21 @@ type OCFL interface {
 }
 
 type Config struct {
-	OCFLs *OCLFRegister
+	ocfls *OCLFRegister
+}
+
+func (c Config) OCFLs() *OCLFRegister {
+	if c.ocfls == nil {
+		return &defaultOCFLs
+	}
+	return c.ocfls
 }
 
 func (c Config) GetSpec(spec Spec) (OCFL, error) {
-	if c.OCFLs == nil {
+	if c.ocfls == nil {
 		return defaultOCFLs.Get(spec)
 	}
-	return c.OCFLs.Get(spec)
+	return c.ocfls.Get(spec)
 }
 
 type OCLFRegister struct {
@@ -57,13 +71,6 @@ type OCLFRegister struct {
 	ocflsMx sync.RWMutex
 	latest  OCFL
 }
-
-func GetOCFL(spec Spec) (OCFL, error) { return defaultOCFLs.Get(spec) }
-func MustGetOCFL(spec Spec) OCFL      { return defaultOCFLs.MustGet(spec) }
-func RegisterOCLF(imp OCFL) bool      { return defaultOCFLs.Set(imp) }
-func UnsetOCFL(spec Spec) bool        { return defaultOCFLs.Unset(spec) }
-func LatestOCFL() (OCFL, error)       { return defaultOCFLs.Latest() }
-func Implementations() []Spec         { return defaultOCFLs.Specs() }
 
 func (reg *OCLFRegister) Get(spec Spec) (OCFL, error) {
 	reg.ocflsMx.RLock()
@@ -134,6 +141,21 @@ func (reg *OCLFRegister) Specs() []Spec {
 	return specs
 }
 
+type ReadObject interface {
+	// Inventory returns the object's inventory or nil if
+	// the object hasn't been created yet.
+	Inventory() ReadInventory
+	// FS for accessing object contents
+	FS() FS
+	// Path returns the object's path relative to its FS()
+	Path() string
+	ValidateRoot(context.Context, *ObjectState, *ObjectValidation)
+	ValidateContent(context.Context, *ObjectValidation)
+	// VersionFS returns an io/fs.FS for accessing the logical contents of the
+	// object version state with the index v.
+	VersionFS(ctx context.Context, v int) fs.FS
+}
+
 // DigestConcurrency is a global configuration for the number  of files to
 // digest concurrently.
 func DigestConcurrency() int {
@@ -164,19 +186,4 @@ func XferConcurrency() int {
 // during a commit operation.
 func SetXferConcurrency(i int) {
 	commitConcurrency.Store(int32(i))
-}
-
-type ReadObject interface {
-	// Inventory returns the object's inventory or nil if
-	// the object hasn't been created yet.
-	Inventory() ReadInventory
-	// FS for accessing object contents
-	FS() FS
-	// Path returns the object's path relative to its FS()
-	Path() string
-	ValidateRoot(context.Context, *ObjectRootState, *ObjectValidation)
-	ValidateContent(context.Context, *ObjectValidation)
-	// VersionFS returns an io/fs.FS for accessing the logical contents of the
-	// object version state with the index v.
-	VersionFS(ctx context.Context, v int) fs.FS
 }

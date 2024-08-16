@@ -73,7 +73,7 @@ func (o *ReadObject) ValidateContent(ctx context.Context, v *ocfl.ObjectValidati
 	}
 }
 
-func (o *ReadObject) ValidateRoot(ctx context.Context, state *ocfl.ObjectRootState, vldr *ocfl.ObjectValidation) {
+func (o *ReadObject) ValidateRoot(ctx context.Context, state *ocfl.ObjectState, vldr *ocfl.ObjectValidation) {
 	if err := o.validateDeclaration(ctx); err != nil {
 		vldr.AddFatal(err)
 	}
@@ -85,7 +85,7 @@ func (o *ReadObject) ValidateRoot(ctx context.Context, state *ocfl.ObjectRootSta
 	}
 }
 
-func (o ReadObject) validateRootState(state *ocfl.ObjectRootState) *ocfl.Validation {
+func (o ReadObject) validateRootState(state *ocfl.ObjectState) *ocfl.Validation {
 	ocflV := o.inv.Type.Spec
 	v := &ocfl.Validation{}
 	for _, name := range state.Invalid {

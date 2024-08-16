@@ -17,16 +17,13 @@ import (
 	"github.com/srerickson/ocfl-go/backend/s3"
 	"github.com/srerickson/ocfl-go/internal/pipeline"
 	"github.com/srerickson/ocfl-go/logging"
+	"github.com/srerickson/ocfl-go/ocflv1"
 )
-
-// just the fields we need from the inventory
-type inventory struct {
-	ID string `json:"id"`
-}
 
 var numgos int
 
 func main() {
+	ocflv1.Enable()
 	ctx := context.Background()
 	// logging.SetDefaultLevel(slog.LevelDebug)
 	logger := logging.DefaultLogger()
@@ -49,31 +46,31 @@ func main() {
 }
 
 func listObjects(ctx context.Context, fsys ocfl.FS, dir string, gos int, _ *slog.Logger) error {
-	objectRoots := func(yield func(*ocfl.ObjectRoot) bool) {
-		// with go 1.23, we should be able to write:
-		// for obj, err := range ocfl.ObjectRoots(...) {}
-		ocfl.ObjectRoots(ctx, fsys, dir)(func(obj *ocfl.ObjectRoot, err error) bool {
+	objectDirs := func(yield func(string) bool) {
+		for dir, err := range ocfl.ObjectPaths(ctx, fsys, dir) {
 			if err != nil {
-				return false
+				break
 			}
-			return yield(obj)
-		})
-	}
-	getID := func(obj *ocfl.ObjectRoot) (inventory, error) {
-		var inv inventory
-		if err := obj.UnmarshalInventory(ctx, `.`, &inv); err != nil {
-			return inv, err
+			if !yield(dir) {
+				break
+			}
 		}
-		return inv, nil
+	}
+	getID := func(dir string) (ocfl.ReadInventory, error) {
+		obj, err := ocfl.NewObject(ctx, fsys, dir)
+		if err != nil {
+			return nil, err
+		}
+		return obj.Inventory(), nil
 	}
 	var err error
-	resultIter := pipeline.Results(objectRoots, getID, gos)
-	resultIter(func(r pipeline.Result[*ocfl.ObjectRoot, inventory]) bool {
+	resultIter := pipeline.Results(objectDirs, getID, gos)
+	resultIter(func(r pipeline.Result[string, ocfl.ReadInventory]) bool {
 		if r.Err != nil {
 			err = r.Err
 			return false
 		}
-		fmt.Println(r.In.Path, r.Out.ID)
+		fmt.Println(r.In, r.Out.ID())
 		return true
 	})
 	return err

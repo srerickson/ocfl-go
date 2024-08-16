@@ -256,6 +256,11 @@ func ValidationLogger(logger *slog.Logger) ObjectValidationOption {
 	}
 }
 
+type validationFileInfo struct {
+	expected DigestSet
+	exists   bool
+}
+
 // ValidationCode represents a validation error code defined in an
 // OCFL specificaiton. See https://ocfl.io/1.1/spec/validation-codes.html
 type ValidationCode struct {
@@ -278,9 +283,4 @@ func (ver *ValidationError) Error() string {
 
 func (ver *ValidationError) Unwrap() error {
 	return ver.Err
-}
-
-type validationFileInfo struct {
-	expected DigestSet
-	exists   bool
 }

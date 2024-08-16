@@ -24,27 +24,37 @@ var (
 	ErrLayoutUndefined = errors.New("storage root's layout is undefined")
 )
 
-// Store represents an OCFL Storage Root.
-type Store struct {
+// Root represents an OCFL Storage Root.
+type Root struct {
 	fs         FS                // root's fs
 	dir        string            // root's director relative to FS
-	exists     bool              // storage root exists or not
 	spec       Spec              // OCFL spec version in storage root declaration
 	layout     extension.Layout  // layout used to resolve object ids
 	layoutConf map[string]string // contents of `ocfl_layout.json`
+
+	// initArgs is used to initialize new root. Values
+	// are set by InitRoot option.
+	initArgs *initRootArgs
 }
 
-type StoreOption func(*Store)
+func NewRoot(ctx context.Context, fsys FS, dir string, opts ...RootOption) (*Root, error) {
+	r := &Root{fs: fsys, dir: dir}
+	for _, opt := range opts {
+		opt(r)
+	}
 
-func NewStore(ctx context.Context, fsys FS, dir string, opts ...StoreOption) (*Store, error) {
 	entries, err := fsys.ReadDir(ctx, dir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
-	if len(entries) < 1 {
-		// return uninitialized store
-		return &Store{fs: fsys, dir: dir}, nil
+	// try to inititializing a new storage root
+	if len(entries) < 1 && r.initArgs != nil {
+		if err := r.init(ctx); err != nil {
+			return nil, fmt.Errorf("while creating a new storage root: %w", err)
+		}
+		return r, nil
 	}
+	// find storage root declaration
 	decl, err := FindNamaste(entries)
 	if err == nil && decl.Type != NamasteTypeStore {
 		err = fmt.Errorf("NAMASTE declaration has wrong type: %q", decl.Type)
@@ -52,59 +62,30 @@ func NewStore(ctx context.Context, fsys FS, dir string, opts ...StoreOption) (*S
 	if err != nil {
 		return nil, fmt.Errorf("not an OCFL storage root: %w", err)
 	}
-	// initialize a new existing Store
-	s := &Store{fs: fsys, dir: dir, spec: decl.Version, exists: true}
-	// set storage root's layout if possible
-	if err := s.getLayout(ctx); err != nil {
+	// initialize existing Root
+	r.spec = decl.Version
+	if err := r.getLayout(ctx); err != nil {
 		if !errors.Is(err, ErrLayoutUndefined) {
 			return nil, err
 		}
 	}
-	return s, nil
+	return r, nil
 }
 
-func (s *Store) Init(ctx context.Context, spec Spec, layoutDesc string, extensions ...extension.Extension) error {
-	if s.exists {
-		return errors.New("can't initialize already existing root")
-	}
-	writeFS, isWriteFS := s.fs.(WriteFS)
-	if !isWriteFS {
-		return fmt.Errorf("storage root backend is not writable")
-	}
-	decl := Namaste{Version: spec, Type: NamasteTypeStore}
-	if err := WriteDeclaration(ctx, writeFS, s.dir, decl); err != nil {
-		return err
-	}
-	var haveLayout bool
-	for _, e := range extensions {
-		layout, isLayout := e.(extension.Layout)
-		if isLayout && !haveLayout {
-			if err := s.setLayout(ctx, layout, layoutDesc); err != nil {
-				return err
-			}
-			haveLayout = true
-			continue
-		}
-		if err := writeExtensionConfig(ctx, writeFS, s.dir, e); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Store) Description() string {
+func (s *Root) Description() string {
 	return s.layoutConf[descriptionKey]
 }
 
-func (s *Store) FS() FS {
+func (s *Root) FS() FS {
 	return s.fs
 }
 
-func (s *Store) Exists() bool {
-	return s.exists
+func (r *Root) Layout() extension.Layout {
+	return r.layout
 }
 
-func (s *Store) NewObject(ctx context.Context, id string, opts ...ObjectOption) (*Object, error) {
+// NewObject returns a new
+func (s *Root) NewObject(ctx context.Context, id string, opts ...ObjectOption) (*Object, error) {
 	if s.layout == nil {
 		return nil, ErrLayoutUndefined
 	}
@@ -115,18 +96,78 @@ func (s *Store) NewObject(ctx context.Context, id string, opts ...ObjectOption) 
 	if !fs.ValidPath(objPath) {
 		return nil, fmt.Errorf("layout resolved id to an invalid path: %s", objPath)
 	}
+	opts = append(opts, objectExpectedID(id))
 	return NewObject(ctx, s.fs, path.Join(s.dir, objPath), opts...)
 }
 
-func (s *Store) Path() string {
+// ObjectPaths returns an iterator of object paths for the objects in the
+// storage root.
+func (r *Root) ObjectPaths(ctx context.Context) func(func(string, error) bool) {
+	return ObjectPaths(ctx, r.fs, r.dir)
+}
+
+// Objects returns an iterator of objects in the storage root.
+func (r *Root) Objects(ctx context.Context) func(func(*Object, error) bool) {
+	return func(yield func(*Object, error) bool) {
+		for dir, err := range r.ObjectPaths(ctx) {
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			obj, err := NewObject(ctx, r.fs, dir)
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			if !yield(obj, nil) {
+				return
+			}
+		}
+	}
+}
+
+func (s *Root) Path() string {
 	return s.dir
 }
 
-func (s *Store) Spec() Spec {
+func (s *Root) Spec() Spec {
 	return s.spec
 }
 
-func (s *Store) getLayout(ctx context.Context) error {
+func (r *Root) init(ctx context.Context) error {
+	if r.initArgs == nil {
+		return nil
+	}
+	if r.initArgs.spec.Empty() {
+		return errors.New("can't initialize storage root: missing OCFL spec version")
+	}
+	writeFS, isWriteFS := r.fs.(WriteFS)
+	if !isWriteFS {
+		return fmt.Errorf("storage root backend is not writable")
+	}
+	decl := Namaste{Version: r.initArgs.spec, Type: NamasteTypeStore}
+	if err := WriteDeclaration(ctx, writeFS, r.dir, decl); err != nil {
+		return err
+	}
+	r.spec = r.initArgs.spec
+	var haveLayout bool
+	for _, e := range r.initArgs.extensions {
+		layout, isLayout := e.(extension.Layout)
+		if isLayout && !haveLayout {
+			if err := r.setLayout(ctx, layout, r.initArgs.layoutDesc); err != nil {
+				return err
+			}
+			haveLayout = true
+			continue
+		}
+		if err := writeExtensionConfig(ctx, writeFS, r.dir, e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Root) getLayout(ctx context.Context) error {
 	s.layoutConf = nil
 	s.layout = nil
 	if err := s.readLayoutConfig(ctx); err != nil {
@@ -150,7 +191,7 @@ func (s *Store) getLayout(ctx context.Context) error {
 
 // readLayoutConfig reads the `ocfl_layout.json` files in the storage root
 // and unmarshals into the value pointed to by layout
-func (s *Store) readLayoutConfig(ctx context.Context) error {
+func (s *Root) readLayoutConfig(ctx context.Context) error {
 	f, err := s.fs.OpenFile(ctx, path.Join(s.dir, layoutName))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -170,23 +211,21 @@ func (s *Store) readLayoutConfig(ctx context.Context) error {
 
 // setLayout marshals the value pointe to by layout and writes the result to
 // the `ocfl_layout.json` files in the storage root.
-func (s *Store) setLayout(ctx context.Context, layout extension.Layout, desc string) error {
-	writeFS, isWriteFS := s.fs.(WriteFS)
+func (r *Root) setLayout(ctx context.Context, layout extension.Layout, desc string) error {
+	writeFS, isWriteFS := r.fs.(WriteFS)
 	if !isWriteFS {
 		return fmt.Errorf("storage root backend is not writable")
 	}
-	layoutPath := path.Join(s.dir, layoutName)
-	if layout == nil {
-		s.layout = nil
-		s.layoutConf = nil
-		if s.exists {
-			// remove existing file
-			if err := writeFS.Remove(ctx, layoutPath); err != nil {
-				if errors.Is(err, fs.ErrNotExist) {
-					return nil
-				}
-				return err
+	layoutPath := path.Join(r.dir, layoutName)
+	if layout == nil && r.layout != nil {
+		r.layout = nil
+		r.layoutConf = nil
+		// remove existing file
+		if err := writeFS.Remove(ctx, layoutPath); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
 			}
+			return err
 		}
 		return nil
 	}
@@ -202,11 +241,11 @@ func (s *Store) setLayout(ctx context.Context, layout extension.Layout, desc str
 	if err != nil {
 		return fmt.Errorf("writing %s: %w", layoutName, err)
 	}
-	if err := writeExtensionConfig(ctx, writeFS, s.dir, layout); err != nil {
+	if err := writeExtensionConfig(ctx, writeFS, r.dir, layout); err != nil {
 		return fmt.Errorf("setting root layout extension: %w", err)
 	}
-	s.layoutConf = newConfig
-	s.layout = layout
+	r.layoutConf = newConfig
+	r.layout = layout
 	return nil
 }
 
@@ -243,4 +282,24 @@ func writeExtensionConfig(ctx context.Context, fsys WriteFS, root string, config
 		return fmt.Errorf("writing config for extension %s: %w", config.Name(), err)
 	}
 	return nil
+}
+
+type RootOption func(*Root)
+
+type initRootArgs struct {
+	spec       Spec
+	layoutDesc string
+	extensions []extension.Extension
+}
+
+// InitRoot returns a RootOption for initializing a new storage root as part of
+// the call to NewRoot().
+func InitRoot(spec Spec, layoutDesc string, extensions ...extension.Extension) RootOption {
+	return func(root *Root) {
+		root.initArgs = &initRootArgs{
+			spec:       spec,
+			layoutDesc: layoutDesc,
+			extensions: extensions,
+		}
+	}
 }
