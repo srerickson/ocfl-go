@@ -28,6 +28,7 @@ var (
 type Root struct {
 	fs         FS                // root's fs
 	dir        string            // root's director relative to FS
+	global     Config            // shared OCFL settings
 	spec       Spec              // OCFL spec version in storage root declaration
 	layout     extension.Layout  // layout used to resolve object ids
 	layoutConf map[string]string // contents of `ocfl_layout.json`
@@ -61,6 +62,9 @@ func NewRoot(ctx context.Context, fsys FS, dir string, opts ...RootOption) (*Roo
 	}
 	if err != nil {
 		return nil, fmt.Errorf("not an OCFL storage root: %w", err)
+	}
+	if _, err := r.global.GetSpec(decl.Version); err != nil {
+		return nil, fmt.Errorf(" OCFL v%s: %w", decl.Version, err)
 	}
 	// initialize existing Root
 	r.spec = decl.Version
@@ -140,6 +144,9 @@ func (r *Root) init(ctx context.Context) error {
 	}
 	if r.initArgs.spec.Empty() {
 		return errors.New("can't initialize storage root: missing OCFL spec version")
+	}
+	if _, err := r.global.GetSpec(r.initArgs.spec); err != nil {
+		return fmt.Errorf(" OCFL v%s: %w", r.initArgs.spec, err)
 	}
 	writeFS, isWriteFS := r.fs.(WriteFS)
 	if !isWriteFS {
