@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path"
@@ -22,6 +23,11 @@ import (
 var cli struct {
 	InitRoot InitRootCmd `cmd:"init-root" help:"Initialize a new storage root"`
 	Commit   CommitCmd   `cmd:"commit" help:"Create or update an object in a storage root"`
+	LS       LSCmd       `cmd:"ls" help:"List objects in a storage root or contents of an object version."`
+}
+
+type runner interface {
+	Run(ctx context.Context, stdout, stderr io.Writer) error
 }
 
 func main() {
@@ -34,23 +40,29 @@ func main() {
 			Compact: true,
 			Summary: true,
 		}))
-	var err error
+
+	var r runner
 	switch kongCtx.Command() {
 	case "init-root <path>":
-		err = cli.InitRoot.Run(ctx, os.Stdout, os.Stderr)
+		r = &cli.InitRoot
 	case "commit <path>":
-		err = cli.Commit.Run(ctx, os.Stdout, os.Stderr)
+		r = &cli.Commit
+	case "ls":
+		r = &cli.LS
 	default:
 		kongCtx.FatalIfErrorf(errors.New("invalid sub-command"))
+		return
 	}
-	if err != nil {
+	if err := r.Run(ctx, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
 }
 
 func parseRootConfig(ctx context.Context, name string) (ocfl.WriteFS, string, error) {
-	//if we were using s3-based backend:
+	if name == "" {
+		return nil, "", fmt.Errorf("the storage root to use for the operation is not set")
+	}
 	rl, err := url.Parse(name)
 	if err != nil {
 		return nil, "", err
