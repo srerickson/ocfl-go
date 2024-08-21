@@ -10,7 +10,7 @@ import (
 
 const (
 	ext0006   = "0006-flat-omit-prefix-storage-layout"
-	delimeter = "delimeter"
+	delimiter = "delimiter"
 )
 
 // LayoutFlatOmitPrefix implements 0006-flat-omit-prefix-storage-layout
@@ -30,7 +30,7 @@ func (l LayoutFlatOmitPrefix) Name() string { return ext0006 }
 
 func (l LayoutFlatOmitPrefix) Resolve(id string) (string, error) {
 	if l.Delimiter == "" {
-		return "", errors.New("missing required layout configuration: " + delimeter)
+		return "", errors.New("missing required layout configuration: " + delimiter)
 	}
 	dir := id
 	lowerID := strings.ToLower(id)
@@ -48,6 +48,6 @@ func (l LayoutFlatOmitPrefix) Resolve(id string) (string, error) {
 func (l LayoutFlatOmitPrefix) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]any{
 		extensionName: ext0006,
-		delimeter:     l.Delimiter,
+		delimiter:     l.Delimiter,
 	})
 }
