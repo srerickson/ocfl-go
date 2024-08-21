@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/ocflv1"
@@ -42,8 +43,12 @@ func (cmd *LSCmd) Run(ctx context.Context, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("listing contents from object %q: %w", cmd.ID, err)
 	}
+	if !obj.Exists() {
+		// the object doesn't exist at the expected location
+		err := fmt.Errorf("object %q not found at root path %s: %w", cmd.ID, obj.Path(), fs.ErrNotExist)
+		return err
+	}
 	ver := obj.Inventory().Version(cmd.Version)
-
 	if ver == nil {
 		err := fmt.Errorf("version %d not found in object %q", cmd.Version, cmd.ID)
 		return err

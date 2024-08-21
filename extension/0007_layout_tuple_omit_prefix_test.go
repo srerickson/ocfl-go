@@ -3,6 +3,7 @@ package extension_test
 import (
 	"testing"
 
+	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go/extension"
 )
 
@@ -34,4 +35,25 @@ func TestLayoutTupleOmitPrefix(t *testing.T) {
 		testLayoutExt(t, layout, in, exp)
 	}
 
+	t.Run("unmarshal", func(t *testing.T) {
+		ext, err := extension.Unmarshal([]byte(`{
+			"delimiter": ":",
+			"extensionName": "0007-n-tuple-omit-prefix-storage-layout",
+			"tupleSize" : 4,
+			"numberOfTuples" : 2,
+			"zeroPadding" : "right",
+			"reverseObjectRoot": true
+		}`))
+		be.NilErr(t, err)
+		layout, ok := ext.(extension.Layout)
+		be.True(t, ok)
+		concretLayout, ok := layout.(*extension.LayoutTupleOmitPrefix)
+		be.True(t, ok)
+		be.Equal(t, ":", concretLayout.Delimiter)
+		be.Equal(t, "0007-n-tuple-omit-prefix-storage-layout", concretLayout.Name())
+		be.Equal(t, 4, concretLayout.TupleSize)
+		be.Equal(t, 2, concretLayout.TupleNum)
+		be.Equal(t, "right", concretLayout.Padding)
+		be.Equal(t, true, concretLayout.Reverse)
+	})
 }

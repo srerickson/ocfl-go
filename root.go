@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	layoutName          = "ocfl_layout.json"
+	layoutConfigFile    = "ocfl_layout.json"
 	descriptionKey      = `description`
 	extensionKey        = `extension`
 	extensionConfigFile = "config.json"
@@ -26,12 +26,12 @@ var (
 
 // Root represents an OCFL Storage Root.
 type Root struct {
-	fs         FS                // root's fs
-	dir        string            // root's director relative to FS
-	global     Config            // shared OCFL settings
-	spec       Spec              // OCFL spec version in storage root declaration
-	layout     extension.Layout  // layout used to resolve object ids
-	layoutConf map[string]string // contents of `ocfl_layout.json`
+	fs           FS                // root's fs
+	dir          string            // root's director relative to FS
+	global       Config            // shared OCFL settings
+	spec         Spec              // OCFL spec version in storage root declaration
+	layout       extension.Layout  // layout used to resolve object ids
+	layoutConfig map[string]string // contents of `ocfl_layout.json`
 
 	// initArgs is used to initialize new root. Values
 	// are set by InitRoot option.
@@ -69,15 +69,13 @@ func NewRoot(ctx context.Context, fsys FS, dir string, opts ...RootOption) (*Roo
 	// initialize existing Root
 	r.spec = decl.Version
 	if err := r.getLayout(ctx); err != nil {
-		if !errors.Is(err, ErrLayoutUndefined) {
-			return nil, err
-		}
+		return nil, err
 	}
 	return r, nil
 }
 
 func (s *Root) Description() string {
-	return s.layoutConf[descriptionKey]
+	return s.layoutConfig[descriptionKey]
 }
 
 func (s *Root) FS() FS {
@@ -175,18 +173,26 @@ func (r *Root) init(ctx context.Context) error {
 }
 
 func (s *Root) getLayout(ctx context.Context) error {
-	s.layoutConf = nil
+	s.layoutConfig = nil
 	s.layout = nil
 	if err := s.readLayoutConfig(ctx); err != nil {
 		return err
 	}
-	if s.layoutConf == nil || s.layoutConf[extensionKey] == "" {
-		return ErrLayoutUndefined
+	if s.layoutConfig == nil || s.layoutConfig[extensionKey] == "" {
+		return nil
 	}
-	name := s.layoutConf[extensionKey]
+	name := s.layoutConfig[extensionKey]
 	ext, err := readExtensionConfig(ctx, s.fs, s.dir, name)
 	if err != nil {
-		return err
+		if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		// Allow for missing extension config: If the config doesn't exist, use
+		// the extensions default values.
+		ext, err = extension.Get(name)
+		if err != nil {
+			return err
+		}
 	}
 	layout, ok := ext.(extension.Layout)
 	if !ok {
@@ -199,10 +205,10 @@ func (s *Root) getLayout(ctx context.Context) error {
 // readLayoutConfig reads the `ocfl_layout.json` files in the storage root
 // and unmarshals into the value pointed to by layout
 func (s *Root) readLayoutConfig(ctx context.Context) error {
-	f, err := s.fs.OpenFile(ctx, path.Join(s.dir, layoutName))
+	f, err := s.fs.OpenFile(ctx, path.Join(s.dir, layoutConfigFile))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			s.layoutConf = nil
+			s.layoutConfig = nil
 			return nil
 		}
 		return err
@@ -210,9 +216,9 @@ func (s *Root) readLayoutConfig(ctx context.Context) error {
 	defer f.Close()
 	layout := map[string]string{}
 	if err := json.NewDecoder(f).Decode(&layout); err != nil {
-		return fmt.Errorf("decoding %s: %w", layoutName, err)
+		return fmt.Errorf("decoding %s: %w", layoutConfigFile, err)
 	}
-	s.layoutConf = layout
+	s.layoutConfig = layout
 	return nil
 }
 
@@ -223,10 +229,10 @@ func (r *Root) setLayout(ctx context.Context, layout extension.Layout, desc stri
 	if !isWriteFS {
 		return fmt.Errorf("storage root backend is not writable")
 	}
-	layoutPath := path.Join(r.dir, layoutName)
+	layoutPath := path.Join(r.dir, layoutConfigFile)
 	if layout == nil && r.layout != nil {
 		r.layout = nil
-		r.layoutConf = nil
+		r.layoutConfig = nil
 		// remove existing file
 		if err := writeFS.Remove(ctx, layoutPath); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
@@ -242,16 +248,16 @@ func (r *Root) setLayout(ctx context.Context, layout extension.Layout, desc stri
 	}
 	b, err := json.Marshal(newConfig)
 	if err != nil {
-		return fmt.Errorf("encoding %s: %w", layoutName, err)
+		return fmt.Errorf("encoding %s: %w", layoutConfigFile, err)
 	}
 	_, err = writeFS.Write(ctx, layoutPath, bytes.NewBuffer(b))
 	if err != nil {
-		return fmt.Errorf("writing %s: %w", layoutName, err)
+		return fmt.Errorf("writing %s: %w", layoutConfigFile, err)
 	}
 	if err := writeExtensionConfig(ctx, writeFS, r.dir, layout); err != nil {
 		return fmt.Errorf("setting root layout extension: %w", err)
 	}
-	r.layoutConf = newConfig
+	r.layoutConfig = newConfig
 	r.layout = layout
 	return nil
 }
@@ -263,10 +269,7 @@ func readExtensionConfig(ctx context.Context, fsys FS, root string, name string)
 	confPath := path.Join(root, ExtensionsDir, name, extensionConfigFile)
 	f, err := fsys.OpenFile(ctx, confPath)
 	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("openning config for extension %s: %w", name, err)
-		}
-		return nil, nil
+		return nil, fmt.Errorf("can't open config for extension %s: %w", name, err)
 	}
 	defer f.Close()
 	b, err := io.ReadAll(f)
