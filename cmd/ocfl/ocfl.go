@@ -23,7 +23,8 @@ import (
 var cli struct {
 	InitRoot InitRootCmd `cmd:"init-root" help:"Initialize a new storage root"`
 	Commit   CommitCmd   `cmd:"commit" help:"Create or update an object in a storage root"`
-	LS       LSCmd       `cmd:"ls" help:"List objects in a storage root or contents of an object version."`
+	LS       LSCmd       `cmd:"ls" help:"List objects in a storage root or contents of an object version"`
+	Export   ExportCmd   `cmd:"export" help:"Export object contents to the local filesystem"`
 }
 
 type runner interface {
@@ -40,7 +41,6 @@ func main() {
 			Compact: true,
 			Summary: true,
 		}))
-
 	var r runner
 	switch kongCtx.Command() {
 	case "init-root <path>":
@@ -49,6 +49,8 @@ func main() {
 		r = &cli.Commit
 	case "ls":
 		r = &cli.LS
+	case "export <dst>":
+		r = &cli.Export
 	default:
 		kongCtx.FatalIfErrorf(errors.New("invalid sub-command"))
 		return
