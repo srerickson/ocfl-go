@@ -1,4 +1,4 @@
-package main
+package run
 
 import (
 	"context"
@@ -7,19 +7,18 @@ import (
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/extension"
-	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
-type InitRootCmd struct {
+const initRootHelp = `Create a new OCFL storage root`
+
+type initRootCmd struct {
 	Layout      string `name:"layout" short:"l" optional:"" default:"0004-hashed-n-tuple-storage-layout"  help:"The storage root layout extension (see https://ocfl.github.io/extensions/)."`
 	Description string `name:"description" short:"d" optional:"" help:"Description to include in the storage root metadata"`
 	Spec        string `name:"ocflv" default:"1.1" help:"OCFL version for the storage root"`
-	Path        string `arg:"" name:"path" help:"Local directory or S3 bucket/prefix where the storage root will be initialized"`
 }
 
-func (cmd *InitRootCmd) Run(ctx context.Context, stdout, stderr io.Writer) error {
-	ocflv1.Enable() // hopefuly this won't be necessary in the near future.
-	fsys, dir, err := parseRootConfig(ctx, cmd.Path)
+func (cmd *initRootCmd) Run(ctx context.Context, fsysConfig string, stdout, stderr io.Writer) error {
+	fsys, dir, err := parseRootConfig(ctx, fsysConfig)
 	if err != nil {
 		return err
 	}
@@ -32,13 +31,18 @@ func (cmd *InitRootCmd) Run(ctx context.Context, stdout, stderr io.Writer) error
 	if !isLayout {
 		return fmt.Errorf("%s: %w", cmd.Layout, extension.ErrNotLayout)
 	}
-	_, err = ocfl.NewRoot(ctx, fsys, dir, ocfl.InitRoot(spec, cmd.Description, layout))
+	root, err := ocfl.NewRoot(ctx, fsys, dir, ocfl.InitRoot(spec, cmd.Description, layout))
 	if err != nil {
 		return fmt.Errorf("failed to initialize new root at %s: $w", err)
 	}
 	rootCfg := rootConfig(fsys, dir)
-	fmt.Println("storage root:", rootCfg)
-	fmt.Println("layout:", layout.Name())
-	fmt.Printf("To use the storage root with other commands, set:\n$ export OCFL_ROOT=%s\n", rootCfg)
+	fmt.Fprintln(stdout, "storage root:", rootCfg)
+	if l := root.LayoutName(); l != "" {
+		fmt.Fprintln(stdout, "layout:", root.LayoutName())
+	}
+	if d := root.Description(); d != "" {
+		fmt.Fprintln(stdout, "description:", root.Description())
+	}
+	fmt.Fprintln(stdout, "OCFL version:", root.Spec())
 	return nil
 }

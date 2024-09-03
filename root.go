@@ -20,9 +20,7 @@ const (
 	extensionConfigFile = "config.json"
 )
 
-var (
-	ErrLayoutUndefined = errors.New("storage root's layout is undefined")
-)
+var ErrLayoutUndefined = errors.New("storage root's layout is undefined")
 
 // Root represents an OCFL Storage Root.
 type Root struct {
@@ -38,12 +36,15 @@ type Root struct {
 	initArgs *initRootArgs
 }
 
+// NewRoot returns a new *Root for working with the OCFL storage root at
+// directory dir in fsys. It can be used to initialize new storage roots if the
+// InitRoot option is used, fsys is an ocfl.WriteFS, and dir is a non-existing
+// or empty directory.
 func NewRoot(ctx context.Context, fsys FS, dir string, opts ...RootOption) (*Root, error) {
 	r := &Root{fs: fsys, dir: dir}
 	for _, opt := range opts {
 		opt(r)
 	}
-
 	entries, err := fsys.ReadDir(ctx, dir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
@@ -51,7 +52,7 @@ func NewRoot(ctx context.Context, fsys FS, dir string, opts ...RootOption) (*Roo
 	// try to inititializing a new storage root
 	if len(entries) < 1 && r.initArgs != nil {
 		if err := r.init(ctx); err != nil {
-			return nil, fmt.Errorf("while creating a new storage root: %w", err)
+			return nil, fmt.Errorf("initializing new storage root: %w", err)
 		}
 		return r, nil
 	}
@@ -74,19 +75,35 @@ func NewRoot(ctx context.Context, fsys FS, dir string, opts ...RootOption) (*Roo
 	return r, nil
 }
 
+// Description returns the description string from the storage roots
+// `ocfl_layout.json` file, which may be empty.
 func (s *Root) Description() string {
 	return s.layoutConfig[descriptionKey]
 }
 
+// FS returns the Root's FS
 func (s *Root) FS() FS {
 	return s.fs
 }
 
+// Layout returns the storage root's layout, which may be nil.ß
 func (r *Root) Layout() extension.Layout {
 	return r.layout
 }
 
-// NewObject returns a new
+// LayoutName returns the name of the root's layout extension or an empty string
+// if the root has no layout.
+func (r *Root) LayoutName() string {
+	if r.layout == nil {
+		return ""
+	}
+	return r.layout.Name()
+}
+
+// NewObject returns an *Object for managing the OCFL object with the given ID
+// in the root. If no object exists with the given ID, the returned *Object can
+// be used to create it. If the Root has not storage layout for resovling object
+// IDs, the returned error is ErrLayoutUndefined.
 func (s *Root) NewObject(ctx context.Context, id string, opts ...ObjectOption) (*Object, error) {
 	if s.layout == nil {
 		return nil, ErrLayoutUndefined
