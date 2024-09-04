@@ -93,7 +93,8 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	root, err := ocfl.NewRoot(ctx, fsys, dir)
 	if err != nil {
-		fmt.Fprintln(stderr, "error reading OCFL storage root:", err.Error())
+		rootcnf := rootConfig(fsys, dir)
+		fmt.Fprintln(stderr, "error reading OCFL storage root:", rootcnf+":", err.Error())
 		return err
 	}
 	if err := runner.Run(ctx, root, stdout, stderr); err != nil {

@@ -34,7 +34,7 @@ type Namaste struct {
 func FindNamaste(items []fs.DirEntry) (Namaste, error) {
 	var found []Namaste
 	for _, e := range items {
-		if !e.Type().IsRegular() {
+		if e.IsDir() {
 			continue
 		}
 		if dec, err := ParseNamaste(e.Name()); err == nil {
