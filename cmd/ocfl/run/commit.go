@@ -8,6 +8,8 @@ import (
 	"github.com/srerickson/ocfl-go"
 )
 
+const commitHelp = "Create or update an object in a storage root"
+
 type commitCmd struct {
 	ID      string `name:"id" short:"i" help:"The ID for the object to create or update"`
 	Message string `name:"message" short:"m" help:"Message to include in the object version metadata"`

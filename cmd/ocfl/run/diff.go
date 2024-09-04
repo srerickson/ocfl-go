@@ -11,6 +11,8 @@ import (
 	"github.com/srerickson/ocfl-go/cmd/ocfl/internal/diff"
 )
 
+const diffHelp = "Show changed files between versions of an object"
+
 type DiffCmd struct {
 	ID string `name:"id" short:"i" optional:"" help:"The id for object to diff"`
 	Vs []int  `name:"versions" short:"v" default:"-1,0" help:"Object versions to compare, separated by commas. 0 refers to HEAD, negative numbers match versions before HEAD."`

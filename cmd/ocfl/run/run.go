@@ -23,20 +23,28 @@ import (
 var cli struct {
 	RootConfig string      `name:"root" short:"r" env:"OCFL_ROOT" help:"The prefix/directory of the OCFL storage root used for the command"`
 	InitRoot   initRootCmd `cmd:"init-root" help:"${init_root_help}"`
-	Commit     commitCmd   `cmd:"commit" help:"Create or update an object in a storage root"`
-	LS         lsCmd       `cmd:"ls" help:"List objects in a storage root or contents of an object version"`
-	Export     exportCmd   `cmd:"export" help:"Export object contents to the local filesystem"`
-	Diff       DiffCmd     `cmd:"diff" help:"show changed files between versions of an object"`
+	Commit     commitCmd   `cmd:"commit" help:"${commit_help}"`
+	LS         lsCmd       `cmd:"ls" help:"${ls_help}"`
+	Export     exportCmd   `cmd:"export" help:"${export_help}"`
+	Diff       DiffCmd     `cmd:"diff" help:"${diff_help}"`
 }
 
 func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	ocflv1.Enable() // hopefuly this won't be necessary in the near future.
 	parser, err := kong.New(&cli, kong.Name("ocfl"),
 		kong.Writers(stdout, stderr),
-		kong.Description("command line tool for working with OCFL repositories"),
+		kong.Description("tools for working with OCFL repositories"),
 		kong.Vars{
+			"commit_help":    commitHelp,
+			"diff_help":      diffHelp,
+			"export_help":    exportHelp,
 			"init_root_help": initRootHelp,
+			"ls_help":        lsHelp,
 		},
+		kong.ConfigureHelp(kong.HelpOptions{
+			Summary: true,
+			Compact: true,
+		}),
 	)
 	if err != nil {
 		fmt.Fprintln(stderr, "in kong configuration:", err.Error())
@@ -71,10 +79,6 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "export":
 		runner = &cli.Export
 	case "diff":
-		fallthrough
-	case "diff <v1>":
-		fallthrough
-	case "diff <v1> <v2>":
 		runner = &cli.Diff
 	default:
 		kongCtx.PrintUsage(true)

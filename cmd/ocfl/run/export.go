@@ -13,6 +13,8 @@ import (
 	"github.com/srerickson/ocfl-go"
 )
 
+const exportHelp = "Export object contents to the local filesystem"
+
 type exportCmd struct {
 	ID       string   `name:"id" short:"i" help:"The ID for the object to export"`
 	Version  int      `name:"version" short:"v" default:"0" help:"The number (unpadded) of the object version from which to export content"`
