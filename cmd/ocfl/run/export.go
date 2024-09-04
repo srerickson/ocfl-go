@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/srerickson/ocfl-go"
@@ -14,11 +15,11 @@ import (
 
 type exportCmd struct {
 	ID       string   `name:"id" short:"i" help:"The ID for the object to export"`
-	Version  int      `name:"version" short:"v" default:"0" help:"The object version number (unpadded) to list contents from. The default (0) lists the latest version."`
+	Version  int      `name:"version" short:"v" default:"0" help:"The number (unpadded) of the object version from which to export content"`
 	Replace  bool     `name:"replace" help:"replace existing files with object contents"`
-	SrcDir   string   `name:"dir" short:"d" default:"." help:"The parent directory for the object content to export."`
-	SrcFiles []string `name:"file" short:"f"`
-	Dst      string   `arg:"" name:"dst" help:"The destination where exported content will be saved."`
+	FromDir  string   `name:"from" default:"." help:"The parent directory for the object content to export. Ignored if --file is set."`
+	To       string   `name:"to" default:"." help:"The destination directory for writing exported content. For single file exports, use '-' to print file to STDOUT or a file name."`
+	SrcFiles []string `name:"file" short:"f" help:"file(s) in object to export. Pattern matching with wildcards is supported. Can be repeated."`
 }
 
 func (cmd *exportCmd) Run(ctx context.Context, root *ocfl.Root, stdout, stderr io.Writer) error {
@@ -36,68 +37,71 @@ func (cmd *exportCmd) Run(ctx context.Context, root *ocfl.Root, stdout, stderr i
 	if err != nil {
 		return err
 	}
-	if len(cmd.SrcFiles) < 1 {
-		subFS, err := fs.Sub(versionFS, cmd.SrcDir)
+	// check destination: it doesn't need to exist, but its parent should be an
+	// existing directory.
+	var absTo string
+	if cmd.To != "-" {
+		absTo, err = filepath.Abs(cmd.To)
+		if err != nil {
+			return fmt.Errorf("invalid value for --to: %w", err)
+		}
+		parentDir := filepath.Dir(absTo)
+		exists, isDir, err := stat(parentDir)
 		if err != nil {
 			return err
 		}
-		return os.CopyFS(cmd.Dst, subFS)
+		if !exists || !isDir {
+			err := errors.New("not an existing directory: " + parentDir)
+			return err
+		}
 	}
+	if len(cmd.SrcFiles) < 1 {
+		if cmd.To == "-" {
+			err := errors.New("exporting to STDOUT requires --file flag")
+			return err
+		}
+		subFS, err := fs.Sub(versionFS, cmd.FromDir)
+		if err != nil {
+			return err
+		}
+		// FIXME this overwrites existing content
+		return os.CopyFS(absTo, subFS)
+	}
+	var matches []string
 	for _, srcFile := range cmd.SrcFiles {
-		fmt.Fprintln(stdout, srcFile)
+		m, err := fs.Glob(versionFS, srcFile)
+		if err != nil {
+			return err
+		}
+		matches = append(matches, m...)
 	}
-	// if cmd.SrcDir == "." {
-	// 	fs.Sub()
-
-	// }
-	// logicalState := versionFS.State()
-	// if logicalState == nil {
-	// 	return errors.New("encountered unexpected nil state")
-	// }
-
-	// statePaths := logicalState.PathMap()
-	// if statePaths[cmd.SrcDir] != "" {
-	// 	// explicit source file export
-	// 	if cmd.Dst == "-" {
-	// 		return exportFile(versionFS, cmd.SrcDir, cmd.Replace, stdout)
-	// 	}
-	// 	return exportFile(versionFS, cmd.SrcDir, cmd.Replace, nil, cmd.Dst)
-	// }
-	// if cmd.Dst == "-" {
-	// 	return errors.New("export to stdout requires src to be a single file")
-	// }
-	// // treat cmd.Src is the parent directory for the content to export
-	// exports := map[string][]string{} // srcname -> dstNames
-	// for _, logicalNames := range logicalState {
-	// 	if len(logicalNames) < 1 {
-	// 		return errors.New("version state is corrupt")
-	// 	}
-	// 	srcName := logicalNames[0]
-	// 	for _, logicalName := range logicalNames {
-	// 		if cmd.SrcDir == "." {
-	// 			dstName := filepath.Join(cmd.Dst, filepath.FromSlash(logicalName))
-	// 			exports[srcName] = append(exports[srcName], dstName)
-	// 			continue
-	// 		}
-	// 		if strings.HasPrefix(logicalName, cmd.SrcDir+"/") {
-	// 			// dst-path can be a new directory
-	// 			dstName := filepath.Join(cmd.Dst, filepath.FromSlash(strings.TrimPrefix(logicalName, cmd.SrcDir+"/")))
-	// 			exports[srcName] = append(exports[srcName], dstName)
-	// 			continue
-	// 		}
-	// 		if match, _ := path.Match(cmd.SrcDir, logicalName); match {
-	// 			// dst-path should be an existing directory
-	// 			dstName := filepath.Join(cmd.Dst, path.Base(logicalName))
-	// 			exports[srcName] = append(exports[srcName], dstName)
-	// 			continue
-	// 		}
-	// 	}
-	// }
-	// for srcName, dstNames := range exports {
-	// 	if err := exportFile(versionFS, srcName, cmd.Replace, nil, dstNames...); err != nil {
-	// 		return err
-	// 	}
-	// }
+	if len(matches) < 1 {
+		err = errors.New("no matching files in the object")
+		return err
+	}
+	if cmd.To == "-" {
+		// print first match to STDOUT
+		return exportFile(versionFS, matches[0], false, stdout)
+	}
+	exists, isDir, err := stat(absTo)
+	if err != nil {
+		return err
+	}
+	// single match: we can can create/overwrite destination as file
+	if (!exists || !isDir) && len(matches) == 1 {
+		return exportFile(versionFS, matches[0], cmd.Replace, nil, absTo)
+	}
+	// copy matching files into the desintation, which must be an existing directory
+	if !isDir {
+		err = errors.New("not an existing directory: " + absTo)
+		return err
+	}
+	for _, file := range matches {
+		dstName := filepath.Join(absTo, path.Base(file))
+		if err := exportFile(versionFS, file, cmd.Replace, nil, dstName); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -144,4 +148,15 @@ func exportFile(srcFS fs.FS, srcName string, replace bool, stdout io.Writer, dst
 	}
 	_, err = io.Copy(io.MultiWriter(writers...), f)
 	return
+}
+
+func stat(dir string) (exists bool, isDir bool, err error) {
+	info, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, false, nil
+		}
+		return false, false, err
+	}
+	return true, info.IsDir(), nil
 }

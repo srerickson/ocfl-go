@@ -67,7 +67,7 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		runner = &cli.Commit
 	case "ls":
 		runner = &cli.LS
-	case "export <dst>":
+	case "export":
 		runner = &cli.Export
 	default:
 		kongCtx.PrintUsage(true)
