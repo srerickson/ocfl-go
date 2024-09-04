@@ -13,7 +13,7 @@ import (
 
 type DiffCmd struct {
 	ID string `name:"id" short:"i" optional:"" help:"The id for object to diff"`
-	Vs []int  `name:"version" short:"v" default:"-1" help:"Object version to compare to HEAD, or object versions to compare if repeated twice. 0 refers to head, negative numbers match versions before HEAD."`
+	Vs []int  `name:"versions" short:"v" default:"-1,0" help:"Object versions to compare, separated by commas. 0 refers to HEAD, negative numbers match versions before HEAD."`
 }
 
 func (cmd *DiffCmd) Run(ctx context.Context, root *ocfl.Root, stdout, stderr io.Writer) error {
@@ -42,6 +42,12 @@ func (cmd *DiffCmd) Run(ctx context.Context, root *ocfl.Root, stdout, stderr io.
 		v2 = cmd.Vs[1]
 	}
 	head := inv.Head().Num()
+	if v1 > head || (head+v1 < 1) {
+		return fmt.Errorf("version %d is out of range (HEAD=%d)", v1, head)
+	}
+	if v2 > head || (head+v2 < 1) {
+		return fmt.Errorf("version %d is out of range (HEAD=%d)", v2, head)
+	}
 	if v1 < 0 {
 		v1 = head + v1
 	}
