@@ -17,16 +17,16 @@ type exportCmd struct {
 	ID       string   `name:"id" short:"i" help:"The ID for the object to export"`
 	Version  int      `name:"version" short:"v" default:"0" help:"The number (unpadded) of the object version from which to export content"`
 	Replace  bool     `name:"replace" help:"replace existing files with object contents"`
-	FromDir  string   `name:"from" default:"." help:"The parent directory for the object content to export. Ignored if --file is set."`
-	To       string   `name:"to" default:"." help:"The destination directory for writing exported content. For single file exports, use '-' to print file to STDOUT or a file name."`
-	SrcFiles []string `name:"file" short:"f" help:"file(s) in object to export. Pattern matching with wildcards is supported. Can be repeated."`
+	SrcDir   string   `name:"dir" short:"d" default:"." help:"An object directory to export. Defaults to the object's logical root. Ignored if --file is set."`
+	SrcFiles []string `name:"file" short:"f" help:"Object file(s) to export. Wildcards (*,?,[]) can be used to match multiple files. This flag can be repeated."`
+	To       string   `name:"to" short:"t" default:"." help:"The destination directory for writing exported content. For single file exports, use '-' to print file to STDOUT or a file name."`
 }
 
 func (cmd *exportCmd) Run(ctx context.Context, root *ocfl.Root, stdout, stderr io.Writer) error {
 	// list contents of an object
 	obj, err := root.NewObject(ctx, cmd.ID)
 	if err != nil {
-		return fmt.Errorf("listing contents from object %q: %w", cmd.ID, err)
+		return fmt.Errorf("reading object id: %q: %w", cmd.ID, err)
 	}
 	if !obj.Exists() {
 		// the object doesn't exist at the expected location
@@ -60,12 +60,11 @@ func (cmd *exportCmd) Run(ctx context.Context, root *ocfl.Root, stdout, stderr i
 			err := errors.New("exporting to STDOUT requires --file flag")
 			return err
 		}
-		subFS, err := fs.Sub(versionFS, cmd.FromDir)
+		subFS, err := fs.Sub(versionFS, cmd.SrcDir)
 		if err != nil {
 			return err
 		}
-		// FIXME this overwrites existing content
-		return os.CopyFS(absTo, subFS)
+		return copyFS(absTo, subFS, cmd.Replace)
 	}
 	var matches []string
 	for _, srcFile := range cmd.SrcFiles {
@@ -159,4 +158,38 @@ func stat(dir string) (exists bool, isDir bool, err error) {
 		return false, false, err
 	}
 	return true, info.IsDir(), nil
+}
+
+func copyFS(dir string, fsys fs.FS, replace bool) error {
+	return fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		newPath := filepath.Join(dir, filepath.FromSlash(path))
+		if d.IsDir() {
+			return os.MkdirAll(newPath, 0777)
+		}
+		r, err := fsys.Open(path)
+		if err != nil {
+			return err
+		}
+		defer r.Close()
+		info, err := r.Stat()
+		if err != nil {
+			return err
+		}
+		fileFlag := os.O_CREATE | os.O_WRONLY | os.O_EXCL
+		if replace {
+			fileFlag = os.O_CREATE | os.O_TRUNC | os.O_WRONLY
+		}
+		w, err := os.OpenFile(newPath, fileFlag, 0666|info.Mode()&0777)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(w, r); err != nil {
+			w.Close()
+			return &os.PathError{Op: "Copy", Path: newPath, Err: err}
+		}
+		return w.Close()
+	})
 }

@@ -26,6 +26,7 @@ var cli struct {
 	Commit     commitCmd   `cmd:"commit" help:"Create or update an object in a storage root"`
 	LS         lsCmd       `cmd:"ls" help:"List objects in a storage root or contents of an object version"`
 	Export     exportCmd   `cmd:"export" help:"Export object contents to the local filesystem"`
+	Diff       DiffCmd     `cmd:"diff" help:"show changed files between versions of an object"`
 }
 
 func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -69,6 +70,12 @@ func CLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		runner = &cli.LS
 	case "export":
 		runner = &cli.Export
+	case "diff":
+		fallthrough
+	case "diff <v1>":
+		fallthrough
+	case "diff <v1> <v2>":
+		runner = &cli.Diff
 	default:
 		kongCtx.PrintUsage(true)
 		err = fmt.Errorf("unknown command: %s", kongCtx.Command())
