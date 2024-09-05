@@ -212,6 +212,27 @@ func testObjectCommit(t *testing.T) {
 		be.True(t, obj.Exists())
 		be.NilErr(t, obj.Validate(ctx).Err())
 	})
+	t.Run("commit must use same same alg", func(t *testing.T) {
+		fsys, err := local.NewFS(t.TempDir())
+		be.NilErr(t, err)
+		obj, err := ocfl.NewObject(ctx, fsys, ".")
+		be.NilErr(t, err)
+		be.False(t, obj.Exists())
+		commit := &ocfl.Commit{
+			ID:      "new-object",
+			Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: ocfl.SHA512},
+			Message: "new object",
+			User: ocfl.User{
+				Name: "Anna Karenina",
+			},
+			Spec: ocfl.Spec1_0,
+		}
+		be.NilErr(t, obj.Commit(ctx, commit))
+		commit.Stage.DigestAlgorithm = ocfl.SHA256
+		err = obj.Commit(ctx, commit)
+		be.True(t, err != nil)
+		be.True(t, strings.Contains(err.Error(), "must use same digest algorithm as existing inventory"))
+	})
 	t.Run("update fixtures", testUpdateFixtures)
 }
 
