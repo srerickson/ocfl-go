@@ -76,6 +76,7 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 	}
 }
 
+// Commit creates a new object version based on values in commit.
 func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	if _, isWriteFS := obj.reader.FS().(WriteFS); !isWriteFS {
 		return errors.New("object's backing file system doesn't support write operations")
@@ -116,6 +117,7 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	return nil
 }
 
+// Exists returns true if the object has an existing version.
 func (obj *Object) Exists() bool { return ObjectExists(obj.reader) }
 
 // ExtensionNames returns the names of directories in the object's
@@ -185,6 +187,7 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 	return vfs, nil
 }
 
+// Validate validates the object.
 func (obj *Object) Validate(ctx context.Context, opts ...ObjectValidationOption) (v *ObjectValidation) {
 	v = NewObjectValidation(opts...)
 	objPath := obj.Path()
@@ -241,8 +244,9 @@ func (obj *Object) readInventory(ctx context.Context, dir string) (inv ReadInven
 	return
 }
 
+// Commit represents an update to object.
 type Commit struct {
-	ID      string
+	ID      string // required for new objects in storage roots without a layout.
 	Stage   *Stage // required
 	Message string // required
 	User    User   // required
