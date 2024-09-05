@@ -1,6 +1,7 @@
 package extension
 
 import (
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,9 @@ const (
 	ext0004         = "0004-hashed-n-tuple-storage-layout"
 	shortObjectRoot = "shortObjectRoot"
 )
+
+//go:embed docs/0004-hashed-n-tuple-storage-layout.md
+var ext0004doc []byte
 
 // LayoutHashTuple implements 0004-hashed-n-tuple-storage-layout
 type LayoutHashTuple struct {
@@ -34,24 +38,37 @@ func Ext0004() Extension {
 	}
 }
 
-func (l LayoutHashTuple) Resolve(id string) (string, error) {
+func (l LayoutHashTuple) Name() string { return ext0004 }
+
+func (l LayoutHashTuple) Documentation() []byte { return ext0004doc }
+
+func (l LayoutHashTuple) Valid() error {
 	h := getAlg(l.DigestAlgorithm)
 	if h == nil {
-		return "", fmt.Errorf("unknown digest algorithm: %q", l.DigestAlgorithm)
+		return fmt.Errorf("unknown digest algorithm: %q", l.DigestAlgorithm)
 	}
 	if l.TupleSize == 0 && l.TupleNum != 0 {
-		return "", errors.New(numberOfTuples + " must be 0 if " + tupleSize + " is 0")
+		return errors.New(numberOfTuples + " must be 0 if " + tupleSize + " is 0")
 	}
 	if l.TupleNum == 0 && l.TupleSize != 0 {
-		return "", errors.New(tupleSize + " must be 0 if " + numberOfTuples + " is 0")
+		return errors.New(tupleSize + " must be 0 if " + numberOfTuples + " is 0")
 	}
+	// h.Size()*2 is number of characters in hex encoded digest
+	if l.TupleNum*(l.TupleSize) > h.Size()*2 {
+		err := errors.New("product of " + tupleSize + " and " + numberOfTuples + " is more then hash length for " + l.DigestAlgorithm)
+		return err
+	}
+	return nil
+}
+
+func (l LayoutHashTuple) Resolve(id string) (string, error) {
+	if err := l.Valid(); err != nil {
+		return "", err
+	}
+	h := getAlg(l.DigestAlgorithm)
 	h.Write([]byte(id))
 	hID := hex.EncodeToString(h.Sum(nil))
 	tupSize, tupNum := l.TupleSize, l.TupleNum
-	if tupSize*(tupNum) > len(hID) {
-		err := errors.New("product of tupleSize and numberOfTuples is more then hash length for " + l.DigestAlgorithm)
-		return "", err
-	}
 	var tuples = make([]string, tupNum+1)
 	for i := 0; i < tupNum; i++ {
 		tuples[i] = hID[i*tupSize : (i+1)*tupSize]
@@ -63,8 +80,6 @@ func (l LayoutHashTuple) Resolve(id string) (string, error) {
 	}
 	return strings.Join(tuples, "/"), nil
 }
-
-func (l LayoutHashTuple) Name() string { return ext0004 }
 
 func (l LayoutHashTuple) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]any{
