@@ -30,6 +30,10 @@ func (l CustomLayout) Resolve(id string) (string, error) {
 	return path.Join(l.Prefix, url.QueryEscape(id)), nil
 }
 
+func (l CustomLayout) Valid() error {
+	return nil
+}
+
 func (l CustomLayout) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]string{
 		"extensionName": customExtensionName,

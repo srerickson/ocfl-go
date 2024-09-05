@@ -398,13 +398,15 @@ func buildInventory(prev ocfl.ReadInventory, commit *ocfl.Commit) (*Inventory, e
 	case prev != nil:
 		prevInv, ok := prev.(*readInventory)
 		if !ok {
-			err := errors.New("previous inventory is not an OCFLv1 inventory")
+			err := errors.New("inventory is not an OCFLv1 inventory")
 			return nil, err
+		}
+		if newInv.DigestAlgorithm != prev.DigestAlgorithm() {
+			return nil, fmt.Errorf("commit must use same digest algorithm as existing inventory (%s)", prev.DigestAlgorithm())
 		}
 		newInv.ID = prev.ID()
 		newInv.ContentDirectory = prevInv.raw.ContentDirectory
 		newInv.Type = prevInv.raw.Type
-
 		var err error
 		newInv.Head, err = prev.Head().Next()
 		if err != nil {

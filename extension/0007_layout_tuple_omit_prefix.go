@@ -1,6 +1,7 @@
 package extension
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"path"
@@ -14,6 +15,9 @@ const (
 	zeroPadding       = "zeroPadding"
 	reverseObjectRoot = "reverseObjectRoot"
 )
+
+//go:embed docs/0007-n-tuple-omit-prefix-storage-layout.md
+var ext0007doc []byte
 
 // LayoutTupleOmitPrefix implements 0007-n-tuple-omit-prefix-storage-layout
 type LayoutTupleOmitPrefix struct {
@@ -38,17 +42,27 @@ func Ext0007() Extension {
 	}
 }
 
-func (l LayoutTupleOmitPrefix) Resolve(id string) (string, error) {
+func (l LayoutTupleOmitPrefix) Name() string { return ext0007 }
+
+func (l LayoutTupleOmitPrefix) Documentation() []byte { return ext0007doc }
+
+func (l LayoutTupleOmitPrefix) Valid() error {
 	if l.TupleSize < 1 {
-		return "", fmt.Errorf("invalid %s %d", tupleSize, l.TupleSize)
+		return fmt.Errorf("invalid %s: %d", tupleSize, l.TupleSize)
 	}
 	if l.TupleNum < 1 {
-		return "", fmt.Errorf("invalid %s %d", numberOfTuples, l.TupleNum)
+		return fmt.Errorf("invalid %s: %d", numberOfTuples, l.TupleNum)
 	}
 	if l.Padding != padLeft && l.Padding != padRight {
-		return "", fmt.Errorf("invalid padding %s", l.Padding)
+		return fmt.Errorf("invalid padding: %s", l.Padding)
 	}
+	return nil
+}
 
+func (l LayoutTupleOmitPrefix) Resolve(id string) (string, error) {
+	if err := l.Valid(); err != nil {
+		return "", err
+	}
 	size := l.TupleNum * l.TupleSize
 	for _, b := range []byte(id) {
 		// only asci characters
@@ -95,8 +109,6 @@ func (l LayoutTupleOmitPrefix) Resolve(id string) (string, error) {
 	}
 	return path.Join(tuples, trimID), nil
 }
-
-func (l LayoutTupleOmitPrefix) Name() string { return ext0007 }
 
 func (l LayoutTupleOmitPrefix) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]any{

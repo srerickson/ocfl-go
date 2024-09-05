@@ -1,6 +1,7 @@
 package extension
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,9 @@ const (
 	ext0006   = "0006-flat-omit-prefix-storage-layout"
 	delimiter = "delimiter"
 )
+
+//go:embed docs/0006-flat-omit-prefix-storage-layout.md
+var ext0006doc []byte
 
 // LayoutFlatOmitPrefix implements 0006-flat-omit-prefix-storage-layout
 type LayoutFlatOmitPrefix struct {
@@ -27,6 +31,15 @@ func Ext0006() Extension {
 }
 
 func (l LayoutFlatOmitPrefix) Name() string { return ext0006 }
+
+func (l LayoutFlatOmitPrefix) Documentation() []byte { return ext0006doc }
+
+func (l LayoutFlatOmitPrefix) Valid() error {
+	if l.Delimiter == "" {
+		return errors.New("required field not set: " + delimiter)
+	}
+	return nil
+}
 
 func (l LayoutFlatOmitPrefix) Resolve(id string) (string, error) {
 	if l.Delimiter == "" {
