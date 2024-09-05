@@ -60,7 +60,7 @@ func TestDigester(t *testing.T) {
 		if err == nil {
 			t.Error("Validate() didn't return an error for an invalid DigestSet")
 		}
-		var digestErr *ocfl.DigestErr
+		var digestErr *ocfl.DigestError
 		if !errors.As(err, &digestErr) {
 			t.Error("Validate() didn't return a DigestErr as expected")
 		}

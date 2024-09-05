@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"io/fs"
 	"log/slog"
 	"os"
 
@@ -14,32 +13,31 @@ import (
 )
 
 var (
-	storeURI string // path to content directory
-	srcDir   string // path to content directory
-	id       string // object id to commit
-	msg      string // message for new version
-	alg      string // digest algorith (sha512 or sha256)
-	newObj   bool   // flag indicating new object
-	user     ocfl.User
+	objPath string // path to object
+	srcDir  string // path to content directory
+	msg     string // message for new version
+	alg     string // digest algorith (sha512 or sha256)
+	newID   string // ID for new object
+	user    ocfl.User
 
 	logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{}))
 )
 
 func main() {
 	ctx := context.Background()
+	ocflv1.Enable()
+	flag.StringVar(&srcDir, "obj", "", "directory of object to commit to")
 	flag.StringVar(&srcDir, "src", "", "directory with new version content")
-	flag.StringVar(&storeURI, "store", "", "path/uri for storage root")
-	flag.StringVar(&id, "id", "", "object id to commit")
 	flag.StringVar(&msg, "msg", "", "message field for new version")
 	flag.StringVar(&user.Name, "name", "", "name field for new version")
 	flag.StringVar(&user.Address, "email", "", "email field for new version")
 	flag.StringVar(&alg, "alg", "sha512", "digest algorith for new version")
-	flag.BoolVar(&newObj, "new", false, "enable creating new objects")
+	flag.StringVar(&newID, "id", "", "object ID (required for new objects)")
 	flag.Parse()
 
 	var missing []string
 	flag.VisitAll(func(f *flag.Flag) {
-		if f.Name == "new" || f.Name == "alg" {
+		if f.Name == "id" || f.Name == "alg" {
 			return
 		}
 		if v := f.Value.String(); v == "" {
@@ -51,36 +49,28 @@ func main() {
 		os.Exit(1)
 	}
 	// open storage root
-	writeFS, err := local.NewFS(storeURI)
+	writeFS, err := local.NewFS(objPath)
 	if err != nil {
 		quit(err)
 	}
-	store, err := ocflv1.GetStore(ctx, writeFS, ".")
+	obj, err := ocfl.NewObject(ctx, writeFS, ".")
 	if err != nil {
 		quit(err)
 	}
-	// get object
-	if _, err := store.GetObject(ctx, id); err != nil {
-		// not an error if object doesn't exist
-		if !errors.Is(err, fs.ErrNotExist) {
-			quit(err)
-		}
-		if !newObj {
-			err := errors.New("object must be created but the 'new' flag is not set")
-			quit(err)
-		}
-	}
-	if err == nil && newObj {
-		err := errors.New("object exists and 'new' flag is set")
+	if !obj.Exists() && newID == "" {
+		err := errors.New("object needs to be created, but 'id' flag is missing")
 		quit(err)
 	}
 	stage, err := ocfl.StageDir(ctx, ocfl.DirFS(srcDir), ".", alg)
 	if err != nil {
 		quit(err)
 	}
-	err = store.Commit(ctx, id, stage,
-		ocflv1.WithMessage(msg),
-		ocflv1.WithUser(user))
+	err = obj.Commit(ctx, &ocfl.Commit{
+		ID:      newID,
+		Stage:   stage,
+		Message: msg,
+		User:    user,
+	})
 	if err != nil {
 		quit(err)
 	}

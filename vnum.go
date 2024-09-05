@@ -154,8 +154,8 @@ func (v VNum) paddingOverflow() bool {
 	return v.padding > 0 && v.num >= int(math.Pow10(v.padding-1))
 }
 
-// AsHead returns a VNums with v as the head.
-func (v VNum) AsHead() VNums {
+// Lineage returns a VNums with v as the head.
+func (v VNum) Lineage() VNums {
 	if v.num == 0 {
 		return VNums{}
 	}

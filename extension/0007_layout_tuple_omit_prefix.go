@@ -101,7 +101,7 @@ func (l LayoutTupleOmitPrefix) Name() string { return ext0007 }
 func (l LayoutTupleOmitPrefix) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]any{
 		extensionName:     ext0007,
-		delimeter:         l.Delimiter,
+		delimiter:         l.Delimiter,
 		tupleSize:         l.TupleSize,
 		numberOfTuples:    l.TupleNum,
 		zeroPadding:       l.Padding,

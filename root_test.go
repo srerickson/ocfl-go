@@ -1,0 +1,92 @@
+package ocfl_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/carlmjohnson/be"
+	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/backend/local"
+	"github.com/srerickson/ocfl-go/extension"
+	"github.com/srerickson/ocfl-go/ocflv1"
+)
+
+func TestRoot(t *testing.T) {
+	ocflv1.Enable()
+	ctx := context.Background()
+
+	t.Run("fixture reg-extension-dir-root", func(t *testing.T) {
+		fsys := ocfl.DirFS(storeFixturePath)
+		dir := `1.0/good-stores/reg-extension-dir-root`
+		root, err := ocfl.NewRoot(ctx, fsys, dir)
+		be.NilErr(t, err)
+		be.Equal(t, ocfl.Spec1_0, root.Spec())
+		obj, err := root.NewObject(ctx, "ark:123/abc")
+		be.NilErr(t, err)
+		be.True(t, obj.Exists())
+	})
+
+	t.Run("fixture simple-root", func(t *testing.T) {
+		fsys := ocfl.DirFS(storeFixturePath)
+		dir := `1.0/good-stores/simple-root`
+		root, err := ocfl.NewRoot(ctx, fsys, dir)
+		be.NilErr(t, err)
+		be.Equal(t, ocfl.Spec1_0, root.Spec())
+	})
+
+	t.Run("init root and commit", func(t *testing.T) {
+		fsys, err := local.NewFS(t.TempDir())
+		be.NilErr(t, err)
+
+		// new root settings
+		dir := `new-root`
+		desc := "a new root"
+		layout := extension.Ext0004()
+		newRoot, err := ocfl.NewRoot(ctx, fsys, dir, ocfl.InitRoot(ocfl.Spec1_1, desc, layout))
+		be.NilErr(t, err)
+		be.Equal(t, layout.Name(), newRoot.Layout().Name())
+		be.Equal(t, ocfl.Spec1_1, newRoot.Spec())
+		be.Equal(t, desc, newRoot.Description())
+
+		// commit an object
+		objID := "object-1"
+		obj, err := newRoot.NewObject(ctx, objID)
+		be.NilErr(t, err)
+		stage, err := ocfl.StageBytes(map[string][]byte{
+			"file.txt": []byte("readme readme readme"),
+		}, ocfl.SHA256)
+		be.NilErr(t, err)
+		err = obj.Commit(ctx, &ocfl.Commit{
+			Stage:   stage,
+			Message: "first version",
+			User:    ocfl.User{Name: "Stinky & Dirty"},
+		})
+		be.NilErr(t, err)
+
+		// re-open and validate object
+		sameRoot, err := ocfl.NewRoot(ctx, fsys, dir)
+		be.NilErr(t, err)
+		be.Equal(t, layout.Name(), sameRoot.Layout().Name())
+		be.Equal(t, ocfl.Spec1_1, sameRoot.Spec())
+		be.Equal(t, desc, sameRoot.Description())
+		sameObj, err := sameRoot.NewObject(ctx, objID)
+		be.NilErr(t, err)
+		be.NilErr(t, sameObj.Validate(ctx).Err())
+		be.Equal(t, objID, sameObj.Inventory().ID())
+	})
+
+	t.Run("Objects", func(t *testing.T) {
+		t.Run("simple-root", func(t *testing.T) {
+			fsys := ocfl.DirFS(storeFixturePath)
+			dir := `1.0/good-stores/simple-root`
+			root, err := ocfl.NewRoot(ctx, fsys, dir)
+			be.NilErr(t, err)
+			count := 0
+			for _, err := range root.Objects(ctx) {
+				be.NilErr(t, err)
+				count++
+			}
+			be.Equal(t, 3, count)
+		})
+	})
+}

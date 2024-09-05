@@ -7,22 +7,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/ocflv1/codes"
+	"golang.org/x/exp/maps"
 )
 
 var (
-	invSidecarContentsRexp = regexp.MustCompile(`^([a-fA-F0-9]+)\s+inventory\.json[\n]?$`)
-	ErrVersionNotFound     = errors.New("version not found in inventory")
+	ErrVersionNotFound = errors.New("version not found in inventory")
 )
 
-// Inventory represents contents of an OCFL v1.x inventory.json file
+// Inventory represents raw contents of an OCFL v1.x inventory.json file
 type Inventory struct {
 	ID               string                    `json:"id"`
 	Type             ocfl.InvType              `json:"type"`
@@ -33,8 +34,8 @@ type Inventory struct {
 	Versions         map[ocfl.VNum]*Version    `json:"versions"`
 	Fixity           map[string]ocfl.DigestMap `json:"fixity,omitempty"`
 
-	// digest of raw inventory using DigestAlgorithm, set during json unmarshal
-	digest string
+	// jsonDigest of raw inventory using DigestAlgorithm, set during json marshal/unmarshal
+	jsonDigest string
 }
 
 // Version represents object version state and metadata
@@ -45,26 +46,22 @@ type Version struct {
 	User    *ocfl.User     `json:"user,omitempty"`
 }
 
-// UnmarshalJSON decodes the inventory and sets inv's
-// digest value for the bytes b.
-func (inv *Inventory) UnmarshalJSON(b []byte) error {
+func (inv *Inventory) MarshalJSON() ([]byte, error) {
 	type invAlias Inventory
-	var alias invAlias
-	if err := json.Unmarshal(b, &alias); err != nil {
-		return err
+	alias := (*invAlias)(inv)
+	byts, err := json.Marshal(alias)
+	if err != nil {
+		return nil, err
 	}
-	// digest json bytes
-	if d := ocfl.NewDigester(alias.DigestAlgorithm); d != nil {
-		if _, err := io.Copy(d, bytes.NewReader(b)); err != nil {
-			return err
-		}
-		alias.digest = d.String()
+	digester := ocfl.NewDigester(inv.DigestAlgorithm)
+	if digester == nil {
+		return nil, fmt.Errorf("inventory digest algorithm %q: %w", inv.DigestAlgorithm, ocfl.ErrUnknownAlg)
 	}
-	*inv = Inventory(alias)
-	if inv.ContentDirectory == "" {
-		inv.ContentDirectory = contentDir
+	if _, err := io.Copy(digester, bytes.NewReader(byts)); err != nil {
+		return nil, err
 	}
-	return nil
+	inv.jsonDigest = digester.String()
+	return byts, nil
 }
 
 // VNums returns a sorted slice of VNums corresponding to the keys in the
@@ -84,7 +81,7 @@ func (inv Inventory) VNums() []ocfl.VNum {
 // Inventory wasn't decoded using ValidateInventory or ValidateInventoryReader,
 // an empty string is returned.
 func (inv Inventory) Digest() string {
-	return inv.digest
+	return inv.jsonDigest
 }
 
 // ContentPath resolves the logical path from the version state with number v to
@@ -137,31 +134,237 @@ func (inv Inventory) GetFixity(digest string) ocfl.DigestSet {
 	return set
 }
 
-// WriteInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
-// fsys. The digest is calculated using alg and the inventory sidecar is also written to
-// dir/inventory.alg
-func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs ...string) error {
-	if err := ctx.Err(); err != nil {
-		return err
+func (inv Inventory) Inventory() ocfl.ReadInventory {
+	return &readInventory{raw: inv}
+}
+
+// Validate checks the inventory's structure and internal consistency. Errors
+// and warnings are added to any validations. The returned error wraps all fatal
+// errors.
+func (inv *Inventory) Validate() *ocfl.Validation {
+	v := &ocfl.Validation{}
+	if inv.Type.Empty() {
+		err := errors.New("missing required field: 'type'")
+		v.AddFatal(err)
+	}
+	ocflV := inv.Type.Spec
+	if inv.ID == "" {
+		err := errors.New("missing required field: 'id'")
+		v.AddFatal(ec(err, codes.E036(ocflV)))
+	}
+	if inv.Head.IsZero() {
+		err := errors.New("missing required field: 'head'")
+		v.AddFatal(ec(err, codes.E036(ocflV)))
+	}
+	if inv.Manifest == nil {
+		err := errors.New("missing required field 'manifest'")
+		v.AddFatal(ec(err, codes.E041(ocflV)))
+	}
+	if inv.Versions == nil {
+		err := errors.New("missing required field: 'versions'")
+		v.AddFatal(ec(err, codes.E041(ocflV)))
+	}
+	if u, err := url.ParseRequestURI(inv.ID); err != nil || u.Scheme == "" {
+		err := fmt.Errorf(`object ID is not a URI: %q`, inv.ID)
+		v.AddWarn(ec(err, codes.W005(ocflV)))
+	}
+	switch inv.DigestAlgorithm {
+	case ocfl.SHA512:
+		break
+	case ocfl.SHA256:
+		err := fmt.Errorf(`'digestAlgorithm' is %q`, ocfl.SHA256)
+		v.AddWarn(ec(err, codes.W004(ocflV)))
+	default:
+		err := fmt.Errorf(`'digestAlgorithm' is not %q or %q`, ocfl.SHA512, ocfl.SHA256)
+		v.AddFatal(ec(err, codes.E025(ocflV)))
+	}
+	if err := inv.Head.Valid(); err != nil {
+		err = fmt.Errorf("head is invalid: %w", err)
+		v.AddFatal(ec(err, codes.E011(ocflV)))
+	}
+	if strings.Contains(inv.ContentDirectory, "/") {
+		err := errors.New("contentDirectory contains '/'")
+		v.AddFatal(ec(err, codes.E017(ocflV)))
+	}
+	if inv.ContentDirectory == "." || inv.ContentDirectory == ".." {
+		err := errors.New("contentDirectory is '.' or '..'")
+		v.AddFatal(ec(err, codes.E017(ocflV)))
+	}
+	if inv.Manifest != nil {
+		err := inv.Manifest.Valid()
+		if err != nil {
+			var dcErr *ocfl.MapDigestConflictErr
+			var pcErr *ocfl.MapPathConflictErr
+			var piErr *ocfl.MapPathInvalidErr
+			if errors.As(err, &dcErr) {
+				err = ec(err, codes.E096(ocflV))
+			} else if errors.As(err, &pcErr) {
+				err = ec(err, codes.E101(ocflV))
+			} else if errors.As(err, &piErr) {
+				err = ec(err, codes.E099(ocflV))
+			}
+			v.AddFatal(err)
+		}
+		// check that each manifest entry is used in at least one state
+		for _, digest := range inv.Manifest.Digests() {
+			var found bool
+			for _, version := range inv.Versions {
+				if version == nil {
+					continue
+				}
+				if len(version.State[digest]) > 0 {
+					found = true
+					break
+				}
+			}
+			if !found {
+				err := fmt.Errorf("digest in manifest not used in version state: %s", digest)
+				v.AddFatal(ec(err, codes.E107(ocflV)))
+			}
+		}
+	}
+	// version names
+	var versionNums ocfl.VNums = maps.Keys(inv.Versions)
+	if err := versionNums.Valid(); err != nil {
+		if errors.Is(err, ocfl.ErrVerEmpty) {
+			err = ec(err, codes.E008(ocflV))
+		} else if errors.Is(err, ocfl.ErrVNumMissing) {
+			err = ec(err, codes.E010(ocflV))
+		} else if errors.Is(err, ocfl.ErrVNumPadding) {
+			err = ec(err, codes.E012(ocflV))
+		}
+		v.AddFatal(err)
+	}
+	if versionNums.Head() != inv.Head {
+		err := fmt.Errorf(`version head not most recent version: %s`, inv.Head)
+		v.AddFatal(ec(err, codes.E040(ocflV)))
+	}
+	// version state
+	for vname, ver := range inv.Versions {
+		if ver == nil {
+			err := fmt.Errorf(`missing required version block for %q`, vname)
+			v.AddFatal(ec(err, codes.E048(ocflV)))
+			continue
+		}
+		if ver.Created.IsZero() {
+			err := fmt.Errorf(`version %s missing required field: 'created'`, vname)
+			v.AddFatal(ec(err, codes.E048(ocflV)))
+		}
+		if ver.Message == "" {
+			err := fmt.Errorf("version %s missing recommended field: 'message'", vname)
+			v.AddWarn(ec(err, codes.W007(ocflV)))
+		}
+		if ver.User != nil {
+			if ver.User.Name == "" {
+				err := fmt.Errorf("version %s user missing required field: 'name'", vname)
+				v.AddFatal(ec(err, codes.E054(ocflV)))
+			}
+			if ver.User.Address == "" {
+				err := fmt.Errorf("version %s user missing recommended field: 'address'", vname)
+				v.AddWarn(ec(err, codes.W008(ocflV)))
+			}
+			if u, err := url.ParseRequestURI(ver.User.Address); err != nil || u.Scheme == "" {
+				err := fmt.Errorf("version %s user address is not a URI", vname)
+				v.AddWarn(ec(err, codes.W009(ocflV)))
+			}
+		}
+		if ver.State == nil {
+			err := fmt.Errorf(`version %s missing required field: 'state'`, vname)
+			v.AddFatal(ec(err, codes.E048(ocflV)))
+			continue
+		}
+		err := ver.State.Valid()
+		if err != nil {
+			var dcErr *ocfl.MapDigestConflictErr
+			var pcErr *ocfl.MapPathConflictErr
+			var piErr *ocfl.MapPathInvalidErr
+			if errors.As(err, &dcErr) {
+				err = ec(err, codes.E050(ocflV))
+			} else if errors.As(err, &pcErr) {
+				err = ec(err, codes.E095(ocflV))
+			} else if errors.As(err, &piErr) {
+				err = ec(err, codes.E052(ocflV))
+			}
+			v.AddFatal(err)
+		}
+		// check that each state digest appears in manifest
+		for _, digest := range ver.State.Digests() {
+			if len(inv.Manifest[digest]) == 0 {
+				err := fmt.Errorf("digest in %s state not in manifest: %s", vname, digest)
+				v.AddFatal(ec(err, codes.E050(ocflV)))
+			}
+		}
+	}
+	//fixity
+	for _, fixity := range inv.Fixity {
+		err := fixity.Valid()
+		if err != nil {
+			var dcErr *ocfl.MapDigestConflictErr
+			var piErr *ocfl.MapPathInvalidErr
+			var pcErr *ocfl.MapPathConflictErr
+			if errors.As(err, &dcErr) {
+				err = ec(err, codes.E097(ocflV))
+			} else if errors.As(err, &piErr) {
+				err = ec(err, codes.E099(ocflV))
+			} else if errors.As(err, &pcErr) {
+				err = ec(err, codes.E101(ocflV))
+			}
+			v.AddFatal(err)
+		}
+	}
+	return v
+}
+
+func ValidateInventoryBytes(raw []byte) (*Inventory, *ocfl.Validation) {
+	inv, err := NewInventory(raw)
+	if err != nil {
+		vld := &ocfl.Validation{}
+		vld.AddFatal(err)
+		return nil, vld
+	}
+	v := inv.Validate()
+	if v.Err() != nil {
+		return nil, v
+	}
+	return inv, v
+}
+
+// NewInventory reads the inventory and sets its digest value using
+// the digest algorithm
+func NewInventory(byts []byte) (*Inventory, error) {
+	dec := json.NewDecoder(bytes.NewReader(byts))
+	dec.DisallowUnknownFields()
+	var inv Inventory
+	if err := dec.Decode(&inv); err != nil {
+		return nil, err
 	}
 	digester := ocfl.NewDigester(inv.DigestAlgorithm)
 	if digester == nil {
-		return fmt.Errorf("%w: %q", ocfl.ErrUnknownAlg, inv.DigestAlgorithm)
+		return nil, fmt.Errorf("%w: %q", ocfl.ErrUnknownAlg, inv.DigestAlgorithm)
+	}
+	if _, err := io.Copy(digester, bytes.NewReader(byts)); err != nil {
+		return nil, err
+	}
+	inv.jsonDigest = digester.String()
+	return &inv, nil
+}
+
+// writeInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
+// fsys. The digest is calculated using alg and the inventory sidecar is also written to
+// dir/inventory.alg
+func writeInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	byts, err := json.Marshal(inv)
 	if err != nil {
 		return fmt.Errorf("encoding inventory: %w", err)
 	}
-	_, err = io.Copy(digester, bytes.NewReader(byts))
-	if err != nil {
-		return err
-	}
-	invDigest := digester.String()
 	// write inventory.json and sidecar
 	for _, dir := range dirs {
 		invFile := path.Join(dir, inventoryFile)
 		sideFile := invFile + "." + inv.DigestAlgorithm
-		sideContent := invDigest + " " + inventoryFile + "\n"
+		sideContent := inv.jsonDigest + " " + inventoryFile + "\n"
 		_, err = fsys.Write(ctx, invFile, bytes.NewReader(byts))
 		if err != nil {
 			return fmt.Errorf("write inventory failed: %w", err)
@@ -174,161 +377,218 @@ func WriteInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs
 	return nil
 }
 
-// readInventorySidecar parses the contents of file as an inventory sidecar, returning
-// the stored digest on succecss. An error is returned if the sidecar is not in the expected
-// format
-func readInventorySidecar(ctx context.Context, fsys ocfl.FS, name string) (digest string, err error) {
-	file, err := fsys.OpenFile(ctx, name)
-	if err != nil {
-		return
+// NextInventory ...
+func buildInventory(prev ocfl.ReadInventory, commit *ocfl.Commit) (*Inventory, error) {
+	if commit.Stage == nil {
+		return nil, errors.New("commit is missing new version state")
 	}
-	defer file.Close()
-	cont, err := io.ReadAll(file)
-	if err != nil {
-		return
-	}
-	matches := invSidecarContentsRexp.FindSubmatch(cont)
-	if len(matches) != 2 {
-		err = fmt.Errorf("reading %s: %w", name, ErrInvSidecarContents)
-		return
-	}
-	digest = string(matches[1])
-	return
-}
+	if commit.Stage.DigestAlgorithm == "" {
+		return nil, errors.New("commit has no digest algorithm")
 
-// NormalizedCopy returns a copy of the inventory with all digests
-// normalized.
-func (inv Inventory) NormalizedCopy() (*Inventory, error) {
-	newInv := inv
-	newInv.digest = "" // don't copy digest value (read from sidecar)
-	var err error
-	newInv.Manifest, err = inv.Manifest.Normalize()
-	if err != nil {
-		return nil, fmt.Errorf("in manifest: %w", err)
 	}
-	newInv.Versions = make(map[ocfl.VNum]*Version, len(inv.Versions))
-	for v, ver := range inv.Versions {
-		newInv.Versions[v] = &Version{
-			Created: ver.Created,
-			Message: ver.Message,
+	if commit.Stage.State == nil {
+		commit.Stage.State = ocfl.DigestMap{}
+	}
+	newInv := &Inventory{
+		ID:               commit.ID,
+		DigestAlgorithm:  commit.Stage.DigestAlgorithm,
+		ContentDirectory: contentDir,
+	}
+	switch {
+	case prev != nil:
+		prevInv, ok := prev.(*readInventory)
+		if !ok {
+			err := errors.New("previous inventory is not an OCFLv1 inventory")
+			return nil, err
 		}
-		newInv.Versions[v].State, err = ver.State.Normalize()
+		newInv.ID = prev.ID()
+		newInv.ContentDirectory = prevInv.raw.ContentDirectory
+		newInv.Type = prevInv.raw.Type
+
+		var err error
+		newInv.Head, err = prev.Head().Next()
 		if err != nil {
-			return nil, fmt.Errorf("in version %s state: %w", v, err)
+			return nil, fmt.Errorf("existing inventory's version scheme doesn't support additional versions: %w", err)
 		}
-		if ver.User != nil {
-			newInv.Versions[v].User = &ocfl.User{
-				Name:    ver.User.Name,
-				Address: ver.User.Address,
+		if !commit.Spec.Empty() {
+			// new inventory spec must be >= prev
+			if commit.Spec.Cmp(prev.Spec()) < 0 {
+				err = fmt.Errorf("new inventory's OCFL spec can't be lower than the existing inventory's (%s)", prev.Spec())
+				return nil, err
+			}
+			newInv.Type = commit.Spec.AsInvType()
+		}
+		if !commit.AllowUnchanged {
+			lastV := prev.Version(0)
+			if lastV.State().Eq(commit.Stage.State) {
+				err := errors.New("version state unchanged")
+				return nil, err
 			}
 		}
-	}
-	newInv.Fixity = make(map[string]ocfl.DigestMap, len(inv.Fixity))
-	for alg, m := range inv.Fixity {
-		newInv.Fixity[alg], err = m.Normalize()
-		if err != nil {
-			return nil, fmt.Errorf("in %s fixity: %w", alg, err)
-		}
-	}
-	return &newInv, nil
-}
 
-// NextInventory builds a new inventory from base with an incremented HEAD and
-// a new version block. The new manifest will include the previous manifest
-// plus new entries for new content. Manifest paths are generated by passing
-// new content paths through contentPathFn. Fixer is used to provide new fixity
-// values.
-func NewInventory(base *Inventory, ver *Version, fixer ocfl.FixitySource, contentPathFn ocfl.RemapFunc) (*Inventory, error) {
-	if ver == nil || ver.State == nil {
-		return nil, errors.New("missing new version state")
-	}
-	if base == nil {
-		base = &Inventory{
-			ContentDirectory: contentDir,
-			Type:             defaultSpec.AsInvType(),
+		// copy and normalize all digests in the inventory. If we don't do this
+		// non-normalized digests in previous version states might cause
+		// problems since the updated manifest/fixity will be normalized.
+		newInv.Manifest, err = prev.Manifest().Normalize()
+		if err != nil {
+			return nil, fmt.Errorf("in existing inventory manifest: %w", err)
 		}
+		versions := prev.Head().Lineage()
+		newInv.Versions = make(map[ocfl.VNum]*Version, len(versions))
+		for _, vnum := range versions {
+			prevVer := prev.Version(vnum.Num())
+			newVer := &Version{
+				Created: prevVer.Created(),
+				Message: prevVer.Message(),
+			}
+			newVer.State, err = prevVer.State().Normalize()
+			if err != nil {
+				return nil, fmt.Errorf("in existing inventory %s state: %w", vnum, err)
+			}
+			if prevVer.User() != nil {
+				newVer.User = &ocfl.User{
+					Name:    prevVer.User().Name,
+					Address: prevVer.User().Address,
+				}
+			}
+			newInv.Versions[vnum] = newVer
+		}
+		// transfer fixity
+		newInv.Fixity = make(map[string]ocfl.DigestMap, len(prevInv.raw.Fixity))
+		for alg, m := range prevInv.raw.Fixity {
+			newInv.Fixity[alg], err = m.Normalize()
+			if err != nil {
+				return nil, fmt.Errorf("in existing inventory %s fixity: %w", alg, err)
+			}
+		}
+	default:
+		// FIXME: how whould padding be set for new inventories?
+		newInv.Head = ocfl.V(1, 0)
+		newInv.Manifest = ocfl.DigestMap{}
+		newInv.Fixity = map[string]ocfl.DigestMap{}
+		newInv.Versions = map[ocfl.VNum]*Version{}
+		newInv.Type = commit.Spec.AsInvType()
 	}
-	newHead, err := base.Head.Next()
-	if err != nil {
-		return nil, fmt.Errorf("inventory's version scheme doesn't allow additional versions: %w", err)
+
+	// add new version
+	newVersion := &Version{
+		State:   commit.Stage.State,
+		Created: commit.Created,
+		Message: commit.Message,
+		User:    &commit.User,
 	}
-	nextInv, err := base.NormalizedCopy()
-	if err != nil {
-		return nil, fmt.Errorf("errors in base inventory: %w", err)
+	if newVersion.Created.IsZero() {
+		newVersion.Created = time.Now()
 	}
-	nextInv.Head = newHead
-	// normalize all digests in the inventory. If we don't do this
-	// non-normalized digests in previous version states might cause problems
-	// since the updated manifest/fixity will be normalized.
-	if nextInv.Manifest == nil {
-		nextInv.Manifest = ocfl.DigestMap{}
-	}
-	if nextInv.Fixity == nil {
-		nextInv.Fixity = map[string]ocfl.DigestMap{}
-	}
-	if nextInv.Versions == nil {
-		nextInv.Versions = map[ocfl.VNum]*Version{}
-	}
-	nextInv.Versions[nextInv.Head] = ver
+	newVersion.Created = newVersion.Created.Truncate(time.Second)
+	newInv.Versions[newInv.Head] = newVersion
 
 	// build new manifest and fixity entries
 	newContentFunc := func(paths []string) []string {
 		// apply user-specified path transform first
-		if contentPathFn != nil {
-			paths = contentPathFn(paths)
+		if commit.ContentPathFunc != nil {
+			paths = commit.ContentPathFunc(paths)
+		}
+		contDir := newInv.ContentDirectory
+		if contDir == "" {
+			contDir = contentDir
 		}
 		for i, p := range paths {
-			paths[i] = path.Join(nextInv.Head.String(), nextInv.ContentDirectory, p)
+			paths[i] = path.Join(newInv.Head.String(), contDir, p)
 		}
 		return paths
 	}
-	for digest, logicPaths := range ver.State {
-		if len(nextInv.Manifest[digest]) > 0 {
-			// exists
+	for digest, logicPaths := range newVersion.State {
+		if len(newInv.Manifest[digest]) > 0 {
+			// version content already exists in the manifest
 			continue
 		}
-		nextInv.Manifest[digest] = newContentFunc(slices.Clone(logicPaths))
+		newInv.Manifest[digest] = newContentFunc(slices.Clone(logicPaths))
 	}
-	if fixer != nil {
-		for digest, contentPaths := range nextInv.Manifest {
-			fixSet := fixer.GetFixity(digest)
+	if commit.Stage.FixitySource != nil {
+		for digest, contentPaths := range newInv.Manifest {
+			fixSet := commit.Stage.FixitySource.GetFixity(digest)
 			if len(fixSet) < 1 {
 				continue
 			}
 			for fixAlg, fixDigest := range fixSet {
-				if nextInv.Fixity[fixAlg] == nil {
-					nextInv.Fixity[fixAlg] = ocfl.DigestMap{}
+				if newInv.Fixity[fixAlg] == nil {
+					newInv.Fixity[fixAlg] = ocfl.DigestMap{}
 				}
 				for _, cp := range contentPaths {
-					fixPaths := nextInv.Fixity[fixAlg][fixDigest]
+					fixPaths := newInv.Fixity[fixAlg][fixDigest]
 					if !slices.Contains(fixPaths, cp) {
-						nextInv.Fixity[fixAlg][fixDigest] = append(fixPaths, cp)
+						newInv.Fixity[fixAlg][fixDigest] = append(fixPaths, cp)
 					}
 				}
 			}
 		}
 	}
 	// check that resulting inventory is valid
-	if err := nextInv.Validate().Err(); err != nil {
+	if err := newInv.Validate().Err(); err != nil {
 		return nil, fmt.Errorf("generated inventory is not valid: %w", err)
 	}
-	return nextInv, nil
+	return newInv, nil
 }
+
+// readInventory implements ocfl.Inventory
+type readInventory struct {
+	raw Inventory
+}
+
+func (inv *readInventory) MarshalJSON() ([]byte, error) { return json.Marshal(inv.raw) }
+
+func (inv *readInventory) GetFixity(digest string) ocfl.DigestSet { return inv.raw.GetFixity(digest) }
+
+func (inv *readInventory) ContentDirectory() string {
+	if c := inv.raw.ContentDirectory; c != "" {
+		return c
+	}
+	return contentDir
+}
+
+func (inv *readInventory) Digest() string { return inv.raw.jsonDigest }
+
+func (inv *readInventory) DigestAlgorithm() string { return inv.raw.DigestAlgorithm }
+
+func (inv *readInventory) Head() ocfl.VNum { return inv.raw.Head }
+
+func (inv *readInventory) ID() string { return inv.raw.ID }
+
+func (inv *readInventory) Manifest() ocfl.DigestMap { return inv.raw.Manifest }
+
+func (inv *readInventory) Spec() ocfl.Spec { return inv.raw.Type.Spec }
+
+func (inv *readInventory) Validate() *ocfl.Validation {
+	if inv.raw.jsonDigest == "" {
+		err := errors.New("inventory was not initialized correctly: missing file digest value")
+		v := &ocfl.Validation{}
+		v.AddFatal(err)
+		return v
+	}
+	return inv.raw.Validate()
+}
+
+func (inv *readInventory) Version(i int) ocfl.ObjectVersion {
+	v := inv.raw.Version(i)
+	if v == nil {
+		return nil
+	}
+	return &inventoryVersion{ver: v}
+}
+
+type inventoryVersion struct {
+	ver *Version
+}
+
+func (v *inventoryVersion) State() ocfl.DigestMap { return v.ver.State }
+func (v *inventoryVersion) Message() string       { return v.ver.Message }
+func (v *inventoryVersion) Created() time.Time    { return v.ver.Created }
+func (v *inventoryVersion) User() *ocfl.User      { return v.ver.User }
 
 type logicalState struct {
 	manifest ocfl.DigestMap
 	state    ocfl.DigestMap
-}
-
-func (inv *Inventory) logicalState(i int) logicalState {
-	var state ocfl.DigestMap
-	if v := inv.Version(i); v != nil {
-		state = v.State
-	}
-	return logicalState{
-		manifest: inv.Manifest,
-		state:    state,
-	}
 }
 
 func (a logicalState) Eq(b logicalState) bool {

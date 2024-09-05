@@ -5,9 +5,9 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/matryer/is"
+	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/backend/memfs"
+	"github.com/srerickson/ocfl-go/backend/local"
 )
 
 func TestParseName(t *testing.T) {
@@ -19,13 +19,12 @@ func TestParseName(t *testing.T) {
 	}
 	for in, exp := range table {
 		t.Run(in, func(t *testing.T) {
-			is := is.New(t)
 			d, err := ocfl.ParseNamaste(in)
 			if exp.Type != "" {
-				is.NoErr(err)
-				is.Equal(d, exp)
+				be.NilErr(t, err)
+				be.Equal(t, exp, d)
 			} else {
-				is.True(err != nil)
+				be.True(t, err != nil)
 			}
 		})
 	}
@@ -33,7 +32,6 @@ func TestParseName(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
-	is := is.New(t)
 	fsys := fstest.MapFS{
 		"0=hot_tub_12.1": &fstest.MapFile{
 			Data: []byte("hot_tub_12.1\n")},
@@ -43,27 +41,25 @@ func TestValidate(t *testing.T) {
 			Data: []byte("hot_tub_12.1\n")},
 	}
 	err := ocfl.ValidateNamaste(context.Background(), ocfl.NewFS(fsys), "0=hot_tub_12.1")
-	is.NoErr(err)
+	be.NilErr(t, err)
 	err = ocfl.ValidateNamaste(context.Background(), ocfl.NewFS(fsys), "0=hot_bath_12.1")
-	is.True(err != nil)
+	be.True(t, err != nil)
 	err = ocfl.ValidateNamaste(context.Background(), ocfl.NewFS(fsys), "1=hot_tub_12.1")
-	is.True(err != nil)
+	be.True(t, err != nil)
 }
 
 func TestWriteDeclaration(t *testing.T) {
-	is := is.New(t)
-	fsys := memfs.New()
 	ctx := context.Background()
+	fsys, err := local.NewFS(t.TempDir())
+	be.NilErr(t, err)
 	v := ocfl.Spec("12.1")
 	dec := &ocfl.Namaste{"ocfl", v}
-	err := ocfl.WriteDeclaration(ctx, fsys, ".", *dec)
-	is.NoErr(err)
+	be.NilErr(t, ocfl.WriteDeclaration(ctx, fsys, ".", *dec))
 	inf, err := fsys.ReadDir(ctx, ".")
-	is.NoErr(err)
+	be.NilErr(t, err)
 	out, err := ocfl.FindNamaste(inf)
-	is.NoErr(err)
-	is.True(out.Type == "ocfl")
-	is.True(out.Version == v)
-	err = ocfl.ValidateNamaste(ctx, fsys, dec.Name())
-	is.NoErr(err)
+	be.NilErr(t, err)
+	be.Equal(t, "ocfl", out.Type)
+	be.Equal(t, v, out.Version)
+	be.NilErr(t, ocfl.ValidateNamaste(ctx, fsys, dec.Name()))
 }

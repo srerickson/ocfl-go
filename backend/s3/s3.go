@@ -82,10 +82,11 @@ func readDir(ctx context.Context, api ReadDirAPI, buck string, dir string) ([]fs
 		}
 		numDirs := len(list.CommonPrefixes)
 		numFiles := len(list.Contents)
-		if numDirs == 0 && numFiles == 0 {
-			return nil, pathErr("readdir", dir, fs.ErrNotExist)
+		numEntries := numDirs + numFiles
+		if numEntries == 0 {
+			break
 		}
-		newEntries := make([]fs.DirEntry, numDirs+numFiles)
+		newEntries := make([]fs.DirEntry, numEntries)
 		for i, item := range list.CommonPrefixes {
 			newEntries[i] = &iofsInfo{
 				name: path.Base(*item.Prefix),
@@ -107,6 +108,10 @@ func readDir(ctx context.Context, api ReadDirAPI, buck string, dir string) ([]fs
 		if params.ContinuationToken == nil {
 			break
 		}
+	}
+	if len(entries) == 0 {
+		// treat the prefix as a non-existing directory
+		return nil, pathErr("readdir", dir, fs.ErrNotExist)
 	}
 	return entries, nil
 }
@@ -299,113 +304,6 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 		}
 	}
 	return nil
-}
-
-// objectyRootsIter returns an iterator for ocfl.ObjectyRoots under the
-// prefix dir, in bucket
-func objectyRootsIter(ctx context.Context, api ObjectRootsAPI, buck string, fsys ocfl.FS, dir string) func(func(*ocfl.ObjectRoot, error) bool) {
-	return func(yield func(obj *ocfl.ObjectRoot, err error) bool) {
-		const op = "list_object_roots"
-		if !fs.ValidPath(dir) {
-			yield(nil, pathErr(op, dir, fs.ErrInvalid))
-			return
-		}
-		params := &s3v2.ListObjectsV2Input{
-			Bucket:  &buck,
-			MaxKeys: &maxKeys,
-		}
-		if dir != "." {
-			params.Prefix = aws.String(dir + "/")
-		}
-		var obj *ocfl.ObjectRoot
-		for {
-			listPage, err := api.ListObjectsV2(ctx, params)
-			if err != nil {
-				yield(nil, pathErr(op, dir, err))
-				return
-			}
-			for _, s3obj := range listPage.Contents {
-				if s3obj.Key == nil {
-					err := errors.New("nil content key in s3 ListObjectsV2 response")
-					yield(nil, pathErr(op, dir, err))
-					return
-				}
-				key := *s3obj.Key
-				keyDir := path.Dir(key)
-				keyBase := path.Base(key)
-				decl, _ := ocfl.ParseNamaste(keyBase)
-				switch {
-				case decl.Type == ocfl.NamasteTypeObject:
-					// key is an OCFL object declaration file
-					if obj != nil {
-						if obj.Path == "." || obj.Path == keyDir || strings.HasPrefix(keyDir, obj.Path+"/") {
-							// the key is an object declaration in a directory that
-							// we've already seen an object declaration for.
-							// That's invalid; here we just ignore the new key.
-							break
-						}
-						// handle the previous OCFL object we saw
-						if !yield(obj, nil) {
-							return
-						}
-					}
-					obj = &ocfl.ObjectRoot{
-						FS:   fsys,
-						Path: keyDir,
-						State: &ocfl.ObjectRootState{
-							Spec:  decl.Version,
-							Flags: ocfl.HasNamaste,
-						},
-					}
-				case obj == nil || (obj.Path != "." && !strings.HasPrefix(key, obj.Path+"/")):
-					// ignore the key if its not part of an object that
-					// we've already found the declaration for
-					// FIXME: There is a bug here since we may through-out non-conforming
-					// keys for objects that we haven't seen the declaration for yet.
-					// (ie., names that appear before `0=`).
-					break
-				case keyDir == obj.Path:
-					// file in OCFL object root
-					switch {
-					case keyBase == "inventory.json":
-						obj.State.Flags |= ocfl.HasInventory
-					case strings.HasPrefix(keyBase, "inventory.json."):
-						obj.State.Flags |= ocfl.HasSidecar
-						obj.State.SidecarAlg = strings.TrimPrefix(keyBase, "inventory.json.")
-					default:
-						obj.State.Invalid = append(obj.State.Invalid, keyBase)
-					}
-				default:
-					// subdirectory of OCFL object root
-					subdir, _, _ := strings.Cut(strings.TrimPrefix(key, obj.Path+"/"), "/")
-					var vnum ocfl.VNum
-					switch {
-					case subdir == "extensions":
-						if !obj.State.HasExtensions() {
-							obj.State.Flags |= ocfl.HasExtensions
-						}
-					case ocfl.ParseVNum(subdir, &vnum) == nil:
-						if !slices.Contains(obj.State.VersionDirs, vnum) {
-							obj.State.VersionDirs = append(obj.State.VersionDirs, vnum)
-						}
-					default:
-						obj.State.Invalid = append(obj.State.Invalid, subdir)
-					}
-				}
-			}
-			params.ContinuationToken = listPage.NextContinuationToken
-			if params.ContinuationToken == nil {
-				break
-			}
-		}
-		// haven't called yield on final object
-		if obj != nil {
-			if !yield(obj, nil) {
-				return
-			}
-		}
-		return
-	}
 }
 
 // filesIter returns an iterator that yields PathInfo for files in the dir

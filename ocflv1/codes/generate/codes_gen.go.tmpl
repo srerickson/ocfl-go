@@ -1,19 +1,24 @@
 package codes
+
 // This is generated code. Do not modify. See gen folder.
 
-import "github.com/srerickson/ocfl-go/validation"
 import "github.com/srerickson/ocfl-go"
 
+{{- range $code, $element := . }}
 
-{{ range $code, $element := . }}
-//{{ $element.Comment }}
-var {{ $code }} = validation.NewCode("{{ $code }}",
-	map[ocfl.Spec]*validation.Ref{
-	{{- range $v, $spec := $element.Specs }}
-		{ {{- index $v 0}}, {{ index $v 1 -}} }: {
-			Description: "{{ $spec.Description }}",
-			URL:         "{{ $spec.URL }}",
-		},
+// {{ $element.Comment }}
+func {{ $code -}}(spec ocfl.Spec) *ocfl.ValidationCode {
+	switch spec {
+	{{- range $spec, $ref := $element.Specs }}
+	case ocfl.Spec("{{ $spec -}}"):
+		return &ocfl.ValidationCode{
+			Spec:        spec,
+			Code:        "{{ $code }}",
+			Description: "{{ $ref.Description }}",
+			URL:         "{{ $ref.URL }}",
+		}
 	{{- end }}
-	})
-{{ end }}
+	default:
+		return nil
+	}
+}{{ end }}

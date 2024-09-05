@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/srerickson/ocfl-go/backend/s3"
 )
 
@@ -321,7 +321,7 @@ func (m *S3API) CopyObject(ctx context.Context, in *s3v2.CopyObjectInput, opts .
 		return nil, err
 	}
 	if in.Key == nil {
-		return nil, errors.New("Key is required")
+		return nil, errors.New("key is required")
 	}
 	if in.CopySource == nil {
 		return nil, errors.New("CopySource is required")
