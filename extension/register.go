@@ -21,6 +21,19 @@ func (r Register) New(name string) (Extension, error) {
 	return extfunc(), nil
 }
 
+// NewLayout is the same as New with an additional check that the extension is a
+// layout.
+func (r Register) NewLayout(name string) (Layout, error) {
+	ext, err := r.New(name)
+	if err != nil {
+		return nil, err
+	}
+	if layout, isLayout := ext.(Layout); isLayout {
+		return layout, nil
+	}
+	return nil, fmt.Errorf("%w: %q", ErrNotLayout, name)
+}
+
 // Append returns a new Register that includes extension constructors from r
 // plus additional constructors. If the added extension constructors have the same
 // name as those in r, the new register will use the added constructor.
