@@ -38,7 +38,7 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 	for _, optFn := range opts {
 		optFn(obj)
 	}
-	inv, err := readUnknownInventory(ctx, obj.globals.OCFLs(), fsys, path.Join(dir, inventoryBase))
+	inv, err := readUnknownInventory(ctx, obj.globals.OCFLs(), fsys, dir)
 	if err != nil {
 		var pthError *fs.PathError
 		if !errors.As(err, &pthError) || path.Base(pthError.Path) != inventoryBase {
@@ -265,8 +265,8 @@ func ValidateObject(ctx context.Context, fsys FS, dir string, opts ...ObjectVali
 	}
 	var prevInv ReadInventory
 	for _, vnum := range state.VersionDirs.Head().Lineage() {
-		name := path.Join(dir, vnum.String(), inventoryBase)
-		versionInv, err := readUnknownInventory(ctx, v.globals.OCFLs(), fsys, name)
+		versionDir := path.Join(dir, vnum.String())
+		versionInv, err := readUnknownInventory(ctx, v.globals.OCFLs(), fsys, versionDir)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			v.AddFatal(fmt.Errorf("reading %s/inventory.json: %w", vnum, err))
 			continue
