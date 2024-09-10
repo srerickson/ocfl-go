@@ -97,7 +97,7 @@ func testObjectExample(t *testing.T) {
 	be.Equal(t, "1,2,3", string(gotBytes))
 
 	// check that the object is valid
-	be.NilErr(t, obj.Validate(ctx).Err())
+	be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 	// be.NilErr(t, result.Warning)
 
 	// create a new object by forking new-object-01
@@ -111,7 +111,7 @@ func testObjectExample(t *testing.T) {
 	forkObj, err := ocfl.NewObject(ctx, tmpFS, forkID)
 	be.NilErr(t, err)
 	be.NilErr(t, forkObj.Commit(ctx, fork))
-	be.NilErr(t, forkObj.Validate(ctx).Err())
+	be.NilErr(t, ocfl.ValidateObject(ctx, forkObj.FS(), forkObj.Path()).Err())
 	// TODO
 	// roll-back an object to a previous version
 	// interact with an object's extensions: list them, add an extension, remove an extension.
@@ -210,7 +210,7 @@ func testObjectCommit(t *testing.T) {
 		}
 		be.NilErr(t, obj.Commit(ctx, commit))
 		be.True(t, obj.Exists())
-		be.NilErr(t, obj.Validate(ctx).Err())
+		be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 	})
 	t.Run("commit must use same same alg", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
@@ -270,7 +270,7 @@ func testUpdateFixtures(t *testing.T) {
 					Message: "update",
 					User:    ocfl.User{Name: "Tristram Shandy"},
 				}))
-				be.NilErr(t, obj.Validate(ctx).Err())
+				be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 				// check content
 				newVersion, err := obj.OpenVersion(ctx, 0)
 				be.NilErr(t, err)
@@ -297,9 +297,7 @@ func testValidateFixtures(t *testing.T) {
 				be.NilErr(t, err)
 				for _, dir := range goodObjects {
 					t.Run(dir.Name(), func(t *testing.T) {
-						obj, err := ocfl.NewObject(ctx, fsys, dir.Name())
-						be.NilErr(t, err)
-						result := obj.Validate(ctx)
+						result := ocfl.ValidateObject(ctx, fsys, dir.Name())
 						be.NilErr(t, result.Err())
 						be.NilErr(t, result.WarnErr())
 					})
@@ -314,14 +312,7 @@ func testValidateFixtures(t *testing.T) {
 						continue
 					}
 					t.Run(dir.Name(), func(t *testing.T) {
-						obj, err := ocfl.NewObject(ctx, fsys, dir.Name())
-						if err != nil {
-							if ok, desc := fixtureExpectedErrs(dir.Name(), err); !ok {
-								t.Log(path.Join(spec, dir.Name())+":", desc)
-							}
-							return
-						}
-						result := obj.Validate(ctx)
+						result := ocfl.ValidateObject(ctx, fsys, dir.Name())
 						be.True(t, result.Err() != nil)
 						if ok, desc := fixtureExpectedErrs(dir.Name(), result.Errors()...); !ok {
 							t.Log(path.Join(spec, dir.Name())+":", desc)
@@ -335,9 +326,7 @@ func testValidateFixtures(t *testing.T) {
 				be.NilErr(t, err)
 				for _, dir := range warnObjects {
 					t.Run(dir.Name(), func(t *testing.T) {
-						obj, err := ocfl.NewObject(ctx, fsys, dir.Name())
-						be.NilErr(t, err)
-						result := obj.Validate(ctx)
+						result := ocfl.ValidateObject(ctx, fsys, dir.Name())
 						be.NilErr(t, result.Err())
 						t.Log(result.WarnErr())
 						be.True(t, len(result.WarnErrors()) > 0)

@@ -77,7 +77,7 @@ func (o *ReadObject) ValidateRoot(ctx context.Context, state *ocfl.ObjectState, 
 	if err := o.validateDeclaration(ctx); err != nil {
 		vldr.AddFatal(err)
 	}
-	vldr.PrefixAdd("root contents", o.validateRootState(state))
+	vldr.PrefixAdd("root contents", validateRootState(o.inv.Type.Spec, state))
 	vldr.PrefixAdd("inventory.json", o.inv.Validate())
 	vldr.PrefixAdd("extensions directory", o.validateExtensionsDir(ctx))
 	if err := vldr.AddInventoryDigests(o.Inventory()); err != nil {
@@ -85,8 +85,7 @@ func (o *ReadObject) ValidateRoot(ctx context.Context, state *ocfl.ObjectState, 
 	}
 }
 
-func (o ReadObject) validateRootState(state *ocfl.ObjectState) *ocfl.Validation {
-	ocflV := o.inv.Type.Spec
+func validateRootState(ocflV ocfl.Spec, state *ocfl.ObjectState) *ocfl.Validation {
 	v := &ocfl.Validation{}
 	for _, name := range state.Invalid {
 		err := fmt.Errorf(`%w: %s`, ErrObjRootStructure, name)
@@ -115,14 +114,14 @@ func (o ReadObject) validateRootState(state *ocfl.ObjectState) *ocfl.Validation 
 		err := errors.New("version directory names are zero-padded")
 		v.AddWarn(ec(err, codes.W001(ocflV)))
 	}
-	if vdirHead := state.VersionDirs.Head().Num(); vdirHead > o.inv.Head.Num() {
-		err := errors.New("version directories don't reflect versions in inventory.json")
-		v.AddFatal(ec(err, codes.E046(ocflV)))
-	}
+	// if vdirHead := state.VersionDirs.Head().Num(); vdirHead > o.inv.Head.Num() {
+	// 	err := errors.New("version directories don't reflect versions in inventory.json")
+	// 	v.AddFatal(ec(err, codes.E046(ocflV)))
+	// }
 	return v
 }
 
-func (o *ReadObject) validateDeclaration(ctx context.Context) error {
+func (o ReadObject) validateDeclaration(ctx context.Context) error {
 	ocflV := o.inv.Type.Spec
 	decl := ocfl.Namaste{Type: ocfl.NamasteTypeObject, Version: ocflV}
 	name := path.Join(o.path, decl.Name())

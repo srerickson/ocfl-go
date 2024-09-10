@@ -33,11 +33,6 @@ func main() {
 
 func validateObject(ctx context.Context, root string, logger *slog.Logger) error {
 	fsys := ocfl.NewFS(os.DirFS(root))
-	obj, err := ocfl.NewObject(ctx, fsys, ".")
-	if err != nil {
-		logger.Error(err.Error())
-		return err
-	}
-	result := obj.Validate(ctx, ocfl.ValidationLogger(logger))
+	result := ocfl.ValidateObject(ctx, fsys, ".", ocfl.ValidationLogger(logger))
 	return result.Err()
 }

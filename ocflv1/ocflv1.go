@@ -140,6 +140,22 @@ func (imp OCFL) Commit(ctx context.Context, obj ocfl.ReadObject, commit *ocfl.Co
 	}, nil
 }
 
+func (imp OCFL) ValidateObjectRoot(ctx context.Context, fsys ocfl.FS, dir string, state *ocfl.ObjectState, vldr *ocfl.ObjectValidation) (ocfl.ReadObject, error) {
+	// validate namaste
+	decl := ocfl.Namaste{Type: ocfl.NamasteTypeObject, Version: imp.spec}
+	name := path.Join(dir, decl.Name())
+	err := ocfl.ValidateNamaste(ctx, fsys, name)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			err = fmt.Errorf("%s: %w", name, ocfl.ErrObjectNamasteNotExist)
+		}
+		vldr.AddFatal(err)
+		return nil, err
+	}
+	vldr.PrefixAdd("root contents", validateRootState(imp.spec, state))
+	return nil, nil
+}
+
 func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum, inv ocfl.ReadInventory, prev ocfl.ReadInventory, vldr *ocfl.ObjectValidation) error {
 	fsys := obj.FS()
 	vDir := path.Join(obj.Path(), dirNum.String())

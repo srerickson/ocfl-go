@@ -38,7 +38,7 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 	for _, optFn := range opts {
 		optFn(obj)
 	}
-	inv, err := readInventory(ctx, obj.globals.OCFLs(), fsys, path.Join(dir, inventoryBase))
+	inv, err := readUnknownInventory(ctx, obj.globals.OCFLs(), fsys, path.Join(dir, inventoryBase))
 	if err != nil {
 		var pthError *fs.PathError
 		if !errors.As(err, &pthError) || path.Base(pthError.Path) != inventoryBase {
@@ -187,61 +187,98 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 	return vfs, nil
 }
 
-// Validate validates the object.
-func (obj *Object) Validate(ctx context.Context, opts ...ObjectValidationOption) (v *ObjectValidation) {
-	v = NewObjectValidation(opts...)
-	objPath := obj.Path()
-	objFS := obj.FS()
-	// the object may not exist
-	if !obj.Exists() {
-		err := fmt.Errorf("not an existing OCFL object: %s: %w", objPath, ErrNamasteNotExist)
+// // Validate validates the object.
+// func (obj *Object) Validate(ctx context.Context, opts ...ObjectValidationOption) (v *ObjectValidation) {
+// 	v = NewObjectValidation(opts...)
+// 	objPath := obj.Path()
+// 	objFS := obj.FS()
+// 	// the object may not exist
+// 	if !obj.Exists() {
+// 		err := fmt.Errorf("not an existing OCFL object: %s: %w", objPath, ErrNamasteNotExist)
+// 		v.AddFatal(err)
+// 		return
+// 	}
+// 	entries, err := objFS.ReadDir(ctx, objPath)
+// 	if err != nil {
+// 		v.AddFatal(err)
+// 		return
+// 	}
+// 	rootState := ParseObjectDir(entries)
+// 	obj.reader.ValidateRoot(ctx, rootState, v)
+// 	if v.Err() != nil {
+// 		// don't continue if object is invalid
+// 		return
+// 	}
+// 	// validate versions using previous specs
+// 	versionOCFL, err := obj.globals.GetSpec(Spec1_0)
+// 	if err != nil {
+// 		err = fmt.Errorf("unexpected error during validation: %w", err)
+// 		v.AddFatal(err)
+// 		return
+// 	}
+// 	var prevInv ReadInventory
+// 	for _, vnum := range rootState.VersionDirs.Head().Lineage() {
+// 		name := path.Join(objPath, vnum.String(), inventoryBase)
+// 		versionInv, err := readUnknownInventory(ctx, v.globals.OCFLs(), objFS, name)
+// 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+// 			v.AddFatal(fmt.Errorf("reading %s/inventory.json: %w", vnum, err))
+// 			continue
+// 		}
+// 		if versionInv != nil {
+// 			versionOCFL = v.globals.OCFLs().MustGet(versionInv.Spec())
+// 		}
+// 		versionOCFL.ValidateVersion(ctx, obj.reader, vnum, versionInv, prevInv, v)
+// 		prevInv = versionInv
+// 	}
+// 	obj.reader.ValidateContent(ctx, v)
+// 	return
+// }
+
+func ValidateObject(ctx context.Context, fsys FS, dir string, opts ...ObjectValidationOption) *ObjectValidation {
+	v := NewObjectValidation(opts...)
+	if !fs.ValidPath(dir) {
+		err := fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
 		v.AddFatal(err)
-		return
+		return v
 	}
-	entries, err := objFS.ReadDir(ctx, objPath)
+	entries, err := fsys.ReadDir(ctx, dir)
 	if err != nil {
 		v.AddFatal(err)
-		return
+		return v
 	}
-	rootState := ParseObjectDir(entries)
-	obj.reader.ValidateRoot(ctx, rootState, v)
-	if v.Err() != nil {
-		// don't continue if object is invalid
-		return
+	state := ParseObjectDir(entries)
+	impl, err := v.globals.GetSpec(state.Spec)
+	if err != nil {
+		v.AddFatal(err)
+		return v
+	}
+	obj, err := impl.ValidateObjectRoot(ctx, fsys, dir, state, v)
+	if err != nil {
+		return v
 	}
 	// validate versions using previous specs
-	versionOCFL, err := obj.globals.GetSpec(Spec1_0)
+	versionOCFL, err := v.globals.GetSpec(Spec1_0)
 	if err != nil {
 		err = fmt.Errorf("unexpected error during validation: %w", err)
 		v.AddFatal(err)
-		return
+		return v
 	}
 	var prevInv ReadInventory
-	for _, vnum := range rootState.VersionDirs.Head().Lineage() {
-		nextInv, nextOCFL, err := obj.readInventory(ctx, vnum.String())
+	for _, vnum := range state.VersionDirs.Head().Lineage() {
+		name := path.Join(dir, vnum.String(), inventoryBase)
+		versionInv, err := readUnknownInventory(ctx, v.globals.OCFLs(), fsys, name)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			v.AddFatal(fmt.Errorf("reading %s/inventory.json: %w", vnum, err))
 			continue
 		}
-		if nextOCFL != nil {
-			// nextOCFL should be >= versionOCFL
-			versionOCFL = nextOCFL
+		if versionInv != nil {
+			versionOCFL = v.globals.OCFLs().MustGet(versionInv.Spec())
 		}
-		versionOCFL.ValidateVersion(ctx, obj.reader, vnum, nextInv, prevInv, v)
-		prevInv = nextInv
+		versionOCFL.ValidateVersion(ctx, obj, vnum, versionInv, prevInv, v)
+		prevInv = versionInv
 	}
-	obj.reader.ValidateContent(ctx, v)
-	return
-}
-
-func (obj *Object) readInventory(ctx context.Context, dir string) (inv ReadInventory, invOCFL OCFL, err error) {
-	ocfls := obj.globals.OCFLs()
-	inv, err = readInventory(ctx, obj.globals.OCFLs(), obj.FS(), path.Join(obj.Path(), dir, inventoryBase))
-	if err != nil {
-		return
-	}
-	invOCFL = ocfls.MustGet(inv.Spec())
-	return
+	obj.ValidateContent(ctx, v)
+	return v
 }
 
 // Commit represents an update to object.

@@ -66,7 +66,7 @@ func ReadSidecarDigest(ctx context.Context, fsys FS, name string) (digest string
 	return
 }
 
-func readInventory(ctx context.Context, ocfls *OCLFRegister, fsys FS, name string) (ReadInventory, error) {
+func readUnknownInventory(ctx context.Context, ocfls *OCLFRegister, fsys FS, name string) (ReadInventory, error) {
 	f, err := fsys.OpenFile(ctx, name)
 	if err != nil {
 		return nil, err

@@ -71,7 +71,7 @@ func TestRoot(t *testing.T) {
 		be.Equal(t, desc, sameRoot.Description())
 		sameObj, err := sameRoot.NewObject(ctx, objID)
 		be.NilErr(t, err)
-		be.NilErr(t, sameObj.Validate(ctx).Err())
+		be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 		be.Equal(t, objID, sameObj.Inventory().ID())
 	})
 

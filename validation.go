@@ -70,6 +70,8 @@ func (v *Validation) WarnErrors() []error {
 // ObjectValidation is used to configure and track results from an object validation process.
 type ObjectValidation struct {
 	Validation
+
+	globals     Config
 	logger      *slog.Logger
 	skipDigests bool
 	files       map[string]*validationFileInfo
