@@ -3,10 +3,8 @@ module github.com/srerickson/ocfl-go
 go 1.23
 
 require (
-	github.com/alecthomas/kong v0.9.0
 	github.com/aws/aws-sdk-go-v2 v1.30.3
 	github.com/aws/aws-sdk-go-v2/config v1.27.27
-	github.com/aws/aws-sdk-go-v2/credentials v1.17.27
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.9
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.58.2
 	github.com/carlmjohnson/be v0.23.2
@@ -20,6 +18,7 @@ require (
 
 require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.3 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.17.27 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.11 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.15 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.15 // indirect

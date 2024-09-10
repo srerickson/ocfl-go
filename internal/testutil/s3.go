@@ -1,42 +1,121 @@
 package testutil
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/srerickson/ocfl-go"
+	ocflS3 "github.com/srerickson/ocfl-go/backend/s3"
 )
 
-func S3Client() *s3.Client {
-	return s3.NewFromConfig(aws.Config{Region: "us-east-1"}, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String("http://127.0.0.1:9000")
-		o.Credentials = credentials.NewStaticCredentialsProvider("minioadmin", "minioadmin", "")
+const (
+	envS3Enabled = "OCFL_TEST_S3"
+	tmpPrefix    = "ocfl-go-test"
+)
+
+// S3Enabled returns true if $OCFL_TEST_S3 is set
+func S3Enabled() bool { return os.Getenv(envS3Enabled) != "" }
+
+func S3Client(ctx context.Context) (*s3.Client, error) {
+	endpoint := os.Getenv(envS3Enabled)
+	if endpoint == "" {
+		return nil, errors.New("S3 not enabled in thest test environment: $OCFL_TEST_S3ß not set.")
+	}
+	cnf, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cli := s3.NewFromConfig(cnf, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
 	})
+	return cli, nil
 }
 
-// func removeBucket(s3cl *s3.S3, name string) error {
-// 	b := aws.String(name)
-// 	var listFuncErr error
-// 	listopts := &s3.ListObjectsV2Input{Bucket: b}
-// 	listFunc := func(out *s3.ListObjectsV2Output, last bool) bool {
-// 		for _, obj := range out.Contents {
-// 			if _, err := s3cl.DeleteObject(&s3.DeleteObjectInput{
-// 				Bucket: b,
-// 				Key:    obj.Key,
-// 			}); err != nil {
-// 				listFuncErr = fmt.Errorf("removing %q: %w", *obj.Key, err)
-// 				return false
-// 			}
-// 		}
-// 		return !last
-// 	}
-// 	if err := s3cl.ListObjectsV2Pages(listopts, listFunc); err != nil {
-// 		return err
-// 	}
-// 	if listFuncErr != nil {
-// 		return listFuncErr
-// 	}
-// 	_, err := s3cl.DeleteBucket(&s3.DeleteBucketInput{
-// 		Bucket: aws.String(name),
-// 	})
-// 	return err
-// }
+// S3WriteFS returns an ocfl.WriteFS backed by a tempory S3 bucket. The bucket
+// and its contents will be erased as part of the test's cleanup.
+func S3WriteFS(t *testing.T) ocfl.WriteFS {
+	t.Helper()
+	ctx := context.Background()
+	cli, err := S3Client(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucket, err := TmpBucket(ctx, cli)
+	if err != nil {
+		t.Fatal("setting up S3 bucket:", err)
+	}
+	t.Cleanup(func() {
+		if err := RemoveBucket(ctx, cli, bucket); err != nil {
+			t.Fatal("cleaning up S3 bucket:", err)
+		}
+	})
+	return &ocflS3.BucketFS{S3: cli, Bucket: bucket}
+}
+
+func TmpBucket(ctx context.Context, cli *s3.Client) (string, error) {
+	var bucket string
+	var retries int
+	for {
+		bucket = randName(tmpPrefix)
+		_, err := cli.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &bucket})
+		if err == nil {
+			break
+		}
+		if retries > 4 {
+			return "", err
+		}
+		retries++
+	}
+	return bucket, nil
+}
+
+func RemoveBucket(ctx context.Context, s3cl *s3.Client, bucket string) error {
+	if !strings.HasPrefix(bucket, tmpPrefix) {
+		return errors.New("bucket name doesn't look like a test bucket: " + bucket)
+	}
+	b := aws.String(bucket)
+	listInput := &s3.ListObjectsV2Input{Bucket: b}
+	for {
+		list, err := s3cl.ListObjectsV2(ctx, listInput)
+		if err != nil {
+			return err
+		}
+		for _, obj := range list.Contents {
+			_, err = s3cl.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: b,
+				Key:    obj.Key,
+			})
+			if err != nil {
+				return err
+			}
+		}
+		listInput.ContinuationToken = list.NextContinuationToken
+		if listInput.ContinuationToken == nil {
+			break
+		}
+	}
+	_, err := s3cl.DeleteBucket(ctx, &s3.DeleteBucketInput{
+		Bucket: aws.String(bucket),
+	})
+	return err
+}
+
+func randName(prefix string) string {
+	byt, err := io.ReadAll(io.LimitReader(rand.Reader, 4))
+	if err != nil {
+		panic("randName: " + err.Error())
+	}
+	now := time.Now().UnixMicro()
+	return fmt.Sprintf("%s-%d-%s", prefix, now, hex.EncodeToString(byt))
+}
