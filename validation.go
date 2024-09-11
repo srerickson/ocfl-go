@@ -178,6 +178,10 @@ func (v *ObjectValidation) AddInventoryDigests(inv ReadInventory) error {
 			}
 			return true
 		}
+		if current.expected == nil {
+			current.expected = allDigests
+			return true
+		}
 		if err := current.expected.Add(allDigests); err != nil {
 			var digestError *DigestError
 			if errors.As(err, &digestError) {

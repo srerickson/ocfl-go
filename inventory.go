@@ -28,9 +28,6 @@ type ReadInventory interface {
 	ID() string
 	Manifest() DigestMap
 	Spec() Spec
-	// Validate validates the internal structure of the inventory, adding
-	// errors and warnings to zero or more validations. The returned
-	// error wraps all fatal errors encountered.
 	Validate() *Validation
 	Version(int) ObjectVersion
 }
@@ -67,12 +64,12 @@ func ReadSidecarDigest(ctx context.Context, fsys FS, name string) (digest string
 	return
 }
 
-// ValidateInventoryDigest reads the inventory sidecar with inv's digest
+// ValidateInventorySidecar reads the inventory sidecar with inv's digest
 // algorithm (e.g., inventory.json.sha512) in directory dir and return an error
 // if the sidecar content is not formatted correctly or if the inv's digest
 // doesn't match the value found in the sidecar.
-func ValidateInventoryDigest(ctx context.Context, inv ReadInventory, fsys FS, dir string) error {
-	sideCar := path.Join(dir, inventoryBase+inv.DigestAlgorithm())
+func ValidateInventorySidecar(ctx context.Context, inv ReadInventory, fsys FS, dir string) error {
+	sideCar := path.Join(dir, inventoryBase+"."+inv.DigestAlgorithm())
 	expSum, err := ReadSidecarDigest(ctx, fsys, sideCar)
 	if err != nil {
 		return err

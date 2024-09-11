@@ -105,6 +105,15 @@ func (fsys *ioFS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, erro
 
 }
 
+func ReadAll(ctx context.Context, fsys FS, name string) ([]byte, error) {
+	f, err := fsys.OpenFile(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
 // Copy copies src in srcFS to dst in dstFS. If srcFS and dstFS are the same refererence
 // and it implements CopyFS, then Copy uses the fs's Copy() method.
 func Copy(ctx context.Context, dstFS WriteFS, dst string, srcFS FS, src string) (err error) {

@@ -30,7 +30,7 @@ func S3Enabled() bool { return os.Getenv(envS3Enabled) != "" }
 func S3Client(ctx context.Context) (*s3.Client, error) {
 	endpoint := os.Getenv(envS3Enabled)
 	if endpoint == "" {
-		return nil, errors.New("S3 not enabled in thest test environment: $OCFL_TEST_S3ß not set.")
+		return nil, errors.New("S3 not enabled in thest test environment: $OCFL_TEST_S3 not set.")
 	}
 	cnf, err := config.LoadDefaultConfig(ctx)
 	if err != nil {

@@ -277,7 +277,7 @@ func ValidateObject(ctx context.Context, fsys FS, dir string, opts ...ObjectVali
 		versionOCFL.ValidateVersion(ctx, obj, vnum, versionInv, prevInv, v)
 		prevInv = versionInv
 	}
-	obj.ValidateContent(ctx, v)
+	impl.ValidateObjectContent(ctx, obj, v)
 	return v
 }
 
