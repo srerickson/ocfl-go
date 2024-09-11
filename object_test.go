@@ -26,6 +26,7 @@ func TestObject(t *testing.T) {
 	t.Run("Example", testObjectExample)
 	t.Run("Open", testOpenObject)
 	t.Run("Commit", testObjectCommit)
+	t.Run("ValidateObject", testValidateObject)
 	t.Run("ValidateFixtures", testValidateFixtures)
 }
 
@@ -121,13 +122,6 @@ func testObjectExample(t *testing.T) {
 func testOpenObject(t *testing.T) {
 	ctx := context.Background()
 	fsys := ocfl.DirFS(objectFixturesPath)
-	// ocflv1_1 := ocfl.MustGetOCFL(ocfl.Spec1_1)
-	// expectErrIs := func(t *testing.T, err error, wantErr error) {
-	// 	t.Helper()
-	// 	if !errors.Is(err, wantErr) {
-	// 		t.Errorf("wanted error: %q; got error: %q", wantErr, err)
-	// 	}
-	// }
 
 	type testCase struct {
 		ctx    context.Context
@@ -144,15 +138,6 @@ func testOpenObject(t *testing.T) {
 				be.NilErr(t, err)
 			},
 		},
-		// FIXME
-		// "wrong spec 1.0": {
-		// 	fs:   fsys,
-		// 	path: "1.0/good-objects/spec-ex-full",
-		// 	opts: []func(*ocfl.Object){ocfl.ObjectUseOCFL(ocflv1_1)},
-		// 	expect: func(t *testing.T, _ *ocfl.Object, err error) {
-		// 		expectErrIs(t, err, ocfl.ErrObjectNamasteNotExist)
-		// 	},
-		// },
 		"ok 1.1": {
 			fs:   fsys,
 			path: "1.1/good-objects/spec-ex-full",
@@ -283,6 +268,18 @@ func testUpdateFixtures(t *testing.T) {
 	}
 }
 
+func testValidateObject(t *testing.T) {
+	ctx := context.Background()
+	fixturePath := filepath.Join(`testdata`, `object-fixtures`, `1.1`)
+	fsys := ocfl.DirFS(filepath.Join(fixturePath, `bad-objects`))
+	t.Run("skip digests", func(t *testing.T) {
+		// object reports no validation if digests aren't checked
+		objPath := `E093_fixity_digest_mismatch`
+		v := ocfl.ValidateObject(ctx, fsys, objPath, ocfl.ValidationSkipDigest())
+		be.NilErr(t, v.Err())
+	})
+}
+
 func testValidateFixtures(t *testing.T) {
 	ctx := context.Background()
 	for _, spec := range []string{`1.0`, `1.1`} {
@@ -382,20 +379,6 @@ func fixtureExpectedErrs(name string, errs ...error) (bool, string) {
 	}
 	return gotExpected, desc
 }
-
-// func TestObjectValidatioSkipDigest(t *testing.T) {
-// 	objPath := filepath.Join("..", "testdata", "object-fixtures", "1.0", "bad-objects", "E092_content_file_digest_mismatch")
-// 	fsys := ocfl.DirFS(objPath)
-// 	_, result := ocflv1.ValidateObject(context.Background(), fsys, ".")
-// 	if err := result.Err(); err == nil {
-// 		t.Fatal("expect an error if checking digests")
-// 	}
-// 	// validating this object without digest check should return no errors
-// 	_, result = ocflv1.ValidateObject(context.Background(), fsys, ".", ocflv1.SkipDigests())
-// 	if err := result.Err(); err != nil {
-// 		t.Fatal(err)
-// 	}
-// }
 
 // creates a temporary directory and copies files from directory dir
 // in fsys to the temporary directory. This is used to create writable

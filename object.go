@@ -12,6 +12,8 @@ import (
 	"log/slog"
 )
 
+// Object represents and OCFL Object, typically contained in a Root. An Object
+// may not exist.
 type Object struct {
 	reader ReadObject
 	// global settings
@@ -22,14 +24,8 @@ type Object struct {
 	expectID string
 }
 
-// func ObjectUseOCFL(ocfl OCFL) ObjectOption {
-// 	return func(opt *Object) {
-// 		opt.ocfl = ocfl
-// 	}
-// }
-
-// NewObject returns an *Object reference for managing the OCFL object at
-// path in fsys. The object doesn't need to exist when NewObject is called.
+// NewObject returns an *Object for managing the OCFL object at path in fsys.
+// The object doesn't need to exist when NewObject is called.
 func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (*Object, error) {
 	if !fs.ValidPath(dir) {
 		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
@@ -142,14 +138,18 @@ func (obj Object) ExtensionNames(ctx context.Context) ([]string, error) {
 	return names, err
 }
 
+// FS returns the FS where object is stored.
 func (obj *Object) FS() FS {
 	return obj.reader.FS()
 }
 
+// Inventory returns the object's ReadInventory if it exists. If the object
+// doesn't exist, it returns nil.
 func (obj *Object) Inventory() ReadInventory {
 	return obj.reader.Inventory()
 }
 
+// Path returns the Object's path relative to its FS.
 func (obj *Object) Path() string {
 	return obj.reader.Path()
 }
@@ -324,26 +324,11 @@ type uninitializedObject struct {
 	path string
 }
 
-// FS for accessing object contents
-func (o *uninitializedObject) FS() FS { return o.fs }
+var _ (ReadObject) = (*uninitializedObject)(nil)
 
-func (o *uninitializedObject) Inventory() ReadInventory { return nil }
-
-// Path returns the object's path relative to its FS()
-func (o *uninitializedObject) Path() string { return o.path }
-
-func (o *uninitializedObject) ValidateRoot(_ context.Context, _ *ObjectState, v *ObjectValidation) {
-	err := fmt.Errorf("empty or missing path: %s: %w", o.path, ErrNamasteNotExist)
-	if v != nil {
-		v.AddFatal(err)
-	}
-}
-
-func (o *uninitializedObject) ValidateContent(_ context.Context, v *ObjectValidation) {}
-
-// VersionFS returns a value that implements an io/fs.FS for
-// accessing the logical contents of the object version state
-// with the index v.
+func (o *uninitializedObject) FS() FS                                     { return o.fs }
+func (o *uninitializedObject) Inventory() ReadInventory                   { return nil }
+func (o *uninitializedObject) Path() string                               { return o.path }
 func (o *uninitializedObject) VersionFS(ctx context.Context, v int) fs.FS { return nil }
 
 type ObjectOption func(*Object)

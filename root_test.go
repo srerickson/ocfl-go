@@ -2,6 +2,8 @@ package ocfl_test
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"testing"
 
 	"github.com/carlmjohnson/be"
@@ -87,6 +89,32 @@ func TestRoot(t *testing.T) {
 				count++
 			}
 			be.Equal(t, 3, count)
+
+			valid := root.ValidateObjectDir(ctx, "http%3A%2F%2Fexample.org%2Fminimal_mixed_digests")
+			be.NilErr(t, valid.Err())
+
+		})
+	})
+
+	t.Run("ValidateObjectDir", func(t *testing.T) {
+		t.Run("simple", func(t *testing.T) {
+			fsys := ocfl.DirFS(storeFixturePath)
+			dir := `1.0/good-stores/simple-root`
+			root, err := ocfl.NewRoot(ctx, fsys, dir)
+			be.NilErr(t, err)
+			objPath := "http%3A%2F%2Fexample.org%2Fminimal_mixed_digests"
+			valid := root.ValidateObjectDir(ctx, objPath)
+			be.NilErr(t, valid.Err())
+		})
+		t.Run("missingDir", func(t *testing.T) {
+			fsys := ocfl.DirFS(storeFixturePath)
+			dir := `1.0/good-stores/simple-root`
+			root, err := ocfl.NewRoot(ctx, fsys, dir)
+			be.NilErr(t, err)
+			objPath := "none"
+			err = root.ValidateObjectDir(ctx, objPath).Err()
+			be.True(t, err != nil)
+			be.True(t, errors.Is(err, fs.ErrNotExist))
 		})
 	})
 }
