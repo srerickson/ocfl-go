@@ -187,53 +187,7 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 	return vfs, nil
 }
 
-// // Validate validates the object.
-// func (obj *Object) Validate(ctx context.Context, opts ...ObjectValidationOption) (v *ObjectValidation) {
-// 	v = NewObjectValidation(opts...)
-// 	objPath := obj.Path()
-// 	objFS := obj.FS()
-// 	// the object may not exist
-// 	if !obj.Exists() {
-// 		err := fmt.Errorf("not an existing OCFL object: %s: %w", objPath, ErrNamasteNotExist)
-// 		v.AddFatal(err)
-// 		return
-// 	}
-// 	entries, err := objFS.ReadDir(ctx, objPath)
-// 	if err != nil {
-// 		v.AddFatal(err)
-// 		return
-// 	}
-// 	rootState := ParseObjectDir(entries)
-// 	obj.reader.ValidateRoot(ctx, rootState, v)
-// 	if v.Err() != nil {
-// 		// don't continue if object is invalid
-// 		return
-// 	}
-// 	// validate versions using previous specs
-// 	versionOCFL, err := obj.globals.GetSpec(Spec1_0)
-// 	if err != nil {
-// 		err = fmt.Errorf("unexpected error during validation: %w", err)
-// 		v.AddFatal(err)
-// 		return
-// 	}
-// 	var prevInv ReadInventory
-// 	for _, vnum := range rootState.VersionDirs.Head().Lineage() {
-// 		name := path.Join(objPath, vnum.String(), inventoryBase)
-// 		versionInv, err := readUnknownInventory(ctx, v.globals.OCFLs(), objFS, name)
-// 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-// 			v.AddFatal(fmt.Errorf("reading %s/inventory.json: %w", vnum, err))
-// 			continue
-// 		}
-// 		if versionInv != nil {
-// 			versionOCFL = v.globals.OCFLs().MustGet(versionInv.Spec())
-// 		}
-// 		versionOCFL.ValidateVersion(ctx, obj.reader, vnum, versionInv, prevInv, v)
-// 		prevInv = versionInv
-// 	}
-// 	obj.reader.ValidateContent(ctx, v)
-// 	return
-// }
-
+// ValidateObject fully validates the OCFL Object at dir in fsys
 func ValidateObject(ctx context.Context, fsys FS, dir string, opts ...ObjectValidationOption) *ObjectValidation {
 	v := NewObjectValidation(opts...)
 	if !fs.ValidPath(dir) {
@@ -274,7 +228,7 @@ func ValidateObject(ctx context.Context, fsys FS, dir string, opts ...ObjectVali
 		if versionInv != nil {
 			versionOCFL = v.globals.OCFLs().MustGet(versionInv.Spec())
 		}
-		versionOCFL.ValidateVersion(ctx, obj, vnum, versionInv, prevInv, v)
+		versionOCFL.ValidateObjectVersion(ctx, obj, vnum, versionInv, prevInv, v)
 		prevInv = versionInv
 	}
 	impl.ValidateObjectContent(ctx, obj, v)

@@ -142,16 +142,24 @@ func (imp OCFL) ValidateObjectRoot(ctx context.Context, fsys ocfl.FS, dir string
 	name := path.Join(dir, decl.Name())
 	err := ocfl.ValidateNamaste(ctx, fsys, name)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
 			err = fmt.Errorf("%s: %w", name, ocfl.ErrObjectNamasteNotExist)
+			vldr.AddFatal(ec(err, codes.E001(imp.spec)))
+		default:
+			vldr.AddFatal(ec(err, codes.E007(imp.spec)))
 		}
-		vldr.AddFatal(err)
 		return nil, err
 	}
 	// validate root inventory
 	invBytes, err := ocfl.ReadAll(ctx, fsys, path.Join(dir, inventoryFile))
 	if err != nil {
-		vldr.AddFatal(err)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			vldr.AddFatal(err, ec(err, codes.E063(imp.spec)))
+		default:
+			vldr.AddFatal(err)
+		}
 		return nil, err
 	}
 	inv, invValidation := ValidateInventoryBytes(invBytes)
@@ -160,16 +168,17 @@ func (imp OCFL) ValidateObjectRoot(ctx context.Context, fsys ocfl.FS, dir string
 		return nil, err
 	}
 	if err := ocfl.ValidateInventorySidecar(ctx, inv.Inventory(), fsys, dir); err != nil {
-		vldr.AddFatal(err)
-		// digest mismatch
+		switch {
+		case errors.Is(err, ocfl.ErrInventorySidecarContents):
+			vldr.AddFatal(ec(err, codes.E061(imp.spec)))
+		default:
+			vldr.AddFatal(ec(err, codes.E060(imp.spec)))
+		}
 	}
-	// validate extensions
 	vldr.PrefixAdd("extensions directory", validateExtensionsDir(ctx, imp.spec, fsys, dir))
-
 	if err := vldr.AddInventoryDigests(inv.Inventory()); err != nil {
 		vldr.AddFatal(err)
 	}
-
 	vldr.PrefixAdd("root contents", validateRootState(imp.spec, state))
 	if err := vldr.Err(); err != nil {
 		return nil, err
@@ -177,52 +186,61 @@ func (imp OCFL) ValidateObjectRoot(ctx context.Context, fsys ocfl.FS, dir string
 	return &ReadObject{fs: fsys, path: dir, inv: inv}, nil
 }
 
-func (imp OCFL) ValidateVersion(ctx context.Context, obj ocfl.ReadObject, dirNum ocfl.VNum, verInv ocfl.ReadInventory, prevInv ocfl.ReadInventory, vldr *ocfl.ObjectValidation) error {
+func (imp OCFL) ValidateObjectVersion(ctx context.Context, obj ocfl.ReadObject, vnum ocfl.VNum, verInv ocfl.ReadInventory, prevInv ocfl.ReadInventory, vldr *ocfl.ObjectValidation) error {
 	fsys := obj.FS()
-	vDir := path.Join(obj.Path(), dirNum.String())
+	vDir := path.Join(obj.Path(), vnum.String())
 	vSpec := imp.spec
 	rootInv := obj.Inventory() // headInv is assumed to be valid
 	vDirEntries, err := fsys.ReadDir(ctx, vDir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		// can't read version directory for some reason, but not because it
+		// doesn't exist.
 		vldr.AddFatal(err)
 		return err
 	}
-	info := parseVersionDirState(vDirEntries)
-	for _, f := range info.extraFiles {
-		err := fmt.Errorf(`unexpected file in %s: %s`, dirNum, f)
+	vdirState := parseVersionDirState(vDirEntries)
+	for _, f := range vdirState.extraFiles {
+		err := fmt.Errorf(`unexpected file in %s: %s`, vnum, f)
 		vldr.AddFatal(ec(err, codes.E015(vSpec)))
 	}
-	if !info.hasInventory {
-		// the version directory doesn't exist or it's empty
-		err := fmt.Errorf("missing %s/inventory.json", dirNum.String())
+	if !vdirState.hasInventory {
+		err := fmt.Errorf("missing %s/inventory.json", vnum.String())
 		vldr.AddWarn(ec(err, codes.W010(vSpec)))
 	}
 	if verInv != nil {
-		vldr.PrefixAdd(dirNum.String()+"/inventory.json", verInv.Validate())
+		verInvValidation := verInv.Validate()
+		vldr.PrefixAdd(vnum.String()+"/inventory.json", verInvValidation)
 		if err := ocfl.ValidateInventorySidecar(ctx, verInv, fsys, vDir); err != nil {
-			err := fmt.Errorf("%s/inventory.json has unexpected digest: %w", dirNum.String(), err)
-			vldr.AddFatal(ec(err, codes.E060(vSpec)))
+			err := fmt.Errorf("%s/inventory.json: %w", vnum.String(), err)
+			switch {
+			case errors.Is(err, ocfl.ErrInventorySidecarContents):
+				vldr.AddFatal(ec(err, codes.E061(imp.spec)))
+			default:
+				vldr.AddFatal(ec(err, codes.E060(imp.spec)))
+			}
 		}
 		if prevInv != nil && verInv.Spec().Cmp(prevInv.Spec()) < 0 {
-			err := fmt.Errorf("%s/inventory.json uses an older OCFL specification than than the previous version", dirNum)
+			err := fmt.Errorf("%s/inventory.json uses an older OCFL specification than than the previous version", vnum)
 			vldr.AddFatal(ec(err, codes.E103(vSpec)))
 		}
-		if verInv.Head() != dirNum {
-			err := fmt.Errorf("%s/inventory.json: 'head' does not matchs its directory (%s)", dirNum, dirNum)
+		if verInv.Head() != vnum {
+			err := fmt.Errorf("%s/inventory.json: 'head' does not matchs its directory", vnum)
 			vldr.AddFatal(ec(err, codes.E040(vSpec)))
 		}
-		imp.validateVersionInventory(obj, dirNum, verInv, vldr)
 		if verInv.Digest() != rootInv.Digest() {
-			if err := vldr.AddInventoryDigests(verInv); err != nil {
-				err = fmt.Errorf("%s/inventory.json digests are inconsistent with other inventories: %w", dirNum, err)
-				vldr.AddFatal(ec(err, codes.E066(vSpec)))
+			imp.compareVersionInventory(obj, vnum, verInv, vldr)
+			if verInv.Digest() != rootInv.Digest() {
+				if err := vldr.AddInventoryDigests(verInv); err != nil {
+					err = fmt.Errorf("%s/inventory.json digests are inconsistent with other inventories: %w", vnum, err)
+					vldr.AddFatal(ec(err, codes.E066(vSpec)))
+				}
 			}
 		}
 	}
-	for _, d := range info.dirs {
-		// directory SHOULD only be content directory
+	for _, d := range vdirState.dirs {
+		// only be directory SHOULD be content directory
 		if d != rootInv.ContentDirectory() {
-			err := fmt.Errorf(`extra directory in %s: %s`, dirNum, d)
+			err := fmt.Errorf(`extra directory in %s: %s`, vnum, d)
 			vldr.AddWarn(ec(err, codes.W002(vSpec)))
 			continue
 		}
@@ -322,7 +340,7 @@ func parseVersionDirState(entries []fs.DirEntry) versionDirState {
 	return info
 }
 
-func (imp OCFL) validateVersionInventory(obj ocfl.ReadObject, dirNum ocfl.VNum, verInv ocfl.ReadInventory, vldr *ocfl.ObjectValidation) {
+func (imp OCFL) compareVersionInventory(obj ocfl.ReadObject, dirNum ocfl.VNum, verInv ocfl.ReadInventory, vldr *ocfl.ObjectValidation) {
 	rootInv := obj.Inventory()
 	vSpec := imp.spec
 	if verInv.Head() == rootInv.Head() && verInv.Digest() != rootInv.Digest() {

@@ -15,7 +15,7 @@ import (
 
 const (
 	// package version
-	Version       = "0.2.0"
+	Version       = "0.3.0-rc1"
 	ExtensionsDir = "extensions"
 )
 
@@ -46,7 +46,7 @@ type OCFL interface {
 	NewReadObject(fsys FS, path string, inv ReadInventory) ReadObject
 	Commit(ctx context.Context, obj ReadObject, commit *Commit) (ReadObject, error)
 	ValidateObjectRoot(ctx context.Context, fs FS, dir string, state *ObjectState, vldr *ObjectValidation) (ReadObject, error)
-	ValidateVersion(ctx context.Context, obj ReadObject, vnum VNum, versionInv ReadInventory, prevInv ReadInventory, vldr *ObjectValidation) error
+	ValidateObjectVersion(ctx context.Context, obj ReadObject, vnum VNum, versionInv ReadInventory, prevInv ReadInventory, vldr *ObjectValidation) error
 	ValidateObjectContent(ctx context.Context, obj ReadObject, vldr *ObjectValidation) error
 }
 
