@@ -12,6 +12,8 @@ import (
 	"log/slog"
 )
 
+// Object represents and OCFL Object, typically contained in a Root. An Object
+// may not exist.
 type Object struct {
 	reader ReadObject
 	// global settings
@@ -22,14 +24,8 @@ type Object struct {
 	expectID string
 }
 
-// func ObjectUseOCFL(ocfl OCFL) ObjectOption {
-// 	return func(opt *Object) {
-// 		opt.ocfl = ocfl
-// 	}
-// }
-
-// NewObject returns an *Object reference for managing the OCFL object at
-// path in fsys. The object doesn't need to exist when NewObject is called.
+// NewObject returns an *Object for managing the OCFL object at path in fsys.
+// The object doesn't need to exist when NewObject is called.
 func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (*Object, error) {
 	if !fs.ValidPath(dir) {
 		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
@@ -38,7 +34,7 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 	for _, optFn := range opts {
 		optFn(obj)
 	}
-	inv, err := readInventory(ctx, obj.globals.OCFLs(), fsys, path.Join(dir, inventoryBase))
+	inv, err := readUnknownInventory(ctx, obj.globals.OCFLs(), fsys, dir)
 	if err != nil {
 		var pthError *fs.PathError
 		if !errors.As(err, &pthError) || path.Base(pthError.Path) != inventoryBase {
@@ -142,14 +138,18 @@ func (obj Object) ExtensionNames(ctx context.Context) ([]string, error) {
 	return names, err
 }
 
+// FS returns the FS where object is stored.
 func (obj *Object) FS() FS {
 	return obj.reader.FS()
 }
 
+// Inventory returns the object's ReadInventory if it exists. If the object
+// doesn't exist, it returns nil.
 func (obj *Object) Inventory() ReadInventory {
 	return obj.reader.Inventory()
 }
 
+// Path returns the Object's path relative to its FS.
 func (obj *Object) Path() string {
 	return obj.reader.Path()
 }
@@ -187,61 +187,52 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 	return vfs, nil
 }
 
-// Validate validates the object.
-func (obj *Object) Validate(ctx context.Context, opts ...ObjectValidationOption) (v *ObjectValidation) {
-	v = NewObjectValidation(opts...)
-	objPath := obj.Path()
-	objFS := obj.FS()
-	// the object may not exist
-	if !obj.Exists() {
-		err := fmt.Errorf("not an existing OCFL object: %s: %w", objPath, ErrNamasteNotExist)
+// ValidateObject fully validates the OCFL Object at dir in fsys
+func ValidateObject(ctx context.Context, fsys FS, dir string, opts ...ObjectValidationOption) *ObjectValidation {
+	v := NewObjectValidation(opts...)
+	if !fs.ValidPath(dir) {
+		err := fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
 		v.AddFatal(err)
-		return
+		return v
 	}
-	entries, err := objFS.ReadDir(ctx, objPath)
+	entries, err := fsys.ReadDir(ctx, dir)
 	if err != nil {
 		v.AddFatal(err)
-		return
+		return v
 	}
-	rootState := ParseObjectDir(entries)
-	obj.reader.ValidateRoot(ctx, rootState, v)
-	if v.Err() != nil {
-		// don't continue if object is invalid
-		return
+	state := ParseObjectDir(entries)
+	impl, err := v.globals.GetSpec(state.Spec)
+	if err != nil {
+		v.AddFatal(err)
+		return v
+	}
+	obj, err := impl.ValidateObjectRoot(ctx, fsys, dir, state, v)
+	if err != nil {
+		return v
 	}
 	// validate versions using previous specs
-	versionOCFL, err := obj.globals.GetSpec(Spec1_0)
+	versionOCFL, err := v.globals.GetSpec(Spec1_0)
 	if err != nil {
 		err = fmt.Errorf("unexpected error during validation: %w", err)
 		v.AddFatal(err)
-		return
+		return v
 	}
 	var prevInv ReadInventory
-	for _, vnum := range rootState.VersionDirs.Head().Lineage() {
-		nextInv, nextOCFL, err := obj.readInventory(ctx, vnum.String())
+	for _, vnum := range state.VersionDirs.Head().Lineage() {
+		versionDir := path.Join(dir, vnum.String())
+		versionInv, err := readUnknownInventory(ctx, v.globals.OCFLs(), fsys, versionDir)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			v.AddFatal(fmt.Errorf("reading %s/inventory.json: %w", vnum, err))
 			continue
 		}
-		if nextOCFL != nil {
-			// nextOCFL should be >= versionOCFL
-			versionOCFL = nextOCFL
+		if versionInv != nil {
+			versionOCFL = v.globals.OCFLs().MustGet(versionInv.Spec())
 		}
-		versionOCFL.ValidateVersion(ctx, obj.reader, vnum, nextInv, prevInv, v)
-		prevInv = nextInv
+		versionOCFL.ValidateObjectVersion(ctx, obj, vnum, versionInv, prevInv, v)
+		prevInv = versionInv
 	}
-	obj.reader.ValidateContent(ctx, v)
-	return
-}
-
-func (obj *Object) readInventory(ctx context.Context, dir string) (inv ReadInventory, invOCFL OCFL, err error) {
-	ocfls := obj.globals.OCFLs()
-	inv, err = readInventory(ctx, obj.globals.OCFLs(), obj.FS(), path.Join(obj.Path(), dir, inventoryBase))
-	if err != nil {
-		return
-	}
-	invOCFL = ocfls.MustGet(inv.Spec())
-	return
+	impl.ValidateObjectContent(ctx, obj, v)
+	return v
 }
 
 // Commit represents an update to object.
@@ -333,26 +324,11 @@ type uninitializedObject struct {
 	path string
 }
 
-// FS for accessing object contents
-func (o *uninitializedObject) FS() FS { return o.fs }
+var _ (ReadObject) = (*uninitializedObject)(nil)
 
-func (o *uninitializedObject) Inventory() ReadInventory { return nil }
-
-// Path returns the object's path relative to its FS()
-func (o *uninitializedObject) Path() string { return o.path }
-
-func (o *uninitializedObject) ValidateRoot(_ context.Context, _ *ObjectState, v *ObjectValidation) {
-	err := fmt.Errorf("empty or missing path: %s: %w", o.path, ErrNamasteNotExist)
-	if v != nil {
-		v.AddFatal(err)
-	}
-}
-
-func (o *uninitializedObject) ValidateContent(_ context.Context, v *ObjectValidation) {}
-
-// VersionFS returns a value that implements an io/fs.FS for
-// accessing the logical contents of the object version state
-// with the index v.
+func (o *uninitializedObject) FS() FS                                     { return o.fs }
+func (o *uninitializedObject) Inventory() ReadInventory                   { return nil }
+func (o *uninitializedObject) Path() string                               { return o.path }
 func (o *uninitializedObject) VersionFS(ctx context.Context, v int) fs.FS { return nil }
 
 type ObjectOption func(*Object)

@@ -15,7 +15,7 @@ import (
 
 const (
 	// package version
-	Version       = "0.2.0"
+	Version       = "0.3.0-rc1"
 	ExtensionsDir = "extensions"
 )
 
@@ -45,7 +45,9 @@ type OCFL interface {
 	NewReadInventory(raw []byte) (ReadInventory, error)
 	NewReadObject(fsys FS, path string, inv ReadInventory) ReadObject
 	Commit(ctx context.Context, obj ReadObject, commit *Commit) (ReadObject, error)
-	ValidateVersion(ctx context.Context, obj ReadObject, vnum VNum, versionInv ReadInventory, prevInv ReadInventory, vldr *ObjectValidation) error
+	ValidateObjectRoot(ctx context.Context, fs FS, dir string, state *ObjectState, vldr *ObjectValidation) (ReadObject, error)
+	ValidateObjectVersion(ctx context.Context, obj ReadObject, vnum VNum, versionInv ReadInventory, prevInv ReadInventory, vldr *ObjectValidation) error
+	ValidateObjectContent(ctx context.Context, obj ReadObject, vldr *ObjectValidation) error
 }
 
 type Config struct {
@@ -149,8 +151,6 @@ type ReadObject interface {
 	FS() FS
 	// Path returns the object's path relative to its FS()
 	Path() string
-	ValidateRoot(context.Context, *ObjectState, *ObjectValidation)
-	ValidateContent(context.Context, *ObjectValidation)
 	// VersionFS returns an io/fs.FS for accessing the logical contents of the
 	// object version state with the index v.
 	VersionFS(ctx context.Context, v int) fs.FS

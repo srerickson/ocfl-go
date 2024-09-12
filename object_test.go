@@ -26,6 +26,7 @@ func TestObject(t *testing.T) {
 	t.Run("Example", testObjectExample)
 	t.Run("Open", testOpenObject)
 	t.Run("Commit", testObjectCommit)
+	t.Run("ValidateObject", testValidateObject)
 	t.Run("ValidateFixtures", testValidateFixtures)
 }
 
@@ -97,7 +98,7 @@ func testObjectExample(t *testing.T) {
 	be.Equal(t, "1,2,3", string(gotBytes))
 
 	// check that the object is valid
-	be.NilErr(t, obj.Validate(ctx).Err())
+	be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 	// be.NilErr(t, result.Warning)
 
 	// create a new object by forking new-object-01
@@ -111,7 +112,7 @@ func testObjectExample(t *testing.T) {
 	forkObj, err := ocfl.NewObject(ctx, tmpFS, forkID)
 	be.NilErr(t, err)
 	be.NilErr(t, forkObj.Commit(ctx, fork))
-	be.NilErr(t, forkObj.Validate(ctx).Err())
+	be.NilErr(t, ocfl.ValidateObject(ctx, forkObj.FS(), forkObj.Path()).Err())
 	// TODO
 	// roll-back an object to a previous version
 	// interact with an object's extensions: list them, add an extension, remove an extension.
@@ -121,13 +122,6 @@ func testObjectExample(t *testing.T) {
 func testOpenObject(t *testing.T) {
 	ctx := context.Background()
 	fsys := ocfl.DirFS(objectFixturesPath)
-	// ocflv1_1 := ocfl.MustGetOCFL(ocfl.Spec1_1)
-	// expectErrIs := func(t *testing.T, err error, wantErr error) {
-	// 	t.Helper()
-	// 	if !errors.Is(err, wantErr) {
-	// 		t.Errorf("wanted error: %q; got error: %q", wantErr, err)
-	// 	}
-	// }
 
 	type testCase struct {
 		ctx    context.Context
@@ -144,15 +138,6 @@ func testOpenObject(t *testing.T) {
 				be.NilErr(t, err)
 			},
 		},
-		// FIXME
-		// "wrong spec 1.0": {
-		// 	fs:   fsys,
-		// 	path: "1.0/good-objects/spec-ex-full",
-		// 	opts: []func(*ocfl.Object){ocfl.ObjectUseOCFL(ocflv1_1)},
-		// 	expect: func(t *testing.T, _ *ocfl.Object, err error) {
-		// 		expectErrIs(t, err, ocfl.ErrObjectNamasteNotExist)
-		// 	},
-		// },
 		"ok 1.1": {
 			fs:   fsys,
 			path: "1.1/good-objects/spec-ex-full",
@@ -210,7 +195,7 @@ func testObjectCommit(t *testing.T) {
 		}
 		be.NilErr(t, obj.Commit(ctx, commit))
 		be.True(t, obj.Exists())
-		be.NilErr(t, obj.Validate(ctx).Err())
+		be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 	})
 	t.Run("commit must use same same alg", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
@@ -270,7 +255,7 @@ func testUpdateFixtures(t *testing.T) {
 					Message: "update",
 					User:    ocfl.User{Name: "Tristram Shandy"},
 				}))
-				be.NilErr(t, obj.Validate(ctx).Err())
+				be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 				// check content
 				newVersion, err := obj.OpenVersion(ctx, 0)
 				be.NilErr(t, err)
@@ -281,6 +266,18 @@ func testUpdateFixtures(t *testing.T) {
 			})
 		}
 	}
+}
+
+func testValidateObject(t *testing.T) {
+	ctx := context.Background()
+	fixturePath := filepath.Join(`testdata`, `object-fixtures`, `1.1`)
+	fsys := ocfl.DirFS(filepath.Join(fixturePath, `bad-objects`))
+	t.Run("skip digests", func(t *testing.T) {
+		// object reports no validation if digests aren't checked
+		objPath := `E093_fixity_digest_mismatch`
+		v := ocfl.ValidateObject(ctx, fsys, objPath, ocfl.ValidationSkipDigest())
+		be.NilErr(t, v.Err())
+	})
 }
 
 func testValidateFixtures(t *testing.T) {
@@ -297,9 +294,7 @@ func testValidateFixtures(t *testing.T) {
 				be.NilErr(t, err)
 				for _, dir := range goodObjects {
 					t.Run(dir.Name(), func(t *testing.T) {
-						obj, err := ocfl.NewObject(ctx, fsys, dir.Name())
-						be.NilErr(t, err)
-						result := obj.Validate(ctx)
+						result := ocfl.ValidateObject(ctx, fsys, dir.Name())
 						be.NilErr(t, result.Err())
 						be.NilErr(t, result.WarnErr())
 					})
@@ -314,14 +309,7 @@ func testValidateFixtures(t *testing.T) {
 						continue
 					}
 					t.Run(dir.Name(), func(t *testing.T) {
-						obj, err := ocfl.NewObject(ctx, fsys, dir.Name())
-						if err != nil {
-							if ok, desc := fixtureExpectedErrs(dir.Name(), err); !ok {
-								t.Log(path.Join(spec, dir.Name())+":", desc)
-							}
-							return
-						}
-						result := obj.Validate(ctx)
+						result := ocfl.ValidateObject(ctx, fsys, dir.Name())
 						be.True(t, result.Err() != nil)
 						if ok, desc := fixtureExpectedErrs(dir.Name(), result.Errors()...); !ok {
 							t.Log(path.Join(spec, dir.Name())+":", desc)
@@ -335,9 +323,7 @@ func testValidateFixtures(t *testing.T) {
 				be.NilErr(t, err)
 				for _, dir := range warnObjects {
 					t.Run(dir.Name(), func(t *testing.T) {
-						obj, err := ocfl.NewObject(ctx, fsys, dir.Name())
-						be.NilErr(t, err)
-						result := obj.Validate(ctx)
+						result := ocfl.ValidateObject(ctx, fsys, dir.Name())
 						be.NilErr(t, result.Err())
 						t.Log(result.WarnErr())
 						be.True(t, len(result.WarnErrors()) > 0)
@@ -393,20 +379,6 @@ func fixtureExpectedErrs(name string, errs ...error) (bool, string) {
 	}
 	return gotExpected, desc
 }
-
-// func TestObjectValidatioSkipDigest(t *testing.T) {
-// 	objPath := filepath.Join("..", "testdata", "object-fixtures", "1.0", "bad-objects", "E092_content_file_digest_mismatch")
-// 	fsys := ocfl.DirFS(objPath)
-// 	_, result := ocflv1.ValidateObject(context.Background(), fsys, ".")
-// 	if err := result.Err(); err == nil {
-// 		t.Fatal("expect an error if checking digests")
-// 	}
-// 	// validating this object without digest check should return no errors
-// 	_, result = ocflv1.ValidateObject(context.Background(), fsys, ".", ocflv1.SkipDigests())
-// 	if err := result.Err(); err != nil {
-// 		t.Fatal(err)
-// 	}
-// }
 
 // creates a temporary directory and copies files from directory dir
 // in fsys to the temporary directory. This is used to create writable

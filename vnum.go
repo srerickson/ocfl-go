@@ -200,7 +200,7 @@ func (vs VNums) Valid() error {
 	padding := vs[0].padding
 	for i := range vs {
 		if vs[i].num != i+1 {
-			return fmt.Errorf("version %d: %w", i+1, ErrVNumMissing)
+			return fmt.Errorf("%w: %s", ErrVNumMissing, V(i+1, padding))
 		}
 		if vs[i].padding != padding {
 			return ErrVNumPadding

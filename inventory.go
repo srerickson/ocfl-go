@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -27,9 +28,6 @@ type ReadInventory interface {
 	ID() string
 	Manifest() DigestMap
 	Spec() Spec
-	// Validate validates the internal structure of the inventory, adding
-	// errors and warnings to zero or more validations. The returned
-	// error wraps all fatal errors encountered.
 	Validate() *Validation
 	Version(int) ObjectVersion
 }
@@ -66,8 +64,30 @@ func ReadSidecarDigest(ctx context.Context, fsys FS, name string) (digest string
 	return
 }
 
-func readInventory(ctx context.Context, ocfls *OCLFRegister, fsys FS, name string) (ReadInventory, error) {
-	f, err := fsys.OpenFile(ctx, name)
+// ValidateInventorySidecar reads the inventory sidecar with inv's digest
+// algorithm (e.g., inventory.json.sha512) in directory dir and return an error
+// if the sidecar content is not formatted correctly or if the inv's digest
+// doesn't match the value found in the sidecar.
+func ValidateInventorySidecar(ctx context.Context, inv ReadInventory, fsys FS, dir string) error {
+	sideCar := path.Join(dir, inventoryBase+"."+inv.DigestAlgorithm())
+	expSum, err := ReadSidecarDigest(ctx, fsys, sideCar)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(expSum, inv.Digest()) {
+		return &DigestError{
+			Name:     sideCar,
+			Alg:      inv.DigestAlgorithm(),
+			Got:      inv.Digest(),
+			Expected: expSum,
+		}
+	}
+	return nil
+}
+
+// return a ReadInventory for an inventory that may use any version of the ocfl spec.
+func readUnknownInventory(ctx context.Context, ocfls *OCLFRegister, fsys FS, dir string) (ReadInventory, error) {
+	f, err := fsys.OpenFile(ctx, path.Join(dir, inventoryBase))
 	if err != nil {
 		return nil, err
 	}
@@ -90,22 +110,5 @@ func readInventory(ctx context.Context, ocfls *OCLFRegister, fsys FS, name strin
 	if err != nil {
 		return nil, err
 	}
-	inv, err := invOCFL.NewReadInventory(raw)
-	if err != nil {
-		return nil, err
-	}
-	expSum, err := ReadSidecarDigest(ctx, fsys, name+"."+inv.DigestAlgorithm())
-	if err != nil {
-		return nil, err
-	}
-	if !strings.EqualFold(expSum, inv.Digest()) {
-		err := &DigestError{
-			Name:     name,
-			Alg:      inv.DigestAlgorithm(),
-			Got:      inv.Digest(),
-			Expected: expSum,
-		}
-		return nil, err
-	}
-	return inv, nil
+	return invOCFL.NewReadInventory(raw)
 }

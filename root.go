@@ -77,13 +77,13 @@ func NewRoot(ctx context.Context, fsys FS, dir string, opts ...RootOption) (*Roo
 
 // Description returns the description string from the storage roots
 // `ocfl_layout.json` file, which may be empty.
-func (s *Root) Description() string {
-	return s.layoutConfig[descriptionKey]
+func (r *Root) Description() string {
+	return r.layoutConfig[descriptionKey]
 }
 
 // FS returns the Root's FS
-func (s *Root) FS() FS {
-	return s.fs
+func (r *Root) FS() FS {
+	return r.fs
 }
 
 // Layout returns the storage root's layout, which may be nil.ß
@@ -101,22 +101,39 @@ func (r *Root) LayoutName() string {
 }
 
 // NewObject returns an *Object for managing the OCFL object with the given ID
-// in the root. If no object exists with the given ID, the returned *Object can
-// be used to create it. If the Root has not storage layout for resovling object
-// IDs, the returned error is ErrLayoutUndefined.
-func (s *Root) NewObject(ctx context.Context, id string, opts ...ObjectOption) (*Object, error) {
-	if s.layout == nil {
-		return nil, ErrLayoutUndefined
-	}
-	objPath, err := s.layout.Resolve(id)
+// in the root. If the object does not exist, the returned *Object can be used
+// to create it. If the Root has not storage layout for resovling object IDs,
+// the returned error is ErrLayoutUndefined.
+func (r *Root) NewObject(ctx context.Context, id string, opts ...ObjectOption) (*Object, error) {
+	objPath, err := r.ResolveID(id)
 	if err != nil {
-		return nil, fmt.Errorf("object id: %q: %w", id, err)
-	}
-	if !fs.ValidPath(objPath) {
-		return nil, fmt.Errorf("layout resolved id to an invalid path: %s", objPath)
+		return nil, err
 	}
 	opts = append(opts, objectExpectedID(id))
-	return NewObject(ctx, s.fs, path.Join(s.dir, objPath), opts...)
+	return NewObject(ctx, r.fs, path.Join(r.dir, objPath), opts...)
+}
+
+// NewObjectDir returns an *Object for managing the OCFL object at path dir in
+// root. If the object does not exist, the returned *Object can be used to
+// create it.
+func (r *Root) NewObjectDir(ctx context.Context, dir string, opts ...ObjectOption) (*Object, error) {
+	return NewObject(ctx, r.fs, path.Join(r.dir, dir), opts...)
+}
+
+// ResolveID resolves the object id to a path relative to the root. If
+// the root has no layout, the returned error is ErrLayoutUndefined.
+func (r *Root) ResolveID(id string) (string, error) {
+	if r.layout == nil {
+		return "", ErrLayoutUndefined
+	}
+	objPath, err := r.layout.Resolve(id)
+	if err != nil {
+		return "", fmt.Errorf("object id: %q: %w", id, err)
+	}
+	if !fs.ValidPath(objPath) {
+		return "", fmt.Errorf("layout resolved id to an invalid path: %s", objPath)
+	}
+	return objPath, nil
 }
 
 // ObjectPaths returns an iterator of object paths for the objects in the
@@ -145,12 +162,32 @@ func (r *Root) Objects(ctx context.Context) func(func(*Object, error) bool) {
 	}
 }
 
-func (s *Root) Path() string {
-	return s.dir
+// Path returns the root's dir relative to its FS
+func (r *Root) Path() string {
+	return r.dir
 }
 
-func (s *Root) Spec() Spec {
-	return s.spec
+// Spec returns the root's OCFL specification number
+func (r *Root) Spec() Spec {
+	return r.spec
+}
+
+// ValidateObject validates the object with the given id. If the id cannot be
+// resolved, the error is reported as a fatal error in the returned
+// *ObjectValidation.
+func (r *Root) ValidateObject(ctx context.Context, id string, opts ...ObjectValidationOption) (v *ObjectValidation) {
+	objPath, err := r.ResolveID(id)
+	if err != nil {
+		v = NewObjectValidation(opts...)
+		v.AddFatal(err)
+		return
+	}
+	return r.ValidateObjectDir(ctx, objPath, opts...)
+}
+
+// ValidateObjectDir validates the object at a path relative to the root.
+func (r *Root) ValidateObjectDir(ctx context.Context, dir string, opts ...ObjectValidationOption) *ObjectValidation {
+	return ValidateObject(ctx, r.fs, path.Join(r.dir, dir), opts...)
 }
 
 func (r *Root) init(ctx context.Context) error {
@@ -189,17 +226,17 @@ func (r *Root) init(ctx context.Context) error {
 	return nil
 }
 
-func (s *Root) getLayout(ctx context.Context) error {
-	s.layoutConfig = nil
-	s.layout = nil
-	if err := s.readLayoutConfig(ctx); err != nil {
+func (r *Root) getLayout(ctx context.Context) error {
+	r.layoutConfig = nil
+	r.layout = nil
+	if err := r.readLayoutConfig(ctx); err != nil {
 		return err
 	}
-	if s.layoutConfig == nil || s.layoutConfig[extensionKey] == "" {
+	if r.layoutConfig == nil || r.layoutConfig[extensionKey] == "" {
 		return nil
 	}
-	name := s.layoutConfig[extensionKey]
-	ext, err := readExtensionConfig(ctx, s.fs, s.dir, name)
+	name := r.layoutConfig[extensionKey]
+	ext, err := readExtensionConfig(ctx, r.fs, r.dir, name)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
 			return err
@@ -215,17 +252,17 @@ func (s *Root) getLayout(ctx context.Context) error {
 	if !ok {
 		return fmt.Errorf("extension: %q: %w", name, extension.ErrNotLayout)
 	}
-	s.layout = layout
+	r.layout = layout
 	return nil
 }
 
 // readLayoutConfig reads the `ocfl_layout.json` files in the storage root
 // and unmarshals into the value pointed to by layout
-func (s *Root) readLayoutConfig(ctx context.Context) error {
-	f, err := s.fs.OpenFile(ctx, path.Join(s.dir, layoutConfigFile))
+func (r *Root) readLayoutConfig(ctx context.Context) error {
+	f, err := r.fs.OpenFile(ctx, path.Join(r.dir, layoutConfigFile))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			s.layoutConfig = nil
+			r.layoutConfig = nil
 			return nil
 		}
 		return err
@@ -235,7 +272,7 @@ func (s *Root) readLayoutConfig(ctx context.Context) error {
 	if err := json.NewDecoder(f).Decode(&layout); err != nil {
 		return fmt.Errorf("decoding %s: %w", layoutConfigFile, err)
 	}
-	s.layoutConfig = layout
+	r.layoutConfig = layout
 	return nil
 }
 
