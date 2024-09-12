@@ -16,10 +16,10 @@ const (
 	// HasSidecar indicates that an object root includes an "inventory.json.*"
 	// file (the inventory sidecar).
 	HasSidecar
-	// HasExtensions indicates that an object root includes a directory
-	// named "extensions"
+	// HasExtensions indicates that an object root includes a directory named
+	// "extensions"
 	HasExtensions
-	//HasLogs indicates that an object root includes a directory name "Logs"
+	//HasLogs indicates that an object root includes a directory named "logs"
 	HasLogs
 
 	inventoryBase    = "inventory.json"
