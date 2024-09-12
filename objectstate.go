@@ -19,6 +19,8 @@ const (
 	// HasExtensions indicates that an object root includes a directory
 	// named "extensions"
 	HasExtensions
+	//HasLogs indicates that an object root includes a directory name "Logs"
+	HasLogs
 
 	inventoryBase    = "inventory.json"
 	sidecarPrefix    = inventoryBase + "."
@@ -55,6 +57,8 @@ func ParseObjectDir(entries []fs.DirEntry) *ObjectState {
 		case e.IsDir():
 			var v VNum
 			switch {
+			case name == LogsDir:
+				state.Flags |= HasLogs
 			case name == ExtensionsDir:
 				state.Flags |= HasExtensions
 			case ParseVNum(name, &v) == nil:
@@ -118,6 +122,11 @@ func (state ObjectState) HasSidecar() bool {
 // HasExtensions returns true if state's HasExtensions flag is set
 func (state ObjectState) HasExtensions() bool {
 	return state.Flags&HasExtensions > 0
+}
+
+// HasLogs returns true if state's HasLogs flag is set
+func (state ObjectState) HasLogs() bool {
+	return state.Flags&HasLogs > 0
 }
 
 // HasVersionDir returns true if the state's VersionDirs includes v

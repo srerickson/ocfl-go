@@ -35,6 +35,38 @@ func TestParseObjectRootEntries(t *testing.T) {
 				Flags: ocfl.HasNamaste,
 			},
 		},
+		"extensions dir": {
+			input: []fs.DirEntry{
+				&dirEntry{name: objDecl},
+				&dirEntry{name: "extensions", mode: fs.ModeDir},
+			},
+			want: ocfl.ObjectState{
+				Spec:  ocfl.Spec1_1,
+				Flags: ocfl.HasNamaste | ocfl.HasExtensions,
+			},
+		},
+		"logs dir": {
+			input: []fs.DirEntry{
+				&dirEntry{name: objDecl},
+				&dirEntry{name: "logs", mode: fs.ModeDir},
+			},
+			want: ocfl.ObjectState{
+				Spec:  ocfl.Spec1_1,
+				Flags: ocfl.HasNamaste | ocfl.HasLogs,
+			},
+		},
+		"inventory and sidecar": {
+			input: []fs.DirEntry{
+				&dirEntry{name: objDecl},
+				&dirEntry{name: "inventory.json"},
+				&dirEntry{name: "inventory.json.sha256"},
+			},
+			want: ocfl.ObjectState{
+				Spec:       ocfl.Spec1_1,
+				Flags:      ocfl.HasNamaste | ocfl.HasInventory | ocfl.HasSidecar,
+				SidecarAlg: "sha256",
+			},
+		},
 		"irregular namaste": {
 			input: []fs.DirEntry{
 				&dirEntry{name: objDecl, mode: fs.ModeIrregular},
@@ -102,6 +134,14 @@ func TestParseObjectRootEntries(t *testing.T) {
 				SidecarAlg:  "",
 				VersionDirs: []ocfl.VNum{ocfl.V(1)},
 				Flags:       ocfl.HasInventory | ocfl.HasNamaste,
+			},
+		}, {
+			name: filepath.Join(`good-objects`, `minimal_with_logs`),
+			want: ocfl.ObjectState{
+				Spec:        ocfl.Spec1_0,
+				SidecarAlg:  "sha512",
+				VersionDirs: []ocfl.VNum{ocfl.V(1)},
+				Flags:       ocfl.HasInventory | ocfl.HasNamaste | ocfl.HasLogs | ocfl.HasSidecar,
 			},
 		},
 	}
