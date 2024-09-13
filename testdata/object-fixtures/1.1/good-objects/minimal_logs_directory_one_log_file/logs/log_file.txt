@@ -1,0 +1,1 @@
+File storing local information about actions to the OCFL Object’s content that is not part of the content itself.
