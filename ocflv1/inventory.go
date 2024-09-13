@@ -319,7 +319,13 @@ func ValidateInventoryBytes(raw []byte) (*Inventory, *ocfl.Validation) {
 	inv, err := NewInventory(raw)
 	if err != nil {
 		vld := &ocfl.Validation{}
-		vld.AddFatal(err)
+		switch {
+		case errors.Is(err, ocfl.ErrVNumInvalid):
+			// couldn't unmarshal versions[key] or head field
+			vld.AddFatal(ec(err, codes.E104(ocfl.Spec1_1)))
+		default:
+			vld.AddFatal(err)
+		}
 		return nil, vld
 	}
 	v := inv.Validate()

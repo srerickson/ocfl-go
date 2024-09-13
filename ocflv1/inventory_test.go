@@ -1,9 +1,13 @@
 package ocflv1_test
 
 import (
+	"encoding/json"
+	"errors"
+	"slices"
 	"testing"
 
 	"github.com/carlmjohnson/be"
+	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
@@ -11,6 +15,7 @@ type testInventory struct {
 	valid       bool
 	description string
 	data        string
+	errCode     string // expected error code
 }
 
 var testInventories = []testInventory{
@@ -234,14 +239,15 @@ var testInventories = []testInventory{
 	{
 		valid:       false,
 		description: `bad_head_format`,
+		errCode:     "E104",
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
-			"head": "v1.0",
+			"head": "1",
 			"manifest": {},
 			"type": "https://ocfl.io/1.0/spec/#inventory",
 			"versions": {
-			  "v1": {
+			  "1": {
 				"created": "2019-01-01T02:03:04Z",
 				"message": "One version and no content",
 				"state": { },
@@ -585,8 +591,25 @@ func TestValidateInventory(t *testing.T) {
 			err := vldr.Err()
 			if test.valid {
 				be.NilErr(t, err)
-			} else {
-				be.True(t, err != nil)
+				return
+			}
+			be.True(t, err != nil)
+			if test.errCode != "" {
+				var foundCodes []string
+				for _, err := range vldr.Errors() {
+					var vCode *ocfl.ValidationError
+					if errors.As(err, &vCode) {
+						foundCodes = append(foundCodes, vCode.Code)
+					}
+					var jsonErr *json.UnmarshalTypeError
+					if errors.As(err, &jsonErr) {
+						t.Logf("%v", jsonErr.Field)
+					}
+				}
+				if !slices.Contains(foundCodes, test.errCode) {
+					t.Errorf("expected code %q, not in found codes %v", test.errCode, foundCodes)
+				}
+
 			}
 		})
 	}
