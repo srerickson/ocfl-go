@@ -136,7 +136,7 @@ func TestParseObjectRootEntries(t *testing.T) {
 				Flags:       ocfl.HasInventory | ocfl.HasNamaste,
 			},
 		}, {
-			name: filepath.Join(`good-objects`, `minimal_with_logs`),
+			name: filepath.Join(`good-objects`, `minimal_logs_directory_one_log_file`),
 			want: ocfl.ObjectState{
 				Spec:        ocfl.Spec1_0,
 				SidecarAlg:  "sha512",
