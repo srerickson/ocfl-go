@@ -315,6 +315,158 @@ func (inv *Inventory) Validate() *ocfl.Validation {
 	return v
 }
 
+func validateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl.Validation) {
+	v = &ocfl.Validation{}
+	invVals := map[string]any{}
+	if err := json.Unmarshal(raw, &invVals); err != nil {
+		err = fmt.Errorf("unmarshalling inventory: %w", err)
+		v.AddFatal(ec(err, codes.E034(spec)))
+		return nil, v
+	}
+	missingErrMsg := "a required field is missing or its value is an unexpected json type"
+	id, exists, typeOK := pullValue[string](invVals, `id`)
+	if !exists || !typeOK {
+		err := errors.New(missingErrMsg + `: 'id'`)
+		v.AddFatal(ec(err, codes.E036(spec)))
+	}
+	typeStr, exists, typeOK := pullValue[string](invVals, `type`)
+	if !exists || !typeOK {
+		err := errors.New(missingErrMsg + `: 'type'`)
+		v.AddFatal(ec(err, codes.E036(spec)))
+	}
+	digestAlg, exists, typeOK := pullValue[string](invVals, `digestAlgorithm`)
+	if !exists || !typeOK {
+		err := errors.New(missingErrMsg + `: 'digestAlgorithm'`)
+		v.AddFatal(ec(err, codes.E036(spec)))
+	}
+	head, exists, typeOK := pullValue[string](invVals, `head`)
+	if !exists || !typeOK {
+		err := errors.New(missingErrMsg + `: 'head'`)
+		v.AddFatal(ec(err, codes.E036(spec)))
+	}
+	manifest, exists, typeOK := pullValue[map[string]any](invVals, `manifest`)
+	if !exists || !typeOK {
+		err := errors.New(missingErrMsg + `: 'manifest'`)
+		v.AddFatal(ec(err, codes.E041(spec)))
+	}
+	versions, exists, typeOK := pullValue[map[string]any](invVals, `versions`)
+	if !exists || !typeOK {
+		err := errors.New(missingErrMsg + `: 'versions'`)
+		v.AddFatal(ec(err, codes.E045(spec)))
+	}
+	// contentDirectory is optional
+	optErrMsg := "optional field has unexpected json value"
+	contentDirectory, exists, typeOK := pullValue[string](invVals, `contentDirectory`)
+	if exists && !typeOK {
+		// FIXME: not sure which error code. E108?
+		err := errors.New(optErrMsg + `: 'contentDirectory'`)
+		v.AddFatal(err)
+	}
+	// fixity is optional
+	fixity, exists, typeOK := pullValue[map[string]any](invVals, `fixity`)
+	if exists && !typeOK {
+		err := errors.New(optErrMsg + `: 'fixity'`)
+		v.AddFatal(ec(err, codes.E111(spec)))
+	}
+	// any remaining values in invVals are invalid
+	inv = &Inventory{
+		ID:               id,
+		ContentDirectory: contentDirectory,
+		DigestAlgorithm:  digestAlg,
+	}
+	if err := inv.Type.UnmarshalText([]byte(typeStr)); err != nil {
+		v.AddFatal(ec(err, codes.E038(spec)))
+	}
+	if err := inv.Head.UnmarshalText([]byte(head)); err != nil {
+		v.AddFatal(ec(err, codes.E040(spec)))
+	}
+	var err error
+	if inv.Manifest, err = convertDigestMap(manifest); err != nil {
+		err = fmt.Errorf("invalid manfiest: %w", err)
+		v.AddFatal(ec(err, codes.E092(spec)))
+	}
+	for key, val := range versions {
+		var (
+			vnum        ocfl.VNum
+			versionVals map[string]any
+			userVals    map[string]any
+			stateVals   map[string]any
+			created     time.Time
+			message     string
+			state       ocfl.DigestMap
+			user        *ocfl.User
+		)
+		if err := ocfl.ParseVNum(key, &vnum); err != nil {
+			err = fmt.Errorf("invalid key %q in versions block: %w", key, err)
+			v.AddFatal(ec(err, codes.E046(spec)))
+		}
+		versionVals, typeOK = val.(map[string]any)
+		if !typeOK {
+			err := fmt.Errorf("version %q: not a json object", key)
+			v.AddFatal(ec(err, codes.E045(spec)))
+		}
+		created, exists, typeOK = pullValue[time.Time](versionVals, `created`)
+		if !exists || !typeOK {
+			err := fmt.Errorf("version %q: %s: %s", key, missingErrMsg, `'created'`)
+			v.AddFatal(ec(err, codes.E049(spec)))
+		}
+		stateVals, exists, typeOK = pullValue[map[string]any](versionVals, `state`)
+		if !exists || !typeOK {
+			err := fmt.Errorf("version %q: %s: %q", key, missingErrMsg, `state`)
+			v.AddFatal(ec(err, codes.E049(spec)))
+		}
+		// message is optional
+		message, exists, typeOK = pullValue[string](versionVals, `message`)
+		if exists && !typeOK {
+			err := fmt.Errorf("version %q: %s: %q", key, optErrMsg, `message`)
+			v.AddFatal(ec(err, codes.E094(spec)))
+		}
+		// user is optional
+		userVals, exists, typeOK := pullValue[map[string]any](versionVals, `user`)
+		switch {
+		case exists && !typeOK:
+			err := fmt.Errorf("version %q: %s: %q", key, optErrMsg, `user`)
+			v.AddFatal(ec(err, codes.E054(spec)))
+		case exists:
+			var userName, userAddress string
+			userName, exists, typeOK = pullValue[string](userVals, `name`)
+			if !exists || !typeOK {
+				err := fmt.Errorf("version %q: user: %s: %q", key, missingErrMsg, `name`)
+				v.AddFatal(ec(err, codes.E054(spec)))
+			}
+			// address is optional
+			userAddress, exists, typeOK = pullValue[string](userVals, `address`)
+			if exists && !typeOK {
+				err := fmt.Errorf("version %q: user: %s: %q", key, optErrMsg, `address`)
+				v.AddFatal(ec(err, codes.E054(spec)))
+			}
+			user = &ocfl.User{Name: userName, Address: userAddress}
+		}
+		// any additional fields in versionVals are invalid.
+		for extra := range versionVals {
+			err := fmt.Errorf("version %q: invalid key: %q", key, extra)
+			v.AddFatal(err)
+		}
+
+		state, err := convertDigestMap(stateVals)
+		if err != nil {
+
+		}
+		inv.Versions[vnum] = &Version{
+			Created: created,
+			State:   state,
+			Message: message,
+			User:    user,
+		}
+	}
+
+	v = inv.Validate()
+	if v.Err() != nil {
+		return nil, v
+	}
+	return inv, v
+}
+
 func ValidateInventoryBytes(raw []byte) (*Inventory, *ocfl.Validation) {
 	inv, err := NewInventory(raw)
 	if err != nil {
@@ -628,4 +780,32 @@ func (a logicalState) Eq(b logicalState) bool {
 	return b.state.EachPath(func(otherName string, _ string) bool {
 		return a.state.GetDigest(otherName) != ""
 	})
+}
+
+func pullValue[T any](m map[string]any, key string) (val T, exists bool, typeOK bool) {
+	var anyVal any
+	anyVal, exists = m[key]
+	val, typeOK = anyVal.(T)
+	delete(m, key)
+	return
+}
+
+func convertDigestMap(jsonMap map[string]any) (ocfl.DigestMap, error) {
+	m := ocfl.DigestMap{}
+	msg := "invalid json type: expected array of strings"
+	for key, mapVal := range jsonMap {
+		slice, isSlice := mapVal.([]any)
+		if !isSlice {
+			return nil, errors.New(msg)
+		}
+		m[key] = make([]string, len(slice))
+		for i := range slice {
+			strVal, isStr := slice[i].(string)
+			if !isStr {
+				return nil, errors.New(msg)
+			}
+			m[key][i] = strVal
+		}
+	}
+	return m, nil
 }
