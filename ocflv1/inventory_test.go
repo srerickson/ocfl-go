@@ -1,7 +1,6 @@
 package ocflv1_test
 
 import (
-	"encoding/json"
 	"errors"
 	"slices"
 	"testing"
@@ -12,17 +11,13 @@ import (
 )
 
 type testInventory struct {
-	valid       bool
-	description string
-	data        string
-	errCode     string // expected error code
+	data   string
+	expect func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation)
 }
 
-var testInventories = []testInventory{
+var testInventories = map[string]testInventory{
 	// Good inventories
-	{
-		valid:       true,
-		description: `minimal`,
+	`minimal`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v1",
@@ -38,10 +33,20 @@ var testInventories = []testInventory{
 			  }
 			}
 		  }`,
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.NilErr(t, v.Err())
+			be.Equal(t, "http://example.org/minimal_no_content", inv.ID)
+			be.Equal(t, "sha512", inv.DigestAlgorithm)
+			be.Equal(t, "v1", inv.Head.String())
+			be.Equal(t, ocfl.Spec1_0.AsInvType(), inv.Type)
+			version := inv.Versions[inv.Head]
+			be.Nonzero(t, version.Created)
+			be.Equal(t, "One version and no content", version.Message)
+			be.Equal(t, "mailto:Person_A@example.org", version.User.Address)
+			be.Equal(t, "Person A", version.User.Name)
+		},
 	},
-	{
-		valid:       true,
-		description: `minimal_contentDirectory`,
+	`minimal_contentDirectory`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v1",
@@ -58,10 +63,11 @@ var testInventories = []testInventory{
 			  }
 			}
 		  }`,
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.NilErr(t, v.Err())
+		},
 	},
-	{
-		valid:       true,
-		description: `one_version`,
+	`one_version`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v1",
@@ -88,11 +94,12 @@ var testInventories = []testInventory{
 			  }
 			}
 		  }`,
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.NilErr(t, v.Err())
+		},
 	},
 	// Bad inventories
-	{
-		valid:       false,
-		description: `missing_id`,
+	`missing_id`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v1",
@@ -107,9 +114,14 @@ var testInventories = []testInventory{
 			  }
 			}
 		  }`,
-	}, {
-		valid:       false,
-		description: `bad_digestAlgorithm`,
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
+	},
+	`bad_digestAlgorithm`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha51",
 			"head": "v1",
@@ -125,9 +137,11 @@ var testInventories = []testInventory{
 			  }
 			}
 		  }`,
-	}, {
-		valid:       false,
-		description: `missing_digestAlgorithm`,
+	},
+	`missing_digestAlgorithm`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"head": "v1",
 			"id": "http://example.org/minimal_no_content",
@@ -142,9 +156,11 @@ var testInventories = []testInventory{
 			  }
 			}
 		  }`,
-	}, {
-		valid:       false,
-		description: `null_id`,
+	},
+	`null_id`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": null,
@@ -161,9 +177,10 @@ var testInventories = []testInventory{
 			}
 		  }`,
 	},
-	{
-		valid:       false,
-		description: `missing_type`,
+	`missing_type`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -179,9 +196,10 @@ var testInventories = []testInventory{
 			}
 		  }`,
 	},
-	{
-		valid:       false,
-		description: `bad_type`,
+	`bad_type`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -198,9 +216,10 @@ var testInventories = []testInventory{
 			}
 		  }`,
 	},
-	{
-		valid:       false,
-		description: `bad_contentDirectory`,
+	`bad_contentDirectory`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -218,9 +237,11 @@ var testInventories = []testInventory{
 			}
 		  }`,
 	},
-	{
-		valid:       false,
-		description: `missing_head`,
+	`missing_head`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+			ErrorsIncludeOCFLCode(t, "E104", v.Errors()...)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -236,10 +257,11 @@ var testInventories = []testInventory{
 			}
 		  }`,
 	},
-	{
-		valid:       false,
-		description: `bad_head_format`,
-		errCode:     "E104",
+	`bad_head_format`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+			ErrorsIncludeOCFLCode(t, "E104", v.Errors()...)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -256,9 +278,10 @@ var testInventories = []testInventory{
 			}
 		  }`,
 	},
-	{
-		valid:       false,
-		description: `bad_head_not_last`,
+	`bad_head_not_last`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -281,9 +304,10 @@ var testInventories = []testInventory{
 			}
 		  }`,
 	},
-	{
-		valid:       false,
-		description: `missing_manifest`,
+	`missing_manifest`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -299,9 +323,10 @@ var testInventories = []testInventory{
 			}
 		  }`,
 	},
-	{
-		valid:       false,
-		description: `bad_manifest`,
+	`bad_manifest`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -318,9 +343,10 @@ var testInventories = []testInventory{
 			}
 		  }`,
 	},
-	{
-		valid:       false,
-		description: `missing_versions`,
+	`missing_versions`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -329,9 +355,10 @@ var testInventories = []testInventory{
 			"manifest": {}
 		  }`,
 	},
-	{
-		valid:       false,
-		description: `bad_versions_empty`,
+	`bad_versions_empty`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 				"digestAlgorithm": "sha512",
 				"id": "ark:123/abc",
@@ -341,9 +368,10 @@ var testInventories = []testInventory{
 				"versions": {}
 			  }`,
 	},
-	{
-		valid:       false,
-		description: `bad_versions_missingv1`,
+	`bad_versions_missingv1`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 				"digestAlgorithm": "sha512",
 				"id": "ark:123/abc",
@@ -360,9 +388,10 @@ var testInventories = []testInventory{
 				}
 			  }`,
 	},
-	{
-		valid:       false,
-		description: `bad_versions_padding`,
+	`bad_versions_padding`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 				"digestAlgorithm": "sha512",
 				"id": "ark:123/abc",
@@ -385,9 +414,10 @@ var testInventories = []testInventory{
 				}
 			  }`,
 	},
-	{
-		valid:       false,
-		description: `bad_manifest_digestconflict`,
+	`bad_manifest_digestconflict`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v2",
@@ -431,9 +461,10 @@ var testInventories = []testInventory{
 			}
 		  }`,
 	},
-	{
-		valid:       false,
-		description: `bad_manifest_basepathconflict`,
+	`bad_manifest_basepathconflict`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v3",
@@ -494,9 +525,10 @@ var testInventories = []testInventory{
 		  }
 		  `,
 	},
-	{
-		valid:       false,
-		description: `missing_version_state`,
+	`missing_version_state`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v1",
@@ -512,9 +544,10 @@ var testInventories = []testInventory{
 			}
 		  }`,
 	},
-	{
-		valid:       false,
-		description: `null_version_block`,
+	`null_version_block`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v1",
@@ -526,9 +559,10 @@ var testInventories = []testInventory{
 			}
 		  }`,
 	},
-	{
-		valid:       false,
-		description: `missing_version_created`,
+	`missing_version_created`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v1",
@@ -544,9 +578,10 @@ var testInventories = []testInventory{
 			}
 		  }`,
 	},
-	{
-		valid:       false,
-		description: `missing_version_user_name`,
+	`missing_version_user_name`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v1",
@@ -563,9 +598,10 @@ var testInventories = []testInventory{
 			}
 		  }`,
 	},
-	{
-		valid:       false,
-		description: `empty_version_user_name`,
+	`empty_version_user_name`: {
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v1",
@@ -585,32 +621,24 @@ var testInventories = []testInventory{
 }
 
 func TestValidateInventory(t *testing.T) {
-	for _, test := range testInventories {
-		t.Run(test.description, func(t *testing.T) {
-			_, vldr := ocflv1.ValidateInventoryBytes([]byte(test.data), ocfl.Spec1_0)
-			err := vldr.Err()
-			if test.valid {
-				be.NilErr(t, err)
-				return
-			}
-			be.True(t, err != nil)
-			if test.errCode != "" {
-				var foundCodes []string
-				for _, err := range vldr.Errors() {
-					var vCode *ocfl.ValidationError
-					if errors.As(err, &vCode) {
-						foundCodes = append(foundCodes, vCode.Code)
-					}
-					var jsonErr *json.UnmarshalTypeError
-					if errors.As(err, &jsonErr) {
-						t.Logf("%v", jsonErr.Field)
-					}
-				}
-				if !slices.Contains(foundCodes, test.errCode) {
-					t.Errorf("expected code %q, not in found codes %v", test.errCode, foundCodes)
-				}
-
-			}
+	for desc, test := range testInventories {
+		t.Run(desc, func(t *testing.T) {
+			inv, vldr := ocflv1.ValidateInventoryBytes([]byte(test.data), ocfl.Spec1_0)
+			test.expect(t, inv, vldr)
 		})
+	}
+}
+
+func ErrorsIncludeOCFLCode(t *testing.T, ocflCode string, errs ...error) {
+	t.Helper()
+	var foundCodes []string
+	for _, err := range errs {
+		var vCode *ocfl.ValidationError
+		if errors.As(err, &vCode) {
+			foundCodes = append(foundCodes, vCode.Code)
+		}
+	}
+	if !slices.Contains(foundCodes, ocflCode) {
+		t.Errorf("OCFL validation code %q not in found validation codes %v", ocflCode, foundCodes)
 	}
 }
