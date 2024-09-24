@@ -1,12 +1,11 @@
 package ocflv1_test
 
 import (
-	"errors"
-	"slices"
 	"testing"
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/internal/testutil"
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
@@ -44,27 +43,57 @@ var testInventories = map[string]testInventory{
 			be.Equal(t, "One version and no content", version.Message)
 			be.Equal(t, "mailto:Person_A@example.org", version.User.Address)
 			be.Equal(t, "Person A", version.User.Name)
+			be.Nonzero(t, inv.Digest())
 		},
 	},
-	`minimal_contentDirectory`: {
+	`complete`: {
 		data: `{
+			"contentDirectory": "custom",
 			"digestAlgorithm": "sha512",
+			"fixity": {
+				"md5": {
+					"e8f239a71aabe2231faf696d92c92c20": [ "v1/content/file.txt" ]
+				},
+				"sha1": {
+					"43c8321bda03dea62b63a5c09e9105b24ab6121b": [ "v1/content/file.txt" ]
+				},
+				"sha256": {
+					"0b13a01dc7580ed7d4737d62ecd1a0c2067b0f3eccc327f4964fd82d582e3fd4": [ "v1/content/file.txt" ]
+				},
+				"sha512": {
+					"a8a450d00c6ca7aa90e3e4858864fc195b6b2fe0a75c2d1e078e92eca232ce7be034a129ea9ea9cda2b0efaf11ba8f5ebdbebacb12f7992a4c37cad589e16a4d": [ "v1/content/file.txt" ]
+				},
+				"blake2b-512": {
+					"51ff3faaf6b51b56011aea528fde0c43af07912011d1baa4fba795b899aa96e01452afc32d757777695bb9c93add6e8cb166b5e6f1c3670d9950e15570922203": [ "v1/content/file.txt" ]
+				}
+			},
 			"head": "v1",
-			"contentDirectory": "cont",
-			"id": "http://example.org/minimal_no_content",
-			"manifest": {},
+			"id": "info:something/abc",
+			"manifest": {
+				"a8a450d00c6ca7aa90e3e4858864fc195b6b2fe0a75c2d1e078e92eca232ce7be034a129ea9ea9cda2b0efaf11ba8f5ebdbebacb12f7992a4c37cad589e16a4d": ["v1/content/file.txt"]
+			},
 			"type": "https://ocfl.io/1.0/spec/#inventory",
 			"versions": {
-			  "v1": {
-				"created": "2019-01-01T02:03:04Z",
-				"message": "One version and no content",
-				"state": { },
-				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
-			  }
+				"v1": {
+					"created": "2000-01-02T03:04:05Z",
+					"state": {
+						"a8a450d00c6ca7aa90e3e4858864fc195b6b2fe0a75c2d1e078e92eca232ce7be034a129ea9ea9cda2b0efaf11ba8f5ebdbebacb12f7992a4c37cad589e16a4d": ["file.txt"]
+					},
+					"message": "A file",
+					"user": {
+						"name": "A Person",
+						"address": "https://orcid.org/0000-0000-0000-0000"
+					}
+				}
 			}
-		  }`,
+		}`,
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.NilErr(t, v.Err())
+			sum := "a8a450d00c6ca7aa90e3e4858864fc195b6b2fe0a75c2d1e078e92eca232ce7be034a129ea9ea9cda2b0efaf11ba8f5ebdbebacb12f7992a4c37cad589e16a4d"
+			be.Equal(t, "custom", inv.ContentDirectory)
+			be.Equal(t, "v1/content/file.txt", inv.Fixity[inv.DigestAlgorithm][sum][0])
+			be.Equal(t, "v1/content/file.txt", inv.Manifest[sum][0])
+			be.Equal(t, "file.txt", inv.Versions[inv.Head].State[sum][0])
 		},
 	},
 	`one_version`: {
@@ -116,12 +145,11 @@ var testInventories = map[string]testInventory{
 		  }`,
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E036", v.Errors()...)
 		},
 	},
 	`bad_digestAlgorithm`: {
-		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
-			be.True(t, v.Err() != nil)
-		},
+
 		data: `{
 			"digestAlgorithm": "sha51",
 			"head": "v1",
@@ -137,11 +165,12 @@ var testInventories = map[string]testInventory{
 			  }
 			}
 		  }`,
-	},
-	`missing_digestAlgorithm`: {
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E025", v.Errors()...)
 		},
+	},
+	`missing_digestAlgorithm`: {
 		data: `{
 			"head": "v1",
 			"id": "http://example.org/minimal_no_content",
@@ -156,11 +185,12 @@ var testInventories = map[string]testInventory{
 			  }
 			}
 		  }`,
-	},
-	`null_id`: {
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E036", v.Errors()...)
 		},
+	},
+	`null_id`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": null,
@@ -176,11 +206,12 @@ var testInventories = map[string]testInventory{
 			  }
 			}
 		  }`,
-	},
-	`missing_type`: {
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E036", v.Errors()...)
 		},
+	},
+	`missing_type`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -195,11 +226,12 @@ var testInventories = map[string]testInventory{
 			  }
 			}
 		  }`,
-	},
-	`bad_type`: {
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E036", v.Errors()...)
 		},
+	},
+	`bad_type`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -215,17 +247,18 @@ var testInventories = map[string]testInventory{
 			  }
 			}
 		  }`,
-	},
-	`bad_contentDirectory`: {
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E038", v.Errors()...)
 		},
+	},
+	`bad_contentDirectory`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
 			"head": "v1",
 			"contentDirectory": "..",
-			"type": "https://ocfl.io",
+			"type": "https://ocfl.io/1.0/spec/#inventory",
 			"manifest": {},
 			"versions": {
 			  "v1": {
@@ -236,12 +269,12 @@ var testInventories = map[string]testInventory{
 			  }
 			}
 		  }`,
-	},
-	`missing_head`: {
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
-			ErrorsIncludeOCFLCode(t, "E104", v.Errors()...)
+			testutil.ErrorsIncludeOCFLCode(t, "E017", v.Errors()...)
 		},
+	},
+	`missing_head`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -256,12 +289,12 @@ var testInventories = map[string]testInventory{
 			  }
 			}
 		  }`,
-	},
-	`bad_head_format`: {
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
-			ErrorsIncludeOCFLCode(t, "E104", v.Errors()...)
+			testutil.ErrorsIncludeOCFLCode(t, "E040", v.Errors()...)
 		},
+	},
+	`bad_head_format`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -277,11 +310,12 @@ var testInventories = map[string]testInventory{
 			  }
 			}
 		  }`,
-	},
-	`bad_head_not_last`: {
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E040", v.Errors()...)
 		},
+	},
+	`bad_head_not_last`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -303,11 +337,12 @@ var testInventories = map[string]testInventory{
 			  }
 			}
 		  }`,
-	},
-	`missing_manifest`: {
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E040", v.Errors()...)
 		},
+	},
+	`missing_manifest`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -322,11 +357,13 @@ var testInventories = map[string]testInventory{
 			  }
 			}
 		  }`,
-	},
-	`bad_manifest`: {
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E041", v.Errors()...)
 		},
+	},
+	`bad_manifest`: {
+
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -342,11 +379,12 @@ var testInventories = map[string]testInventory{
 			  }
 			}
 		  }`,
-	},
-	`missing_versions`: {
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E041", v.Errors()...)
 		},
+	},
+	`missing_versions`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"id": "ark:123/abc",
@@ -354,70 +392,74 @@ var testInventories = map[string]testInventory{
 			"type": "https://ocfl.io/1.0/spec/#inventory",
 			"manifest": {}
 		  }`,
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E043", v.Errors()...)
+		},
 	},
 	`bad_versions_empty`: {
+		data: `{
+			"digestAlgorithm": "sha512",
+			"id": "ark:123/abc",
+			"head": "v1",
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"manifest": {},
+			"versions": {}
+		}`,
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E008", v.Errors()...)
 		},
-		data: `{
-				"digestAlgorithm": "sha512",
-				"id": "ark:123/abc",
-				"head": "v1",
-				"type": "https://ocfl.io/1.0/spec/#inventory",
-				"manifest": {},
-				"versions": {}
-			  }`,
 	},
 	`bad_versions_missingv1`: {
+		data: `{
+			"digestAlgorithm": "sha512",
+			"id": "ark:123/abc",
+			"head": "v2",
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"manifest": {},
+			"versions": {
+				"v2": {
+					"created": "2019-01-01T02:03:04Z",
+					"message": "One version and no content",
+					"state": { },
+					"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+				}	
+			}
+		}`,
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E010", v.Errors()...)
 		},
-		data: `{
-				"digestAlgorithm": "sha512",
-				"id": "ark:123/abc",
-				"head": "v2",
-				"type": "https://ocfl.io/1.0/spec/#inventory",
-				"manifest": {},
-				"versions": {
-					"v2": {
-						"created": "2019-01-01T02:03:04Z",
-						"message": "One version and no content",
-						"state": { },
-						"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
-					}	
-				}
-			  }`,
 	},
 	`bad_versions_padding`: {
+		data: `{
+			"digestAlgorithm": "sha512",
+			"id": "ark:123/abc",
+			"head": "v02",
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"manifest": {},
+			"versions": {
+				"v1": {
+					"created": "2019-01-01T02:03:04Z",
+					"message": "One version and no content",
+					"state": { },
+					"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+				},
+				"v02": {
+					"created": "2019-01-01T02:03:04Z",
+					"message": "One version and no content",
+					"state": { },
+					"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+				}	
+			}
+		}`,
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E012", v.Errors()...)
 		},
-		data: `{
-				"digestAlgorithm": "sha512",
-				"id": "ark:123/abc",
-				"head": "v02",
-				"type": "https://ocfl.io/1.0/spec/#inventory",
-				"manifest": {},
-				"versions": {
-					"v1": {
-						"created": "2019-01-01T02:03:04Z",
-						"message": "One version and no content",
-						"state": { },
-						"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
-					},
-					"v02": {
-						"created": "2019-01-01T02:03:04Z",
-						"message": "One version and no content",
-						"state": { },
-						"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
-					}	
-				}
-			  }`,
 	},
 	`bad_manifest_digestconflict`: {
-		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
-			be.True(t, v.Err() != nil)
-		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v2",
@@ -460,11 +502,13 @@ var testInventories = map[string]testInventory{
 			  }
 			}
 		  }`,
-	},
-	`bad_manifest_basepathconflict`: {
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E096", v.Errors()...)
 		},
+	},
+	`bad_manifest_basepathconflict`: {
+
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v3",
@@ -522,13 +566,13 @@ var testInventories = map[string]testInventory{
 				}
 			  }
 			}
-		  }
-		  `,
-	},
-	`missing_version_state`: {
+		}`,
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E101", v.Errors()...)
 		},
+	},
+	`missing_version_state`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v1",
@@ -542,7 +586,11 @@ var testInventories = map[string]testInventory{
 				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
 			  }
 			}
-		  }`,
+		}`,
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E048", v.Errors()...)
+		},
 	},
 	`null_version_block`: {
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
@@ -560,9 +608,6 @@ var testInventories = map[string]testInventory{
 		  }`,
 	},
 	`missing_version_created`: {
-		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
-			be.True(t, v.Err() != nil)
-		},
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v1",
@@ -577,11 +622,33 @@ var testInventories = map[string]testInventory{
 			  }
 			}
 		  }`,
-	},
-	`missing_version_user_name`: {
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E048", v.Errors()...)
 		},
+	},
+	`invalid_version_created`: {
+		data: `{
+			"digestAlgorithm": "sha512",
+			"head": "v1",
+			"id": "http://example.org/minimal_no_content",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+			  	"created": "2019",
+				"state": {},
+				"message": "One version and no content",
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+			  }
+			}
+		  }`,
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E049", v.Errors()...)
+		},
+	},
+	`missing_version_user_name`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v1",
@@ -596,12 +663,13 @@ var testInventories = map[string]testInventory{
 				"user": { "address": "mailto:Person_A@example.org"}
 			  }
 			}
-		  }`,
-	},
-	`empty_version_user_name`: {
+		}`,
 		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
 			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E054", v.Errors()...)
 		},
+	},
+	`empty_version_user_name`: {
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v1",
@@ -617,6 +685,10 @@ var testInventories = map[string]testInventory{
 			  }
 			}
 		  }`,
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.True(t, v.Err() != nil)
+			testutil.ErrorsIncludeOCFLCode(t, "E054", v.Errors()...)
+		},
 	},
 }
 
@@ -626,19 +698,5 @@ func TestValidateInventory(t *testing.T) {
 			inv, vldr := ocflv1.ValidateInventoryBytes([]byte(test.data), ocfl.Spec1_0)
 			test.expect(t, inv, vldr)
 		})
-	}
-}
-
-func ErrorsIncludeOCFLCode(t *testing.T, ocflCode string, errs ...error) {
-	t.Helper()
-	var foundCodes []string
-	for _, err := range errs {
-		var vCode *ocfl.ValidationError
-		if errors.As(err, &vCode) {
-			foundCodes = append(foundCodes, vCode.Code)
-		}
-	}
-	if !slices.Contains(foundCodes, ocflCode) {
-		t.Errorf("OCFL validation code %q not in found validation codes %v", ocflCode, foundCodes)
 	}
 }

@@ -347,10 +347,18 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 		err := errors.New(requiredErrMsg + `: 'type'`)
 		v.AddFatal(ec(err, codes.E036(spec)))
 	}
+	if typeStr != "" && typeStr != spec.AsInvType().String() {
+		err := fmt.Errorf("invalid inventory type value: %q", typeStr)
+		v.AddFatal(ec(err, codes.E038(spec)))
+	}
 	digestAlg, exists, typeOK := pullValue[string](invVals, `digestAlgorithm`)
 	if !exists || !typeOK {
 		err := errors.New(requiredErrMsg + `: 'digestAlgorithm'`)
 		v.AddFatal(ec(err, codes.E036(spec)))
+	}
+	if digestAlg != "" && digestAlg != ocfl.SHA512 && digestAlg != ocfl.SHA256 {
+		err := fmt.Errorf("invalid digest algorithm: %q", digestAlg)
+		v.AddFatal(ec(err, codes.E025(spec)))
 	}
 	head, exists, typeOK := pullValue[string](invVals, `head`)
 	if !exists || !typeOK {
@@ -365,7 +373,7 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 	versionsVals, exists, typeOK := pullValue[map[string]any](invVals, `versions`)
 	if !exists || !typeOK {
 		err := errors.New(requiredErrMsg + `: 'versions'`)
-		v.AddFatal(ec(err, codes.E045(spec)))
+		v.AddFatal(ec(err, codes.E043(spec)))
 	}
 	// FIXME: not sure which error code. E108?
 	contentDirectory, exists, typeOK := pullValue[string](invVals, `contentDirectory`)
@@ -430,16 +438,18 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 		createdStr, exists, typeOK = pullValue[string](versionVals, `created`)
 		if !exists || !typeOK {
 			err := fmt.Errorf("%s: %s: %s", versionErrPrefix, requiredErrMsg, `'created'`)
-			v.AddFatal(ec(err, codes.E049(spec)))
+			v.AddFatal(ec(err, codes.E048(spec)))
 		}
-		if err := created.UnmarshalText([]byte(createdStr)); err != nil {
-			err = fmt.Errorf("%s: created: %w", versionErrPrefix, err)
-			v.AddFatal(ec(err, codes.E049(spec)))
+		if createdStr != "" {
+			if err := created.UnmarshalText([]byte(createdStr)); err != nil {
+				err = fmt.Errorf("%s: created: %w", versionErrPrefix, err)
+				v.AddFatal(ec(err, codes.E049(spec)))
+			}
 		}
 		stateVals, exists, typeOK = pullValue[map[string]any](versionVals, `state`)
 		if !exists || !typeOK {
 			err := fmt.Errorf("%s: %s: %q", versionErrPrefix, requiredErrMsg, `state`)
-			v.AddFatal(ec(err, codes.E049(spec)))
+			v.AddFatal(ec(err, codes.E048(spec)))
 		}
 		// message is optional
 		message, exists, typeOK = pullValue[string](versionVals, `message`)
