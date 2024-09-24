@@ -162,7 +162,7 @@ func (imp OCFL) ValidateObjectRoot(ctx context.Context, fsys ocfl.FS, dir string
 		}
 		return nil, err
 	}
-	inv, invValidation := ValidateInventoryBytes(invBytes)
+	inv, invValidation := ValidateInventoryBytes(invBytes, imp.spec)
 	vldr.PrefixAdd("root inventory.json", invValidation)
 	if err := invValidation.Err(); err != nil {
 		return nil, err
