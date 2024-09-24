@@ -47,6 +47,8 @@ type Version struct {
 	User    *ocfl.User     `json:"user,omitempty"`
 }
 
+// MarshalJSON implements json.Marhsaller for inventory. The inventory's json
+// digest is updated with the digest of the returned bytes.
 func (inv *Inventory) MarshalJSON() ([]byte, error) {
 	type invAlias Inventory
 	alias := (*invAlias)(inv)
@@ -54,14 +56,9 @@ func (inv *Inventory) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	digester := ocfl.NewDigester(inv.DigestAlgorithm)
-	if digester == nil {
-		return nil, fmt.Errorf("inventory digest algorithm %q: %w", inv.DigestAlgorithm, ocfl.ErrUnknownAlg)
-	}
-	if _, err := io.Copy(digester, bytes.NewReader(byts)); err != nil {
+	if err := inv.setJsonDigest(byts); err != nil {
 		return nil, err
 	}
-	inv.jsonDigest = digester.String()
 	return byts, nil
 }
 
