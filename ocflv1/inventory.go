@@ -34,7 +34,8 @@ type Inventory struct {
 	Versions         map[ocfl.VNum]*Version    `json:"versions"`
 	Fixity           map[string]ocfl.DigestMap `json:"fixity,omitempty"`
 
-	// jsonDigest of raw inventory using DigestAlgorithm, set during json marshal/unmarshal
+	// digest of raw inventory using DigestAlgorithm, set during json
+	// marshal/unmarshal
 	jsonDigest string
 }
 
@@ -78,8 +79,7 @@ func (inv Inventory) VNums() []ocfl.VNum {
 }
 
 // Digest of Inventory's source json using the inventory digest. If the
-// Inventory wasn't decoded using ValidateInventory or ValidateInventoryReader,
-// an empty string is returned.
+// Inventory wasn't decoded using ValidateInventoryBytes
 func (inv Inventory) Digest() string {
 	return inv.jsonDigest
 }
@@ -327,6 +327,24 @@ func (inv *Inventory) setJsonDigest(raw []byte) error {
 	return nil
 }
 
+// NewInventory reads the inventory and sets its digest value using the digest
+// algorithm. The returned inventory is not fully validated.
+func NewInventory(byts []byte) (*Inventory, error) {
+	dec := json.NewDecoder(bytes.NewReader(byts))
+	dec.DisallowUnknownFields()
+	var inv Inventory
+	if err := dec.Decode(&inv); err != nil {
+		return nil, err
+	}
+	if err := inv.setJsonDigest(byts); err != nil {
+		return nil, err
+	}
+	return &inv, nil
+}
+
+// ValidateInventoryBytes unmarshals the raw json bytes and fully validates the
+// internal structure of the inventory. The returned ocfl.Validation will use
+// use error codes based of the on the ocfl specificatoin spec.
 func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl.Validation) {
 	v = &ocfl.Validation{}
 	invVals := map[string]any{}
@@ -337,12 +355,12 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 	}
 	const requiredErrMsg = "required field is missing or has unexpected json value"
 	const optionalErrMsg = "optional field has unexpected json value"
-	id, exists, typeOK := pullValue[string](invVals, `id`)
+	id, exists, typeOK := pullJSONValue[string](invVals, `id`)
 	if !exists || !typeOK {
 		err := errors.New(requiredErrMsg + `: 'id'`)
 		v.AddFatal(ec(err, codes.E036(spec)))
 	}
-	typeStr, exists, typeOK := pullValue[string](invVals, `type`)
+	typeStr, exists, typeOK := pullJSONValue[string](invVals, `type`)
 	if !exists || !typeOK {
 		err := errors.New(requiredErrMsg + `: 'type'`)
 		v.AddFatal(ec(err, codes.E036(spec)))
@@ -351,7 +369,7 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 		err := fmt.Errorf("invalid inventory type value: %q", typeStr)
 		v.AddFatal(ec(err, codes.E038(spec)))
 	}
-	digestAlg, exists, typeOK := pullValue[string](invVals, `digestAlgorithm`)
+	digestAlg, exists, typeOK := pullJSONValue[string](invVals, `digestAlgorithm`)
 	if !exists || !typeOK {
 		err := errors.New(requiredErrMsg + `: 'digestAlgorithm'`)
 		v.AddFatal(ec(err, codes.E036(spec)))
@@ -360,30 +378,30 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 		err := fmt.Errorf("invalid digest algorithm: %q", digestAlg)
 		v.AddFatal(ec(err, codes.E025(spec)))
 	}
-	head, exists, typeOK := pullValue[string](invVals, `head`)
+	head, exists, typeOK := pullJSONValue[string](invVals, `head`)
 	if !exists || !typeOK {
 		err := errors.New(requiredErrMsg + `: 'head'`)
 		v.AddFatal(ec(err, codes.E036(spec)))
 	}
-	manifestVals, exists, typeOK := pullValue[map[string]any](invVals, `manifest`)
+	manifestVals, exists, typeOK := pullJSONValue[map[string]any](invVals, `manifest`)
 	if !exists || !typeOK {
 		err := errors.New(requiredErrMsg + `: 'manifest'`)
 		v.AddFatal(ec(err, codes.E041(spec)))
 	}
-	versionsVals, exists, typeOK := pullValue[map[string]any](invVals, `versions`)
+	versionsVals, exists, typeOK := pullJSONValue[map[string]any](invVals, `versions`)
 	if !exists || !typeOK {
 		err := errors.New(requiredErrMsg + `: 'versions'`)
 		v.AddFatal(ec(err, codes.E043(spec)))
 	}
 	// FIXME: not sure which error code. E108?
-	contentDirectory, exists, typeOK := pullValue[string](invVals, `contentDirectory`)
+	contentDirectory, exists, typeOK := pullJSONValue[string](invVals, `contentDirectory`)
 	if exists && !typeOK {
 		// contentDirectory is optional
 		err := errors.New(optionalErrMsg + `: 'contentDirectory'`)
 		v.AddFatal(err)
 	}
 	// fixity is optional
-	fixityVals, exists, typeOK := pullValue[map[string]any](invVals, `fixity`)
+	fixityVals, exists, typeOK := pullJSONValue[map[string]any](invVals, `fixity`)
 	if exists && !typeOK {
 		err := errors.New(optionalErrMsg + `: 'fixity'`)
 		v.AddFatal(ec(err, codes.E111(spec)))
@@ -407,7 +425,7 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 		v.AddFatal(ec(err, codes.E040(spec)))
 	}
 	var err error
-	if inv.Manifest, err = convertDigestMap(manifestVals); err != nil {
+	if inv.Manifest, err = convertJSONDigestMap(manifestVals); err != nil {
 		err = fmt.Errorf("invalid manfiest: %w", err)
 		v.AddFatal(ec(err, codes.E092(spec)))
 	}
@@ -435,7 +453,7 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 			err := errors.New(versionErrPrefix + ": value is not a json object")
 			v.AddFatal(ec(err, codes.E045(spec)))
 		}
-		createdStr, exists, typeOK = pullValue[string](versionVals, `created`)
+		createdStr, exists, typeOK = pullJSONValue[string](versionVals, `created`)
 		if !exists || !typeOK {
 			err := fmt.Errorf("%s: %s: %s", versionErrPrefix, requiredErrMsg, `'created'`)
 			v.AddFatal(ec(err, codes.E048(spec)))
@@ -446,32 +464,32 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 				v.AddFatal(ec(err, codes.E049(spec)))
 			}
 		}
-		stateVals, exists, typeOK = pullValue[map[string]any](versionVals, `state`)
+		stateVals, exists, typeOK = pullJSONValue[map[string]any](versionVals, `state`)
 		if !exists || !typeOK {
 			err := fmt.Errorf("%s: %s: %q", versionErrPrefix, requiredErrMsg, `state`)
 			v.AddFatal(ec(err, codes.E048(spec)))
 		}
 		// message is optional
-		message, exists, typeOK = pullValue[string](versionVals, `message`)
+		message, exists, typeOK = pullJSONValue[string](versionVals, `message`)
 		if exists && !typeOK {
 			err := fmt.Errorf("%s: %s: %q", versionErrPrefix, optionalErrMsg, `message`)
 			v.AddFatal(ec(err, codes.E094(spec)))
 		}
 		// user is optional
-		userVals, exists, typeOK := pullValue[map[string]any](versionVals, `user`)
+		userVals, exists, typeOK := pullJSONValue[map[string]any](versionVals, `user`)
 		switch {
 		case exists && !typeOK:
 			err := fmt.Errorf("%s: %s: %q", versionErrPrefix, optionalErrMsg, `user`)
 			v.AddFatal(ec(err, codes.E054(spec)))
 		case exists:
 			var userName, userAddress string
-			userName, exists, typeOK = pullValue[string](userVals, `name`)
+			userName, exists, typeOK = pullJSONValue[string](userVals, `name`)
 			if !exists || !typeOK {
 				err := fmt.Errorf("%s: user: %s: %q", versionErrPrefix, requiredErrMsg, `name`)
 				v.AddFatal(ec(err, codes.E054(spec)))
 			}
 			// address is optional
-			userAddress, exists, typeOK = pullValue[string](userVals, `address`)
+			userAddress, exists, typeOK = pullJSONValue[string](userVals, `address`)
 			if exists && !typeOK {
 				err := fmt.Errorf("%s: user: %s: %q", versionErrPrefix, optionalErrMsg, `address`)
 				v.AddFatal(ec(err, codes.E054(spec)))
@@ -483,7 +501,7 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 			err := fmt.Errorf("%s: invalid key: %q", versionErrPrefix, extra)
 			v.AddFatal(err)
 		}
-		state, err := convertDigestMap(stateVals)
+		state, err := convertJSONDigestMap(stateVals)
 		if err != nil {
 			err = fmt.Errorf("%s: state: %w", versionErrPrefix, err)
 			v.AddFatal(err)
@@ -505,7 +523,7 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 			v.AddFatal(ec(err, codes.E057(spec)))
 			continue
 		}
-		digests, err := convertDigestMap(digestVals)
+		digests, err := convertJSONDigestMap(digestVals)
 		if err != nil {
 			err = fmt.Errorf("%s: %w", fixityErrPrefix, err)
 			v.AddFatal(ec(err, codes.E057(spec)))
@@ -524,26 +542,6 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 		return nil, v
 	}
 	return inv, v
-}
-
-// NewInventory reads the inventory and sets its digest value using
-// the digest algorithm
-func NewInventory(byts []byte) (*Inventory, error) {
-	dec := json.NewDecoder(bytes.NewReader(byts))
-	dec.DisallowUnknownFields()
-	var inv Inventory
-	if err := dec.Decode(&inv); err != nil {
-		return nil, err
-	}
-	digester := ocfl.NewDigester(inv.DigestAlgorithm)
-	if digester == nil {
-		return nil, fmt.Errorf("%w: %q", ocfl.ErrUnknownAlg, inv.DigestAlgorithm)
-	}
-	if _, err := io.Copy(digester, bytes.NewReader(byts)); err != nil {
-		return nil, err
-	}
-	inv.jsonDigest = digester.String()
-	return &inv, nil
 }
 
 // writeInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
@@ -821,7 +819,7 @@ func (a logicalState) Eq(b logicalState) bool {
 	})
 }
 
-func pullValue[T any](m map[string]any, key string) (val T, exists bool, typeOK bool) {
+func pullJSONValue[T any](m map[string]any, key string) (val T, exists bool, typeOK bool) {
 	var anyVal any
 	anyVal, exists = m[key]
 	val, typeOK = anyVal.(T)
@@ -829,7 +827,7 @@ func pullValue[T any](m map[string]any, key string) (val T, exists bool, typeOK 
 	return
 }
 
-func convertDigestMap(jsonMap map[string]any) (ocfl.DigestMap, error) {
+func convertJSONDigestMap(jsonMap map[string]any) (ocfl.DigestMap, error) {
 	m := ocfl.DigestMap{}
 	msg := "invalid json type: expected array of strings"
 	for key, mapVal := range jsonMap {
