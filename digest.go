@@ -16,7 +16,6 @@ import (
 
 	"github.com/srerickson/ocfl-go/internal/pipeline"
 	"golang.org/x/crypto/blake2b"
-	"golang.org/x/exp/maps"
 )
 
 var ErrUnknownAlg = errors.New("unknown digest algorithm")
@@ -184,17 +183,20 @@ func (s DigestSet) ConflictWith(other DigestSet) []string {
 
 // Validate digests reader and return an error if the resulting digest for any
 // algorithm in s doesn't match the value in s.
-func (s DigestSet) Validate(reader io.Reader) (err error) {
-	digester := NewMultiDigester(maps.Keys(s)...)
-	if _, err = io.Copy(digester, reader); err != nil {
+func (s DigestSet) Validate(reader io.Reader) error {
+	algs := make([]string, 0, len(s))
+	for alg := range s {
+		algs = append(algs, alg)
+	}
+	digester := NewMultiDigester(algs...)
+	if _, err := io.Copy(digester, reader); err != nil {
 		return err
 	}
 	result := digester.Sums()
-	conflicts := result.ConflictWith(s)
-	for _, a := range conflicts {
-		err = errors.Join(err, &DigestError{Alg: a, Expected: s[a], Got: result[a]})
+	for _, alg := range result.ConflictWith(s) {
+		return &DigestError{Alg: alg, Expected: s[alg], Got: result[alg]}
 	}
-	return err
+	return nil
 }
 
 // DigestError is returned when content's digest conflicts with an expected value
@@ -244,7 +246,7 @@ func Digest(ctx context.Context, fsys FS, inputSeq func(func(path string, algs [
 		return
 	}
 	return func(yield func(DigestResult, error) bool) {
-		results := pipeline.Results(jobsIter, runJobs, DigestConcurrency())
+		results := pipeline.Results(jobsIter, runJobs, 1)
 		results(func(r pipeline.Result[digestJob, DigestSet]) bool {
 			return yield(DigestResult{
 				Path:    r.In.path,

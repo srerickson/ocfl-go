@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"iter"
 	"runtime"
 	"sync"
 )
@@ -8,8 +9,8 @@ import (
 // pipeline is a parameterized type for concurrent job processing
 type pipeline[Tin, Tout any] struct {
 	numWorkers int
-	taskIter   func(func(Tin) bool)
-	taskFn     func(Tin) (Tout, error)
+	taskIter   iter.Seq[Tin]
+	workFn     func(Tin) (Tout, error)
 }
 
 type Result[Tin, Tout any] struct {
@@ -17,6 +18,8 @@ type Result[Tin, Tout any] struct {
 	Out Tout
 	Err error
 }
+
+type ResultSeq[Tin, Tout any] func(func(Result[Tin, Tout]) bool)
 
 // Results is a generic implementation of the fan-out/fan-in concurrency
 // pattern. The input paramateter, tasks, is an iterator function for adding
@@ -27,21 +30,17 @@ type Result[Tin, Tout any] struct {
 // individual Result values. If the yield function of the returned iterator
 // returns false, task processing is stopped and no new tasks are received.
 // the yield function runs in the same go routine as the caller.
-func Results[Tin, Tout any](
-	tasks func(func(Tin) bool),
-	taskFn func(Tin) (Tout, error),
-	numWorkers int,
-) func(yield func(Result[Tin, Tout]) bool) {
-	pipe := &pipeline[Tin, Tout]{
+func Results[Tin, Tout any](tasks iter.Seq[Tin], workFn func(Tin) (Tout, error), numWorkers int) ResultSeq[Tin, Tout] {
+	p := &pipeline[Tin, Tout]{
 		numWorkers: numWorkers,
 		taskIter:   tasks,
-		taskFn:     taskFn,
+		workFn:     workFn,
 	}
-	return pipe.results
+	return p.results
 }
 
 func (p *pipeline[Tin, Tout]) results(yield func(Result[Tin, Tout]) bool) {
-	if p.taskFn == nil {
+	if p.workFn == nil {
 		return
 	}
 	if p.taskIter == nil {
@@ -62,14 +61,13 @@ func (p *pipeline[Tin, Tout]) results(yield func(Result[Tin, Tout]) bool) {
 	// iterate over tasks
 	go func() {
 		defer close(taskQ)
-		p.taskIter(func(task Tin) bool {
+		for task := range p.taskIter {
 			select {
 			case taskQ <- task:
-				return true
 			case <-cancel:
-				return false
+				return
 			}
-		})
+		}
 	}()
 	// process tasks
 	wg := sync.WaitGroup{}
@@ -82,7 +80,7 @@ func (p *pipeline[Tin, Tout]) results(yield func(Result[Tin, Tout]) bool) {
 				case <-cancel:
 				default:
 					r := Result[Tin, Tout]{In: in}
-					r.Out, r.Err = p.taskFn(r.In)
+					r.Out, r.Err = p.workFn(r.In)
 					resultQ <- r
 				}
 			}

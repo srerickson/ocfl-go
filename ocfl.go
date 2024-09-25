@@ -157,21 +157,6 @@ type ReadObject interface {
 	VersionFS(ctx context.Context, v int) fs.FS
 }
 
-// DigestConcurrency is a global configuration for the number  of files to
-// digest concurrently.
-func DigestConcurrency() int {
-	i := digestConcurrency.Load()
-	if i < 1 {
-		return runtime.NumCPU()
-	}
-	return int(i)
-}
-
-// SetDigestConcurrency sets the max number of files to digest concurrently.
-func SetDigestConcurrency(i int) {
-	digestConcurrency.Store(int32(i))
-}
-
 // XferConcurrency is a global configuration for the maximum number of files
 // transferred concurrently during a commit operation. It defaults to
 // runtime.NumCPU().

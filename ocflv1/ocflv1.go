@@ -271,40 +271,39 @@ func (imp OCFL) ValidateObjectVersion(ctx context.Context, obj ocfl.ReadObject, 
 }
 
 func (imp OCFL) ValidateObjectContent(ctx context.Context, obj ocfl.ReadObject, v *ocfl.ObjectValidation) error {
-	ocflV := imp.spec
 	objFS := obj.FS()
 	objDir := obj.Path()
 	newVld := &ocfl.Validation{}
 	v.MissingContent()(func(name string) bool {
 		err := fmt.Errorf("missing content: %s", name)
-		newVld.AddFatal(ec(err, codes.E092(ocflV)))
+		newVld.AddFatal(ec(err, codes.E092(imp.spec)))
 		return true
 	})
 	v.UnexpectedContent()(func(name string) bool {
 		err := fmt.Errorf("unexpected content: %s", name)
-		newVld.AddFatal(ec(err, codes.E023(ocflV)))
+		newVld.AddFatal(ec(err, codes.E023(imp.spec)))
 		return true
 	})
 	if !v.SkipDigests() {
-		v.ExistingContentDigests()(func(name string, digests ocfl.DigestSet) bool {
+		// var taskIter iter.Seq[ocfl.DigestResult] = func(yield func(ocfl.DigestResult) bool) {
+		// }
+		for name, digests := range v.ExistingContentDigests() {
 			// TODO concurrent digests
 			f, err := objFS.OpenFile(ctx, path.Join(objDir, name))
 			if err != nil {
 				err = fmt.Errorf("unexpected error while validating digests: %w", err)
 				newVld.AddFatal(err)
-				return true
+				continue
 			}
-			defer func() {
-				if closeErr := f.Close(); closeErr != nil {
-					v.AddFatal(closeErr)
-				}
-			}()
 			if err := digests.Validate(f); err != nil {
 				err = fmt.Errorf("validating digests for %q: %w", name, err)
-				newVld.AddFatal(ec(err, codes.E093(ocflV)))
+				newVld.AddFatal(ec(err, codes.E093(imp.spec)))
 			}
-			return true
-		})
+			if err := f.Close(); err != nil {
+				v.AddFatal(err)
+			}
+		}
+
 	}
 	v.Add(newVld)
 	return newVld.Err()

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime"
 
 	"github.com/hashicorp/go-multierror"
 )
@@ -74,6 +75,7 @@ type ObjectValidation struct {
 	globals     Config
 	logger      *slog.Logger
 	skipDigests bool
+	concurrency int
 	files       map[string]*validationFileInfo
 }
 
@@ -219,6 +221,15 @@ func (v *ObjectValidation) SkipDigests() bool {
 	return v.skipDigests
 }
 
+// DigestConcurrency returns the configured number of go routines used to read
+// and digest contents during validation. The default value is runtime.NumCPU().
+func (v *ObjectValidation) DigestConcurrency() int {
+	if v.concurrency > 0 {
+		return v.concurrency
+	}
+	return runtime.NumCPU()
+}
+
 // UnexpectedContent returns an iterator that yields the names of existing files
 // that were not included in an inventory manifest.
 func (v *ObjectValidation) UnexpectedContent() func(func(name string) bool) {
@@ -256,9 +267,19 @@ func ValidationSkipDigest() ObjectValidationOption {
 	}
 }
 
+// ValidationLogger sets the *slog.Logger that should be used for logging
+// validation errors and warnings.
 func ValidationLogger(logger *slog.Logger) ObjectValidationOption {
 	return func(v *ObjectValidation) {
 		v.logger = logger
+	}
+}
+
+// ValidationDigestConcurrency is used to set the number of go routines used to
+// read and digest contents during validation.
+func ValidationDigestConcurrency(num int) ObjectValidationOption {
+	return func(v *ObjectValidation) {
+		v.concurrency = num
 	}
 }
 
