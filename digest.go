@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"iter"
 	"strings"
 	"sync"
 
@@ -214,18 +215,18 @@ func (e DigestError) Error() string {
 	return fmt.Sprintf("unexpected %s for %q: %q, expected=%q", e.Alg, e.Name, e.Got, e.Expected)
 }
 
-// Digest concurrently digests files in an FS. The inputIter argument is a funcion
-// iterator that yields file paths and digest algorithms. It returns an iteratator
-// the yield the computed DigestSet for each path.
-func Digest(ctx context.Context, fsys FS, inputSeq func(func(path string, algs []string) bool)) DigestResultSeq {
+// Digest concurrently digests files in an FS. The pathAlgs argument is a funcion
+// iterator that yields file paths and a slide of digest digest algorithms. It returns an iteratator
+// the yields PathDigest or an error.
+func Digest(ctx context.Context, fsys FS, pathAlgs iter.Seq2[string, []string]) iter.Seq2[PathDigests, error] {
 	// checksum digestJob
 	type digestJob struct {
 		path string
 		algs []string
 	}
-	jobsIter := func(addJob func(digestJob) bool) {
-		inputSeq(func(name string, algs []string) bool {
-			return addJob(digestJob{path: name, algs: algs})
+	jobsIter := func(yield func(digestJob) bool) {
+		pathAlgs(func(name string, algs []string) bool {
+			return yield(digestJob{path: name, algs: algs})
 		})
 	}
 	runJobs := func(j digestJob) (digests DigestSet, err error) {
@@ -245,10 +246,10 @@ func Digest(ctx context.Context, fsys FS, inputSeq func(func(path string, algs [
 		digests = digester.Sums()
 		return
 	}
-	return func(yield func(DigestResult, error) bool) {
+	return func(yield func(PathDigests, error) bool) {
 		results := pipeline.Results(jobsIter, runJobs, 1)
 		results(func(r pipeline.Result[digestJob, DigestSet]) bool {
-			return yield(DigestResult{
+			return yield(PathDigests{
 				Path:    r.In.path,
 				Digests: r.Out,
 			}, r.Err)
@@ -256,14 +257,12 @@ func Digest(ctx context.Context, fsys FS, inputSeq func(func(path string, algs [
 	}
 }
 
-// DigestResult represent on or more computed
+// PathDigests represent on or more computed
 // digests for a file in an FS.
-type DigestResult struct {
+type PathDigests struct {
 	Path    string
 	Digests DigestSet
 }
-
-type DigestResultSeq func(yield func(DigestResult, error) bool)
 
 func mustBlake2bNew512() hash.Hash {
 	h, err := blake2b.New512(nil)

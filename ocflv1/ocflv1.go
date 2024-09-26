@@ -271,39 +271,25 @@ func (imp OCFL) ValidateObjectVersion(ctx context.Context, obj ocfl.ReadObject, 
 }
 
 func (imp OCFL) ValidateObjectContent(ctx context.Context, obj ocfl.ReadObject, v *ocfl.ObjectValidation) error {
-	objFS := obj.FS()
-	objDir := obj.Path()
 	newVld := &ocfl.Validation{}
-	v.MissingContent()(func(name string) bool {
+	for name := range v.MissingContent() {
 		err := fmt.Errorf("missing content: %s", name)
 		newVld.AddFatal(ec(err, codes.E092(imp.spec)))
-		return true
-	})
-	v.UnexpectedContent()(func(name string) bool {
+	}
+	for name := range v.UnexpectedContent() {
 		err := fmt.Errorf("unexpected content: %s", name)
 		newVld.AddFatal(ec(err, codes.E023(imp.spec)))
-		return true
-	})
-	if !v.SkipDigests() {
-		// var taskIter iter.Seq[ocfl.DigestResult] = func(yield func(ocfl.DigestResult) bool) {
-		// }
-		for name, digests := range v.ExistingContentDigests() {
-			// TODO concurrent digests
-			f, err := objFS.OpenFile(ctx, path.Join(objDir, name))
-			if err != nil {
-				err = fmt.Errorf("unexpected error while validating digests: %w", err)
+	}
+	for err := range v.DigestExistingContent(ctx, obj.FS(), obj.Path()) {
+		if err != nil {
+			var digestErr *ocfl.DigestError
+			switch {
+			case errors.As(err, &digestErr):
+				newVld.AddFatal(ec(digestErr, codes.E093(imp.spec)))
+			default:
 				newVld.AddFatal(err)
-				continue
-			}
-			if err := digests.Validate(f); err != nil {
-				err = fmt.Errorf("validating digests for %q: %w", name, err)
-				newVld.AddFatal(ec(err, codes.E093(imp.spec)))
-			}
-			if err := f.Close(); err != nil {
-				v.AddFatal(err)
 			}
 		}
-
 	}
 	v.Add(newVld)
 	return newVld.Err()

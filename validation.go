@@ -1,12 +1,16 @@
 package ocfl
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
+	"path"
 	"runtime"
 
 	"github.com/hashicorp/go-multierror"
+	"github.com/srerickson/ocfl-go/internal/pipeline"
 )
 
 // Validation represents multiple fatal errors and warning errors.
@@ -196,6 +200,38 @@ func (v *ObjectValidation) AddInventoryDigests(inv ReadInventory) error {
 	return allErrors.ErrorOrNil()
 }
 
+func (v *ObjectValidation) DigestExistingContent(ctx context.Context, fs FS, dir string) iter.Seq[error] {
+	if v.SkipDigests() {
+		return func(_ func(error) bool) {}
+	}
+	return func(yield func(error) bool) {
+		work := v.ExistingContentDigests()
+		numWorkers := v.DigestConcurrency()
+		var workFn = func(d PathDigests) (bool, error) {
+			f, err := fs.OpenFile(ctx, path.Join(dir, d.Path))
+			if err != nil {
+				err = fmt.Errorf("unexpected error while validating digests: %w", err)
+				return false, err
+			}
+			if err := d.Digests.Validate(f); err != nil {
+				f.Close()
+				var digestErr *DigestError
+				if errors.As(err, &digestErr) {
+					digestErr.Name = d.Path
+					return false, digestErr
+				}
+				return false, fmt.Errorf("validating digests for %q: %w", d.Path, err)
+			}
+			return true, f.Close()
+		}
+		for result := range pipeline.Results(work, workFn, numWorkers) {
+			if !yield(result.Err) {
+				break
+			}
+		}
+	}
+}
+
 // Logger returns the validation's logger, which is nil by default.
 func (v *ObjectValidation) Logger() *slog.Logger {
 	return v.logger
@@ -203,7 +239,7 @@ func (v *ObjectValidation) Logger() *slog.Logger {
 
 // MissingContent returns an iterator the yields the names of files that appear
 // in an inventory added to the validation but were not marked as existing.
-func (v *ObjectValidation) MissingContent() func(func(name string) bool) {
+func (v *ObjectValidation) MissingContent() iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for name, entry := range v.files {
 			if !entry.exists && len(entry.expected) > 0 {
@@ -232,7 +268,7 @@ func (v *ObjectValidation) DigestConcurrency() int {
 
 // UnexpectedContent returns an iterator that yields the names of existing files
 // that were not included in an inventory manifest.
-func (v *ObjectValidation) UnexpectedContent() func(func(name string) bool) {
+func (v *ObjectValidation) UnexpectedContent() iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for name, entry := range v.files {
 			if entry.exists && len(entry.expected) == 0 {
@@ -247,11 +283,11 @@ func (v *ObjectValidation) UnexpectedContent() func(func(name string) bool) {
 // ExistingContent digests returns an iterator that yields the names and digests
 // of files that exist and were reference in the inventory added to the
 // valiation.
-func (v *ObjectValidation) ExistingContentDigests() func(func(name string, digests DigestSet) bool) {
-	return func(yield func(string, DigestSet) bool) {
+func (v *ObjectValidation) ExistingContentDigests() iter.Seq[PathDigests] {
+	return func(yield func(PathDigests) bool) {
 		for name, entry := range v.files {
 			if entry.exists && len(entry.expected) > 0 {
-				if !yield(name, entry.expected) {
+				if !yield(PathDigests{Path: name, Digests: entry.expected}) {
 					return
 				}
 			}
