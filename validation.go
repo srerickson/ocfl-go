@@ -3,7 +3,9 @@ package ocfl
 import (
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
+	"runtime"
 
 	"github.com/hashicorp/go-multierror"
 )
@@ -74,6 +76,7 @@ type ObjectValidation struct {
 	globals     Config
 	logger      *slog.Logger
 	skipDigests bool
+	concurrency int
 	files       map[string]*validationFileInfo
 }
 
@@ -185,7 +188,7 @@ func (v *ObjectValidation) AddInventoryDigests(inv ReadInventory) error {
 		if err := current.expected.Add(allDigests); err != nil {
 			var digestError *DigestError
 			if errors.As(err, &digestError) {
-				digestError.Name = name
+				digestError.Path = name
 			}
 			allErrors = multierror.Append(allErrors, err)
 		}
@@ -201,7 +204,7 @@ func (v *ObjectValidation) Logger() *slog.Logger {
 
 // MissingContent returns an iterator the yields the names of files that appear
 // in an inventory added to the validation but were not marked as existing.
-func (v *ObjectValidation) MissingContent() func(func(name string) bool) {
+func (v *ObjectValidation) MissingContent() iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for name, entry := range v.files {
 			if !entry.exists && len(entry.expected) > 0 {
@@ -219,9 +222,18 @@ func (v *ObjectValidation) SkipDigests() bool {
 	return v.skipDigests
 }
 
+// DigestConcurrency returns the configured number of go routines used to read
+// and digest contents during validation. The default value is runtime.NumCPU().
+func (v *ObjectValidation) DigestConcurrency() int {
+	if v.concurrency > 0 {
+		return v.concurrency
+	}
+	return runtime.NumCPU()
+}
+
 // UnexpectedContent returns an iterator that yields the names of existing files
 // that were not included in an inventory manifest.
-func (v *ObjectValidation) UnexpectedContent() func(func(name string) bool) {
+func (v *ObjectValidation) UnexpectedContent() iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for name, entry := range v.files {
 			if entry.exists && len(entry.expected) == 0 {
@@ -236,11 +248,11 @@ func (v *ObjectValidation) UnexpectedContent() func(func(name string) bool) {
 // ExistingContent digests returns an iterator that yields the names and digests
 // of files that exist and were reference in the inventory added to the
 // valiation.
-func (v *ObjectValidation) ExistingContentDigests() func(func(name string, digests DigestSet) bool) {
-	return func(yield func(string, DigestSet) bool) {
+func (v *ObjectValidation) ExistingContentDigests() iter.Seq[PathDigests] {
+	return func(yield func(PathDigests) bool) {
 		for name, entry := range v.files {
 			if entry.exists && len(entry.expected) > 0 {
-				if !yield(name, entry.expected) {
+				if !yield(PathDigests{Path: name, Digests: entry.expected}) {
 					return
 				}
 			}
@@ -256,9 +268,19 @@ func ValidationSkipDigest() ObjectValidationOption {
 	}
 }
 
+// ValidationLogger sets the *slog.Logger that should be used for logging
+// validation errors and warnings.
 func ValidationLogger(logger *slog.Logger) ObjectValidationOption {
 	return func(v *ObjectValidation) {
 		v.logger = logger
+	}
+}
+
+// ValidationDigestConcurrency is used to set the number of go routines used to
+// read and digest contents during validation.
+func ValidationDigestConcurrency(num int) ObjectValidationOption {
+	return func(v *ObjectValidation) {
+		v.concurrency = num
 	}
 }
 

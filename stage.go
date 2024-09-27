@@ -173,7 +173,7 @@ func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage,
 	}
 	// digest result: add results to the stage
 	var digestErr error
-	Digest(ctx, dirMan.fs, walkFS)(func(r DigestResult, err error) bool {
+	Digest(ctx, dirMan.fs, walkFS)(func(r PathDigests, err error) bool {
 		name := r.Path
 		if err != nil {
 			digestErr = err

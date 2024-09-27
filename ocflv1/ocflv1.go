@@ -12,6 +12,7 @@ import (
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/extension"
+	"github.com/srerickson/ocfl-go/internal/pipeline"
 	"github.com/srerickson/ocfl-go/logging"
 	"github.com/srerickson/ocfl-go/ocflv1/codes"
 	"golang.org/x/sync/errgroup"
@@ -271,40 +272,32 @@ func (imp OCFL) ValidateObjectVersion(ctx context.Context, obj ocfl.ReadObject, 
 }
 
 func (imp OCFL) ValidateObjectContent(ctx context.Context, obj ocfl.ReadObject, v *ocfl.ObjectValidation) error {
-	ocflV := imp.spec
-	objFS := obj.FS()
-	objDir := obj.Path()
 	newVld := &ocfl.Validation{}
-	v.MissingContent()(func(name string) bool {
+	for name := range v.MissingContent() {
 		err := fmt.Errorf("missing content: %s", name)
-		newVld.AddFatal(ec(err, codes.E092(ocflV)))
-		return true
-	})
-	v.UnexpectedContent()(func(name string) bool {
+		newVld.AddFatal(ec(err, codes.E092(imp.spec)))
+	}
+	for name := range v.UnexpectedContent() {
 		err := fmt.Errorf("unexpected content: %s", name)
-		newVld.AddFatal(ec(err, codes.E023(ocflV)))
-		return true
-	})
+		newVld.AddFatal(ec(err, codes.E023(imp.spec)))
+	}
 	if !v.SkipDigests() {
-		v.ExistingContentDigests()(func(name string, digests ocfl.DigestSet) bool {
-			// TODO concurrent digests
-			f, err := objFS.OpenFile(ctx, path.Join(objDir, name))
-			if err != nil {
-				err = fmt.Errorf("unexpected error while validating digests: %w", err)
-				newVld.AddFatal(err)
-				return true
-			}
-			defer func() {
-				if closeErr := f.Close(); closeErr != nil {
-					v.AddFatal(closeErr)
+		numWorkers := v.DigestConcurrency()
+		work := v.ExistingContentDigests()
+		workFn := func(d ocfl.PathDigests) (bool, error) {
+			return d.Validate(ctx, obj.FS(), obj.Path())
+		}
+		for result := range pipeline.Results(work, workFn, numWorkers) {
+			if result.Err != nil {
+				var digestErr *ocfl.DigestError
+				switch {
+				case errors.As(result.Err, &digestErr):
+					newVld.AddFatal(ec(digestErr, codes.E093(imp.spec)))
+				default:
+					newVld.AddFatal(result.Err)
 				}
-			}()
-			if err := digests.Validate(f); err != nil {
-				err = fmt.Errorf("validating digests for %q: %w", name, err)
-				newVld.AddFatal(ec(err, codes.E093(ocflV)))
 			}
-			return true
-		})
+		}
 	}
 	v.Add(newVld)
 	return newVld.Err()

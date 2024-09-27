@@ -76,7 +76,7 @@ func ValidateInventorySidecar(ctx context.Context, inv ReadInventory, fsys FS, d
 	}
 	if !strings.EqualFold(expSum, inv.Digest()) {
 		return &DigestError{
-			Name:     sideCar,
+			Path:     sideCar,
 			Alg:      inv.DigestAlgorithm(),
 			Got:      inv.Digest(),
 			Expected: expSum,
