@@ -1,16 +1,13 @@
 package ocfl
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
-	"path"
 	"runtime"
 
 	"github.com/hashicorp/go-multierror"
-	"github.com/srerickson/ocfl-go/internal/pipeline"
 )
 
 // Validation represents multiple fatal errors and warning errors.
@@ -191,45 +188,13 @@ func (v *ObjectValidation) AddInventoryDigests(inv ReadInventory) error {
 		if err := current.expected.Add(allDigests); err != nil {
 			var digestError *DigestError
 			if errors.As(err, &digestError) {
-				digestError.Name = name
+				digestError.Path = name
 			}
 			allErrors = multierror.Append(allErrors, err)
 		}
 		return true
 	})
 	return allErrors.ErrorOrNil()
-}
-
-func (v *ObjectValidation) DigestExistingContent(ctx context.Context, fs FS, dir string) iter.Seq[error] {
-	if v.SkipDigests() {
-		return func(_ func(error) bool) {}
-	}
-	return func(yield func(error) bool) {
-		work := v.ExistingContentDigests()
-		numWorkers := v.DigestConcurrency()
-		var workFn = func(d PathDigests) (bool, error) {
-			f, err := fs.OpenFile(ctx, path.Join(dir, d.Path))
-			if err != nil {
-				err = fmt.Errorf("unexpected error while validating digests: %w", err)
-				return false, err
-			}
-			if err := d.Digests.Validate(f); err != nil {
-				f.Close()
-				var digestErr *DigestError
-				if errors.As(err, &digestErr) {
-					digestErr.Name = d.Path
-					return false, digestErr
-				}
-				return false, fmt.Errorf("validating digests for %q: %w", d.Path, err)
-			}
-			return true, f.Close()
-		}
-		for result := range pipeline.Results(work, workFn, numWorkers) {
-			if !yield(result.Err) {
-				break
-			}
-		}
-	}
 }
 
 // Logger returns the validation's logger, which is nil by default.

@@ -12,6 +12,8 @@ import (
 	"hash"
 	"io"
 	"iter"
+	"path"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -202,23 +204,31 @@ func (s DigestSet) Validate(reader io.Reader) error {
 
 // DigestError is returned when content's digest conflicts with an expected value
 type DigestError struct {
-	Name     string // Content path
+	Path     string // Content path
 	Alg      string // Digest algorithm
 	Got      string // Calculated digest
 	Expected string // Expected digest
 }
 
 func (e DigestError) Error() string {
-	if e.Name == "" {
+	if e.Path == "" {
 		return fmt.Sprintf("unexpected %s value: %q, expected=%q", e.Alg, e.Got, e.Expected)
 	}
-	return fmt.Sprintf("unexpected %s for %q: %q, expected=%q", e.Alg, e.Name, e.Got, e.Expected)
+	return fmt.Sprintf("unexpected %s for %q: %q, expected=%q", e.Alg, e.Path, e.Got, e.Expected)
 }
 
-// Digest concurrently digests files in an FS. The pathAlgs argument is a funcion
-// iterator that yields file paths and a slide of digest digest algorithms. It returns an iteratator
-// the yields PathDigest or an error.
+// Digest is equivalent to ConcurrentDigest with the number of digest workers
+// set to runtime.NumCPU(). The pathAlgs argument is an iterator that yields
+// file paths and a slice of digest algorithms. It returns an iteratator the
+// yields PathDigest or an error.
 func Digest(ctx context.Context, fsys FS, pathAlgs iter.Seq2[string, []string]) iter.Seq2[PathDigests, error] {
+	return ConcurrentDigest(ctx, fsys, pathAlgs, runtime.NumCPU())
+}
+
+// ConcurrentDigest concurrently digests files in an FS. The pathAlgs argument
+// is an iterator that yields file paths and a slice of digest algorithms. It
+// returns an iteratator the yields PathDigest or an error.
+func ConcurrentDigest(ctx context.Context, fsys FS, pathAlgs iter.Seq2[string, []string], numWorkers int) iter.Seq2[PathDigests, error] {
 	// checksum digestJob
 	type digestJob struct {
 		path string
@@ -247,13 +257,15 @@ func Digest(ctx context.Context, fsys FS, pathAlgs iter.Seq2[string, []string]) 
 		return
 	}
 	return func(yield func(PathDigests, error) bool) {
-		results := pipeline.Results(jobsIter, runJobs, 1)
-		results(func(r pipeline.Result[digestJob, DigestSet]) bool {
-			return yield(PathDigests{
-				Path:    r.In.path,
-				Digests: r.Out,
-			}, r.Err)
-		})
+		for result := range pipeline.Results(jobsIter, runJobs, numWorkers) {
+			pd := PathDigests{
+				Path:    result.In.path,
+				Digests: result.Out,
+			}
+			if !yield(pd, result.Err) {
+				break
+			}
+		}
 	}
 }
 
@@ -262,6 +274,26 @@ func Digest(ctx context.Context, fsys FS, pathAlgs iter.Seq2[string, []string]) 
 type PathDigests struct {
 	Path    string
 	Digests DigestSet
+}
+
+// Validate validates pd's DigestSet by reading the file at pd.Path, relative to
+// the directory parent in fsys. The returned bool is true if the file was read
+// and all digests validated; in this case, the returned error may be non-nil if
+// error occured closing the file.
+func (pd PathDigests) Validate(ctx context.Context, fsys FS, parent string) (bool, error) {
+	f, err := fsys.OpenFile(ctx, path.Join(parent, pd.Path))
+	if err != nil {
+		return false, err
+	}
+	if err := pd.Digests.Validate(f); err != nil {
+		f.Close()
+		var digestErr *DigestError
+		if errors.As(err, &digestErr) {
+			digestErr.Path = pd.Path
+		}
+		return false, err
+	}
+	return true, f.Close()
 }
 
 func mustBlake2bNew512() hash.Hash {

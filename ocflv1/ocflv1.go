@@ -12,6 +12,7 @@ import (
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/extension"
+	"github.com/srerickson/ocfl-go/internal/pipeline"
 	"github.com/srerickson/ocfl-go/logging"
 	"github.com/srerickson/ocfl-go/ocflv1/codes"
 	"golang.org/x/sync/errgroup"
@@ -280,14 +281,21 @@ func (imp OCFL) ValidateObjectContent(ctx context.Context, obj ocfl.ReadObject, 
 		err := fmt.Errorf("unexpected content: %s", name)
 		newVld.AddFatal(ec(err, codes.E023(imp.spec)))
 	}
-	for err := range v.DigestExistingContent(ctx, obj.FS(), obj.Path()) {
-		if err != nil {
-			var digestErr *ocfl.DigestError
-			switch {
-			case errors.As(err, &digestErr):
-				newVld.AddFatal(ec(digestErr, codes.E093(imp.spec)))
-			default:
-				newVld.AddFatal(err)
+	if !v.SkipDigests() {
+		numWorkers := v.DigestConcurrency()
+		work := v.ExistingContentDigests()
+		workFn := func(d ocfl.PathDigests) (bool, error) {
+			return d.Validate(ctx, obj.FS(), obj.Path())
+		}
+		for result := range pipeline.Results(work, workFn, numWorkers) {
+			if result.Err != nil {
+				var digestErr *ocfl.DigestError
+				switch {
+				case errors.As(result.Err, &digestErr):
+					newVld.AddFatal(ec(digestErr, codes.E093(imp.spec)))
+				default:
+					newVld.AddFatal(result.Err)
+				}
 			}
 		}
 	}
