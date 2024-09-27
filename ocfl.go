@@ -25,7 +25,6 @@ var (
 	ErrObjectNamasteExists   = fmt.Errorf("found existing OCFL object declaration: %w", fs.ErrExist)
 	ErrObjectNamasteNotExist = fmt.Errorf("the OCFL object declaration does not exist: %w", ErrNamasteNotExist)
 
-	digestConcurrency atomic.Int32 // FIXME: get rid of this
 	commitConcurrency atomic.Int32 // FIXME: get rid of this
 
 	// map of OCFL implementations
