@@ -19,16 +19,9 @@ import (
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/digest"
 	"golang.org/x/crypto/blake2b"
 )
-
-func TestDigestAlg(t *testing.T) {
-	for _, alg := range ocfl.RegisteredAlgs() {
-		if _, err := testAlg(alg, []byte("test data")); err != nil {
-			t.Error(err)
-		}
-	}
-}
 
 func TestDigester(t *testing.T) {
 	testDigester := func(t *testing.T, algs []string) {
@@ -58,7 +51,7 @@ func TestDigester(t *testing.T) {
 			t.Error("Validate() unexpected error:", err)
 		}
 		// add invalid entry
-		result[ocfl.SHA1] = "invalid"
+		result[digest.SHA1.ID()] = "invalid"
 		err := result.Validate(bytes.NewReader(data))
 		if err == nil {
 			t.Error("Validate() didn't return an error for an invalid DigestSet")
@@ -67,10 +60,10 @@ func TestDigester(t *testing.T) {
 		if !errors.As(err, &digestErr) {
 			t.Error("Validate() didn't return a DigestErr as expected")
 		}
-		if digestErr.Alg != ocfl.SHA1 {
+		if digestErr.Alg != digest.SHA1.ID() {
 			t.Error("Validate() returned an error with the wrong Alg value")
 		}
-		if digestErr.Expected != result[ocfl.SHA1] {
+		if digestErr.Expected != result[digest.SHA1.ID()] {
 			t.Error("Validate() returned an error with wrong Expected value")
 		}
 	}
@@ -78,34 +71,35 @@ func TestDigester(t *testing.T) {
 		testDigester(t, nil)
 	})
 	t.Run("1 alg", func(t *testing.T) {
-		testDigester(t, []string{ocfl.MD5})
+		testDigester(t, []string{digest.MD5.ID()})
 	})
 	t.Run("2 algs", func(t *testing.T) {
-		testDigester(t, []string{ocfl.MD5, ocfl.BLAKE2B})
+		testDigester(t, []string{digest.MD5.ID(), digest.BLAKE2B.ID()})
 	})
 }
 
-func testAlg(alg string, val []byte) (string, error) {
+func testAlg(algID string, val []byte) (string, error) {
 	var h hash.Hash
-	switch alg {
-	case ocfl.SHA512:
+	switch algID {
+	case digest.SHA512.ID():
 		h = sha512.New()
-	case ocfl.SHA256:
+	case digest.SHA256.ID():
 		h = sha256.New()
-	case ocfl.SHA1:
+	case digest.SHA1.ID():
 		h = sha1.New()
-	case ocfl.MD5:
+	case digest.MD5.ID():
 		h = md5.New()
-	case ocfl.BLAKE2B:
+	case digest.BLAKE2B.ID():
 		h, _ = blake2b.New512(nil)
 	}
-	d := ocfl.NewDigester(alg)
+	alg, _ := digest.Defaults.New(algID)
+	d := alg.Digester()
 	d.Write(val)
 	h.Write(val)
 	exp := hex.EncodeToString(h.Sum(nil))
 	got := d.String()
 	if exp != got {
-		return exp, fmt.Errorf("%s value: got=%q, expected=%q", alg, got, exp)
+		return exp, fmt.Errorf("%s value: got=%q, expected=%q", algID, got, exp)
 	}
 	return exp, nil
 }
@@ -124,7 +118,7 @@ func TestDigestFS(t *testing.T) {
 	})
 	t.Run("missing file", func(t *testing.T) {
 		setup := func(add func(name string, algs []string) bool) {
-			add(filepath.Join("missingfile"), []string{ocfl.MD5})
+			add(filepath.Join("missingfile"), []string{digest.MD5.ID()})
 		}
 		for _, err := range ocfl.Digest(ctx, fsys, setup) {
 			be.True(t, err != nil)
@@ -141,15 +135,15 @@ func TestDigestFS(t *testing.T) {
 	})
 	t.Run("minimal, one existing file, md5", func(t *testing.T) {
 		setup := func(add func(name string, algs []string) bool) {
-			add("hello.csv", []string{ocfl.MD5})
+			add("hello.csv", []string{digest.MD5.ID()})
 		}
 		for r, err := range ocfl.Digest(ctx, fsys, setup) {
 			be.NilErr(t, err)
-			be.Equal(t, testMD5Sums[r.Path], r.Digests[ocfl.MD5])
+			be.Equal(t, testMD5Sums[r.Path], r.Digests[digest.MD5.ID()])
 		}
 	})
 	t.Run("multiple files, md5, sha1", func(t *testing.T) {
-		algs := []string{ocfl.MD5, ocfl.SHA1}
+		algs := []string{digest.MD5.ID(), digest.SHA1.ID()}
 		setup := func(add func(name string, algs []string) bool) {
 			add("hello.csv", algs)
 			add("folder1/file.txt", algs)
@@ -158,8 +152,8 @@ func TestDigestFS(t *testing.T) {
 		}
 		for r, err := range ocfl.Digest(ctx, fsys, setup) {
 			be.NilErr(t, err)
-			be.Nonzero(t, r.Digests[ocfl.MD5])
-			be.Nonzero(t, r.Digests[ocfl.SHA1])
+			be.Nonzero(t, r.Digests[digest.MD5.ID()])
+			be.Nonzero(t, r.Digests[digest.SHA1.ID()])
 		}
 	})
 	t.Run("minimal, one existing file, no algs", func(t *testing.T) {
@@ -186,7 +180,7 @@ func TestPathDigests(t *testing.T) {
 	t.Run("example", func(t *testing.T) {
 		jobs := func(yield func(string, []string) bool) {
 			for name := range fsys {
-				yield(name, []string{ocfl.SHA256, ocfl.MD5})
+				yield(name, []string{digest.SHA256.ID(), digest.MD5.ID()})
 			}
 		}
 		for pd, err := range ocfl.Digest(ctx, ocfl.NewFS(fsys), jobs) {

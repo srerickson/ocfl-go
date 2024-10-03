@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing/fstest"
+
+	"github.com/srerickson/ocfl-go/digest"
 )
 
 // Stage is used to create/update objects.
@@ -42,7 +44,8 @@ func (s *Stage) Overlay(stages ...*Stage) error {
 	if s.State == nil {
 		s.State = DigestMap{}
 	}
-	if alg := s.DigestAlgorithm; alg == "" || (alg != SHA512 && alg != SHA256) {
+	// FIXME
+	if al := s.DigestAlgorithm; al == "" || (al != digest.SHA512.ID() && al != digest.SHA256.ID()) {
 		return errors.New("stage's digest algorithm must be 'sha512' or 'sha256'")
 	}
 	var err error
@@ -146,8 +149,9 @@ func (ps fixitySources) GetFixity(digest string) DigestSet {
 // All files in dir and its subdirectories are digested with the given digest
 // algs and added to the stage. The algs must include sha512 or sha256 or an
 // error is returned
+// FIXME: algs should be DigestAlgorithms, not strings
 func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage, error) {
-	if len(algs) < 1 || (algs[0] != SHA512 && algs[0] != SHA256) {
+	if len(algs) < 1 || (algs[0] != digest.SHA512.ID() && algs[0] != digest.SHA256.ID()) {
 		return nil, fmt.Errorf("must use sha512 or sha256 as the primary digest algorithm for the stage")
 	}
 	if !fs.ValidPath(dir) {

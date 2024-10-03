@@ -2,11 +2,6 @@ package ocfl
 
 import (
 	"context"
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
@@ -15,113 +10,30 @@ import (
 	"path"
 	"runtime"
 	"strings"
-	"sync"
 
+	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/internal/pipeline"
 	"golang.org/x/crypto/blake2b"
 )
-
-var ErrUnknownAlg = errors.New("unknown digest algorithm")
-
-const (
-	SHA512  = `sha512`
-	SHA256  = `sha256`
-	SHA1    = `sha1`
-	MD5     = `md5`
-	BLAKE2B = `blake2b-512`
-)
-
-var (
-	// built-in digest algorithm definitions
-	builtin = map[string]func() Digester{
-		SHA512:  func() Digester { return newHashDigester(sha512.New()) },
-		SHA256:  func() Digester { return newHashDigester(sha256.New()) },
-		SHA1:    func() Digester { return newHashDigester(sha1.New()) },
-		MD5:     func() Digester { return newHashDigester(md5.New()) },
-		BLAKE2B: func() Digester { return newHashDigester(mustBlake2bNew512()) },
-	}
-
-	// register includes digest algorithms registered with RegisterAlg
-	register   = map[string]func() Digester{}
-	registerMx = sync.RWMutex{}
-)
-
-// RegisteredAlgs returns a slice of all available digest algorithms
-func RegisteredAlgs() []string {
-	algs := make([]string, 0, len(builtin)+len(register))
-	for k := range builtin {
-		algs = append(algs, k)
-	}
-	for k := range register {
-		algs = append(algs, k)
-	}
-	return algs
-}
-
-// RegisterAlg registers the Digester constructor for alg, so that alg.New() can
-// be used.
-func RegisterAlg(alg string, newDigester func() Digester) {
-	// check built-in
-	if builtin[alg] != nil {
-		return
-	}
-	// check register
-	registerMx.Lock()
-	defer registerMx.Unlock()
-	if register[alg] != nil {
-		return
-	}
-	register[alg] = newDigester
-}
-
-// New returns a new Digester for generated digest values. If a Digester
-// constructor was not registered for a, nil is returne.
-func NewDigester(alg string) Digester {
-	// check built-in
-	if newDigester := builtin[alg]; newDigester != nil {
-		return newDigester()
-	}
-	// check register
-	registerMx.RLock()
-	defer registerMx.RUnlock()
-	if newDigester := register[alg]; newDigester != nil {
-		return newDigester()
-	}
-	return nil
-}
-
-// Digester is an interface used for generating digest values.
-type Digester interface {
-	io.Writer
-	// String() returns the digest value for the bytes written to the digester.
-	String() string
-}
-
-type hashDigester struct {
-	hash.Hash
-}
-
-func newHashDigester(h hash.Hash) hashDigester {
-	return hashDigester{Hash: h}
-}
-
-func (h hashDigester) String() string { return hex.EncodeToString(h.Sum(nil)) }
 
 // MultiDigester is used to generate digests for multiple digest algorithms at
 // the same time.
 type MultiDigester struct {
 	io.Writer
-	digesters map[string]Digester
+	digesters map[string]digest.Digester
 }
 
 func NewMultiDigester(algs ...string) *MultiDigester {
 	writers := make([]io.Writer, 0, len(algs))
-	digesters := make(map[string]Digester, len(algs))
-	for _, alg := range algs {
-		if digester := NewDigester(alg); digester != nil {
-			digesters[alg] = digester
-			writers = append(writers, digester)
+	digesters := make(map[string]digest.Digester, len(algs))
+	for _, algID := range algs {
+		alg, _ := digest.Defaults.New(algID)
+		if alg == nil {
+			continue
 		}
+		digester := alg.Digester()
+		digesters[alg.ID()] = digester
+		writers = append(writers, digester)
 	}
 	if len(writers) == 0 {
 		return &MultiDigester{Writer: io.Discard}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/ocflv1/codes"
 	"golang.org/x/exp/maps"
 )
@@ -166,13 +167,13 @@ func (inv *Inventory) Validate() *ocfl.Validation {
 		v.AddWarn(ec(err, codes.W005(ocflV)))
 	}
 	switch inv.DigestAlgorithm {
-	case ocfl.SHA512:
+	case digest.SHA512.ID():
 		break
-	case ocfl.SHA256:
-		err := fmt.Errorf(`'digestAlgorithm' is %q`, ocfl.SHA256)
+	case digest.SHA256.ID():
+		err := fmt.Errorf(`'digestAlgorithm' is %q`, digest.SHA256.ID())
 		v.AddWarn(ec(err, codes.W004(ocflV)))
 	default:
-		err := fmt.Errorf(`'digestAlgorithm' is not %q or %q`, ocfl.SHA512, ocfl.SHA256)
+		err := fmt.Errorf(`'digestAlgorithm' is not %q or %q`, digest.SHA512.ID(), digest.SHA256.ID())
 		v.AddFatal(ec(err, codes.E025(ocflV)))
 	}
 	if err := inv.Head.Valid(); err != nil {
@@ -371,7 +372,7 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 		err := errors.New(requiredErrMsg + `: 'digestAlgorithm'`)
 		v.AddFatal(ec(err, codes.E036(spec)))
 	}
-	if digestAlg != "" && digestAlg != ocfl.SHA512 && digestAlg != ocfl.SHA256 {
+	if digestAlg != "" && digestAlg != digest.SHA512.ID() && digestAlg != digest.SHA256.ID() {
 		err := fmt.Errorf("invalid digest algorithm: %q", digestAlg)
 		v.AddFatal(ec(err, codes.E025(spec)))
 	}
