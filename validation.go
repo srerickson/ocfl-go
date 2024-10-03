@@ -290,7 +290,7 @@ type validationFileInfo struct {
 }
 
 // ValidationCode represents a validation error code defined in an
-// OCFL specificaiton. See https://ocfl.io/1.1/spec/validation-codes.html
+// OCFL specification. See https://ocfl.io/1.1/spec/validation-codes.html
 type ValidationCode struct {
 	Spec        Spec   // OCFL spec that the code refers to
 	Code        string // Validation error code from OCFL Spec

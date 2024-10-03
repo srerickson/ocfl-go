@@ -423,7 +423,7 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 	}
 	var err error
 	if inv.Manifest, err = convertJSONDigestMap(manifestVals); err != nil {
-		err = fmt.Errorf("invalid manfiest: %w", err)
+		err = fmt.Errorf("invalid manifest: %w", err)
 		v.AddFatal(ec(err, codes.E092(spec)))
 	}
 	// build versions

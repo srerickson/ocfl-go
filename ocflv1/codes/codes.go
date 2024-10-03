@@ -1926,14 +1926,14 @@ func E089(spec ocfl.Spec) *ocfl.ValidationCode {
 	}
 }
 
-// E090: Hard and soft (symbolic) links are not portable and MUST NOT be used within OCFL Storage hierachies.
+// E090: Hard and soft (symbolic) links are not portable and MUST NOT be used within OCFL Storage hierarchies.
 func E090(spec ocfl.Spec) *ocfl.ValidationCode {
 	switch spec {
 	case ocfl.Spec("1.0"):
 		return &ocfl.ValidationCode{
 			Spec:        spec,
 			Code:        "E090",
-			Description: "Hard and soft (symbolic) links are not portable and MUST NOT be used within OCFL Storage hierachies.",
+			Description: "Hard and soft (symbolic) links are not portable and MUST NOT be used within OCFL Storage hierarchies.",
 			URL:         "https://ocfl.io/1.0/spec/#E090",
 		}
 	case ocfl.Spec("1.1"):
