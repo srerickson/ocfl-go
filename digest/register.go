@@ -6,7 +6,15 @@ import (
 	"io"
 )
 
-var ErrUnknown = errors.New("unrecognized digest algorithm")
+var (
+	// ErrUnknown: a digest algorithm was not recognize
+	ErrUnknown = errors.New("unrecognized digest algorithm")
+	// ErrMissing: missing an expected digest algorithm
+	ErrMissing = errors.New("missing a required digest algorithm")
+
+	// built-in Alg register
+	builtinRegister = NewRegister(SHA512, SHA256, SHA1, MD5, BLAKE2B)
+)
 
 // Register is an immutable container of Algs.
 type Register struct {
@@ -44,26 +52,25 @@ func (r Register) NewDigester(id string) (Digester, error) {
 	return alg.Digester(), nil
 }
 
-// NewMultiRegsiter returns a MultiDigester using algs from the register an
-// error returned if any alg is not defined in the r or if len(algs) < 1.
+// NewMultiRegsiter returns a MultiDigester using algs from the register. An
+// error is returned if any alg is not defined in the r or if len(algs) < 1.
 func (r Register) NewMultiDigester(algs ...string) (*MultiDigester, error) {
 	if len(algs) < 1 {
-		return nil, errors.New("initializing multi-digester without digest algorithms")
+		return nil, ErrMissing
 	}
 	writers := make([]io.Writer, 0, len(algs))
-	rs := make(map[string]Digester, len(algs))
+	digesters := make(map[string]Digester, len(algs))
 	for _, algID := range algs {
 		r, err := r.NewDigester(algID)
 		if err != nil {
 			return nil, err
 		}
-		rs[algID] = r
+		digesters[algID] = r
 		writers = append(writers, r)
 	}
-
 	return &MultiDigester{
 		Writer:    io.MultiWriter(writers...),
-		digesters: rs,
+		digesters: digesters,
 	}, nil
 }
 

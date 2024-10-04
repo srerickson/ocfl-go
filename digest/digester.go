@@ -9,18 +9,18 @@ import (
 // Digester is an interface used for generating values.
 type Digester interface {
 	io.Writer
-	// String() returns the value for the bytes written to the r.
+	// String() returns the digest of the bytes written to the digester.
 	String() string
 }
 
 // NewDigester is a convenience function that returns a new
-// for a built-in Alg with the given id.
+// Digester for a built-in Alg with the given id.
 func NewDigester(id string) (Digester, error) {
 	return builtinRegister.NewDigester(id)
 }
 
-// MultiDigester is used to generate  for multiple algorithms at
-// the same time.
+// MultiDigester is used to generate digests for multiple algorithms at the same
+// time.
 type MultiDigester struct {
 	io.Writer
 	digesters map[string]Digester
@@ -28,24 +28,8 @@ type MultiDigester struct {
 
 // NewMultiDigester constructs a MultiDigester for one or more built-in digest
 // algorithms.
-func NewMultiDigester(algs ...string) *MultiDigester {
-	writers := make([]io.Writer, 0, len(algs))
-	rs := make(map[string]Digester, len(algs))
-	for _, algID := range algs {
-		r, _ := NewDigester(algID)
-		if r == nil {
-			continue
-		}
-		rs[algID] = r
-		writers = append(writers, r)
-	}
-	if len(writers) == 0 {
-		return &MultiDigester{Writer: io.Discard}
-	}
-	return &MultiDigester{
-		Writer:    io.MultiWriter(writers...),
-		digesters: rs,
-	}
+func NewMultiDigester(algs ...string) (*MultiDigester, error) {
+	return builtinRegister.NewMultiDigester(algs...)
 }
 
 func (md MultiDigester) Sum(alg string) string {
@@ -107,7 +91,10 @@ func (s Set) Validate(reader io.Reader) error {
 	for alg := range s {
 		algs = append(algs, alg)
 	}
-	r := NewMultiDigester(algs...)
+	r, err := NewMultiDigester(algs...)
+	if err != nil {
+		return err
+	}
 	if _, err := io.Copy(r, reader); err != nil {
 		return err
 	}

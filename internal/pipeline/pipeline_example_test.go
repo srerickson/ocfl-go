@@ -38,7 +38,10 @@ func ExampleResults() {
 			return r, err
 		}
 		defer f.Close()
-		dig := digest.NewMultiDigester(alg)
+		dig, err := digest.NewMultiDigester(alg)
+		if err != nil {
+			return r, err
+		}
 		if _, err := io.Copy(dig, f); err != nil {
 			return r, err
 		}

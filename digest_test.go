@@ -38,7 +38,7 @@ func TestDigestFS(t *testing.T) {
 			add("hello.csv", []string{"bad"})
 		}
 		for digests, err := range ocfl.Digest(ctx, fsys, setup) {
-			be.NilErr(t, err)
+			be.True(t, err != nil)
 			be.Zero(t, len(digests.Digests))
 		}
 	})
@@ -70,7 +70,7 @@ func TestDigestFS(t *testing.T) {
 			add("hello.csv", nil)
 		}
 		for r, err := range ocfl.Digest(ctx, fsys, setup) {
-			be.NilErr(t, err)
+			be.True(t, err != nil)
 			be.Zero(t, len(r.Digests))
 		}
 	})

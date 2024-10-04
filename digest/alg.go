@@ -19,20 +19,6 @@ const (
 	BLAKE2B = alg(`blake2b-512`) // built-in Alg for blake2b
 )
 
-var (
-	// built-in Alg register
-	builtinRegister = NewRegister(SHA512, SHA256, SHA1, MD5, BLAKE2B)
-
-	// digester constructors for built-in algs
-	builtInDigesters = map[alg]func() Digester{
-		SHA512:  func() Digester { return &hashDigester{Hash: sha512.New()} },
-		SHA256:  func() Digester { return &hashDigester{Hash: sha256.New()} },
-		SHA1:    func() Digester { return &hashDigester{Hash: sha1.New()} },
-		MD5:     func() Digester { return &hashDigester{Hash: md5.New()} },
-		BLAKE2B: func() Digester { return &hashDigester{Hash: mustBlake2bNew512()} },
-	}
-)
-
 // Alg is implemented by digest algorithms
 type Alg interface {
 	// ID returns the algorithm name (e.g., 'sha512')
@@ -41,23 +27,32 @@ type Alg interface {
 	Digester() Digester
 }
 
+// digester constructors for built-in algs
+var builtInDigesters = map[alg]func() Digester{
+	SHA512:  func() Digester { return &hashDigester{Hash: sha512.New()} },
+	SHA256:  func() Digester { return &hashDigester{Hash: sha256.New()} },
+	SHA1:    func() Digester { return &hashDigester{Hash: sha1.New()} },
+	MD5:     func() Digester { return &hashDigester{Hash: md5.New()} },
+	BLAKE2B: func() Digester { return &hashDigester{Hash: mustBlake2bNew512()} },
+}
+
 // alg is a built-in Alg
 type alg string
 
+// ID implements Alg for alg
 func (a alg) ID() string { return string(a) }
-func (a alg) Digester() Digester {
-	if fn := builtInDigesters[a]; fn != nil {
-		return fn()
-	}
-	return nil
-}
+
+// Digester implements Alg for alg
+func (a alg) Digester() Digester { return builtInDigesters[a]() }
 
 // hashDigester implements Digester using a hash.Hash
 type hashDigester struct {
 	hash.Hash
 }
 
-func (h hashDigester) String() string { return hex.EncodeToString(h.Sum(nil)) }
+func (h hashDigester) String() string {
+	return hex.EncodeToString(h.Sum(nil))
+}
 
 func mustBlake2bNew512() hash.Hash {
 	h, err := blake2b.New512(nil)

@@ -13,6 +13,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go/digest"
 	"golang.org/x/crypto/blake2b"
 )
@@ -21,7 +22,10 @@ func TestDigester(t *testing.T) {
 	testDigester := func(t *testing.T, algs []string) {
 		data := []byte("content")
 		t.Helper()
-		dig := digest.NewMultiDigester(algs...)
+		dig, err := digest.NewMultiDigester(algs...)
+		if err != nil {
+			t.Fatal(err)
+		}
 		// readfrom
 		if _, err := io.Copy(dig, bytes.NewReader(data)); err != nil {
 			t.Fatal(err)
@@ -46,7 +50,7 @@ func TestDigester(t *testing.T) {
 		}
 		// add invalid entry
 		result[digest.SHA1.ID()] = "invalid"
-		err := result.Validate(bytes.NewReader(data))
+		err = result.Validate(bytes.NewReader(data))
 		if err == nil {
 			t.Error("Validate() didn't return an error for an invalid DigestSet")
 		}
@@ -61,8 +65,9 @@ func TestDigester(t *testing.T) {
 			t.Error("Validate() returned an error with wrong Expected value")
 		}
 	}
-	t.Run("nil algs", func(t *testing.T) {
-		testDigester(t, nil)
+	t.Run("no algs", func(t *testing.T) {
+		_, err := digest.NewMultiDigester()
+		be.True(t, err != nil)
 	})
 	t.Run("1 alg", func(t *testing.T) {
 		testDigester(t, []string{digest.MD5.ID()})
