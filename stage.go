@@ -118,7 +118,7 @@ type ContentSource interface {
 type FixitySource interface {
 	// GetFixity returns a DigestSet with alternate digests for the content with
 	// the digest derrived using the stage's primary digest algorithm.
-	GetFixity(digest string) DigestSet
+	GetFixity(digest string) digest.Set
 }
 
 type contentSources []ContentSource
@@ -135,10 +135,10 @@ func (ps contentSources) GetContent(digest string) (FS, string) {
 
 type fixitySources []FixitySource
 
-func (ps fixitySources) GetFixity(digest string) DigestSet {
-	set := DigestSet{}
+func (ps fixitySources) GetFixity(dig string) digest.Set {
+	set := digest.Set{}
 	for _, fixer := range ps {
-		for fixAlg, fixDigest := range fixer.GetFixity(digest) {
+		for fixAlg, fixDigest := range fixer.GetFixity(dig) {
 			set[fixAlg] = fixDigest
 		}
 	}
@@ -164,24 +164,22 @@ func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage,
 		manifest: map[string]dirManifestEntry{},
 	}
 	var walkErr error
-	walkFS := func(digestFile func(name string, algs []string) bool) {
-		// add files to digest work queue
-		Files(ctx, dirMan.fs, dir)(func(info FileInfo, err error) bool {
+	filesIter := func(yield func(name string, algs []string) bool) {
+		for info, err := range Files(ctx, dirMan.fs, dir) {
 			if err != nil {
 				walkErr = err
-				return false
+				break
 			}
-			digestFile(info.Path, algs)
-			return true
-		})
+			if !yield(info.Path, algs) {
+				break
+			}
+		}
 	}
 	// digest result: add results to the stage
-	var digestErr error
-	Digest(ctx, dirMan.fs, walkFS)(func(r PathDigests, err error) bool {
+	for r, err := range Digest(ctx, dirMan.fs, filesIter) {
 		name := r.Path
 		if err != nil {
-			digestErr = err
-			return false
+			return nil, err
 		}
 		if dirMan.root != "." {
 			// Trim name so it's relative to root, not FS
@@ -189,8 +187,7 @@ func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage,
 		}
 		primary, fixity, err := splitDigests(r.Digests, alg)
 		if err != nil {
-			digestErr = err
-			return false
+			return nil, err
 		}
 		if dirMan.manifest == nil {
 			dirMan.manifest = make(map[string]dirManifestEntry)
@@ -199,11 +196,9 @@ func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage,
 		entry.addPaths(name)
 		entry.addFixity(fixity)
 		dirMan.manifest[primary] = entry
-		return true
-	})
-	// run checksum
-	if err := errors.Join(walkErr, digestErr); err != nil {
-		return nil, err
+	}
+	if walkErr != nil {
+		return nil, walkErr
 	}
 	state := DigestMap{}
 	for dig, entry := range dirMan.manifest {
@@ -234,13 +229,13 @@ func (s *dirManifest) GetContent(digest string) (FS, string) {
 	return s.fs, path.Join(s.root, s.manifest[digest].paths[0])
 }
 
-func (s *dirManifest) GetFixity(dig string) DigestSet {
+func (s *dirManifest) GetFixity(dig string) digest.Set {
 	return s.manifest[dig].fixity
 }
 
 type dirManifestEntry struct {
-	paths  []string  // content paths relative to Root in FS
-	fixity DigestSet // additional digests associate with paths
+	paths  []string   // content paths relative to Root in FS
+	fixity digest.Set // additional digests associate with paths
 }
 
 func (entry *dirManifestEntry) addPaths(paths ...string) {
@@ -255,7 +250,7 @@ func (entry *dirManifestEntry) addPaths(paths ...string) {
 	}
 }
 
-func (entry *dirManifestEntry) addFixity(fixity DigestSet) {
+func (entry *dirManifestEntry) addFixity(fixity digest.Set) {
 	if len(fixity) == 0 {
 		return
 	}
@@ -268,8 +263,8 @@ func (entry *dirManifestEntry) addFixity(fixity DigestSet) {
 	}
 }
 
-func splitDigests(set DigestSet, alg string) (string, DigestSet, error) {
-	newSet := DigestSet{}
+func splitDigests(set digest.Set, alg string) (string, digest.Set, error) {
+	newSet := digest.Set{}
 	dig := ""
 	for setAlg, setVal := range set {
 		if setAlg == alg {

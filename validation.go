@@ -8,6 +8,7 @@ import (
 	"runtime"
 
 	"github.com/hashicorp/go-multierror"
+	"github.com/srerickson/ocfl-go/digest"
 )
 
 // Validation represents multiple fatal errors and warning errors.
@@ -186,7 +187,7 @@ func (v *ObjectValidation) AddInventoryDigests(inv ReadInventory) error {
 			return true
 		}
 		if err := current.expected.Add(allDigests); err != nil {
-			var digestError *DigestError
+			var digestError *digest.DigestError
 			if errors.As(err, &digestError) {
 				digestError.Path = name
 			}
@@ -285,7 +286,7 @@ func ValidationDigestConcurrency(num int) ObjectValidationOption {
 }
 
 type validationFileInfo struct {
-	expected DigestSet
+	expected digest.Set
 	exists   bool
 }
 

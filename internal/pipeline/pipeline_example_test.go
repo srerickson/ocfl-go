@@ -7,7 +7,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/internal/pipeline"
 )
 
@@ -38,7 +38,7 @@ func ExampleResults() {
 			return r, err
 		}
 		defer f.Close()
-		dig := ocfl.NewMultiDigester(alg)
+		dig := digest.NewMultiDigester(alg)
 		if _, err := io.Copy(dig, f); err != nil {
 			return r, err
 		}

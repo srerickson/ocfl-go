@@ -114,12 +114,12 @@ func (inv Inventory) Version(v int) *Version {
 }
 
 // GetFixity implements ocfl.FixitySource for Inventory
-func (inv Inventory) GetFixity(digest string) ocfl.DigestSet {
-	paths := inv.Manifest[digest]
+func (inv Inventory) GetFixity(dig string) digest.Set {
+	paths := inv.Manifest[dig]
 	if len(paths) < 1 {
 		return nil
 	}
-	set := ocfl.DigestSet{}
+	set := digest.Set{}
 	for fixAlg, fixMap := range inv.Fixity {
 		fixMap.EachPath(func(p, fixDigest string) bool {
 			if slices.Contains(paths, p) {
@@ -314,9 +314,9 @@ func (inv *Inventory) Validate() *ocfl.Validation {
 }
 
 func (inv *Inventory) setJsonDigest(raw []byte) error {
-	digester := ocfl.NewDigester(inv.DigestAlgorithm)
-	if digester == nil {
-		return fmt.Errorf("%w: %q", ocfl.ErrUnknownAlg, inv.DigestAlgorithm)
+	digester, err := digest.NewDigester(inv.DigestAlgorithm)
+	if err != nil {
+		return err
 	}
 	if _, err := io.Copy(digester, bytes.NewReader(raw)); err != nil {
 		return fmt.Errorf("digesting inventory: %w", err)
@@ -733,7 +733,7 @@ type readInventory struct {
 
 func (inv *readInventory) MarshalJSON() ([]byte, error) { return json.Marshal(inv.raw) }
 
-func (inv *readInventory) GetFixity(digest string) ocfl.DigestSet { return inv.raw.GetFixity(digest) }
+func (inv *readInventory) GetFixity(digest string) digest.Set { return inv.raw.GetFixity(digest) }
 
 func (inv *readInventory) ContentDirectory() string {
 	if c := inv.raw.ContentDirectory; c != "" {

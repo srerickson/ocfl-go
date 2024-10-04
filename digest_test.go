@@ -1,17 +1,8 @@
 package ocfl_test
 
 import (
-	"bytes"
 	"context"
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
-	"encoding/hex"
 	"errors"
-	"fmt"
-	"hash"
-	"io"
 	"io/fs"
 	"path/filepath"
 	"testing"
@@ -20,89 +11,7 @@ import (
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
-	"golang.org/x/crypto/blake2b"
 )
-
-func TestDigester(t *testing.T) {
-	testDigester := func(t *testing.T, algs []string) {
-		data := []byte("content")
-		t.Helper()
-		dig := ocfl.NewMultiDigester(algs...)
-		// readfrom
-		if _, err := io.Copy(dig, bytes.NewReader(data)); err != nil {
-			t.Fatal(err)
-		}
-		result := dig.Sums()
-		if l := len(result); l != len(algs) {
-			t.Fatalf("Sums() returned wrong number of entries: got=%d, expect=%d", l, len(algs))
-		}
-		expect := ocfl.DigestSet{}
-		for alg := range result {
-			var err error
-			expect[alg], err = testAlg(alg, data)
-			if err != nil {
-				t.Error(err)
-			}
-			if expect[alg] != result[alg] {
-				t.Errorf("ReadFrom() has unexpected result for %s: got=%q, expect=%q", alg, dig.Sum(alg), expect[alg])
-			}
-		}
-		if err := result.Validate(bytes.NewReader(data)); err != nil {
-			t.Error("Validate() unexpected error:", err)
-		}
-		// add invalid entry
-		result[digest.SHA1.ID()] = "invalid"
-		err := result.Validate(bytes.NewReader(data))
-		if err == nil {
-			t.Error("Validate() didn't return an error for an invalid DigestSet")
-		}
-		var digestErr *ocfl.DigestError
-		if !errors.As(err, &digestErr) {
-			t.Error("Validate() didn't return a DigestErr as expected")
-		}
-		if digestErr.Alg != digest.SHA1.ID() {
-			t.Error("Validate() returned an error with the wrong Alg value")
-		}
-		if digestErr.Expected != result[digest.SHA1.ID()] {
-			t.Error("Validate() returned an error with wrong Expected value")
-		}
-	}
-	t.Run("nil algs", func(t *testing.T) {
-		testDigester(t, nil)
-	})
-	t.Run("1 alg", func(t *testing.T) {
-		testDigester(t, []string{digest.MD5.ID()})
-	})
-	t.Run("2 algs", func(t *testing.T) {
-		testDigester(t, []string{digest.MD5.ID(), digest.BLAKE2B.ID()})
-	})
-}
-
-func testAlg(algID string, val []byte) (string, error) {
-	var h hash.Hash
-	switch algID {
-	case digest.SHA512.ID():
-		h = sha512.New()
-	case digest.SHA256.ID():
-		h = sha256.New()
-	case digest.SHA1.ID():
-		h = sha1.New()
-	case digest.MD5.ID():
-		h = md5.New()
-	case digest.BLAKE2B.ID():
-		h, _ = blake2b.New512(nil)
-	}
-	alg, _ := digest.Defaults.New(algID)
-	d := alg.Digester()
-	d.Write(val)
-	h.Write(val)
-	exp := hex.EncodeToString(h.Sum(nil))
-	got := d.String()
-	if exp != got {
-		return exp, fmt.Errorf("%s value: got=%q, expected=%q", algID, got, exp)
-	}
-	return exp, nil
-}
 
 func TestDigestFS(t *testing.T) {
 	var testMD5Sums = map[string]string{
@@ -194,7 +103,7 @@ func TestPathDigests(t *testing.T) {
 			pd.Digests["sha1"] = "baddigest"
 			valid, err := pd.Validate(ctx, ocfl.NewFS(fsys), ".")
 			be.False(t, valid)
-			var digestErr *ocfl.DigestError
+			var digestErr *digest.DigestError
 			be.True(t, errors.As(err, &digestErr))
 		}
 		for pd, err := range ocfl.Digest(ctx, ocfl.NewFS(fsys), jobs) {
@@ -203,7 +112,7 @@ func TestPathDigests(t *testing.T) {
 			fsys := fstest.MapFS{pd.Path: &fstest.MapFile{Data: []byte("changed!")}}
 			valid, err := pd.Validate(ctx, ocfl.NewFS(fsys), ".")
 			be.False(t, valid)
-			var digestErr *ocfl.DigestError
+			var digestErr *digest.DigestError
 			be.True(t, errors.As(err, &digestErr))
 		}
 		for pd, err := range ocfl.Digest(ctx, ocfl.NewFS(fsys), jobs) {

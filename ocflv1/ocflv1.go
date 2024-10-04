@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/extension"
 	"github.com/srerickson/ocfl-go/internal/pipeline"
 	"github.com/srerickson/ocfl-go/logging"
@@ -289,7 +290,7 @@ func (imp OCFL) ValidateObjectContent(ctx context.Context, obj ocfl.ReadObject, 
 		}
 		for result := range pipeline.Results(work, workFn, numWorkers) {
 			if result.Err != nil {
-				var digestErr *ocfl.DigestError
+				var digestErr *digest.DigestError
 				switch {
 				case errors.As(result.Err, &digestErr):
 					newVld.AddFatal(ec(digestErr, codes.E093(imp.spec)))

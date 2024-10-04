@@ -7,21 +7,21 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"hash"
-	"io"
 
 	"golang.org/x/crypto/blake2b"
 )
 
 const (
-	SHA512  = alg(`sha512`)
-	SHA256  = alg(`sha256`)
-	SHA1    = alg(`sha1`)
-	MD5     = alg(`md5`)
-	BLAKE2B = alg(`blake2b-512`)
+	SHA512  = alg(`sha512`)      // built-in Alg for sha512
+	SHA256  = alg(`sha256`)      // built-in Alg for sha256
+	SHA1    = alg(`sha1`)        // built-in Alg for sha1
+	MD5     = alg(`md5`)         // built-in Alg for md5
+	BLAKE2B = alg(`blake2b-512`) // built-in Alg for blake2b
 )
 
 var (
-	builtin = []Alg{SHA512, SHA256, SHA1, MD5, BLAKE2B}
+	// built-in Alg register
+	builtinRegister = NewRegister(SHA512, SHA256, SHA1, MD5, BLAKE2B)
 
 	// digester constructors for built-in algs
 	builtInDigesters = map[alg]func() Digester{
@@ -39,13 +39,6 @@ type Alg interface {
 	ID() string
 	// Digester returns a new digester for generating a new digest value
 	Digester() Digester
-}
-
-// Digester is an interface used for generating digest values.
-type Digester interface {
-	io.Writer
-	// String() returns the digest value for the bytes written to the digester.
-	String() string
 }
 
 // alg is a built-in Alg

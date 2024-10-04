@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/srerickson/ocfl-go/digest"
 )
 
 var (
@@ -75,7 +77,7 @@ func ValidateInventorySidecar(ctx context.Context, inv ReadInventory, fsys FS, d
 		return err
 	}
 	if !strings.EqualFold(expSum, inv.Digest()) {
-		return &DigestError{
+		return &digest.DigestError{
 			Path:     sideCar,
 			Alg:      inv.DigestAlgorithm(),
 			Got:      inv.Digest(),
