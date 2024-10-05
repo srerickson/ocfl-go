@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+
+	"github.com/srerickson/ocfl-go/digest"
 )
 
 const (
@@ -52,6 +54,7 @@ type OCFL interface {
 
 type Config struct {
 	ocfls *OCLFRegister
+	algs  digest.Register
 }
 
 func (c Config) OCFLs() *OCLFRegister {

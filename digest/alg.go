@@ -16,7 +16,7 @@ const (
 	SHA256  = alg(`sha256`)      // built-in Alg for sha256
 	SHA1    = alg(`sha1`)        // built-in Alg for sha1
 	MD5     = alg(`md5`)         // built-in Alg for md5
-	BLAKE2B = alg(`blake2b-512`) // built-in Alg for blake2b
+	BLAKE2B = alg(`blake2b-512`) // built-in Alg for blake2b-512
 )
 
 // Alg is implemented by digest algorithms

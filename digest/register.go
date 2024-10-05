@@ -10,13 +10,13 @@ var (
 	// ErrUnknown: a digest algorithm was not recognize
 	ErrUnknown = errors.New("unrecognized digest algorithm")
 	// ErrMissing: missing an expected digest algorithm
-	ErrMissing = errors.New("missing a required digest algorithm")
+	ErrMissing = errors.New("missing an expected digest algorithm")
 
 	// built-in Alg register
 	builtinRegister = NewRegister(SHA512, SHA256, SHA1, MD5, BLAKE2B)
 )
 
-// Register is an immutable container of Algs.
+// Register is an immutable collection of available Algs.
 type Register struct {
 	algs map[string]Alg
 }

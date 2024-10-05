@@ -8,6 +8,7 @@ import (
 	"errors"
 	"hash"
 
+	"github.com/srerickson/ocfl-go/digest"
 	"golang.org/x/crypto/blake2b"
 )
 
@@ -46,6 +47,13 @@ type Layout interface {
 	Resolve(id string) (path string, err error)
 	// Valid returns an error if the layout configuation is invalid
 	Valid() error
+}
+
+// DigestAlgorithm is an extension that provides a collection of availble
+// digest algorithms
+type DigestAlgorithm interface {
+	Extension
+	Algorithms() digest.Register
 }
 
 func getAlg(name string) hash.Hash {
