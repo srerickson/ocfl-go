@@ -19,8 +19,8 @@ const (
 	BLAKE2B = alg(`blake2b-512`) // built-in Alg for blake2b-512
 )
 
-// Alg is implemented by digest algorithms
-type Alg interface {
+// Algorithm is implemented by digest algorithms
+type Algorithm interface {
 	// ID returns the algorithm name (e.g., 'sha512')
 	ID() string
 	// Digester returns a new digester for generating a new digest value

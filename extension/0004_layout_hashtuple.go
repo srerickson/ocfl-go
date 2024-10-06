@@ -43,7 +43,7 @@ func (l LayoutHashTuple) Name() string { return ext0004 }
 func (l LayoutHashTuple) Documentation() []byte { return ext0004doc }
 
 func (l LayoutHashTuple) Valid() error {
-	h := getAlg(l.DigestAlgorithm)
+	h := getHash(l.DigestAlgorithm)
 	if h == nil {
 		return fmt.Errorf("unknown digest algorithm: %q", l.DigestAlgorithm)
 	}
@@ -65,7 +65,7 @@ func (l LayoutHashTuple) Resolve(id string) (string, error) {
 	if err := l.Valid(); err != nil {
 		return "", err
 	}
-	h := getAlg(l.DigestAlgorithm)
+	h := getHash(l.DigestAlgorithm)
 	h.Write([]byte(id))
 	hID := hex.EncodeToString(h.Sum(nil))
 	tupSize, tupNum := l.TupleSize, l.TupleNum

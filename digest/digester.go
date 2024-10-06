@@ -16,7 +16,7 @@ type Digester interface {
 // NewDigester is a convenience function that returns a new
 // Digester for a built-in Alg with the given id.
 func NewDigester(id string) (Digester, error) {
-	return builtinRegister.NewDigester(id)
+	return defaultRegister.NewDigester(id)
 }
 
 // MultiDigester is used to generate digests for multiple algorithms at the same
@@ -29,7 +29,7 @@ type MultiDigester struct {
 // NewMultiDigester constructs a MultiDigester for one or more built-in digest
 // algorithms.
 func NewMultiDigester(algs ...string) (*MultiDigester, error) {
-	return builtinRegister.NewMultiDigester(algs...)
+	return defaultRegister.NewMultiDigester(algs...)
 }
 
 func (md MultiDigester) Sum(alg string) string {

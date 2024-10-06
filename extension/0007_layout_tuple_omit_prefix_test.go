@@ -36,7 +36,7 @@ func TestLayoutTupleOmitPrefix(t *testing.T) {
 	}
 
 	t.Run("unmarshal", func(t *testing.T) {
-		reg := extension.DefaultRegister()
+		reg := extension.DefaultRegistry()
 		ext, err := reg.Unmarshal([]byte(`{
 			"delimiter": ":",
 			"extensionName": "0007-n-tuple-omit-prefix-storage-layout",

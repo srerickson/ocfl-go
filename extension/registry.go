@@ -5,15 +5,15 @@ import (
 	"fmt"
 )
 
-// Register is an immutable container of Extension constructors.
-type Register struct {
+// Registry is an immutable container of Extension constructors.
+type Registry struct {
 	exts map[string]func() Extension
 }
 
 // New returns a new Extension value for the given extension name or returns an
-// error if the extension is not present in the register. The returned Extension
+// error if the extension is not present in the registry. The returned Extension
 // should have default values (or zero-values where defaults are not defined).
-func (r Register) New(name string) (Extension, error) {
+func (r Registry) New(name string) (Extension, error) {
 	extfunc, ok := r.exts[name]
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknown, name)
@@ -23,7 +23,7 @@ func (r Register) New(name string) (Extension, error) {
 
 // NewLayout is the same as New with an additional check that the extension is a
 // layout.
-func (r Register) NewLayout(name string) (Layout, error) {
+func (r Registry) NewLayout(name string) (Layout, error) {
 	ext, err := r.New(name)
 	if err != nil {
 		return nil, err
@@ -34,11 +34,11 @@ func (r Register) NewLayout(name string) (Layout, error) {
 	return nil, fmt.Errorf("%w: %q", ErrNotLayout, name)
 }
 
-// Append returns a new Register that includes extension constructors from r
+// Append returns a new Registry that includes extension constructors from r
 // plus additional constructors. If the added extension constructors have the same
-// name as those in r, the new register will use the added constructor.
-func (r Register) Append(extFns ...func() Extension) Register {
-	newR := Register{
+// name as those in r, the new registry will use the added constructor.
+func (r Registry) Append(extFns ...func() Extension) Registry {
+	newR := Registry{
 		exts: make(map[string]func() Extension, len(r.exts)+len(extFns)),
 	}
 	for n, fn := range r.exts {
@@ -51,7 +51,7 @@ func (r Register) Append(extFns ...func() Extension) Register {
 }
 
 // Names returns names of all Extensions constructors in r.
-func (r Register) Names() []string {
+func (r Registry) Names() []string {
 	names := make([]string, 0, len(r.exts))
 	for name := range r.exts {
 		names = append(names, name)
@@ -60,7 +60,7 @@ func (r Register) Names() []string {
 }
 
 // Unmarshal decodes the extension config json and returns a new extension instance.
-func (r Register) Unmarshal(jsonBytes []byte) (Extension, error) {
+func (r Registry) Unmarshal(jsonBytes []byte) (Extension, error) {
 	type tmpConfig struct {
 		Name string `json:"extensionName"`
 	}
@@ -78,9 +78,9 @@ func (r Register) Unmarshal(jsonBytes []byte) (Extension, error) {
 	return config, nil
 }
 
-// NewRegister returns a Register for the given extension constructors
-func NewRegister(extFns ...func() Extension) Register {
-	newR := Register{
+// NewRegistry returns a Registry for the given extension constructors
+func NewRegistry(extFns ...func() Extension) Registry {
+	newR := Registry{
 		exts: make(map[string]func() Extension, len(extFns)),
 	}
 	for _, fn := range extFns {
@@ -90,14 +90,14 @@ func NewRegister(extFns ...func() Extension) Register {
 	return newR
 }
 
-// DefaultRegister returns a new Register with default Extension
+// DefaultRegistry returns a new Registry with default Extension
 // constructors.
-func DefaultRegister() Register {
-	return NewRegister(baseExtensions...)
+func DefaultRegistry() Registry {
+	return NewRegistry(baseExtensions...)
 }
 
 // Get returns a new instance of the named extension with default values.
 // DEPRECATED.
 func Get(name string) (Extension, error) {
-	return DefaultRegister().New(name)
+	return DefaultRegistry().New(name)
 }

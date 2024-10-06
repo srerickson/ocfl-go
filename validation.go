@@ -79,7 +79,7 @@ type ObjectValidation struct {
 	skipDigests bool
 	concurrency int
 	files       map[string]*validationFileInfo
-	algRegister digest.Register
+	algRegister digest.Registry
 }
 
 // NewObjectValidation constructs a new *Validation with the given
@@ -287,9 +287,9 @@ func ValidationDigestConcurrency(num int) ObjectValidationOption {
 }
 
 // ValidateDigestAlgorithms is used to set the
-func ValidateDigestAlgorithms(algs ...digest.Alg) ObjectValidationOption {
+func ValidateDigestAlgorithms(algs ...digest.Algorithm) ObjectValidationOption {
 	return func(v *ObjectValidation) {
-		v.algRegister = digest.NewRegister(algs...)
+		v.algRegister = digest.NewRegistry(algs...)
 	}
 }
 

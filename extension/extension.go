@@ -1,15 +1,7 @@
 package extension
 
 import (
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
 	"errors"
-	"hash"
-
-	"github.com/srerickson/ocfl-go/digest"
-	"golang.org/x/crypto/blake2b"
 )
 
 const (
@@ -47,32 +39,4 @@ type Layout interface {
 	Resolve(id string) (path string, err error)
 	// Valid returns an error if the layout configuation is invalid
 	Valid() error
-}
-
-// DigestAlgorithm is an extension that provides a collection of availble
-// digest algorithms
-type DigestAlgorithm interface {
-	Extension
-	Algorithms() digest.Register
-}
-
-func getAlg(name string) hash.Hash {
-	switch name {
-	case `sha512`:
-		return sha512.New()
-	case `sha256`:
-		return sha256.New()
-	case `sha1`:
-		return sha1.New()
-	case `md5`:
-		return md5.New()
-	case `blake2b-512`:
-		h, err := blake2b.New512(nil)
-		if err != nil {
-			panic("creating new blake2b hash")
-		}
-		return h
-	default:
-		return nil
-	}
 }

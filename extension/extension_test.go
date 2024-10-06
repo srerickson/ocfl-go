@@ -19,7 +19,7 @@ func testLayoutExt(t *testing.T, layout extension.Layout, in, out string) {
 }
 
 func TestCustomLayout(t *testing.T) {
-	reg := extension.NewRegister(testutil.NewCustomLayout)
+	reg := extension.NewRegistry(testutil.NewCustomLayout)
 	name := testutil.NewCustomLayout().Name()
 	layoutJSON := []byte(`{
 		"extensionName": "` + name + `",
