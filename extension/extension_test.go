@@ -38,3 +38,20 @@ func TestCustomLayout(t *testing.T) {
 	be.NilErr(t, err)
 	be.Equal(t, ext.Name(), ext2.Name())
 }
+
+func TestExtensionUnmarshal(t *testing.T) {
+	registry := extension.DefaultRegistry()
+	allExtensions := registry.Names()
+	be.Equal(t, 7, len(allExtensions))
+	for _, extName := range allExtensions {
+		ext, err := registry.New(extName)
+		be.NilErr(t, err)
+		be.Equal(t, extName, ext.Name())
+		be.Nonzero(t, ext.Doc())
+		jsonEnc, err := json.Marshal(ext)
+		be.NilErr(t, err)
+		ext2, err := registry.Unmarshal(jsonEnc)
+		be.NilErr(t, err)
+		be.Equal(t, extName, ext2.Name())
+	}
+}

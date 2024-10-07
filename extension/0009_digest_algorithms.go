@@ -7,7 +7,7 @@ import (
 const ext0009 = "0009-digest-algorithms"
 
 func Ext0009() Extension {
-	ext := algRegistry{
+	ext := &algRegistry{
 		Base: Base{ExtensionName: ext0009},
 	}
 	ext.algs = digest.NewRegistry(

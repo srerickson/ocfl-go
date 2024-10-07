@@ -4,11 +4,11 @@ import (
 	"github.com/srerickson/ocfl-go/digest"
 )
 
-const ext0001 = "0009-digest-algorithms"
+const ext0001 = "0001-digest-algorithms"
 
 func Ext0001() Extension {
-	ext := algRegistry{
-		Base: Base{ExtensionName: ext0009},
+	ext := &algRegistry{
+		Base: Base{ExtensionName: ext0001},
 	}
 	ext.algs = digest.NewRegistry(
 		&alg{id: "blake2b-160", ext: ext},
