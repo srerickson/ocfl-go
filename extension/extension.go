@@ -31,6 +31,14 @@ type Extension interface {
 	Name() string // Name returns the extension name
 }
 
+// Base is a type that can be embedded by types that implement
+// the Extension.
+type Base struct {
+	ExtensionName string `json:"extensionName"`
+}
+
+func (b Base) Name() string { return string(b.ExtensionName) }
+
 // Layout is an extension that provides a function for resolving object IDs to
 // Storage Root Paths
 type Layout interface {

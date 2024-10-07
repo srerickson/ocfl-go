@@ -2,7 +2,6 @@ package extension
 
 import (
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -19,6 +18,7 @@ var ext0006doc []byte
 
 // LayoutFlatOmitPrefix implements 0006-flat-omit-prefix-storage-layout
 type LayoutFlatOmitPrefix struct {
+	Base
 	Delimiter string `json:"delimiter"`
 }
 
@@ -27,10 +27,11 @@ var _ (Extension) = (*LayoutFlatOmitPrefix)(nil)
 
 // Ext0006 returns a new instance of 0006-flat-omit-prefix-storage-layout with default values
 func Ext0006() Extension {
-	return &LayoutFlatOmitPrefix{Delimiter: ``}
+	return &LayoutFlatOmitPrefix{
+		Base:      Base{ExtensionName: ext0006},
+		Delimiter: ``,
+	}
 }
-
-func (l LayoutFlatOmitPrefix) Name() string { return ext0006 }
 
 func (l LayoutFlatOmitPrefix) Documentation() []byte { return ext0006doc }
 
@@ -56,11 +57,4 @@ func (l LayoutFlatOmitPrefix) Resolve(id string) (string, error) {
 		return "", fmt.Errorf("object id %q is invalid for the layout", id)
 	}
 	return dir, nil
-}
-
-func (l LayoutFlatOmitPrefix) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{
-		extensionName: ext0006,
-		delimiter:     l.Delimiter,
-	})
 }

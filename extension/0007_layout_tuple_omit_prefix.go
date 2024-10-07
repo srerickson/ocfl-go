@@ -21,6 +21,7 @@ var ext0007doc []byte
 
 // LayoutTupleOmitPrefix implements 0007-n-tuple-omit-prefix-storage-layout
 type LayoutTupleOmitPrefix struct {
+	Base
 	Delimiter string `json:"delimiter"`
 	TupleSize int    `json:"tupleSize"`
 	TupleNum  int    `json:"numberOfTuples"`
@@ -34,6 +35,7 @@ var _ (Extension) = (*LayoutTupleOmitPrefix)(nil)
 // Ext0007 returns a new instance of 0007-n-tuple-omit-prefix-storage-layout with default values
 func Ext0007() Extension {
 	return &LayoutTupleOmitPrefix{
+		Base:      Base{ExtensionName: ext0007},
 		Delimiter: `:`,
 		TupleSize: 3,
 		TupleNum:  3,
@@ -41,8 +43,6 @@ func Ext0007() Extension {
 		Reverse:   false,
 	}
 }
-
-func (l LayoutTupleOmitPrefix) Name() string { return ext0007 }
 
 func (l LayoutTupleOmitPrefix) Documentation() []byte { return ext0007doc }
 

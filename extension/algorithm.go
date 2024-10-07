@@ -19,15 +19,25 @@ type Algorithm interface {
 	Extension() AlgorithmRegistry
 }
 
-// AlgorithmRegistry is an extension that provides a collection of digest
+// AlgorithmRegistry is an extension that provides a registry of digest
 // algorithms
 type AlgorithmRegistry interface {
 	Extension
 	Algorithms() digest.Registry
 }
 
+// algRegistry is an implementation of AlgorithmRegistry
+type algRegistry struct {
+	Base
+	algs digest.Registry
+}
+
+// Algorithms implements DigestAlgorithms for digestAlgorithms
+func (d algRegistry) Algorithms() digest.Registry { return d.algs }
+
+// alg is an implementation of Algorithm used by all extension digest algorithms
 type alg struct {
-	id  string
+	id  string // digest algorithm's id ("size")
 	ext AlgorithmRegistry
 }
 
@@ -38,9 +48,9 @@ func (a alg) Digester() digest.Digester {
 	case "blake2b-160":
 		return &hashDigester{Hash: mustNewBlake2B(20)}
 	case "blake2b-256":
-		return &hashDigester{Hash: mustNewBlake2B(20)}
+		return &hashDigester{Hash: mustNewBlake2B(32)}
 	case "blake2b-384":
-		return &hashDigester{Hash: mustNewBlake2B(20)}
+		return &hashDigester{Hash: mustNewBlake2B(48)}
 	case "sha512/256":
 		return &hashDigester{Hash: sha512.New512_256()}
 	case "size":

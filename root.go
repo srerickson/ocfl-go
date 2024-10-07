@@ -330,7 +330,7 @@ func readExtensionConfig(ctx context.Context, fsys FS, root string, name string)
 	if err != nil {
 		return nil, fmt.Errorf("reading config for extension %s: %w", name, err)
 	}
-	return extension.DefaultRegister().Unmarshal(b)
+	return extension.DefaultRegistry().Unmarshal(b)
 }
 
 // writeExtensionConfig writes the configuration files for the ext to the
