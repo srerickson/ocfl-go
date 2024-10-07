@@ -1,7 +1,6 @@
 package extension
 
 import (
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"path"
@@ -16,9 +15,6 @@ const (
 	reverseObjectRoot = "reverseObjectRoot"
 )
 
-//go:embed docs/0007-n-tuple-omit-prefix-storage-layout.md
-var ext0007doc []byte
-
 // LayoutTupleOmitPrefix implements 0007-n-tuple-omit-prefix-storage-layout
 type LayoutTupleOmitPrefix struct {
 	Base
@@ -28,9 +24,6 @@ type LayoutTupleOmitPrefix struct {
 	Padding   string `json:"zeroPadding"`
 	Reverse   bool   `json:"reverseObjectRoot"`
 }
-
-var _ (Layout) = (*LayoutTupleOmitPrefix)(nil)
-var _ (Extension) = (*LayoutTupleOmitPrefix)(nil)
 
 // Ext0007 returns a new instance of 0007-n-tuple-omit-prefix-storage-layout with default values
 func Ext0007() Extension {
@@ -43,8 +36,6 @@ func Ext0007() Extension {
 		Reverse:   false,
 	}
 }
-
-func (l LayoutTupleOmitPrefix) Documentation() []byte { return ext0007doc }
 
 func (l LayoutTupleOmitPrefix) Valid() error {
 	if l.TupleSize < 1 {

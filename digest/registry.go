@@ -42,6 +42,16 @@ func (r Registry) Get(id string) (Algorithm, error) {
 	return alg, nil
 }
 
+// MustGet is like Get except it panics if the registry does not include
+// the an algorithm with the given id.
+func (r Registry) MustGet(id string) Algorithm {
+	alg, err := r.Get(id)
+	if err != nil {
+		panic(err)
+	}
+	return alg
+}
+
 // NewDigester returns a digester for the given id, which must an Alg registered
 // in r.
 func (r Registry) NewDigester(id string) (Digester, error) {

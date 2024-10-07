@@ -1,19 +1,14 @@
 package extension
 
 import (
-	_ "embed"
-
 	"github.com/srerickson/ocfl-go/digest"
 )
 
-const ext0009name = "0009-digest-algorithms"
+const ext0009 = "0009-digest-algorithms"
 
-//go:embed docs/0009-digest-algorithms.md
-var ext0009doc []byte
-
-func Ext0009() AlgorithmRegistry {
+func Ext0009() Extension {
 	ext := algRegistry{
-		Base: Base{ExtensionName: ext0009name},
+		Base: Base{ExtensionName: ext0009},
 	}
 	ext.algs = digest.NewRegistry(
 		&alg{id: "blake2b-160", ext: ext},

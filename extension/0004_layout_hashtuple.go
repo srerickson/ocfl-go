@@ -1,7 +1,6 @@
 package extension
 
 import (
-	_ "embed"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -13,9 +12,6 @@ const (
 	shortObjectRoot = "shortObjectRoot"
 )
 
-//go:embed docs/0004-hashed-n-tuple-storage-layout.md
-var ext0004doc []byte
-
 // LayoutHashTuple implements 0004-hashed-n-tuple-storage-layout
 type LayoutHashTuple struct {
 	Base
@@ -24,9 +20,6 @@ type LayoutHashTuple struct {
 	TupleNum        int    `json:"numberOfTuples"`
 	Short           bool   `json:"shortObjectRoot"`
 }
-
-var _ (Layout) = (*LayoutHashTuple)(nil)
-var _ (Extension) = (*LayoutHashTuple)(nil)
 
 // Ext0004 returns a new instance of 0004-hashed-n-tuple-storage-layout
 func Ext0004() Extension {
@@ -38,8 +31,6 @@ func Ext0004() Extension {
 		Short:           false,
 	}
 }
-
-func (l LayoutHashTuple) Documentation() []byte { return ext0004doc }
 
 func (l LayoutHashTuple) Valid() error {
 	h := getHash(l.DigestAlgorithm)

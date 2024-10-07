@@ -16,6 +16,8 @@ import (
 // Algorithm is a digest.Algorithm provided by an extension
 type Algorithm interface {
 	digest.Algorithm
+	// Extension returns the AlgorithRegistry extension that provides the
+	// algorithm.
 	Extension() AlgorithmRegistry
 }
 

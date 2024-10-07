@@ -1,7 +1,6 @@
 package extension
 
 import (
-	_ "embed"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,9 +15,6 @@ const (
 	lowerhex        = "0123456789abcdef"
 )
 
-//go:embed docs/0003-hash-and-id-n-tuple-storage-layout.md
-var ext0003doc []byte
-
 // LayoutHashIDTuple implements 0003-hash-and-id-n-tuple-storage-layout
 type LayoutHashIDTuple struct {
 	Base
@@ -26,9 +22,6 @@ type LayoutHashIDTuple struct {
 	TupleSize       int    `json:"tupleSize"`
 	TupleNum        int    `json:"numberOfTuples"`
 }
-
-var _ (Layout) = (*LayoutHashIDTuple)(nil)
-var _ (Extension) = (*LayoutHashIDTuple)(nil)
 
 // Ext0003 returns a new instance of 0003-hash-and-id-n-tuple-storage-layout with default values
 func Ext0003() Extension {
@@ -39,8 +32,6 @@ func Ext0003() Extension {
 		TupleNum:        3,
 	}
 }
-
-func (l LayoutHashIDTuple) Documentation() []byte { return ext0003doc }
 
 func (l LayoutHashIDTuple) Valid() error {
 	h := getHash(l.DigestAlgorithm)
