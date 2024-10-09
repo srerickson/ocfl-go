@@ -16,21 +16,21 @@ import (
 // set to runtime.NumCPU(). The pathAlgs argument is an iterator that yields
 // file paths and a slice of digest algorithms. It returns an iteratator the
 // yields PathDigest or an error.
-func Digest(ctx context.Context, fsys FS, pathAlgs iter.Seq2[string, []string]) iter.Seq2[PathDigests, error] {
+func Digest(ctx context.Context, fsys FS, pathAlgs iter.Seq2[string, []digest.Algorithm]) iter.Seq2[PathDigests, error] {
 	return ConcurrentDigest(ctx, fsys, pathAlgs, runtime.NumCPU())
 }
 
 // ConcurrentDigest concurrently digests files in an FS. The pathAlgs argument
 // is an iterator that yields file paths and a slice of digest algorithms. It
 // returns an iteratator the yields PathDigest or an error.
-func ConcurrentDigest(ctx context.Context, fsys FS, pathAlgs iter.Seq2[string, []string], numWorkers int) iter.Seq2[PathDigests, error] {
+func ConcurrentDigest(ctx context.Context, fsys FS, pathAlgs iter.Seq2[string, []digest.Algorithm], numWorkers int) iter.Seq2[PathDigests, error] {
 	// checksum digestJob
 	type digestJob struct {
 		path string
-		algs []string
+		algs []digest.Algorithm
 	}
 	jobsIter := func(yield func(digestJob) bool) {
-		pathAlgs(func(name string, algs []string) bool {
+		pathAlgs(func(name string, algs []digest.Algorithm) bool {
 			return yield(digestJob{path: name, algs: algs})
 		})
 	}

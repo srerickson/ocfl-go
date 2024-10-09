@@ -22,7 +22,7 @@ func TestDigester(t *testing.T) {
 	testDigester := func(t *testing.T, algs []string) {
 		data := []byte("content")
 		t.Helper()
-		dig, err := digest.NewMultiDigester(algs...)
+		dig, err := digest.DefaultRegister().NewMultiDigester(algs...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -66,8 +66,10 @@ func TestDigester(t *testing.T) {
 		}
 	}
 	t.Run("no algs", func(t *testing.T) {
-		_, err := digest.NewMultiDigester()
-		be.True(t, err != nil)
+		d := digest.NewMultiDigester()
+		_, err := d.Write([]byte("test"))
+		be.NilErr(t, err)
+		be.Zero(t, len(d.Sums()))
 	})
 	t.Run("1 alg", func(t *testing.T) {
 		testDigester(t, []string{digest.MD5.ID()})

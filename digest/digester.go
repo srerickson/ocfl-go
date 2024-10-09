@@ -28,8 +28,21 @@ type MultiDigester struct {
 
 // NewMultiDigester constructs a MultiDigester for one or more built-in digest
 // algorithms.
-func NewMultiDigester(algs ...string) (*MultiDigester, error) {
-	return defaultRegister.NewMultiDigester(algs...)
+func NewMultiDigester(algs ...Algorithm) *MultiDigester {
+	if len(algs) < 1 {
+		return &MultiDigester{Writer: io.Discard}
+	}
+	writers := make([]io.Writer, 0, len(algs))
+	digesters := make(map[string]Digester, len(algs))
+	for _, alg := range algs {
+		digester := alg.Digester()
+		digesters[alg.ID()] = digester
+		writers = append(writers, digester)
+	}
+	return &MultiDigester{
+		Writer:    io.MultiWriter(writers...),
+		digesters: digesters,
+	}
 }
 
 func (md MultiDigester) Sum(alg string) string {
@@ -91,7 +104,7 @@ func (s Set) Validate(reader io.Reader) error {
 	for alg := range s {
 		algs = append(algs, alg)
 	}
-	r, err := NewMultiDigester(algs...)
+	r, err := defaultRegister.NewMultiDigester(algs...)
 	if err != nil {
 		return err
 	}

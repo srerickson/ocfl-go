@@ -150,8 +150,8 @@ func (ps fixitySources) GetFixity(dig string) digest.Set {
 // algs and added to the stage. The algs must include sha512 or sha256 or an
 // error is returned
 // FIXME: algs should be DigestAlgorithms, not strings
-func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage, error) {
-	if len(algs) < 1 || (algs[0] != digest.SHA512.ID() && algs[0] != digest.SHA256.ID()) {
+func StageDir(ctx context.Context, fsys FS, dir string, algs ...digest.Algorithm) (*Stage, error) {
+	if len(algs) < 1 || (algs[0].ID() != digest.SHA512.ID() && algs[0].ID() != digest.SHA256.ID()) {
 		return nil, fmt.Errorf("must use sha512 or sha256 as the primary digest algorithm for the stage")
 	}
 	if !fs.ValidPath(dir) {
@@ -164,7 +164,7 @@ func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage,
 		manifest: map[string]dirManifestEntry{},
 	}
 	var walkErr error
-	filesIter := func(yield func(name string, algs []string) bool) {
+	filesIter := func(yield func(name string, algs []digest.Algorithm) bool) {
 		for info, err := range Files(ctx, dirMan.fs, dir) {
 			if err != nil {
 				walkErr = err
