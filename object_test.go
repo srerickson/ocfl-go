@@ -45,7 +45,7 @@ func testObjectExample(t *testing.T) {
 	v1Content := map[string][]byte{
 		"README.txt": []byte("this is a test file"),
 	}
-	stage, err := ocfl.StageBytes(v1Content, digest.SHA512.ID(), digest.MD5.ID())
+	stage, err := ocfl.StageBytes(v1Content, digest.SHA512, digest.MD5)
 	be.NilErr(t, err)
 	err = obj.Commit(ctx, &ocfl.Commit{
 		Spec:    ocfl.Spec1_0,
@@ -67,7 +67,7 @@ func testObjectExample(t *testing.T) {
 		"new-data.csv":  []byte("1,2,3"),
 		"docs/note.txt": []byte("this is a note"),
 	}
-	stage, err = ocfl.StageBytes(v2Content, digest.SHA512.ID(), digest.MD5.ID())
+	stage, err = ocfl.StageBytes(v2Content, digest.SHA512, digest.MD5)
 	be.NilErr(t, err)
 	err = obj.Commit(ctx, &ocfl.Commit{
 		ID:      "new-object-01",
@@ -187,7 +187,7 @@ func testObjectCommit(t *testing.T) {
 		be.False(t, obj.Exists())
 		commit := &ocfl.Commit{
 			ID:      "new-object",
-			Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA256.ID()},
+			Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA256},
 			Message: "new object",
 			User: ocfl.User{
 				Name: "Anna Karenina",
@@ -206,7 +206,7 @@ func testObjectCommit(t *testing.T) {
 		be.False(t, obj.Exists())
 		commit := &ocfl.Commit{
 			ID:      "new-object",
-			Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA512.ID()},
+			Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA512},
 			Message: "new object",
 			User: ocfl.User{
 				Name: "Anna Karenina",
@@ -214,7 +214,7 @@ func testObjectCommit(t *testing.T) {
 			Spec: ocfl.Spec1_0,
 		}
 		be.NilErr(t, obj.Commit(ctx, commit))
-		commit.Stage.DigestAlgorithm = digest.SHA256.ID()
+		commit.Stage.DigestAlgorithm = digest.SHA256
 		err = obj.Commit(ctx, commit)
 		be.True(t, err != nil)
 		be.True(t, strings.Contains(err.Error(), "must use same digest algorithm as existing inventory"))

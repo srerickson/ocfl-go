@@ -20,31 +20,22 @@ func TestDigestFS(t *testing.T) {
 	fsys := ocfl.DirFS(filepath.Join("testdata", "content-fixture"))
 	ctx := context.Background()
 	t.Run("no input", func(t *testing.T) {
-		setup := func(add func(name string, algs []string) bool) {}
+		setup := func(add func(name string, algs []digest.Algorithm) bool) {}
 		for range ocfl.Digest(ctx, fsys, setup) {
 			t.Error("shouldn't be called")
 		}
 	})
 	t.Run("missing file", func(t *testing.T) {
-		setup := func(add func(name string, algs []string) bool) {
-			add(filepath.Join("missingfile"), []string{digest.MD5.ID()})
+		setup := func(add func(name string, algs []digest.Algorithm) bool) {
+			add(filepath.Join("missingfile"), []digest.Algorithm{digest.MD5})
 		}
 		for _, err := range ocfl.Digest(ctx, fsys, setup) {
 			be.True(t, err != nil)
 		}
 	})
-	t.Run("unknown alg", func(t *testing.T) {
-		setup := func(add func(name string, algs []string) bool) {
-			add("hello.csv", []string{"bad"})
-		}
-		for digests, err := range ocfl.Digest(ctx, fsys, setup) {
-			be.True(t, err != nil)
-			be.Zero(t, len(digests.Digests))
-		}
-	})
 	t.Run("minimal, one existing file, md5", func(t *testing.T) {
-		setup := func(add func(name string, algs []string) bool) {
-			add("hello.csv", []string{digest.MD5.ID()})
+		setup := func(add func(name string, algs []digest.Algorithm) bool) {
+			add("hello.csv", []digest.Algorithm{digest.MD5})
 		}
 		for r, err := range ocfl.Digest(ctx, fsys, setup) {
 			be.NilErr(t, err)
@@ -52,8 +43,8 @@ func TestDigestFS(t *testing.T) {
 		}
 	})
 	t.Run("multiple files, md5, sha1", func(t *testing.T) {
-		algs := []string{digest.MD5.ID(), digest.SHA1.ID()}
-		setup := func(add func(name string, algs []string) bool) {
+		algs := []digest.Algorithm{digest.MD5, digest.SHA1}
+		setup := func(add func(name string, algs []digest.Algorithm) bool) {
 			add("hello.csv", algs)
 			add("folder1/file.txt", algs)
 			add("folder1/folder2/file2.txt", algs)
@@ -66,11 +57,11 @@ func TestDigestFS(t *testing.T) {
 		}
 	})
 	t.Run("minimal, one existing file, no algs", func(t *testing.T) {
-		setup := func(add func(name string, algs []string) bool) {
+		setup := func(add func(name string, algs []digest.Algorithm) bool) {
 			add("hello.csv", nil)
 		}
 		for r, err := range ocfl.Digest(ctx, fsys, setup) {
-			be.True(t, err != nil)
+			be.NilErr(t, err)
 			be.Zero(t, len(r.Digests))
 		}
 	})
@@ -87,9 +78,9 @@ func TestPathDigests(t *testing.T) {
 		"data/subdir/sample.txt": &fstest.MapFile{Data: []byte("some content6")},
 	}
 	t.Run("example", func(t *testing.T) {
-		jobs := func(yield func(string, []string) bool) {
+		jobs := func(yield func(string, []digest.Algorithm) bool) {
 			for name := range fsys {
-				yield(name, []string{digest.SHA256.ID(), digest.MD5.ID()})
+				yield(name, []digest.Algorithm{digest.SHA256, digest.MD5})
 			}
 		}
 		for pd, err := range ocfl.Digest(ctx, ocfl.NewFS(fsys), jobs) {

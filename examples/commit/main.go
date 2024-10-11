@@ -9,6 +9,7 @@ import (
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/local"
+	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
@@ -16,7 +17,7 @@ var (
 	objPath string // path to object
 	srcDir  string // path to content directory
 	msg     string // message for new version
-	alg     string // digest algorith (sha512 or sha256)
+	algID   string // digest algorith (sha512 or sha256)
 	newID   string // ID for new object
 	user    ocfl.User
 
@@ -31,7 +32,7 @@ func main() {
 	flag.StringVar(&msg, "msg", "", "message field for new version")
 	flag.StringVar(&user.Name, "name", "", "name field for new version")
 	flag.StringVar(&user.Address, "email", "", "email field for new version")
-	flag.StringVar(&alg, "alg", "sha512", "digest algorith for new version")
+	flag.StringVar(&algID, "alg", "sha512", "digest algorith for new version")
 	flag.StringVar(&newID, "id", "", "object ID (required for new objects)")
 	flag.Parse()
 
@@ -59,6 +60,10 @@ func main() {
 	}
 	if !obj.Exists() && newID == "" {
 		err := errors.New("object needs to be created, but 'id' flag is missing")
+		quit(err)
+	}
+	alg, err := digest.DefaultRegister().Get(algID)
+	if err != nil {
 		quit(err)
 	}
 	stage, err := ocfl.StageDir(ctx, ocfl.DirFS(srcDir), ".", alg)

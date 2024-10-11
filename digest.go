@@ -44,10 +44,7 @@ func ConcurrentDigest(ctx context.Context, fsys FS, pathAlgs iter.Seq2[string, [
 				err = errors.Join(err, closeErr)
 			}
 		}()
-		digester, err := digest.NewMultiDigester(j.algs...)
-		if err != nil {
-			return
-		}
+		digester := digest.NewMultiDigester(j.algs...)
 		if _, err = io.Copy(digester, f); err != nil {
 			return
 		}

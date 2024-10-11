@@ -175,7 +175,7 @@ func (v *ObjectValidation) AddInventoryDigests(inv ReadInventory) error {
 	allErrors := &multierror.Error{}
 	inv.Manifest().EachPath(func(name string, primaryDigest string) bool {
 		allDigests := inv.GetFixity(primaryDigest)
-		allDigests[primaryAlg] = primaryDigest
+		allDigests[primaryAlg.ID()] = primaryDigest
 		current := v.files[name]
 		if current == nil {
 			v.files[name] = &validationFileInfo{

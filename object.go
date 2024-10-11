@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"log/slog"
+
+	"github.com/srerickson/ocfl-go/digest"
 )
 
 // Object represents and OCFL Object, typically contained in a Root. An Object
@@ -295,7 +297,7 @@ func (vfs *ObjectVersionFS) Close() error {
 	return nil
 }
 func (vfs *ObjectVersionFS) Created() time.Time                { return vfs.ver.Created() }
-func (vfs *ObjectVersionFS) DigestAlgorithm() string           { return vfs.inv.DigestAlgorithm() }
+func (vfs *ObjectVersionFS) DigestAlgorithm() digest.Algorithm { return vfs.inv.DigestAlgorithm() }
 func (vfs *ObjectVersionFS) State() DigestMap                  { return vfs.ver.State() }
 func (vfs *ObjectVersionFS) Message() string                   { return vfs.ver.Message() }
 func (vfs *ObjectVersionFS) Num() int                          { return vfs.num }

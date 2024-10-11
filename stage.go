@@ -19,7 +19,7 @@ type Stage struct {
 	State DigestMap
 	// DigestAlgorithm is the primary digest algorithm (sha512 or sha256) used by the stage
 	// state.
-	DigestAlgorithm string
+	DigestAlgorithm digest.Algorithm
 	// ContentSource is used to access new content needed to construct
 	// an object. It may be nil
 	ContentSource
@@ -45,7 +45,7 @@ func (s *Stage) Overlay(stages ...*Stage) error {
 		s.State = DigestMap{}
 	}
 	// FIXME
-	if al := s.DigestAlgorithm; al == "" || (al != digest.SHA512.ID() && al != digest.SHA256.ID()) {
+	if al := s.DigestAlgorithm; al == nil || (al.ID() != digest.SHA512.ID() && al.ID() != digest.SHA256.ID()) {
 		return errors.New("stage's digest algorithm must be 'sha512' or 'sha256'")
 	}
 	var err error
@@ -185,7 +185,7 @@ func StageDir(ctx context.Context, fsys FS, dir string, algs ...digest.Algorithm
 			// Trim name so it's relative to root, not FS
 			name = strings.TrimPrefix(name, dirMan.root+"/")
 		}
-		primary, fixity, err := splitDigests(r.Digests, alg)
+		primary, fixity, err := splitDigests(r.Digests, alg.ID())
 		if err != nil {
 			return nil, err
 		}
@@ -280,7 +280,7 @@ func splitDigests(set digest.Set, alg string) (string, digest.Set, error) {
 }
 
 // StageBytes builds a stage from a map of filenames to file contents
-func StageBytes(content map[string][]byte, algs ...string) (*Stage, error) {
+func StageBytes(content map[string][]byte, algs ...digest.Algorithm) (*Stage, error) {
 	mapFS := fstest.MapFS{}
 	for file, bytes := range content {
 		mapFS[file] = &fstest.MapFile{Data: bytes}

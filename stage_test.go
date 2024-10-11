@@ -13,11 +13,11 @@ import (
 func TestStageDir(t *testing.T) {
 	ctx := context.Background()
 	fsys := ocfl.DirFS("testdata")
-	stage, err := ocfl.StageDir(ctx, fsys, "content-fixture", digest.SHA256.ID(), digest.MD5.ID())
+	stage, err := ocfl.StageDir(ctx, fsys, "content-fixture", digest.SHA256, digest.MD5)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stage.DigestAlgorithm != digest.SHA256.ID() {
+	if stage.DigestAlgorithm.ID() != digest.SHA256.ID() {
 		t.Fatalf("stage's alg isn't %s", digest.SHA256.ID())
 	}
 	expectedSize := 3

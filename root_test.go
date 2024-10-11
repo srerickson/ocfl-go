@@ -57,7 +57,7 @@ func TestRoot(t *testing.T) {
 		be.NilErr(t, err)
 		stage, err := ocfl.StageBytes(map[string][]byte{
 			"file.txt": []byte("readme readme readme"),
-		}, digest.SHA256.ID())
+		}, digest.SHA256)
 		be.NilErr(t, err)
 		err = obj.Commit(ctx, &ocfl.Commit{
 			Stage:   stage,

@@ -575,7 +575,7 @@ func buildInventory(prev ocfl.ReadInventory, commit *ocfl.Commit) (*Inventory, e
 	if commit.Stage == nil {
 		return nil, errors.New("commit is missing new version state")
 	}
-	if commit.Stage.DigestAlgorithm == "" {
+	if commit.Stage.DigestAlgorithm == nil {
 		return nil, errors.New("commit has no digest algorithm")
 
 	}
@@ -584,7 +584,7 @@ func buildInventory(prev ocfl.ReadInventory, commit *ocfl.Commit) (*Inventory, e
 	}
 	newInv := &Inventory{
 		ID:               commit.ID,
-		DigestAlgorithm:  commit.Stage.DigestAlgorithm,
+		DigestAlgorithm:  commit.Stage.DigestAlgorithm.ID(),
 		ContentDirectory: contentDir,
 	}
 	switch {
@@ -594,7 +594,7 @@ func buildInventory(prev ocfl.ReadInventory, commit *ocfl.Commit) (*Inventory, e
 			err := errors.New("inventory is not an OCFLv1 inventory")
 			return nil, err
 		}
-		if newInv.DigestAlgorithm != prev.DigestAlgorithm() {
+		if newInv.DigestAlgorithm != prev.DigestAlgorithm().ID() {
 			return nil, fmt.Errorf("commit must use same digest algorithm as existing inventory (%s)", prev.DigestAlgorithm())
 		}
 		newInv.ID = prev.ID()
@@ -744,7 +744,17 @@ func (inv *readInventory) ContentDirectory() string {
 
 func (inv *readInventory) Digest() string { return inv.raw.jsonDigest }
 
-func (inv *readInventory) DigestAlgorithm() string { return inv.raw.DigestAlgorithm }
+func (inv *readInventory) DigestAlgorithm() digest.Algorithm {
+	// DigestAlgorithm should be sha512 or sha256
+	switch inv.raw.DigestAlgorithm {
+	case digest.SHA256.ID():
+		return digest.SHA256
+	case digest.SHA512.ID():
+		return digest.SHA512
+	default:
+		return nil
+	}
+}
 
 func (inv *readInventory) Head() ocfl.VNum { return inv.raw.Head }
 
