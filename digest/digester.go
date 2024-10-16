@@ -64,6 +64,17 @@ func (md MultiDigester) Sums() Set {
 // Set is a map of alg id to digest values
 type Set map[string]string
 
+func (s Set) Algorithms() []string {
+	if len(s) == 0 {
+		return nil
+	}
+	algs := make([]string, 0, len(s))
+	for alg := range s {
+		algs = append(algs, alg)
+	}
+	return algs
+}
+
 func (s Set) Add(s2 Set) error {
 	for alg, newDigest := range s2 {
 		currDigest := s[alg]
@@ -95,27 +106,6 @@ func (s Set) ConflictsWith(other Set) []string {
 		}
 	}
 	return keys
-}
-
-// Validate  reader and return an error if the resulting for any
-// algorithm in s doesn't match the value in s.
-func (s Set) Validate(reader io.Reader) error {
-	algs := make([]string, 0, len(s))
-	for alg := range s {
-		algs = append(algs, alg)
-	}
-	r, err := defaultRegister.NewMultiDigester(algs...)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(r, reader); err != nil {
-		return err
-	}
-	result := r.Sums()
-	for _, alg := range result.ConflictsWith(s) {
-		return &DigestError{Alg: alg, Expected: s[alg], Got: result[alg]}
-	}
-	return nil
 }
 
 // DigestError is returned when content's conflicts with an expected value

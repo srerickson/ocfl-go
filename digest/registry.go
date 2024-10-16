@@ -35,6 +35,9 @@ func NewRegistry(algs ...Algorithm) Registry {
 // Get returns the Alg for the given id or ErrUnknown if the algorithm is not
 // present in the registry.
 func (r Registry) Get(id string) (Algorithm, error) {
+	if r.algs == nil {
+		return nil, fmt.Errorf("%w: %q", ErrUnknown, id)
+	}
 	alg, ok := r.algs[id]
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknown, id)
@@ -109,6 +112,26 @@ func (r Registry) IDs() []string {
 	return names
 }
 
-// DefaultRegister returns a Register built-in digest algorithms: sha512, sha256,
+// Len returns number of algs in the registry
+func (r Registry) Len() int {
+	return len(r.algs)
+}
+
+func (r Registry) Validate(reader io.Reader, digests Set) error {
+	digester, err := r.NewMultiDigester(digests.Algorithms()...)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(digester, reader); err != nil {
+		return err
+	}
+	results := digester.Sums()
+	for _, alg := range results.ConflictsWith(digests) {
+		return &DigestError{Alg: alg, Expected: digests[alg], Got: results[alg]}
+	}
+	return nil
+}
+
+// DefaultRegistry returns a Register built-in digest algorithms: sha512, sha256,
 // sha1, md5, and blake2b.
-func DefaultRegister() Registry { return defaultRegister }
+func DefaultRegistry() Registry { return defaultRegister }

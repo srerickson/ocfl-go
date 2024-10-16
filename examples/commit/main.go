@@ -62,7 +62,7 @@ func main() {
 		err := errors.New("object needs to be created, but 'id' flag is missing")
 		quit(err)
 	}
-	alg, err := digest.DefaultRegister().Get(algID)
+	alg, err := digest.DefaultRegistry().Get(algID)
 	if err != nil {
 		quit(err)
 	}

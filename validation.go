@@ -79,13 +79,15 @@ type ObjectValidation struct {
 	skipDigests bool
 	concurrency int
 	files       map[string]*validationFileInfo
-	algRegister digest.Registry
+	algRegistry digest.Registry
 }
 
 // NewObjectValidation constructs a new *Validation with the given
 // options
 func NewObjectValidation(opts ...ObjectValidationOption) *ObjectValidation {
-	v := &ObjectValidation{}
+	v := &ObjectValidation{
+		algRegistry: digest.DefaultRegistry(),
+	}
 	for _, opt := range opts {
 		opt(v)
 	}
@@ -262,6 +264,13 @@ func (v *ObjectValidation) ExistingContentDigests() iter.Seq[PathDigests] {
 	}
 }
 
+// ValidationAlgorithms returns the registry of digest algoriths
+// the object validation is configured to use. The default value is
+// digest.DefaultRegistry
+func (v *ObjectValidation) ValidationAlgorithms() digest.Registry {
+	return v.algRegistry
+}
+
 type ObjectValidationOption func(*ObjectValidation)
 
 func ValidationSkipDigest() ObjectValidationOption {
@@ -286,10 +295,11 @@ func ValidationDigestConcurrency(num int) ObjectValidationOption {
 	}
 }
 
-// ValidateDigestAlgorithms is used to set the
-func ValidateDigestAlgorithms(algs ...digest.Algorithm) ObjectValidationOption {
+// ValidationAlgorithms sets registry of available digest algorithms for
+// fixity validation.
+func ValidationAlgorithms(reg digest.Registry) ObjectValidationOption {
 	return func(v *ObjectValidation) {
-		v.algRegister = digest.NewRegistry(algs...)
+		v.algRegistry = reg
 	}
 }
 

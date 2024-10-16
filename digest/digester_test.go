@@ -20,9 +20,10 @@ import (
 
 func TestDigester(t *testing.T) {
 	testDigester := func(t *testing.T, algs []string) {
-		data := []byte("content")
 		t.Helper()
-		dig, err := digest.DefaultRegister().NewMultiDigester(algs...)
+		data := []byte("content")
+		algRegistry := digest.DefaultRegistry()
+		dig, err := algRegistry.NewMultiDigester(algs...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -45,12 +46,12 @@ func TestDigester(t *testing.T) {
 				t.Errorf("ReadFrom() has unexpected result for %s: got=%q, expect=%q", alg, dig.Sum(alg), expect[alg])
 			}
 		}
-		if err := result.Validate(bytes.NewReader(data)); err != nil {
+		if err := algRegistry.Validate(bytes.NewReader(data), result); err != nil {
 			t.Error("Validate() unexpected error:", err)
 		}
 		// add invalid entry
 		result[digest.SHA1.ID()] = "invalid"
-		err = result.Validate(bytes.NewReader(data))
+		err = algRegistry.Validate(bytes.NewReader(data), result)
 		if err == nil {
 			t.Error("Validate() didn't return an error for an invalid DigestSet")
 		}
