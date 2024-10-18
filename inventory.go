@@ -32,6 +32,7 @@ type ReadInventory interface {
 	Spec() Spec
 	Validate() *Validation
 	Version(int) ObjectVersion
+	FixityAlgorithms() []string
 }
 
 type ObjectVersion interface {

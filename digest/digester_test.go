@@ -23,11 +23,7 @@ func TestDigester(t *testing.T) {
 		t.Helper()
 		data := []byte("content")
 		algRegistry := digest.DefaultRegistry()
-		dig, err := algRegistry.NewMultiDigester(algs...)
-		if err != nil {
-			t.Fatal(err)
-		}
-		// readfrom
+		dig := algRegistry.NewMultiDigester(algs...)
 		if _, err := io.Copy(dig, bytes.NewReader(data)); err != nil {
 			t.Fatal(err)
 		}
@@ -51,7 +47,7 @@ func TestDigester(t *testing.T) {
 		}
 		// add invalid entry
 		result[digest.SHA1.ID()] = "invalid"
-		err = algRegistry.Validate(bytes.NewReader(data), result)
+		err := algRegistry.Validate(bytes.NewReader(data), result)
 		if err == nil {
 			t.Error("Validate() didn't return an error for an invalid DigestSet")
 		}
@@ -67,7 +63,7 @@ func TestDigester(t *testing.T) {
 		}
 	}
 	t.Run("no algs", func(t *testing.T) {
-		d := digest.NewMultiDigester()
+		d := digest.DefaultRegistry().NewMultiDigester()
 		_, err := d.Write([]byte("test"))
 		be.NilErr(t, err)
 		be.Zero(t, len(d.Sums()))
@@ -94,7 +90,7 @@ func testAlg(algID string, val []byte) (string, error) {
 	case digest.BLAKE2B.ID():
 		h, _ = blake2b.New512(nil)
 	}
-	d, err := digest.NewDigester(algID)
+	d, err := digest.DefaultRegistry().NewDigester(algID)
 	if err != nil {
 		return "", err
 	}

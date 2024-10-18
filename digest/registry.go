@@ -35,14 +35,35 @@ func NewRegistry(algs ...Algorithm) Registry {
 // Get returns the Alg for the given id or ErrUnknown if the algorithm is not
 // present in the registry.
 func (r Registry) Get(id string) (Algorithm, error) {
-	if r.algs == nil {
-		return nil, fmt.Errorf("%w: %q", ErrUnknown, id)
-	}
 	alg, ok := r.algs[id]
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknown, id)
 	}
 	return alg, nil
+}
+
+// GetAny returns a slice of Algorithms for any of the algorithm ids in ids
+// found in the registry.
+func (r Registry) GetAny(ids ...string) []Algorithm {
+	var algs []Algorithm
+	for _, id := range ids {
+		alg, err := r.Get(id)
+		if err != nil {
+			continue
+		}
+		algs = append(algs, alg)
+	}
+	return algs
+}
+
+// GetAny returns a slice of Algorithms for any of the algorithm ids in ids
+// found in the registry.
+func (r Registry) All() []Algorithm {
+	algs := make([]Algorithm, 0, len(r.algs))
+	for _, alg := range r.algs {
+		algs = append(algs, alg)
+	}
+	return algs
 }
 
 // MustGet is like Get except it panics if the registry does not include
@@ -65,26 +86,9 @@ func (r Registry) NewDigester(id string) (Digester, error) {
 	return alg.Digester(), nil
 }
 
-// NewMultiDigester returns a MultiDigester using algs from the register. An
-// error is returned if any alg is not defined in the r or if len(algs) < 1.
-func (r Registry) NewMultiDigester(algs ...string) (*MultiDigester, error) {
-	if len(algs) < 1 {
-		return nil, ErrMissing
-	}
-	writers := make([]io.Writer, 0, len(algs))
-	digesters := make(map[string]Digester, len(algs))
-	for _, algID := range algs {
-		r, err := r.NewDigester(algID)
-		if err != nil {
-			return nil, err
-		}
-		digesters[algID] = r
-		writers = append(writers, r)
-	}
-	return &MultiDigester{
-		Writer:    io.MultiWriter(writers...),
-		digesters: digesters,
-	}, nil
+// NewMultiDigester returns a MultiDigester using algs from the register.
+func (r Registry) NewMultiDigester(algs ...string) *MultiDigester {
+	return NewMultiDigester(r.GetAny(algs...)...)
 }
 
 // Append returns a new Registry that includes algs from r plus additional algs.
@@ -118,10 +122,7 @@ func (r Registry) Len() int {
 }
 
 func (r Registry) Validate(reader io.Reader, digests Set) error {
-	digester, err := r.NewMultiDigester(digests.Algorithms()...)
-	if err != nil {
-		return err
-	}
+	digester := NewMultiDigester(defaultRegister.GetAny(digests.Algorithms()...)...)
 	if _, err := io.Copy(digester, reader); err != nil {
 		return err
 	}

@@ -5,9 +5,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
-	"encoding/hex"
 	"hash"
-	"strconv"
 
 	"github.com/srerickson/ocfl-go/digest"
 	"golang.org/x/crypto/blake2b"
@@ -39,51 +37,8 @@ func (d algRegistry) Algorithms() digest.Registry { return d.algs }
 
 // alg is an implementation of Algorithm used by all extension digest algorithms
 type alg struct {
-	id  string // digest algorithm's id ("size")
+	digest.Algorithm
 	ext AlgorithmRegistry
-}
-
-func (a alg) ID() string { return a.id }
-
-func (a alg) Digester() digest.Digester {
-	switch a.id {
-	case "blake2b-160":
-		return &hashDigester{Hash: mustNewBlake2B(20)}
-	case "blake2b-256":
-		return &hashDigester{Hash: mustNewBlake2B(32)}
-	case "blake2b-384":
-		return &hashDigester{Hash: mustNewBlake2B(48)}
-	case "sha512/256":
-		return &hashDigester{Hash: sha512.New512_256()}
-	case "size":
-		return &sizeDigester{}
-	default:
-		panic("invalid algorithm id: " + a.id)
-	}
-}
-
-// hashDigester implements Digester using a hash.Hash
-type hashDigester struct {
-	hash.Hash
-}
-
-func (h hashDigester) String() string {
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-// sizeDigester implements a Digester that counts bytes
-type sizeDigester struct {
-	size int64
-}
-
-func (d *sizeDigester) Write(b []byte) (int, error) {
-	l := len(b)
-	d.size += int64(l)
-	return l, nil
-}
-
-func (d *sizeDigester) String() string {
-	return strconv.FormatInt(d.size, 10)
 }
 
 func getHash(name string) hash.Hash {

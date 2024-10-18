@@ -11,11 +11,11 @@ func Ext0009() Extension {
 		Base: Base{ExtensionName: ext0009},
 	}
 	ext.algs = digest.NewRegistry(
-		&alg{id: "blake2b-160", ext: ext},
-		&alg{id: "blake2b-256", ext: ext},
-		&alg{id: "blake2b-384", ext: ext},
-		&alg{id: "sha512/256", ext: ext},
-		&alg{id: "size", ext: ext},
+		&alg{Algorithm: digest.BLAKE2B_160, ext: ext},
+		&alg{Algorithm: digest.BLAKE2B_256, ext: ext},
+		&alg{Algorithm: digest.BLAKE2B_384, ext: ext},
+		&alg{Algorithm: digest.SHA512_256, ext: ext},
+		&alg{Algorithm: digest.SIZE, ext: ext},
 	)
 	return ext
 }

@@ -314,7 +314,7 @@ func (inv *Inventory) Validate() *ocfl.Validation {
 }
 
 func (inv *Inventory) setJsonDigest(raw []byte) error {
-	digester, err := digest.NewDigester(inv.DigestAlgorithm)
+	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
 	if err != nil {
 		return err
 	}
@@ -754,6 +754,17 @@ func (inv *readInventory) DigestAlgorithm() digest.Algorithm {
 	default:
 		return nil
 	}
+}
+
+func (inv *readInventory) FixityAlgorithms() []string {
+	if len(inv.raw.Fixity) < 1 {
+		return nil
+	}
+	algs := make([]string, 0, len(inv.raw.Fixity))
+	for alg := range inv.raw.Fixity {
+		algs = append(algs, alg)
+	}
+	return algs
 }
 
 func (inv *readInventory) Head() ocfl.VNum { return inv.raw.Head }

@@ -179,7 +179,7 @@ func testOpenObject(t *testing.T) {
 
 func testObjectCommit(t *testing.T) {
 	ctx := context.Background()
-	t.Run("create minimal", func(t *testing.T) {
+	t.Run("minimal", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
 		obj, err := ocfl.NewObject(ctx, fsys, ".")
@@ -198,7 +198,7 @@ func testObjectCommit(t *testing.T) {
 		be.True(t, obj.Exists())
 		be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 	})
-	t.Run("commit must use same same alg", func(t *testing.T) {
+	t.Run("with wrong alg", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
 		obj, err := ocfl.NewObject(ctx, fsys, ".")
@@ -218,6 +218,34 @@ func testObjectCommit(t *testing.T) {
 		err = obj.Commit(ctx, commit)
 		be.True(t, err != nil)
 		be.True(t, strings.Contains(err.Error(), "must use same digest algorithm as existing inventory"))
+	})
+	t.Run("with extension algs", func(t *testing.T) {
+		fsys, err := local.NewFS(t.TempDir())
+		be.NilErr(t, err)
+		obj, err := ocfl.NewObject(ctx, fsys, ".")
+		be.NilErr(t, err)
+
+		algs := digest.NewRegistry(digest.SHA512, digest.SIZE)
+
+		// commit new object version from bytes:
+		content := map[string][]byte{
+			"README.txt": []byte("this is a test file"),
+		}
+		stage, err := ocfl.StageBytes(content, algs.All()...)
+		be.NilErr(t, err)
+		commit := &ocfl.Commit{
+			ID:      "new-object",
+			Stage:   stage,
+			Message: "new object",
+			User: ocfl.User{
+				Name: "Anna Karenina",
+			},
+			Spec: ocfl.Spec1_1,
+		}
+		be.NilErr(t, obj.Commit(ctx, commit))
+		be.DeepEqual(t, []string{"size"}, obj.Inventory().FixityAlgorithms())
+		v := ocfl.ValidateObject(ctx, fsys, ".", ocfl.ValidationAlgorithms(algs))
+		be.NilErr(t, v.Err())
 	})
 	t.Run("update fixtures", testUpdateFixtures)
 }

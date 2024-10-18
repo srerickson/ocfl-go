@@ -13,12 +13,6 @@ type Digester interface {
 	String() string
 }
 
-// NewDigester is a convenience function that returns a new
-// Digester for a built-in Alg with the given id.
-func NewDigester(id string) (Digester, error) {
-	return defaultRegister.NewDigester(id)
-}
-
 // MultiDigester is used to generate digests for multiple algorithms at the same
 // time.
 type MultiDigester struct {
@@ -29,9 +23,6 @@ type MultiDigester struct {
 // NewMultiDigester constructs a MultiDigester for one or more built-in digest
 // algorithms.
 func NewMultiDigester(algs ...Algorithm) *MultiDigester {
-	if len(algs) < 1 {
-		return &MultiDigester{Writer: io.Discard}
-	}
 	writers := make([]io.Writer, 0, len(algs))
 	digesters := make(map[string]Digester, len(algs))
 	for _, alg := range algs {
