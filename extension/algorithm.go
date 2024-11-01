@@ -23,17 +23,17 @@ type Algorithm interface {
 // algorithms
 type AlgorithmRegistry interface {
 	Extension
-	Algorithms() digest.Registry
+	Algorithms() digest.AlgorithmRegistry
 }
 
 // algRegistry is an implementation of AlgorithmRegistry
 type algRegistry struct {
 	Base
-	algs digest.Registry
+	algs digest.AlgorithmRegistry
 }
 
 // Algorithms implements DigestAlgorithms for digestAlgorithms
-func (d algRegistry) Algorithms() digest.Registry { return d.algs }
+func (d algRegistry) Algorithms() digest.AlgorithmRegistry { return d.algs }
 
 // alg is an implementation of Algorithm used by all extension digest algorithms
 type alg struct {

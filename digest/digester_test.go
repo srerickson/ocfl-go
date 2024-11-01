@@ -42,12 +42,12 @@ func TestDigester(t *testing.T) {
 				t.Errorf("ReadFrom() has unexpected result for %s: got=%q, expect=%q", alg, dig.Sum(alg), expect[alg])
 			}
 		}
-		if err := algRegistry.Validate(bytes.NewReader(data), result); err != nil {
+		if err := result.Validate(bytes.NewReader(data), algRegistry); err != nil {
 			t.Error("Validate() unexpected error:", err)
 		}
 		// add invalid entry
 		result[digest.SHA1.ID()] = "invalid"
-		err := algRegistry.Validate(bytes.NewReader(data), result)
+		err := result.Validate(bytes.NewReader(data), algRegistry)
 		if err == nil {
 			t.Error("Validate() didn't return an error for an invalid DigestSet")
 		}

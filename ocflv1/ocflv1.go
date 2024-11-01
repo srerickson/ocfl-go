@@ -291,7 +291,7 @@ func (imp OCFL) ValidateObjectContent(ctx context.Context, obj ocfl.ReadObject, 
 			if err != nil {
 				return false, err
 			}
-			if err := registry.Validate(f, pd.Digests); err != nil {
+			if err := pd.Digests.Validate(f, registry); err != nil {
 				f.Close()
 				var digestErr *digest.DigestError
 				if errors.As(err, &digestErr) {

@@ -79,6 +79,7 @@ func testObjectExample(t *testing.T) {
 	be.NilErr(t, err)
 	be.Equal(t, ocfl.Spec1_1, obj.Inventory().Spec())
 	be.Nonzero(t, obj.Inventory().Version(2).State().PathMap()["new-data.csv"])
+	be.DeepEqual(t, []string{"md5"}, obj.Inventory().FixityAlgorithms())
 
 	// open an object version to access files
 	vfs, err := obj.OpenVersion(ctx, 0)
@@ -219,19 +220,17 @@ func testObjectCommit(t *testing.T) {
 		be.True(t, err != nil)
 		be.True(t, strings.Contains(err.Error(), "must use same digest algorithm as existing inventory"))
 	})
-	t.Run("with extension algs", func(t *testing.T) {
+	t.Run("with extended algorithm algs", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
 		obj, err := ocfl.NewObject(ctx, fsys, ".")
 		be.NilErr(t, err)
-
-		algs := digest.NewRegistry(digest.SHA512, digest.SIZE)
-
+		algReg := digest.NewAlgorithmRegistry(digest.SHA512, digest.SIZE)
 		// commit new object version from bytes:
 		content := map[string][]byte{
 			"README.txt": []byte("this is a test file"),
 		}
-		stage, err := ocfl.StageBytes(content, algs.All()...)
+		stage, err := ocfl.StageBytes(content, algReg.All()...)
 		be.NilErr(t, err)
 		commit := &ocfl.Commit{
 			ID:      "new-object",
@@ -244,7 +243,7 @@ func testObjectCommit(t *testing.T) {
 		}
 		be.NilErr(t, obj.Commit(ctx, commit))
 		be.DeepEqual(t, []string{"size"}, obj.Inventory().FixityAlgorithms())
-		v := ocfl.ValidateObject(ctx, fsys, ".", ocfl.ValidationAlgorithms(algs))
+		v := ocfl.ValidateObject(ctx, fsys, ".", ocfl.ValidationAlgorithms(algReg))
 		be.NilErr(t, v.Err())
 	})
 	t.Run("update fixtures", testUpdateFixtures)

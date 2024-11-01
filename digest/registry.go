@@ -3,7 +3,6 @@ package digest
 import (
 	"errors"
 	"fmt"
-	"io"
 )
 
 var (
@@ -13,17 +12,17 @@ var (
 	ErrMissing = errors.New("missing an expected digest algorithm")
 
 	// built-in Alg register
-	defaultRegister = NewRegistry(SHA512, SHA256, SHA1, MD5, BLAKE2B)
+	defaultRegister = NewAlgorithmRegistry(SHA512, SHA256, SHA1, MD5, BLAKE2B)
 )
 
-// Registry is an immutable collection of available Algs.
-type Registry struct {
+// AlgorithmRegistry is an immutable collection of Algorithm indexed by ID.
+type AlgorithmRegistry struct {
 	algs map[string]Algorithm
 }
 
-// NewRegistry returns a Registry for the given extension algs
-func NewRegistry(algs ...Algorithm) Registry {
-	newR := Registry{
+// NewAlgorithmRegistry returns a Registry for the given extension algs
+func NewAlgorithmRegistry(algs ...Algorithm) AlgorithmRegistry {
+	newR := AlgorithmRegistry{
 		algs: make(map[string]Algorithm, len(algs)),
 	}
 	for _, alg := range algs {
@@ -34,7 +33,7 @@ func NewRegistry(algs ...Algorithm) Registry {
 
 // Get returns the Alg for the given id or ErrUnknown if the algorithm is not
 // present in the registry.
-func (r Registry) Get(id string) (Algorithm, error) {
+func (r AlgorithmRegistry) Get(id string) (Algorithm, error) {
 	alg, ok := r.algs[id]
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknown, id)
@@ -42,9 +41,9 @@ func (r Registry) Get(id string) (Algorithm, error) {
 	return alg, nil
 }
 
-// GetAny returns a slice of Algorithms for any of the algorithm ids in ids
-// found in the registry.
-func (r Registry) GetAny(ids ...string) []Algorithm {
+// GetAny returns a slice of Algorithms for any of the algorithm ids in the registry.
+// The returned slace may be nil.
+func (r AlgorithmRegistry) GetAny(ids ...string) []Algorithm {
 	var algs []Algorithm
 	for _, id := range ids {
 		alg, err := r.Get(id)
@@ -58,7 +57,7 @@ func (r Registry) GetAny(ids ...string) []Algorithm {
 
 // GetAny returns a slice of Algorithms for any of the algorithm ids in ids
 // found in the registry.
-func (r Registry) All() []Algorithm {
+func (r AlgorithmRegistry) All() []Algorithm {
 	algs := make([]Algorithm, 0, len(r.algs))
 	for _, alg := range r.algs {
 		algs = append(algs, alg)
@@ -68,7 +67,7 @@ func (r Registry) All() []Algorithm {
 
 // MustGet is like Get except it panics if the registry does not include
 // the an algorithm with the given id.
-func (r Registry) MustGet(id string) Algorithm {
+func (r AlgorithmRegistry) MustGet(id string) Algorithm {
 	alg, err := r.Get(id)
 	if err != nil {
 		panic(err)
@@ -78,7 +77,7 @@ func (r Registry) MustGet(id string) Algorithm {
 
 // NewDigester returns a digester for the given id, which must an Alg registered
 // in r.
-func (r Registry) NewDigester(id string) (Digester, error) {
+func (r AlgorithmRegistry) NewDigester(id string) (Digester, error) {
 	alg, err := r.Get(id)
 	if err != nil {
 		return nil, err
@@ -87,15 +86,15 @@ func (r Registry) NewDigester(id string) (Digester, error) {
 }
 
 // NewMultiDigester returns a MultiDigester using algs from the register.
-func (r Registry) NewMultiDigester(algs ...string) *MultiDigester {
+func (r AlgorithmRegistry) NewMultiDigester(algs ...string) *MultiDigester {
 	return NewMultiDigester(r.GetAny(algs...)...)
 }
 
 // Append returns a new Registry that includes algs from r plus additional algs.
 // If the added algs have the same id as those in r, the new registry will use
 // new algs.
-func (r Registry) Append(algs ...Algorithm) Registry {
-	newR := Registry{
+func (r AlgorithmRegistry) Append(algs ...Algorithm) AlgorithmRegistry {
+	newR := AlgorithmRegistry{
 		algs: make(map[string]Algorithm, len(r.algs)+len(algs)),
 	}
 	for _, alg := range r.algs {
@@ -108,7 +107,7 @@ func (r Registry) Append(algs ...Algorithm) Registry {
 }
 
 // IDs returns IDs of all Algs in r.
-func (r Registry) IDs() []string {
+func (r AlgorithmRegistry) IDs() []string {
 	names := make([]string, 0, len(r.algs))
 	for name := range r.algs {
 		names = append(names, name)
@@ -117,22 +116,10 @@ func (r Registry) IDs() []string {
 }
 
 // Len returns number of algs in the registry
-func (r Registry) Len() int {
+func (r AlgorithmRegistry) Len() int {
 	return len(r.algs)
-}
-
-func (r Registry) Validate(reader io.Reader, digests Set) error {
-	digester := NewMultiDigester(defaultRegister.GetAny(digests.Algorithms()...)...)
-	if _, err := io.Copy(digester, reader); err != nil {
-		return err
-	}
-	results := digester.Sums()
-	for _, alg := range results.ConflictsWith(digests) {
-		return &DigestError{Alg: alg, Expected: digests[alg], Got: results[alg]}
-	}
-	return nil
 }
 
 // DefaultRegistry returns a Register built-in digest algorithms: sha512, sha256,
 // sha1, md5, and blake2b.
-func DefaultRegistry() Registry { return defaultRegister }
+func DefaultRegistry() AlgorithmRegistry { return defaultRegister }

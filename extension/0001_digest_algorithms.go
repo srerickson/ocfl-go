@@ -10,7 +10,7 @@ func Ext0001() Extension {
 	ext := &algRegistry{
 		Base: Base{ExtensionName: ext0001},
 	}
-	ext.algs = digest.NewRegistry(
+	ext.algs = digest.NewAlgorithmRegistry(
 		&alg{Algorithm: digest.BLAKE2B_160, ext: ext},
 		&alg{Algorithm: digest.BLAKE2B_256, ext: ext},
 		&alg{Algorithm: digest.BLAKE2B_384, ext: ext},
