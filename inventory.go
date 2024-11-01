@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/srerickson/ocfl-go/digest"
 )
 
 var (
@@ -23,13 +25,14 @@ type ReadInventory interface {
 	FixitySource
 	ContentDirectory() string
 	Digest() string
-	DigestAlgorithm() string
+	DigestAlgorithm() digest.Algorithm
 	Head() VNum
 	ID() string
 	Manifest() DigestMap
 	Spec() Spec
 	Validate() *Validation
 	Version(int) ObjectVersion
+	FixityAlgorithms() []string
 }
 
 type ObjectVersion interface {
@@ -69,15 +72,15 @@ func ReadSidecarDigest(ctx context.Context, fsys FS, name string) (digest string
 // if the sidecar content is not formatted correctly or if the inv's digest
 // doesn't match the value found in the sidecar.
 func ValidateInventorySidecar(ctx context.Context, inv ReadInventory, fsys FS, dir string) error {
-	sideCar := path.Join(dir, inventoryBase+"."+inv.DigestAlgorithm())
+	sideCar := path.Join(dir, inventoryBase+"."+inv.DigestAlgorithm().ID())
 	expSum, err := ReadSidecarDigest(ctx, fsys, sideCar)
 	if err != nil {
 		return err
 	}
 	if !strings.EqualFold(expSum, inv.Digest()) {
-		return &DigestError{
+		return &digest.DigestError{
 			Path:     sideCar,
-			Alg:      inv.DigestAlgorithm(),
+			Alg:      inv.DigestAlgorithm().ID(),
 			Got:      inv.Digest(),
 			Expected: expSum,
 		}

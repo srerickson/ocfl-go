@@ -52,6 +52,7 @@ type OCFL interface {
 
 type Config struct {
 	ocfls *OCLFRegister
+	//algs  digest.Registry
 }
 
 func (c Config) OCFLs() *OCLFRegister {

@@ -1,9 +1,7 @@
 package extension
 
 import (
-	_ "embed"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,34 +15,26 @@ const (
 	lowerhex        = "0123456789abcdef"
 )
 
-//go:embed docs/0003-hash-and-id-n-tuple-storage-layout.md
-var ext0003doc []byte
-
 // LayoutHashIDTuple implements 0003-hash-and-id-n-tuple-storage-layout
 type LayoutHashIDTuple struct {
+	Base
 	DigestAlgorithm string `json:"digestAlgorithm"`
 	TupleSize       int    `json:"tupleSize"`
 	TupleNum        int    `json:"numberOfTuples"`
 }
 
-var _ (Layout) = (*LayoutHashIDTuple)(nil)
-var _ (Extension) = (*LayoutHashIDTuple)(nil)
-
 // Ext0003 returns a new instance of 0003-hash-and-id-n-tuple-storage-layout with default values
 func Ext0003() Extension {
 	return &LayoutHashIDTuple{
+		Base:            Base{ExtensionName: ext0003},
 		DigestAlgorithm: "sha256",
 		TupleSize:       3,
 		TupleNum:        3,
 	}
 }
 
-func (l LayoutHashIDTuple) Name() string { return ext0003 }
-
-func (l LayoutHashIDTuple) Documentation() []byte { return ext0003doc }
-
 func (l LayoutHashIDTuple) Valid() error {
-	h := getAlg(l.DigestAlgorithm)
+	h := getHash(l.DigestAlgorithm)
 	if h == nil {
 		return fmt.Errorf("unknown digest algorithm: %q", l.DigestAlgorithm)
 	}
@@ -66,7 +56,7 @@ func (l LayoutHashIDTuple) Resolve(id string) (string, error) {
 	if err := l.Valid(); err != nil {
 		return "", err
 	}
-	h := getAlg(l.DigestAlgorithm)
+	h := getHash(l.DigestAlgorithm)
 	tupSize, tupNum := l.TupleSize, l.TupleNum
 	h.Write([]byte(id))
 	hID := hex.EncodeToString(h.Sum(nil))
@@ -80,15 +70,6 @@ func (l LayoutHashIDTuple) Resolve(id string) (string, error) {
 	}
 	tuples[tupNum] = encID
 	return strings.Join(tuples, "/"), nil
-}
-
-func (l LayoutHashIDTuple) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{
-		extensionName:   ext0003,
-		digestAlgorithm: l.DigestAlgorithm,
-		tupleSize:       l.TupleSize,
-		numberOfTuples:  l.TupleNum,
-	})
 }
 
 func percentEncode(in string) string {

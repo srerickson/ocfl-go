@@ -9,6 +9,7 @@ import (
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/local"
+	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/extension"
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
@@ -56,7 +57,7 @@ func TestRoot(t *testing.T) {
 		be.NilErr(t, err)
 		stage, err := ocfl.StageBytes(map[string][]byte{
 			"file.txt": []byte("readme readme readme"),
-		}, ocfl.SHA256)
+		}, digest.SHA256)
 		be.NilErr(t, err)
 		err = obj.Commit(ctx, &ocfl.Commit{
 			Stage:   stage,

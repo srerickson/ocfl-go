@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/extension"
 	"github.com/srerickson/ocfl-go/internal/pipeline"
 	"github.com/srerickson/ocfl-go/logging"
@@ -284,12 +285,25 @@ func (imp OCFL) ValidateObjectContent(ctx context.Context, obj ocfl.ReadObject, 
 	if !v.SkipDigests() {
 		numWorkers := v.DigestConcurrency()
 		work := v.ExistingContentDigests()
-		workFn := func(d ocfl.PathDigests) (bool, error) {
-			return d.Validate(ctx, obj.FS(), obj.Path())
+		registry := v.ValidationAlgorithms()
+		workFn := func(pd ocfl.PathDigests) (bool, error) {
+			f, err := obj.FS().OpenFile(ctx, path.Join(obj.Path(), pd.Path))
+			if err != nil {
+				return false, err
+			}
+			if err := pd.Digests.Validate(f, registry); err != nil {
+				f.Close()
+				var digestErr *digest.DigestError
+				if errors.As(err, &digestErr) {
+					digestErr.Path = pd.Path
+				}
+				return false, err
+			}
+			return true, f.Close()
 		}
 		for result := range pipeline.Results(work, workFn, numWorkers) {
 			if result.Err != nil {
-				var digestErr *ocfl.DigestError
+				var digestErr *digest.DigestError
 				switch {
 				case errors.As(result.Err, &digestErr):
 					newVld.AddFatal(ec(digestErr, codes.E093(imp.spec)))

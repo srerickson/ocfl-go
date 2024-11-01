@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing/fstest"
+
+	"github.com/srerickson/ocfl-go/digest"
 )
 
 // Stage is used to create/update objects.
@@ -17,7 +19,7 @@ type Stage struct {
 	State DigestMap
 	// DigestAlgorithm is the primary digest algorithm (sha512 or sha256) used by the stage
 	// state.
-	DigestAlgorithm string
+	DigestAlgorithm digest.Algorithm
 	// ContentSource is used to access new content needed to construct
 	// an object. It may be nil
 	ContentSource
@@ -42,7 +44,8 @@ func (s *Stage) Overlay(stages ...*Stage) error {
 	if s.State == nil {
 		s.State = DigestMap{}
 	}
-	if alg := s.DigestAlgorithm; alg == "" || (alg != SHA512 && alg != SHA256) {
+	// FIXME
+	if al := s.DigestAlgorithm; al == nil || (al.ID() != digest.SHA512.ID() && al.ID() != digest.SHA256.ID()) {
 		return errors.New("stage's digest algorithm must be 'sha512' or 'sha256'")
 	}
 	var err error
@@ -115,7 +118,7 @@ type ContentSource interface {
 type FixitySource interface {
 	// GetFixity returns a DigestSet with alternate digests for the content with
 	// the digest derrived using the stage's primary digest algorithm.
-	GetFixity(digest string) DigestSet
+	GetFixity(digest string) digest.Set
 }
 
 type contentSources []ContentSource
@@ -132,10 +135,10 @@ func (ps contentSources) GetContent(digest string) (FS, string) {
 
 type fixitySources []FixitySource
 
-func (ps fixitySources) GetFixity(digest string) DigestSet {
-	set := DigestSet{}
+func (ps fixitySources) GetFixity(dig string) digest.Set {
+	set := digest.Set{}
 	for _, fixer := range ps {
-		for fixAlg, fixDigest := range fixer.GetFixity(digest) {
+		for fixAlg, fixDigest := range fixer.GetFixity(dig) {
 			set[fixAlg] = fixDigest
 		}
 	}
@@ -146,8 +149,9 @@ func (ps fixitySources) GetFixity(digest string) DigestSet {
 // All files in dir and its subdirectories are digested with the given digest
 // algs and added to the stage. The algs must include sha512 or sha256 or an
 // error is returned
-func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage, error) {
-	if len(algs) < 1 || (algs[0] != SHA512 && algs[0] != SHA256) {
+// FIXME: algs should be DigestAlgorithms, not strings
+func StageDir(ctx context.Context, fsys FS, dir string, algs ...digest.Algorithm) (*Stage, error) {
+	if len(algs) < 1 || (algs[0].ID() != digest.SHA512.ID() && algs[0].ID() != digest.SHA256.ID()) {
 		return nil, fmt.Errorf("must use sha512 or sha256 as the primary digest algorithm for the stage")
 	}
 	if !fs.ValidPath(dir) {
@@ -160,33 +164,30 @@ func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage,
 		manifest: map[string]dirManifestEntry{},
 	}
 	var walkErr error
-	walkFS := func(digestFile func(name string, algs []string) bool) {
-		// add files to digest work queue
-		Files(ctx, dirMan.fs, dir)(func(info FileInfo, err error) bool {
+	filesIter := func(yield func(name string, algs []digest.Algorithm) bool) {
+		for info, err := range Files(ctx, dirMan.fs, dir) {
 			if err != nil {
 				walkErr = err
-				return false
+				break
 			}
-			digestFile(info.Path, algs)
-			return true
-		})
+			if !yield(info.Path, algs) {
+				break
+			}
+		}
 	}
 	// digest result: add results to the stage
-	var digestErr error
-	Digest(ctx, dirMan.fs, walkFS)(func(r PathDigests, err error) bool {
+	for r, err := range Digest(ctx, dirMan.fs, filesIter) {
 		name := r.Path
 		if err != nil {
-			digestErr = err
-			return false
+			return nil, err
 		}
 		if dirMan.root != "." {
 			// Trim name so it's relative to root, not FS
 			name = strings.TrimPrefix(name, dirMan.root+"/")
 		}
-		primary, fixity, err := splitDigests(r.Digests, alg)
+		primary, fixity, err := splitDigests(r.Digests, alg.ID())
 		if err != nil {
-			digestErr = err
-			return false
+			return nil, err
 		}
 		if dirMan.manifest == nil {
 			dirMan.manifest = make(map[string]dirManifestEntry)
@@ -195,11 +196,9 @@ func StageDir(ctx context.Context, fsys FS, dir string, algs ...string) (*Stage,
 		entry.addPaths(name)
 		entry.addFixity(fixity)
 		dirMan.manifest[primary] = entry
-		return true
-	})
-	// run checksum
-	if err := errors.Join(walkErr, digestErr); err != nil {
-		return nil, err
+	}
+	if walkErr != nil {
+		return nil, walkErr
 	}
 	state := DigestMap{}
 	for dig, entry := range dirMan.manifest {
@@ -230,13 +229,13 @@ func (s *dirManifest) GetContent(digest string) (FS, string) {
 	return s.fs, path.Join(s.root, s.manifest[digest].paths[0])
 }
 
-func (s *dirManifest) GetFixity(dig string) DigestSet {
+func (s *dirManifest) GetFixity(dig string) digest.Set {
 	return s.manifest[dig].fixity
 }
 
 type dirManifestEntry struct {
-	paths  []string  // content paths relative to Root in FS
-	fixity DigestSet // additional digests associate with paths
+	paths  []string   // content paths relative to Root in FS
+	fixity digest.Set // additional digests associate with paths
 }
 
 func (entry *dirManifestEntry) addPaths(paths ...string) {
@@ -251,7 +250,7 @@ func (entry *dirManifestEntry) addPaths(paths ...string) {
 	}
 }
 
-func (entry *dirManifestEntry) addFixity(fixity DigestSet) {
+func (entry *dirManifestEntry) addFixity(fixity digest.Set) {
 	if len(fixity) == 0 {
 		return
 	}
@@ -264,8 +263,8 @@ func (entry *dirManifestEntry) addFixity(fixity DigestSet) {
 	}
 }
 
-func splitDigests(set DigestSet, alg string) (string, DigestSet, error) {
-	newSet := DigestSet{}
+func splitDigests(set digest.Set, alg string) (string, digest.Set, error) {
+	newSet := digest.Set{}
 	dig := ""
 	for setAlg, setVal := range set {
 		if setAlg == alg {
@@ -281,7 +280,7 @@ func splitDigests(set DigestSet, alg string) (string, DigestSet, error) {
 }
 
 // StageBytes builds a stage from a map of filenames to file contents
-func StageBytes(content map[string][]byte, algs ...string) (*Stage, error) {
+func StageBytes(content map[string][]byte, algs ...digest.Algorithm) (*Stage, error) {
 	mapFS := fstest.MapFS{}
 	for file, bytes := range content {
 		mapFS[file] = &fstest.MapFile{Data: bytes}

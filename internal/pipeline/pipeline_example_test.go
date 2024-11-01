@@ -7,11 +7,11 @@ import (
 	"log"
 	"os"
 
-	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/internal/pipeline"
 )
 
-var alg = `sha256`
+var alg = digest.SHA256
 
 func ExampleResults() {
 	fsys := os.DirFS(".")
@@ -38,11 +38,11 @@ func ExampleResults() {
 			return r, err
 		}
 		defer f.Close()
-		dig := ocfl.NewMultiDigester(alg)
+		dig := digest.NewMultiDigester(alg)
 		if _, err := io.Copy(dig, f); err != nil {
 			return r, err
 		}
-		r.sum = dig.Sums()[alg]
+		r.sum = dig.Sums()[alg.ID()]
 		return r, nil
 	}
 	pipeline.Results(inputFn, workFn, 0)(func(r pipeline.Result[job, result]) bool {

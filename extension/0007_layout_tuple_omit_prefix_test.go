@@ -7,6 +7,9 @@ import (
 	"github.com/srerickson/ocfl-go/extension"
 )
 
+var _ (extension.Layout) = (*extension.LayoutTupleOmitPrefix)(nil)
+var _ (extension.Extension) = (*extension.LayoutTupleOmitPrefix)(nil)
+
 func TestLayoutTupleOmitPrefix(t *testing.T) {
 	layout := extension.Ext0007().(*extension.LayoutTupleOmitPrefix)
 	layout.TupleSize = 4
@@ -36,7 +39,7 @@ func TestLayoutTupleOmitPrefix(t *testing.T) {
 	}
 
 	t.Run("unmarshal", func(t *testing.T) {
-		reg := extension.DefaultRegister()
+		reg := extension.DefaultRegistry()
 		ext, err := reg.Unmarshal([]byte(`{
 			"delimiter": ":",
 			"extensionName": "0007-n-tuple-omit-prefix-storage-layout",

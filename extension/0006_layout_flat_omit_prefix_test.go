@@ -6,6 +6,9 @@ import (
 	"github.com/srerickson/ocfl-go/extension"
 )
 
+var _ (extension.Layout) = (*extension.LayoutFlatOmitPrefix)(nil)
+var _ (extension.Extension) = (*extension.LayoutFlatOmitPrefix)(nil)
+
 func TestLayoutFlatOmitPrefix(t *testing.T) {
 	type test struct {
 		delim  string

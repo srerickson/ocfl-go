@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/ocflv1/codes"
 	"golang.org/x/exp/maps"
 )
@@ -113,12 +114,12 @@ func (inv Inventory) Version(v int) *Version {
 }
 
 // GetFixity implements ocfl.FixitySource for Inventory
-func (inv Inventory) GetFixity(digest string) ocfl.DigestSet {
-	paths := inv.Manifest[digest]
+func (inv Inventory) GetFixity(dig string) digest.Set {
+	paths := inv.Manifest[dig]
 	if len(paths) < 1 {
 		return nil
 	}
-	set := ocfl.DigestSet{}
+	set := digest.Set{}
 	for fixAlg, fixMap := range inv.Fixity {
 		fixMap.EachPath(func(p, fixDigest string) bool {
 			if slices.Contains(paths, p) {
@@ -166,13 +167,13 @@ func (inv *Inventory) Validate() *ocfl.Validation {
 		v.AddWarn(ec(err, codes.W005(ocflV)))
 	}
 	switch inv.DigestAlgorithm {
-	case ocfl.SHA512:
+	case digest.SHA512.ID():
 		break
-	case ocfl.SHA256:
-		err := fmt.Errorf(`'digestAlgorithm' is %q`, ocfl.SHA256)
+	case digest.SHA256.ID():
+		err := fmt.Errorf(`'digestAlgorithm' is %q`, digest.SHA256.ID())
 		v.AddWarn(ec(err, codes.W004(ocflV)))
 	default:
-		err := fmt.Errorf(`'digestAlgorithm' is not %q or %q`, ocfl.SHA512, ocfl.SHA256)
+		err := fmt.Errorf(`'digestAlgorithm' is not %q or %q`, digest.SHA512.ID(), digest.SHA256.ID())
 		v.AddFatal(ec(err, codes.E025(ocflV)))
 	}
 	if err := inv.Head.Valid(); err != nil {
@@ -313,9 +314,9 @@ func (inv *Inventory) Validate() *ocfl.Validation {
 }
 
 func (inv *Inventory) setJsonDigest(raw []byte) error {
-	digester := ocfl.NewDigester(inv.DigestAlgorithm)
-	if digester == nil {
-		return fmt.Errorf("%w: %q", ocfl.ErrUnknownAlg, inv.DigestAlgorithm)
+	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
+	if err != nil {
+		return err
 	}
 	if _, err := io.Copy(digester, bytes.NewReader(raw)); err != nil {
 		return fmt.Errorf("digesting inventory: %w", err)
@@ -371,7 +372,7 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 		err := errors.New(requiredErrMsg + `: 'digestAlgorithm'`)
 		v.AddFatal(ec(err, codes.E036(spec)))
 	}
-	if digestAlg != "" && digestAlg != ocfl.SHA512 && digestAlg != ocfl.SHA256 {
+	if digestAlg != "" && digestAlg != digest.SHA512.ID() && digestAlg != digest.SHA256.ID() {
 		err := fmt.Errorf("invalid digest algorithm: %q", digestAlg)
 		v.AddFatal(ec(err, codes.E025(spec)))
 	}
@@ -574,7 +575,7 @@ func buildInventory(prev ocfl.ReadInventory, commit *ocfl.Commit) (*Inventory, e
 	if commit.Stage == nil {
 		return nil, errors.New("commit is missing new version state")
 	}
-	if commit.Stage.DigestAlgorithm == "" {
+	if commit.Stage.DigestAlgorithm == nil {
 		return nil, errors.New("commit has no digest algorithm")
 
 	}
@@ -583,7 +584,7 @@ func buildInventory(prev ocfl.ReadInventory, commit *ocfl.Commit) (*Inventory, e
 	}
 	newInv := &Inventory{
 		ID:               commit.ID,
-		DigestAlgorithm:  commit.Stage.DigestAlgorithm,
+		DigestAlgorithm:  commit.Stage.DigestAlgorithm.ID(),
 		ContentDirectory: contentDir,
 	}
 	switch {
@@ -593,7 +594,7 @@ func buildInventory(prev ocfl.ReadInventory, commit *ocfl.Commit) (*Inventory, e
 			err := errors.New("inventory is not an OCFLv1 inventory")
 			return nil, err
 		}
-		if newInv.DigestAlgorithm != prev.DigestAlgorithm() {
+		if newInv.DigestAlgorithm != prev.DigestAlgorithm().ID() {
 			return nil, fmt.Errorf("commit must use same digest algorithm as existing inventory (%s)", prev.DigestAlgorithm())
 		}
 		newInv.ID = prev.ID()
@@ -732,7 +733,7 @@ type readInventory struct {
 
 func (inv *readInventory) MarshalJSON() ([]byte, error) { return json.Marshal(inv.raw) }
 
-func (inv *readInventory) GetFixity(digest string) ocfl.DigestSet { return inv.raw.GetFixity(digest) }
+func (inv *readInventory) GetFixity(digest string) digest.Set { return inv.raw.GetFixity(digest) }
 
 func (inv *readInventory) ContentDirectory() string {
 	if c := inv.raw.ContentDirectory; c != "" {
@@ -743,7 +744,28 @@ func (inv *readInventory) ContentDirectory() string {
 
 func (inv *readInventory) Digest() string { return inv.raw.jsonDigest }
 
-func (inv *readInventory) DigestAlgorithm() string { return inv.raw.DigestAlgorithm }
+func (inv *readInventory) DigestAlgorithm() digest.Algorithm {
+	// DigestAlgorithm should be sha512 or sha256
+	switch inv.raw.DigestAlgorithm {
+	case digest.SHA256.ID():
+		return digest.SHA256
+	case digest.SHA512.ID():
+		return digest.SHA512
+	default:
+		return nil
+	}
+}
+
+func (inv *readInventory) FixityAlgorithms() []string {
+	if len(inv.raw.Fixity) < 1 {
+		return nil
+	}
+	algs := make([]string, 0, len(inv.raw.Fixity))
+	for alg := range inv.raw.Fixity {
+		algs = append(algs, alg)
+	}
+	return algs
+}
 
 func (inv *readInventory) Head() ocfl.VNum { return inv.raw.Head }
 

@@ -9,7 +9,7 @@ import (
 )
 
 func TestUnmarshalJSON(t *testing.T) {
-	reg := extension.DefaultRegister()
+	reg := extension.DefaultRegistry()
 	names := reg.Names()
 	if len(names) == 0 {
 		t.Fatal("expected > 0 registered extensions")
@@ -24,7 +24,7 @@ func TestUnmarshalJSON(t *testing.T) {
 
 func TestMarshalJSON(t *testing.T) {
 	// Test json encoding for all registered extensions.
-	reg := extension.DefaultRegister()
+	reg := extension.DefaultRegistry()
 	for _, name := range reg.Names() {
 		ext, err := extension.Get(name)
 		if err != nil {

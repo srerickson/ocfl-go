@@ -68,9 +68,6 @@ func BenchmarkPipeline(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	pipeline.Results(input, run, 0)(func(r pipeline.Result[job, result]) bool {
-		if r.Err != nil {
-			return false
-		}
-		return true
+		return r.Err == nil
 	})
 }

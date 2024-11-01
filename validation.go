@@ -8,6 +8,7 @@ import (
 	"runtime"
 
 	"github.com/hashicorp/go-multierror"
+	"github.com/srerickson/ocfl-go/digest"
 )
 
 // Validation represents multiple fatal errors and warning errors.
@@ -72,18 +73,20 @@ func (v *Validation) WarnErrors() []error {
 // ObjectValidation is used to configure and track results from an object validation process.
 type ObjectValidation struct {
 	Validation
-
 	globals     Config
 	logger      *slog.Logger
 	skipDigests bool
 	concurrency int
 	files       map[string]*validationFileInfo
+	algRegistry digest.AlgorithmRegistry
 }
 
 // NewObjectValidation constructs a new *Validation with the given
 // options
 func NewObjectValidation(opts ...ObjectValidationOption) *ObjectValidation {
-	v := &ObjectValidation{}
+	v := &ObjectValidation{
+		algRegistry: digest.DefaultRegistry(),
+	}
 	for _, opt := range opts {
 		opt(v)
 	}
@@ -173,7 +176,7 @@ func (v *ObjectValidation) AddInventoryDigests(inv ReadInventory) error {
 	allErrors := &multierror.Error{}
 	inv.Manifest().EachPath(func(name string, primaryDigest string) bool {
 		allDigests := inv.GetFixity(primaryDigest)
-		allDigests[primaryAlg] = primaryDigest
+		allDigests[primaryAlg.ID()] = primaryDigest
 		current := v.files[name]
 		if current == nil {
 			v.files[name] = &validationFileInfo{
@@ -186,7 +189,7 @@ func (v *ObjectValidation) AddInventoryDigests(inv ReadInventory) error {
 			return true
 		}
 		if err := current.expected.Add(allDigests); err != nil {
-			var digestError *DigestError
+			var digestError *digest.DigestError
 			if errors.As(err, &digestError) {
 				digestError.Path = name
 			}
@@ -260,6 +263,13 @@ func (v *ObjectValidation) ExistingContentDigests() iter.Seq[PathDigests] {
 	}
 }
 
+// ValidationAlgorithms returns the registry of digest algoriths
+// the object validation is configured to use. The default value is
+// digest.DefaultRegistry
+func (v *ObjectValidation) ValidationAlgorithms() digest.AlgorithmRegistry {
+	return v.algRegistry
+}
+
 type ObjectValidationOption func(*ObjectValidation)
 
 func ValidationSkipDigest() ObjectValidationOption {
@@ -284,8 +294,16 @@ func ValidationDigestConcurrency(num int) ObjectValidationOption {
 	}
 }
 
+// ValidationAlgorithms sets registry of available digest algorithms for
+// fixity validation.
+func ValidationAlgorithms(reg digest.AlgorithmRegistry) ObjectValidationOption {
+	return func(v *ObjectValidation) {
+		v.algRegistry = reg
+	}
+}
+
 type validationFileInfo struct {
-	expected DigestSet
+	expected digest.Set
 	exists   bool
 }
 

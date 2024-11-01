@@ -1,14 +1,8 @@
 package extension
 
 import (
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
+	"embed"
 	"errors"
-	"hash"
-
-	"golang.org/x/crypto/blake2b"
 )
 
 const (
@@ -24,18 +18,42 @@ var (
 
 	// built-in extensions
 	baseExtensions = []func() Extension{
+		Ext0001,
 		Ext0002,
 		Ext0003,
 		Ext0004,
 		Ext0006,
 		Ext0007,
+		Ext0009,
 	}
+
+	//go:embed docs
+	docs embed.FS
 )
 
 // Extension is implemented by types that represent specific OCFL Extensions.
 // See https://github.com/OCFL/extensions
 type Extension interface {
 	Name() string // Name returns the extension name
+	Doc() string  // Extension documentation in markdown format (if available)
+}
+
+// Base is a type that can be embedded by types that implement
+// the Extension.
+type Base struct {
+	ExtensionName string `json:"extensionName"`
+}
+
+func (b Base) Name() string { return string(b.ExtensionName) }
+
+// Doc returns documentation string (markdown format) for the extension, if
+// available.
+func (b Base) Doc() string {
+	byts, err := docs.ReadFile("docs/" + b.ExtensionName + ".md")
+	if err != nil {
+		return ""
+	}
+	return string(byts)
 }
 
 // Layout is an extension that provides a function for resolving object IDs to
@@ -46,25 +64,4 @@ type Layout interface {
 	Resolve(id string) (path string, err error)
 	// Valid returns an error if the layout configuation is invalid
 	Valid() error
-}
-
-func getAlg(name string) hash.Hash {
-	switch name {
-	case `sha512`:
-		return sha512.New()
-	case `sha256`:
-		return sha256.New()
-	case `sha1`:
-		return sha1.New()
-	case `md5`:
-		return md5.New()
-	case `blake2b-512`:
-		h, err := blake2b.New512(nil)
-		if err != nil {
-			panic("creating new blake2b hash")
-		}
-		return h
-	default:
-		return nil
-	}
 }

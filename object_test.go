@@ -17,6 +17,7 @@ import (
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/local"
+	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/ocflv1"
 	"golang.org/x/exp/maps"
 )
@@ -44,7 +45,7 @@ func testObjectExample(t *testing.T) {
 	v1Content := map[string][]byte{
 		"README.txt": []byte("this is a test file"),
 	}
-	stage, err := ocfl.StageBytes(v1Content, ocfl.SHA512, ocfl.MD5)
+	stage, err := ocfl.StageBytes(v1Content, digest.SHA512, digest.MD5)
 	be.NilErr(t, err)
 	err = obj.Commit(ctx, &ocfl.Commit{
 		Spec:    ocfl.Spec1_0,
@@ -66,7 +67,7 @@ func testObjectExample(t *testing.T) {
 		"new-data.csv":  []byte("1,2,3"),
 		"docs/note.txt": []byte("this is a note"),
 	}
-	stage, err = ocfl.StageBytes(v2Content, ocfl.SHA512, ocfl.MD5)
+	stage, err = ocfl.StageBytes(v2Content, digest.SHA512, digest.MD5)
 	be.NilErr(t, err)
 	err = obj.Commit(ctx, &ocfl.Commit{
 		ID:      "new-object-01",
@@ -78,6 +79,7 @@ func testObjectExample(t *testing.T) {
 	be.NilErr(t, err)
 	be.Equal(t, ocfl.Spec1_1, obj.Inventory().Spec())
 	be.Nonzero(t, obj.Inventory().Version(2).State().PathMap()["new-data.csv"])
+	be.DeepEqual(t, []string{"md5"}, obj.Inventory().FixityAlgorithms())
 
 	// open an object version to access files
 	vfs, err := obj.OpenVersion(ctx, 0)
@@ -178,7 +180,7 @@ func testOpenObject(t *testing.T) {
 
 func testObjectCommit(t *testing.T) {
 	ctx := context.Background()
-	t.Run("create minimal", func(t *testing.T) {
+	t.Run("minimal", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
 		obj, err := ocfl.NewObject(ctx, fsys, ".")
@@ -186,7 +188,7 @@ func testObjectCommit(t *testing.T) {
 		be.False(t, obj.Exists())
 		commit := &ocfl.Commit{
 			ID:      "new-object",
-			Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: ocfl.SHA256},
+			Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA256},
 			Message: "new object",
 			User: ocfl.User{
 				Name: "Anna Karenina",
@@ -197,7 +199,7 @@ func testObjectCommit(t *testing.T) {
 		be.True(t, obj.Exists())
 		be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 	})
-	t.Run("commit must use same same alg", func(t *testing.T) {
+	t.Run("with wrong alg", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
 		obj, err := ocfl.NewObject(ctx, fsys, ".")
@@ -205,7 +207,7 @@ func testObjectCommit(t *testing.T) {
 		be.False(t, obj.Exists())
 		commit := &ocfl.Commit{
 			ID:      "new-object",
-			Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: ocfl.SHA512},
+			Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA512},
 			Message: "new object",
 			User: ocfl.User{
 				Name: "Anna Karenina",
@@ -213,10 +215,36 @@ func testObjectCommit(t *testing.T) {
 			Spec: ocfl.Spec1_0,
 		}
 		be.NilErr(t, obj.Commit(ctx, commit))
-		commit.Stage.DigestAlgorithm = ocfl.SHA256
+		commit.Stage.DigestAlgorithm = digest.SHA256
 		err = obj.Commit(ctx, commit)
 		be.True(t, err != nil)
 		be.True(t, strings.Contains(err.Error(), "must use same digest algorithm as existing inventory"))
+	})
+	t.Run("with extended algorithm algs", func(t *testing.T) {
+		fsys, err := local.NewFS(t.TempDir())
+		be.NilErr(t, err)
+		obj, err := ocfl.NewObject(ctx, fsys, ".")
+		be.NilErr(t, err)
+		algReg := digest.NewAlgorithmRegistry(digest.SHA512, digest.SIZE)
+		// commit new object version from bytes:
+		content := map[string][]byte{
+			"README.txt": []byte("this is a test file"),
+		}
+		stage, err := ocfl.StageBytes(content, algReg.All()...)
+		be.NilErr(t, err)
+		commit := &ocfl.Commit{
+			ID:      "new-object",
+			Stage:   stage,
+			Message: "new object",
+			User: ocfl.User{
+				Name: "Anna Karenina",
+			},
+			Spec: ocfl.Spec1_1,
+		}
+		be.NilErr(t, obj.Commit(ctx, commit))
+		be.DeepEqual(t, []string{"size"}, obj.Inventory().FixityAlgorithms())
+		v := ocfl.ValidateObject(ctx, fsys, ".", ocfl.ValidationAlgorithms(algReg))
+		be.NilErr(t, v.Err())
 	})
 	t.Run("update fixtures", testUpdateFixtures)
 }
