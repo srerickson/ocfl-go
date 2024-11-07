@@ -252,6 +252,10 @@ func (inv *Inventory) Validate() *ocfl.Validation {
 			err := fmt.Errorf("version %s missing recommended field: 'message'", vname)
 			v.AddWarn(ec(err, codes.W007(ocflV)))
 		}
+		if ver.User == nil {
+			err := fmt.Errorf("version %s missing recommended field: 'user'", vname)
+			v.AddWarn(ec(err, codes.W007(ocflV)))
+		}
 		if ver.User != nil {
 			if ver.User.Name == "" {
 				err := fmt.Errorf("version %s user missing required field: 'name'", vname)
@@ -532,10 +536,7 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 	if err := inv.setJsonDigest(raw); err != nil {
 		v.AddFatal(err)
 	}
-	if v.Err() != nil {
-		return nil, v
-	}
-	v = inv.Validate()
+	v.Add(inv.Validate())
 	if v.Err() != nil {
 		return nil, v
 	}

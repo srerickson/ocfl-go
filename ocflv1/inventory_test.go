@@ -9,6 +9,15 @@ import (
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
+func TestValidateInventory(t *testing.T) {
+	for desc, test := range testInventories {
+		t.Run(desc, func(t *testing.T) {
+			inv, vldr := ocflv1.ValidateInventoryBytes([]byte(test.data), ocfl.Spec1_0)
+			test.expect(t, inv, vldr)
+		})
+	}
+}
+
 type testInventory struct {
 	data   string
 	expect func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation)
@@ -127,6 +136,51 @@ var testInventories = map[string]testInventory{
 			be.NilErr(t, v.Err())
 		},
 	},
+	// Warn inventories
+	`missing_version_user`: {
+		data: `{
+			"digestAlgorithm": "sha512",
+			"head": "v1",
+			"id": "http://example.org/minimal_no_content",
+			"manifest": {},
+			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"versions": {
+			  "v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { }
+			  }
+			}
+		  }`,
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.NilErr(t, v.Err())
+			testutil.ErrorsIncludeOCFLCode(t, "W007", v.WarnErrors()...)
+		},
+	},
+	// Warn inventories
+	`missing_version_message`: {
+		data: `{
+				"digestAlgorithm": "sha512",
+				"head": "v1",
+				"id": "http://example.org/minimal_no_content",
+				"manifest": {},
+				"type": "https://ocfl.io/1.0/spec/#inventory",
+				"versions": {
+				  "v1": {
+					"created": "2019-01-01T02:03:04Z",
+					"state": { },
+					"user": {
+				  		"address": "mailto:a_person@example.org",
+				  		"name": "A Person"
+					}
+				  }
+				}
+			  }`,
+		expect: func(t *testing.T, inv *ocflv1.Inventory, v *ocfl.Validation) {
+			be.NilErr(t, v.Err())
+			testutil.ErrorsIncludeOCFLCode(t, "W007", v.WarnErrors()...)
+		},
+	},
 	// Bad inventories
 	`missing_id`: {
 		data: `{
@@ -149,7 +203,6 @@ var testInventories = map[string]testInventory{
 		},
 	},
 	`bad_digestAlgorithm`: {
-
 		data: `{
 			"digestAlgorithm": "sha51",
 			"head": "v1",
@@ -508,7 +561,6 @@ var testInventories = map[string]testInventory{
 		},
 	},
 	`bad_manifest_basepathconflict`: {
-
 		data: `{
 			"digestAlgorithm": "sha512",
 			"head": "v3",
@@ -690,13 +742,4 @@ var testInventories = map[string]testInventory{
 			testutil.ErrorsIncludeOCFLCode(t, "E054", v.Errors()...)
 		},
 	},
-}
-
-func TestValidateInventory(t *testing.T) {
-	for desc, test := range testInventories {
-		t.Run(desc, func(t *testing.T) {
-			inv, vldr := ocflv1.ValidateInventoryBytes([]byte(test.data), ocfl.Spec1_0)
-			test.expect(t, inv, vldr)
-		})
-	}
 }
