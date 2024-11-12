@@ -306,12 +306,13 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 	return nil
 }
 
-// filesIter returns an iterator that yields PathInfo for files in the dir
-func filesIter(ctx context.Context, api FilesAPI, buck string, dir string) func(func(ocfl.FileInfo, error) bool) {
-	return func(yield func(ocfl.FileInfo, error) bool) {
+// walkFiles returns an iterator that yields PathInfo for files in the dir
+func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) (ocfl.FileSeq, func() error) {
+	var err error
+	seq := func(yield func(*ocfl.FileRef) bool) {
 		const op = "list_files"
 		if !fs.ValidPath(dir) {
-			yield(ocfl.FileInfo{}, pathErr(op, dir, fs.ErrInvalid))
+			err = pathErr(op, dir, fs.ErrInvalid)
 			return
 		}
 		params := &s3v2.ListObjectsV2Input{
@@ -322,18 +323,28 @@ func filesIter(ctx context.Context, api FilesAPI, buck string, dir string) func(
 			params.Prefix = aws.String(dir + "/")
 		}
 		for {
-			listPage, err := api.ListObjectsV2(ctx, params)
+			var listPage *s3v2.ListObjectsV2Output
+			listPage, err = api.ListObjectsV2(ctx, params)
 			if err != nil {
-				yield(ocfl.FileInfo{}, pathErr(op, dir, err))
+				err = pathErr(op, dir, err)
 				return
 			}
 			for _, s3obj := range listPage.Contents {
-				info := ocfl.FileInfo{
-					Path: *s3obj.Key,
-					Size: *s3obj.Size,
-					Type: fs.ModeIrregular,
+				refPath := *s3obj.Key
+				if dir != "." {
+					refPath = strings.TrimPrefix(refPath, dir+"/")
 				}
-				if !yield(info, nil) {
+				info := &ocfl.FileRef{
+					BaseDir: dir,
+					Path:    refPath,
+					Info: &iofsInfo{
+						name:    path.Base(*s3obj.Key),
+						size:    *s3obj.Size,
+						mode:    fs.ModeIrregular,
+						modTime: *s3obj.LastModified,
+					},
+				}
+				if !yield(info) {
 					return
 				}
 			}
@@ -343,6 +354,7 @@ func filesIter(ctx context.Context, api FilesAPI, buck string, dir string) func(
 			}
 		}
 	}
+	return seq, func() error { return err }
 }
 
 // s3File implements fs.File

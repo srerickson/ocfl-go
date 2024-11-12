@@ -13,7 +13,6 @@ import (
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/extension"
-	"github.com/srerickson/ocfl-go/internal/pipeline"
 	"github.com/srerickson/ocfl-go/logging"
 	"github.com/srerickson/ocfl-go/ocflv1/codes"
 	"golang.org/x/sync/errgroup"
@@ -190,10 +189,11 @@ func (imp OCFL) ValidateObjectRoot(ctx context.Context, fsys ocfl.FS, dir string
 
 func (imp OCFL) ValidateObjectVersion(ctx context.Context, obj ocfl.ReadObject, vnum ocfl.VNum, verInv ocfl.ReadInventory, prevInv ocfl.ReadInventory, vldr *ocfl.ObjectValidation) error {
 	fsys := obj.FS()
-	vDir := path.Join(obj.Path(), vnum.String())
+	vnumStr := vnum.String()
+	fullVerDir := path.Join(obj.Path(), vnumStr) // version directory path relative to FS
 	vSpec := imp.spec
 	rootInv := obj.Inventory() // headInv is assumed to be valid
-	vDirEntries, err := fsys.ReadDir(ctx, vDir)
+	vDirEntries, err := fsys.ReadDir(ctx, fullVerDir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		// can't read version directory for some reason, but not because it
 		// doesn't exist.
@@ -206,14 +206,14 @@ func (imp OCFL) ValidateObjectVersion(ctx context.Context, obj ocfl.ReadObject, 
 		vldr.AddFatal(ec(err, codes.E015(vSpec)))
 	}
 	if !vdirState.hasInventory {
-		err := fmt.Errorf("missing %s/inventory.json", vnum.String())
+		err := fmt.Errorf("missing %s/inventory.json", vnumStr)
 		vldr.AddWarn(ec(err, codes.W010(vSpec)))
 	}
 	if verInv != nil {
 		verInvValidation := verInv.Validate()
-		vldr.PrefixAdd(vnum.String()+"/inventory.json", verInvValidation)
-		if err := ocfl.ValidateInventorySidecar(ctx, verInv, fsys, vDir); err != nil {
-			err := fmt.Errorf("%s/inventory.json: %w", vnum.String(), err)
+		vldr.PrefixAdd(vnumStr+"/inventory.json", verInvValidation)
+		if err := ocfl.ValidateInventorySidecar(ctx, verInv, fsys, fullVerDir); err != nil {
+			err := fmt.Errorf("%s/inventory.json: %w", vnumStr, err)
 			switch {
 			case errors.Is(err, ocfl.ErrInventorySidecarContents):
 				vldr.AddFatal(ec(err, codes.E061(imp.spec)))
@@ -239,33 +239,31 @@ func (imp OCFL) ValidateObjectVersion(ctx context.Context, obj ocfl.ReadObject, 
 			}
 		}
 	}
+	cdName := rootInv.ContentDirectory()
 	for _, d := range vdirState.dirs {
-		// only be directory SHOULD be content directory
-		if d != rootInv.ContentDirectory() {
+		// the only directory in the version directory SHOULD be the content directory
+		if d != cdName {
 			err := fmt.Errorf(`extra directory in %s: %s`, vnum, d)
 			vldr.AddWarn(ec(err, codes.W002(vSpec)))
 			continue
 		}
-		// add version content directory to validation state
+		// add version content files to validation state
 		var added int
-		var iterErr error
-		ocfl.Files(ctx, fsys, path.Join(vDir, rootInv.ContentDirectory()))(func(info ocfl.FileInfo, err error) bool {
-			if err != nil {
-				iterErr = err
-				return false
-			}
-			// convert fs-relative path to object-relative path
-			vldr.AddExistingContent(strings.TrimPrefix(info.Path, obj.Path()+"/"))
+		fullVerContDir := path.Join(fullVerDir, cdName)
+		contentFiles, filesErrFn := ocfl.WalkFiles(ctx, fsys, fullVerContDir)
+		for contentFile := range contentFiles {
+			// convert from path relative to version content directory to path
+			// relative to the object
+			vldr.AddExistingContent(path.Join(vnumStr, cdName, contentFile.Path))
 			added++
-			return true
-		})
-		if iterErr != nil {
-			vldr.AddFatal(iterErr)
-			return iterErr
+		}
+		if err := filesErrFn(); err != nil {
+			vldr.AddFatal(err)
+			return err
 		}
 		if added == 0 {
 			// content directory exists but it's empty
-			err := fmt.Errorf("content directory (%s) contains no files", rootInv.ContentDirectory())
+			err := fmt.Errorf("content directory (%s) is empty directory", fullVerContDir)
 			vldr.AddFatal(ec(err, codes.E016(vSpec)))
 		}
 	}
@@ -283,33 +281,17 @@ func (imp OCFL) ValidateObjectContent(ctx context.Context, obj ocfl.ReadObject, 
 		newVld.AddFatal(ec(err, codes.E023(imp.spec)))
 	}
 	if !v.SkipDigests() {
-		numWorkers := v.DigestConcurrency()
-		work := v.ExistingContentDigests()
+		alg := obj.Inventory().DigestAlgorithm()
+		digests := v.ExistingContentDigests(obj.FS(), obj.Path(), alg)
+		numgos := v.DigestConcurrency()
 		registry := v.ValidationAlgorithms()
-		workFn := func(pd ocfl.PathDigests) (bool, error) {
-			f, err := obj.FS().OpenFile(ctx, path.Join(obj.Path(), pd.Path))
-			if err != nil {
-				return false, err
-			}
-			if err := pd.Digests.Validate(f, registry); err != nil {
-				f.Close()
-				var digestErr *digest.DigestError
-				if errors.As(err, &digestErr) {
-					digestErr.Path = pd.Path
-				}
-				return false, err
-			}
-			return true, f.Close()
-		}
-		for result := range pipeline.Results(work, workFn, numWorkers) {
-			if result.Err != nil {
-				var digestErr *digest.DigestError
-				switch {
-				case errors.As(result.Err, &digestErr):
-					newVld.AddFatal(ec(digestErr, codes.E093(imp.spec)))
-				default:
-					newVld.AddFatal(result.Err)
-				}
+		for err := range digests.ValidateBatch(ctx, registry, numgos) {
+			var digestErr *digest.DigestError
+			switch {
+			case errors.As(err, &digestErr):
+				newVld.AddFatal(ec(digestErr, codes.E093(imp.spec)))
+			default:
+				newVld.AddFatal(err)
 			}
 		}
 	}

@@ -7,7 +7,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"path"
 )
 
 var ErrNotFile = errors.New("not a file")
@@ -40,16 +39,18 @@ type CopyFS interface {
 	Copy(ctx context.Context, dst string, src string) error
 }
 
-type ioFS struct {
-	fs.FS
-}
-
 // NewFS wraps an io/fs.FS as an ocfl.FS
 func NewFS(fsys fs.FS) FS { return &ioFS{FS: fsys} }
 
 // DirFS is shorthand for NewFS(os.DirFS(dir))
 func DirFS(dir string) FS { return NewFS(os.DirFS(dir)) }
 
+// ioFS wraps and fs.FS
+type ioFS struct {
+	fs.FS
+}
+
+// OpenFile implementes FS for ioFS
 func (fsys *ioFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, &fs.PathError{
@@ -76,6 +77,8 @@ func (fsys *ioFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	}
 	return f, nil
 }
+
+// ReadDir implements FS for ioFS.
 func (fsys *ioFS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, &fs.PathError{
@@ -105,6 +108,7 @@ func (fsys *ioFS) ReadDir(ctx context.Context, name string) ([]fs.DirEntry, erro
 
 }
 
+// ReadAll returns the contents of a file.
 func ReadAll(ctx context.Context, fsys FS, name string) ([]byte, error) {
 	f, err := fsys.OpenFile(ctx, name)
 	if err != nil {
@@ -142,71 +146,12 @@ func Copy(ctx context.Context, dstFS WriteFS, dst string, srcFS FS, src string) 
 	return
 }
 
-// Files returns an iterator function that yields name/error pairs for
-// each file in dir and its subdirectories
-func Files(ctx context.Context, fsys FS, dir string) FileSeq {
-	if iter, ok := fsys.(FilesFS); ok {
-		return iter.Files(ctx, dir)
-	}
-	return func(yield func(FileInfo, error) bool) {
-		walkFiles(ctx, fsys, FileInfo{Path: dir}, yield)
-	}
-}
-
-// FileInfo provides path and size information for a file in an OCFL context.
-type FileInfo struct {
-	Path string      // File path relative to an FS
-	Size int64       // file size (-1 if the file size can't be determined)
-	Type fs.FileMode // just the type bits of the file mode
-}
-
-// FileSeq is an interator returned by Files(), that yields FileInfo values
-type FileSeq func(yield func(FileInfo, error) bool)
-
-// FilesFS is used to iterate over regular files in a directory and its sub-directories.
-type FilesFS interface {
-	FS
-	// Files returns a function iterator that yields all files in
-	// dir and its subdirectories
-	Files(ctx context.Context, dir string) FileSeq
-}
-
-// walkFiles calls yield for all files in dir and its subdirectories.
-func walkFiles(ctx context.Context, fsys FS, dir FileInfo, yield func(FileInfo, error) bool) bool {
-	entries, err := fsys.ReadDir(ctx, dir.Path)
+// StatFile returns file informatoin for the file name in fsys.
+func StatFile(ctx context.Context, fsys FS, name string) (fs.FileInfo, error) {
+	f, err := fsys.OpenFile(ctx, name)
 	if err != nil {
-		yield(dir, err)
-		return false
+		return nil, err
 	}
-	for _, e := range entries {
-		inf := FileInfo{
-			Path: path.Join(dir.Path, e.Name()),
-			Type: e.Type(),
-		}
-		switch {
-		case e.IsDir():
-			if !walkFiles(ctx, fsys, inf, yield) {
-				return false
-			}
-		case validFileType(e.Type()):
-			inf.Size = -1
-			if stat, err := e.Info(); err == nil {
-				inf.Size = stat.Size()
-			}
-			if !yield(inf, nil) {
-				return false
-			}
-		default:
-			if !yield(inf, ErrFileType) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// validFileType returns true if mode is ok for a file
-// in an OCFL object.
-func validFileType(mode fs.FileMode) bool {
-	return mode.IsDir() || mode.IsRegular() || mode.Type() == fs.ModeIrregular
+	defer f.Close()
+	return f.Stat()
 }

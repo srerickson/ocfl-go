@@ -24,6 +24,8 @@ type Object struct {
 	ocfl OCFL
 	// object id used to open the object from the root
 	expectID string
+	// the object must exist: don't create a new object.
+	mustExist bool
 }
 
 // NewObject returns an *Object for managing the OCFL object at path in fsys.
@@ -39,7 +41,14 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 	inv, err := readUnknownInventory(ctx, obj.globals.OCFLs(), fsys, dir)
 	if err != nil {
 		var pthError *fs.PathError
-		if !errors.As(err, &pthError) || path.Base(pthError.Path) != inventoryBase {
+		if !errors.As(err, &pthError) {
+			return nil, err
+		}
+		if path.Base(pthError.Path) != inventoryBase {
+			// error is not from opening `inventory.json`
+			return nil, err
+		}
+		if !errors.Is(err, fs.ErrNotExist) || obj.mustExist {
 			return nil, err
 		}
 	}
@@ -333,7 +342,15 @@ func (o *uninitializedObject) Inventory() ReadInventory                   { retu
 func (o *uninitializedObject) Path() string                               { return o.path }
 func (o *uninitializedObject) VersionFS(ctx context.Context, v int) fs.FS { return nil }
 
+// ObjectOptions are used to configure the behavior of NewObject()
 type ObjectOption func(*Object)
+
+// ObjectMustExists requires the object to exist
+func ObjectMustExist() ObjectOption {
+	return func(o *Object) {
+		o.mustExist = true
+	}
+}
 
 func objectExpectedID(id string) ObjectOption {
 	return func(o *Object) {

@@ -15,7 +15,6 @@ import (
 	awsS3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/s3"
-	"github.com/srerickson/ocfl-go/internal/pipeline"
 	"github.com/srerickson/ocfl-go/logging"
 	"github.com/srerickson/ocfl-go/ocflv1"
 )
@@ -39,42 +38,59 @@ func main() {
 		logger.Error("can't parse storage root argument", "err", err)
 		os.Exit(1)
 	}
-	if err := listObjects(ctx, fsys, dir, numgos, logger); err != nil {
+	if err := listObjects2(ctx, fsys, dir, numgos, logger); err != nil {
 		logger.Error("exit with errors", "err", err)
 		os.Exit(1)
 	}
 }
 
-func listObjects(ctx context.Context, fsys ocfl.FS, dir string, gos int, _ *slog.Logger) error {
-	objectDirs := func(yield func(string) bool) {
-		for dir, err := range ocfl.ObjectPaths(ctx, fsys, dir) {
-			if err != nil {
-				break
-			}
-			if !yield(dir) {
-				break
-			}
-		}
-	}
-	getID := func(dir string) (ocfl.ReadInventory, error) {
-		obj, err := ocfl.NewObject(ctx, fsys, dir)
+func listObjects2(ctx context.Context, fsys ocfl.FS, dir string, numgos int, log *slog.Logger) (err error) {
+	allFiles, walkErrFn := ocfl.WalkFiles(ctx, fsys, dir)
+	defer func() {
+		err = walkErrFn()
+	}()
+	decls := allFiles.Filter(func(f *ocfl.FileRef) bool { return f.Namaste().IsObject() })
+	for obj, err := range decls.OpenObjectsBatch(ctx, numgos) {
 		if err != nil {
-			return nil, err
+			log.Error(err.Error())
+			continue
 		}
-		return obj.Inventory(), nil
+		id := obj.Inventory().ID()
+		fmt.Println(id)
 	}
-	var err error
-	resultIter := pipeline.Results(objectDirs, getID, gos)
-	resultIter(func(r pipeline.Result[string, ocfl.ReadInventory]) bool {
-		if r.Err != nil {
-			err = r.Err
-			return false
-		}
-		fmt.Println(r.In, r.Out.ID())
-		return true
-	})
-	return err
+	return
 }
+
+// func listObjects(ctx context.Context, fsys ocfl.FS, dir string, gos int, _ *slog.Logger) error {
+// 	objectDirs := func(yield func(string) bool) {
+// 		for dir, err := range ocfl.ObjectPaths(ctx, fsys, dir) {
+// 			if err != nil {
+// 				break
+// 			}
+// 			if !yield(dir) {
+// 				break
+// 			}
+// 		}
+// 	}
+// 	getID := func(dir string) (ocfl.ReadInventory, error) {
+// 		obj, err := ocfl.NewObject(ctx, fsys, dir)
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 		return obj.Inventory(), nil
+// 	}
+// 	var err error
+// 	resultIter := pipeline.Results(objectDirs, getID, gos)
+// 	resultIter(func(r pipeline.Result[string, ocfl.ReadInventory]) bool {
+// 		if r.Err != nil {
+// 			err = r.Err
+// 			return false
+// 		}
+// 		fmt.Println(r.In, r.Out.ID())
+// 		return true
+// 	})
+// 	return err
+// }
 
 func parseStoreConn(ctx context.Context, name string) (ocfl.FS, string, error) {
 	//if we were using s3-based backend:

@@ -102,6 +102,12 @@ func (s Set) ConflictsWith(other Set) []string {
 	return keys
 }
 
+func (s Set) Delete(id string) string {
+	val := s[id]
+	delete(s, id)
+	return val
+}
+
 // Validate digests the reader using all algorithms used in s found in reg.
 // An error is returned in the resulting digests values conflict with those
 // in s.

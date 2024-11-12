@@ -68,6 +68,16 @@ func (n Namaste) Body() string {
 	return n.Type + `_` + string(n.Version) + "\n"
 }
 
+// IsObject returs true if n's type is 'ocfl_object'
+func (n Namaste) IsObject() bool {
+	return n.Type == NamasteTypeObject
+}
+
+// IsStore returns true if n's type is 'ocfl'
+func (n Namaste) IsStore() bool {
+	return n.Type == NamasteTypeStore
+}
+
 func ParseNamaste(name string) (n Namaste, err error) {
 	m := namasteRE.FindStringSubmatch(name)
 	if len(m) != 3 {

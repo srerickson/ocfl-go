@@ -28,10 +28,10 @@ const (
 )
 
 var (
-	_ ocfl.FS      = (*s3.BucketFS)(nil)
-	_ ocfl.CopyFS  = (*s3.BucketFS)(nil)
-	_ ocfl.WriteFS = (*s3.BucketFS)(nil)
-	_ ocfl.FilesFS = (*s3.BucketFS)(nil)
+	_ ocfl.FS         = (*s3.BucketFS)(nil)
+	_ ocfl.CopyFS     = (*s3.BucketFS)(nil)
+	_ ocfl.WriteFS    = (*s3.BucketFS)(nil)
+	_ ocfl.FileWalker = (*s3.BucketFS)(nil)
 )
 
 func TestOpenFile(t *testing.T) {
@@ -428,14 +428,14 @@ func TestCopy(t *testing.T) {
 	}
 }
 
-func TestFiles(t *testing.T) {
+func TestWalkFiles(t *testing.T) {
 	ctx := context.Background()
 	type testCase struct {
 		desc   string
 		mock   func(t *testing.T) *mock.S3API
 		bucket string
 		dir    string
-		expect func(*testing.T, *mock.S3API, []ocfl.FileInfo, error)
+		expect func(*testing.T, *mock.S3API, []*ocfl.FileRef, error)
 	}
 	cases := []testCase{
 		{
@@ -451,11 +451,12 @@ func TestFiles(t *testing.T) {
 				)
 			},
 			bucket: bucket,
-			expect: func(t *testing.T, state *mock.S3API, files []ocfl.FileInfo, err error) {
+			expect: func(t *testing.T, state *mock.S3API, files []*ocfl.FileRef, err error) {
 				be.NilErr(t, err)
 				be.Equal(t, 5, len(files))
 				for _, f := range files {
-					be.True(t, strings.HasPrefix(f.Path, "obj/"))
+					be.Nonzero(t, f.Info)
+					be.True(t, strings.HasPrefix(f.FullPath(), "obj/"))
 				}
 			},
 		},
@@ -466,7 +467,7 @@ func TestFiles(t *testing.T) {
 				return mock.New(bucket)
 			},
 			bucket: bucket,
-			expect: func(t *testing.T, state *mock.S3API, files []ocfl.FileInfo, err error) {
+			expect: func(t *testing.T, state *mock.S3API, files []*ocfl.FileRef, err error) {
 				isInvalidPathError(t, err)
 			},
 		},
@@ -478,17 +479,12 @@ func TestFiles(t *testing.T) {
 				api = tcase.mock(t)
 			}
 			fsys := s3.BucketFS{Bucket: tcase.bucket, S3: api}
-			files := []ocfl.FileInfo{}
-			var iterErr error
-			fsys.Files(ctx, tcase.dir)(func(info ocfl.FileInfo, err error) bool {
-				if err != nil {
-					iterErr = err
-					return false
-				}
+			files := []*ocfl.FileRef{}
+			fileInfos, errFn := fsys.WalkFiles(ctx, tcase.dir)
+			for info := range fileInfos {
 				files = append(files, info)
-				return true
-			})
-			tcase.expect(t, api, files, iterErr)
+			}
+			tcase.expect(t, api, files, errFn())
 		})
 	}
 }
