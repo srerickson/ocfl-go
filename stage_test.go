@@ -2,49 +2,110 @@ package ocfl_test
 
 import (
 	"context"
-	"io"
-	"strings"
+	"errors"
+	"io/fs"
 	"testing"
 
+	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
 )
 
+func TestNewStage(t *testing.T) {
+	ctx := context.Background()
+	testdataFS := ocfl.DirFS(`testdata`)
+	fixtureFiles := []string{
+		"content-fixture/hello.csv",
+		"content-fixture/folder1/file.txt",
+	}
+	stage, err := ocfl.Files(testdataFS, fixtureFiles...).
+		Digest(ctx, digest.SHA256, digest.BLAKE2B_160, digest.SIZE).
+		Stage()
+	be.NilErr(t, err)
+	be.Equal(t, stage.DigestAlgorithm.ID(), `sha256`)
+	for _, n := range fixtureFiles {
+		digest := stage.State.GetDigest(n)
+		be.Nonzero(t, digest)
+		fsys, path := stage.GetContent(digest)
+		be.Nonzero(t, fsys)
+		be.Nonzero(t, path)
+		be.Nonzero(t, stage.FixitySource.GetFixity(digest)[`size`])
+		be.Nonzero(t, stage.FixitySource.GetFixity(digest)[`blake2b-160`])
+	}
+	t.Run("missing file", func(t *testing.T) {
+		digests, digestErrFn := ocfl.Files(testdataFS, "missing").
+			Digest(ctx, digest.SHA256, digest.BLAKE2B_160, digest.SIZE).
+			UntilErr()
+		_, err := digests.Stage()
+		be.NilErr(t, err)
+		be.True(t, errors.Is(digestErrFn(), fs.ErrNotExist))
+	})
+	t.Run("inconsistent digest algorithms", func(t *testing.T) {
+		var digests ocfl.FileDigestsSeq = func(yield func(*ocfl.FileDigests) bool) {
+			// sha256
+			for d := range ocfl.Files(testdataFS, fixtureFiles[0]).Digest(ctx, digest.SHA256) {
+				if !yield(d) {
+					break
+				}
+			}
+			// sha512
+			for d := range ocfl.Files(testdataFS, fixtureFiles[1]).Digest(ctx, digest.SHA512) {
+				if !yield(d) {
+					break
+				}
+			}
+		}
+		_, err := digests.Stage()
+		be.In(t, "inconsistent digest algorithms", err.Error())
+	})
+	t.Run("inconsistent base dir", func(t *testing.T) {
+		var digests ocfl.FileDigestsSeq = func(yield func(*ocfl.FileDigests) bool) {
+			files, walkErr := ocfl.WalkFiles(ctx, testdataFS, "content-fixture/folder1")
+			for d := range files.Digest(ctx, digest.SHA512) {
+				if !yield(d) {
+					break
+				}
+			}
+			be.NilErr(t, walkErr())
+			for d := range ocfl.Files(testdataFS, fixtureFiles[1]).Digest(ctx, digest.SHA512) {
+				if !yield(d) {
+					break
+				}
+			}
+		}
+		_, err := digests.Stage()
+		be.In(t, "inconsistent base directory", err.Error())
+	})
+	t.Run("missing digest", func(t *testing.T) {
+		var digests ocfl.FileDigestsSeq = func(yield func(*ocfl.FileDigests) bool) {
+			files, walkErr := ocfl.WalkFiles(ctx, testdataFS, "content-fixture/folder1")
+			for d := range files.Digest(ctx, digest.SHA512) {
+				d.Digests.Delete(digest.SHA512.ID())
+				if !yield(d) {
+					return
+				}
+			}
+			be.NilErr(t, walkErr())
+		}
+		_, err := digests.Stage()
+		be.In(t, "missing sha512", err.Error())
+	})
+}
+
 func TestStageDir(t *testing.T) {
 	ctx := context.Background()
-	fsys := ocfl.DirFS("testdata")
-	stage, err := ocfl.StageDir(ctx, fsys, "content-fixture", digest.SHA256, digest.MD5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stage.DigestAlgorithm.ID() != digest.SHA256.ID() {
-		t.Fatalf("stage's alg isn't %s", digest.SHA256.ID())
-	}
-	expectedSize := 3
-	if got := len(stage.State); got != expectedSize {
-		t.Fatalf("expected %d, got %d", expectedSize, got)
-	}
+	testdataFS := ocfl.DirFS(`testdata`)
+	stage, err := ocfl.StageDir(ctx, testdataFS, "content-fixture", digest.SHA256, digest.MD5)
+	be.NilErr(t, err)
+	be.Equal(t, `sha256`, stage.DigestAlgorithm.ID())
+	be.Equal(t, 3, len(stage.State))
 	expectedPath := "folder1/folder2/sculpture-stone-face-head-888027.jpg"
 	expDigest := stage.State.GetDigest(expectedPath)
-	if expDigest == "" {
-		t.Logf("staged paths: %s", strings.Join(stage.State.Paths(), ", "))
-		t.Fatalf("stage state doesn't include digest for %q as expected", expectedPath)
-	}
+	be.Nonzero(t, expDigest)
 	resolveFS, resolvePath := stage.GetContent(expDigest)
-	if resolveFS == nil {
-		t.Fatal("the stage's content resolver returned nil FS")
-	}
-	resolveFile, err := resolveFS.OpenFile(ctx, resolvePath)
-	if err != nil {
-		t.Fatalf("opening staged file %q: %v", resolvePath, err)
-	}
-	defer resolveFile.Close()
-	if _, err := io.Copy(io.Discard, resolveFile); err != nil {
-		t.Fatalf("reading staged file: %v", err)
-	}
-	fixity := stage.FixitySource.GetFixity(expDigest)
-	if _, ok := fixity[digest.MD5.ID()]; !ok {
-		t.Fatalf("fixity doesn't have md5 value")
-	}
-
+	be.Nonzero(t, resolveFS)
+	be.Nonzero(t, resolvePath)
+	_, err = ocfl.StatFile(ctx, resolveFS, resolvePath)
+	be.NilErr(t, err)
+	be.Nonzero(t, stage.FixitySource.GetFixity(expDigest)[`md5`])
 }

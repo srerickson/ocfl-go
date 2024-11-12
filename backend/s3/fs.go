@@ -81,9 +81,19 @@ func (f *BucketFS) RemoveAll(ctx context.Context, name string) error {
 	return removeAll(ctx, f.S3, f.Bucket, name)
 }
 
-func (f *BucketFS) Files(ctx context.Context, dir string) ocfl.FileSeq {
+func (f *BucketFS) WalkFiles(ctx context.Context, dir string) (ocfl.FileSeq, func() error) {
 	f.debugLog(ctx, "s3:list_files", "bucket", f.Bucket, "prefix", dir)
-	return filesIter(ctx, f.S3, f.Bucket, dir)
+	files, errFn := walkFiles(ctx, f.S3, f.Bucket, dir)
+	// FIXME: the values yielded by walkfiles don't include the FS, we need to
+	// add it here.
+	return func(yield func(*ocfl.FileRef) bool) {
+		for file := range files {
+			file.FS = f
+			if !yield(file) {
+				break
+			}
+		}
+	}, errFn
 }
 
 type S3API interface {

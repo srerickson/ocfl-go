@@ -25,7 +25,7 @@ import (
 func TestObject(t *testing.T) {
 	ocflv1.Enable()
 	t.Run("Example", testObjectExample)
-	t.Run("Open", testOpenObject)
+	t.Run("New", testNewObject)
 	t.Run("Commit", testObjectCommit)
 	t.Run("ValidateObject", testValidateObject)
 	t.Run("ValidateFixtures", testValidateFixtures)
@@ -121,7 +121,7 @@ func testObjectExample(t *testing.T) {
 }
 
 // OpenObject unit tests
-func testOpenObject(t *testing.T) {
+func testNewObject(t *testing.T) {
 	ctx := context.Background()
 	fsys := ocfl.DirFS(objectFixturesPath)
 
@@ -153,6 +153,15 @@ func testOpenObject(t *testing.T) {
 			path: "new-dir",
 			expect: func(t *testing.T, obj *ocfl.Object, err error) {
 				be.NilErr(t, err)
+			},
+		},
+		"not existing, must exist": {
+			ctx:  ctx,
+			fs:   fsys,
+			path: "new-dir",
+			opts: []ocfl.ObjectOption{ocfl.ObjectMustExist()},
+			expect: func(t *testing.T, obj *ocfl.Object, err error) {
+				be.True(t, errors.Is(err, fs.ErrNotExist))
 			},
 		},
 		"empty": {
@@ -225,12 +234,11 @@ func testObjectCommit(t *testing.T) {
 		be.NilErr(t, err)
 		obj, err := ocfl.NewObject(ctx, fsys, ".")
 		be.NilErr(t, err)
-		algReg := digest.NewAlgorithmRegistry(digest.SHA512, digest.SIZE)
 		// commit new object version from bytes:
 		content := map[string][]byte{
 			"README.txt": []byte("this is a test file"),
 		}
-		stage, err := ocfl.StageBytes(content, algReg.All()...)
+		stage, err := ocfl.StageBytes(content, digest.SHA512, digest.SIZE)
 		be.NilErr(t, err)
 		commit := &ocfl.Commit{
 			ID:      "new-object",
@@ -243,6 +251,7 @@ func testObjectCommit(t *testing.T) {
 		}
 		be.NilErr(t, obj.Commit(ctx, commit))
 		be.DeepEqual(t, []string{"size"}, obj.Inventory().FixityAlgorithms())
+		algReg := digest.NewAlgorithmRegistry(digest.SHA512, digest.SIZE)
 		v := ocfl.ValidateObject(ctx, fsys, ".", ocfl.ValidationAlgorithms(algReg))
 		be.NilErr(t, v.Err())
 	})

@@ -249,13 +249,22 @@ func (v *ObjectValidation) UnexpectedContent() iter.Seq[string] {
 }
 
 // ExistingContent digests returns an iterator that yields the names and digests
-// of files that exist and were reference in the inventory added to the
+// of files that exist and were referenced in the inventory added to the
 // valiation.
-func (v *ObjectValidation) ExistingContentDigests() iter.Seq[PathDigests] {
-	return func(yield func(PathDigests) bool) {
+func (v *ObjectValidation) ExistingContentDigests(fsys FS, objPath string, alg digest.Algorithm) FileDigestsSeq {
+	return func(yield func(*FileDigests) bool) {
 		for name, entry := range v.files {
 			if entry.exists && len(entry.expected) > 0 {
-				if !yield(PathDigests{Path: name, Digests: entry.expected}) {
+				fd := &FileDigests{
+					FileRef: FileRef{
+						FS:      fsys,
+						BaseDir: objPath,
+						Path:    name,
+					},
+					Algorithm: alg,
+					Digests:   entry.expected,
+				}
+				if !yield(fd) {
 					return
 				}
 			}

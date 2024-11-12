@@ -30,7 +30,7 @@ func S3Enabled() bool { return os.Getenv(envS3Enabled) != "" }
 func S3Client(ctx context.Context) (*s3.Client, error) {
 	endpoint := os.Getenv(envS3Enabled)
 	if endpoint == "" {
-		return nil, errors.New("S3 not enabled in thest test environment: $OCFL_TEST_S3 not set.")
+		return nil, errors.New("S3 not enabled in thest test environment: $OCFL_TEST_S3 not set")
 	}
 	cnf, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
@@ -38,13 +38,14 @@ func S3Client(ctx context.Context) (*s3.Client, error) {
 	}
 	cli := s3.NewFromConfig(cnf, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(endpoint)
+		o.UsePathStyle = true
 	})
 	return cli, nil
 }
 
-// S3WriteFS returns an ocfl.WriteFS backed by a tempory S3 bucket. The bucket
+// TmpS3FS returns an *ocflS3.BucketFS backed by a tempory S3 bucket. The bucket
 // and its contents will be erased as part of the test's cleanup.
-func S3WriteFS(t *testing.T) ocfl.WriteFS {
+func TmpS3FS(t *testing.T, testdata ocfl.FS) *ocflS3.BucketFS {
 	t.Helper()
 	ctx := context.Background()
 	cli, err := S3Client(ctx)
@@ -60,7 +61,21 @@ func S3WriteFS(t *testing.T) ocfl.WriteFS {
 			t.Fatal("cleaning up S3 bucket:", err)
 		}
 	})
-	return &ocflS3.BucketFS{S3: cli, Bucket: bucket}
+	s3fs := &ocflS3.BucketFS{S3: cli, Bucket: bucket}
+	if testdata != nil {
+		files, errFn := ocfl.WalkFiles(ctx, testdata, ".")
+		for file := range files {
+			name := file.FullPath()
+			if err := ocfl.Copy(ctx, s3fs, name, testdata, name); err != nil {
+				t.Fatal("copying testdata to tmp S3 bucket: %w", err)
+			}
+		}
+		if err := errFn(); err != nil {
+			t.Fatal("reading from testdata:", err)
+		}
+	}
+
+	return s3fs
 }
 
 func TmpBucket(ctx context.Context, cli *s3.Client) (string, error) {
