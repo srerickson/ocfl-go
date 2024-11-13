@@ -138,3 +138,13 @@ func (state ObjectState) HasVersionDir(v VNum) bool {
 func (state ObjectState) Empty() bool {
 	return state.Flags == 0 && len(state.VersionDirs) == 0 && len(state.Invalid) == 0
 }
+
+// Namaste return the ObjectState's Namaste value, which may be a zero value.
+func (state ObjectState) Namaste() Namaste {
+	var n Namaste
+	if state.HasNamaste() {
+		n.Version = state.Spec
+		n.Type = NamasteTypeObject
+	}
+	return n
+}

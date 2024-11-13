@@ -357,32 +357,3 @@ func objectExpectedID(id string) ObjectOption {
 		o.expectID = id
 	}
 }
-
-// ObjectPaths searches dir in fsys (and its subdirectories) for OCFL object
-// declarations and returns an iterator that yields each object path it finds.
-func ObjectPaths(ctx context.Context, fsys FS, dir string) func(yield func(string, error) bool) {
-	return func(yield func(string, error) bool) {
-		objectPathsWalk(ctx, fsys, dir, yield)
-	}
-}
-
-func objectPathsWalk(ctx context.Context, fsys FS, dir string, yield func(string, error) bool) bool {
-	entries, err := fsys.ReadDir(ctx, dir)
-	if err != nil {
-		yield("", err)
-		return false
-	}
-	state := ParseObjectDir(entries)
-	if state.HasNamaste() {
-		return yield(dir, nil)
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			subdir := path.Join(dir, e.Name())
-			if !objectPathsWalk(ctx, fsys, subdir, yield) {
-				return false
-			}
-		}
-	}
-	return true
-}
