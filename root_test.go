@@ -77,7 +77,6 @@ func TestRoot(t *testing.T) {
 		be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 		be.Equal(t, objID, sameObj.Inventory().ID())
 	})
-
 	t.Run("Objects", func(t *testing.T) {
 		t.Run("simple-root", func(t *testing.T) {
 			fsys := ocfl.DirFS(storeFixturePath)
@@ -85,15 +84,14 @@ func TestRoot(t *testing.T) {
 			root, err := ocfl.NewRoot(ctx, fsys, dir)
 			be.NilErr(t, err)
 			count := 0
-			for _, err := range root.Objects(ctx) {
-				be.NilErr(t, err)
+			dirs, walkErr := root.WalkObjectDirs(ctx)
+			for dir := range dirs {
+				valid := root.ValidateObjectDir(ctx, dir)
+				be.NilErr(t, valid.Err())
 				count++
 			}
 			be.Equal(t, 3, count)
-
-			valid := root.ValidateObjectDir(ctx, "http%3A%2F%2Fexample.org%2Fminimal_mixed_digests")
-			be.NilErr(t, valid.Err())
-
+			be.NilErr(t, walkErr())
 		})
 	})
 

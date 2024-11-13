@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"iter"
 	"path"
 
 	"github.com/srerickson/ocfl-go/extension"
@@ -136,30 +137,26 @@ func (r *Root) ResolveID(id string) (string, error) {
 	return objPath, nil
 }
 
-// ObjectPaths returns an iterator of object paths for the objects in the
-// storage root.
-func (r *Root) ObjectPaths(ctx context.Context) func(func(string, error) bool) {
-	return ObjectPaths(ctx, r.fs, r.dir)
-}
-
-// Objects returns an iterator of objects in the storage root.
-func (r *Root) Objects(ctx context.Context) func(func(*Object, error) bool) {
-	return func(yield func(*Object, error) bool) {
-		for dir, err := range r.ObjectPaths(ctx) {
+// WalkObjectDirs returns an iterator that walks r's directory structure,
+// yielding paths and directory entries for all objects. If an error is
+// encountered, iteration terminates. The terminating error is accessed with the
+// returned error function.
+func (r *Root) WalkObjectDirs(ctx context.Context) (iter.Seq2[string, []fs.DirEntry], func() error) {
+	var walkErr error
+	dirs := func(yield func(string, []fs.DirEntry) bool) {
+		for dir, err := range r.walkDirs(ctx) {
 			if err != nil {
-				yield(nil, err)
-				return
+				walkErr = err
+				break
 			}
-			obj, err := NewObject(ctx, r.fs, dir)
-			if err != nil {
-				yield(nil, err)
-				return
-			}
-			if !yield(obj, nil) {
-				return
+			if ParseObjectDir(dir.entries).HasNamaste() {
+				if !yield(dir.path, dir.entries) {
+					break
+				}
 			}
 		}
 	}
+	return dirs, func() error { return walkErr }
 }
 
 // Path returns the root's dir relative to its FS
@@ -364,6 +361,42 @@ func InitRoot(spec Spec, layoutDesc string, extensions ...extension.Extension) R
 			spec:       spec,
 			layoutDesc: layoutDesc,
 			extensions: extensions,
+		}
+	}
+}
+
+func (root *Root) walkDirs(ctx context.Context) iter.Seq2[*rootDirRef, error] {
+	return func(yield func(*rootDirRef, error) bool) {
+		root.walkDir(ctx, &rootDirRef{path: "."}, yield)
+	}
+}
+
+// rootDirRef is a directory in a storage root
+type rootDirRef struct {
+	path    string // path relative to the storage root
+	entries []fs.DirEntry
+}
+
+// walkDir reads dir, yields the result, and calls walkDir on each subdirectory
+// unless dir is an object root
+func (root *Root) walkDir(ctx context.Context, ref *rootDirRef, yield func(*rootDirRef, error) bool) {
+	var err error
+	ref.entries, err = root.fs.ReadDir(ctx, path.Join(root.dir, ref.path))
+	if !yield(ref, err) {
+		return
+	}
+	if len(ref.entries) < 1 {
+		return
+	}
+	if ParseObjectDir(ref.entries).HasNamaste() {
+		// don't descend below object root directory
+		return
+	}
+	// TODO: don't descent below extension directories
+	for _, e := range ref.entries {
+		if e.IsDir() {
+			next := &rootDirRef{path: path.Join(ref.path, e.Name())}
+			root.walkDir(ctx, next, yield)
 		}
 	}
 }
