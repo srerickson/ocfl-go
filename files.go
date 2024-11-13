@@ -230,36 +230,16 @@ type FileErrSeq iter.Seq2[*FileRef, error]
 // UntilErr returns a new iterator yielding *FileRef values from seq that
 // terminates on the first non-nil error in seq. The terminating error is
 // returned by errFn.
-func (seq FileErrSeq) UntilErr() (files FileSeq, errFn func() error) {
-	var firstErr error
-	files = func(yield func(*FileRef) bool) {
-		for file, err := range seq {
-			if err != nil {
-				firstErr = err
-				break
-			}
-			if !yield(file) {
-				break
-			}
-		}
-	}
-	errFn = func() error { return firstErr }
-	return
+func (fileErrs FileErrSeq) UntilErr() (FileSeq, func() error) {
+	files, errFn := seqUntilErr(iter.Seq2[*FileRef, error](fileErrs))
+	return FileSeq(files), errFn
 }
 
 // IgnoreErr returns an iterator of *[FileRef]s in seq that are not associated
 // with an error.
-func (seq FileErrSeq) IgnoreErr() (files FileSeq) {
-	return func(yield func(*FileRef) bool) {
-		for file, err := range seq {
-			if err != nil {
-				continue
-			}
-			if !yield(file) {
-				break
-			}
-		}
-	}
+func (fileErrs FileErrSeq) IgnoreErr() FileSeq {
+	files := seqIgnoreErr(iter.Seq2[*FileRef, error](fileErrs))
+	return FileSeq(files)
 }
 
 // FileDigests is a [FileRef] plus digest values of the file contents.
@@ -386,21 +366,9 @@ func (digests FileDigestsSeq) Stage() (*Stage, error) {
 
 // UntilErr returns an iterator of *FileDigests from dfs that terminates on the
 // first non-nil error in dfs. The terminating error is returned by errFn
-func (dfs FileDigestsErrSeq) UntilErr() (digests FileDigestsSeq, errFn func() error) {
-	var firstErr error
-	digests = func(yield func(*FileDigests) bool) {
-		for file, err := range dfs {
-			if err != nil {
-				firstErr = err
-				break
-			}
-			if !yield(file) {
-				break
-			}
-		}
-	}
-	errFn = func() error { return firstErr }
-	return
+func (dfs FileDigestsErrSeq) UntilErr() (FileDigestsSeq, func() error) {
+	seq, errFn := seqUntilErr(iter.Seq2[*FileDigests, error](dfs))
+	return FileDigestsSeq(seq), errFn
 }
 
 func walkFiles(ctx context.Context, fsys FS, dir string) (FileSeq, func() error) {
@@ -470,4 +438,34 @@ var errBreakFileWalk = errors.New("break")
 // in an OCFL object.
 func validFileType(mode fs.FileMode) bool {
 	return mode.IsDir() || mode.IsRegular() || mode.Type() == fs.ModeIrregular
+}
+
+func seqUntilErr[T any](inSeq iter.Seq2[T, error]) (outSeq iter.Seq[T], errFn func() error) {
+	var firstErr error
+	outSeq = func(yield func(T) bool) {
+		for v, err := range inSeq {
+			if err != nil {
+				firstErr = err
+				break
+			}
+			if !yield(v) {
+				break
+			}
+		}
+	}
+	errFn = func() error { return firstErr }
+	return
+}
+
+func seqIgnoreErr[T any](inSeq iter.Seq2[T, error]) iter.Seq[T] {
+	return func(yield func(T) bool) {
+		for v, err := range inSeq {
+			if err != nil {
+				continue
+			}
+			if !yield(v) {
+				break
+			}
+		}
+	}
 }
