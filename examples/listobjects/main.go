@@ -33,24 +33,22 @@ func main() {
 		logger.Error("missing required storage root URI")
 		os.Exit(1)
 	}
-	fsys, dir, err := parseStoreConn(ctx, storeConn)
-	if err != nil {
-		logger.Error("can't parse storage root argument", "err", err)
-		os.Exit(1)
-	}
-	if err := listObjects2(ctx, fsys, dir, numgos, logger); err != nil {
+	if err := listObjects(ctx, storeConn, numgos, logger); err != nil {
 		logger.Error("exit with errors", "err", err)
 		os.Exit(1)
 	}
 }
 
-func listObjects2(ctx context.Context, fsys ocfl.FS, dir string, numgos int, log *slog.Logger) (err error) {
-	allFiles, walkErrFn := ocfl.WalkFiles(ctx, fsys, dir)
-	defer func() {
-		err = walkErrFn()
-	}()
-	decls := allFiles.Filter(func(f *ocfl.FileRef) bool { return f.Namaste().IsObject() })
-	for obj, err := range decls.OpenObjectsBatch(ctx, numgos) {
+func listObjects(ctx context.Context, storeConn string, numgos int, log *slog.Logger) (err error) {
+	fsys, dir, err := parseStoreConn(ctx, storeConn)
+	if err != nil {
+		return fmt.Errorf("can't parse storage root argument: %w", err)
+	}
+	root, err := ocfl.NewRoot(ctx, fsys, dir)
+	if err != nil {
+		return nil
+	}
+	for obj, err := range root.ObjectsBatch(ctx, numgos) {
 		if err != nil {
 			log.Error(err.Error())
 			continue
@@ -58,39 +56,8 @@ func listObjects2(ctx context.Context, fsys ocfl.FS, dir string, numgos int, log
 		id := obj.Inventory().ID()
 		fmt.Println(id)
 	}
-	return
+	return nil
 }
-
-// func listObjects(ctx context.Context, fsys ocfl.FS, dir string, gos int, _ *slog.Logger) error {
-// 	objectDirs := func(yield func(string) bool) {
-// 		for dir, err := range ocfl.ObjectPaths(ctx, fsys, dir) {
-// 			if err != nil {
-// 				break
-// 			}
-// 			if !yield(dir) {
-// 				break
-// 			}
-// 		}
-// 	}
-// 	getID := func(dir string) (ocfl.ReadInventory, error) {
-// 		obj, err := ocfl.NewObject(ctx, fsys, dir)
-// 		if err != nil {
-// 			return nil, err
-// 		}
-// 		return obj.Inventory(), nil
-// 	}
-// 	var err error
-// 	resultIter := pipeline.Results(objectDirs, getID, gos)
-// 	resultIter(func(r pipeline.Result[string, ocfl.ReadInventory]) bool {
-// 		if r.Err != nil {
-// 			err = r.Err
-// 			return false
-// 		}
-// 		fmt.Println(r.In, r.Out.ID())
-// 		return true
-// 	})
-// 	return err
-// }
 
 func parseStoreConn(ctx context.Context, name string) (ocfl.FS, string, error) {
 	//if we were using s3-based backend:
