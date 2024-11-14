@@ -51,7 +51,7 @@ func FindNamaste(items []fs.DirEntry) (Namaste, error) {
 	}
 }
 
-// Name returns the filename for d (0=TYPE_VERSION) or an empty string if d is
+// Name returns the filename for n ('0=TYPE_VERSION') or an empty string if n is
 // empty
 func (n Namaste) Name() string {
 	if n.Type == "" || n.Version.Empty() {

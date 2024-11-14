@@ -37,9 +37,9 @@ type Root struct {
 	initArgs *initRootArgs
 }
 
-// NewRoot returns a new *Root for working with the OCFL storage root at
+// NewRoot returns a new *[Root] for working with the OCFL storage root at
 // directory dir in fsys. It can be used to initialize new storage roots if the
-// InitRoot option is used, fsys is an ocfl.WriteFS, and dir is a non-existing
+// [InitRoot] option is used, fsys is an ocfl.WriteFS, and dir is a non-existing
 // or empty directory.
 func NewRoot(ctx context.Context, fsys FS, dir string, opts ...RootOption) (*Root, error) {
 	r := &Root{fs: fsys, dir: dir}
@@ -137,26 +137,48 @@ func (r *Root) ResolveID(id string) (string, error) {
 	return objPath, nil
 }
 
-// WalkObjectDirs returns an iterator that walks r's directory structure,
-// yielding paths and directory entries for all objects. If an error is
-// encountered, iteration terminates. The terminating error is accessed with the
-// returned error function.
-func (r *Root) WalkObjectDirs(ctx context.Context) (iter.Seq2[string, []fs.DirEntry], func() error) {
-	var walkErr error
-	dirs := func(yield func(string, []fs.DirEntry) bool) {
-		for dir, err := range r.walkDirs(ctx) {
-			if err != nil {
-				walkErr = err
-				break
-			}
-			if ParseObjectDir(dir.entries).HasNamaste() {
-				if !yield(dir.path, dir.entries) {
-					break
-				}
+// ObjectDeclarations returns an iterator that yields all OCFL object
+// declaration files in r. If an error occurs during iteration, it is returned
+// by the error function.
+func (r *Root) ObjectDeclarations(ctx context.Context) (FileSeq, func() error) {
+	allFiles, errFn := WalkFiles(ctx, r.fs, r.dir)
+	decls := allFiles.Filter(func(f *FileRef) bool { return f.Namaste().IsObject() })
+	return decls, errFn
+}
+
+// Objects returns an iterator that yields objects or an error for every object
+// declaration file in the root.
+func (r *Root) Objects(ctx context.Context) iter.Seq2[*Object, error] {
+	return func(yield func(*Object, error) bool) {
+		decls, listErr := r.ObjectDeclarations(ctx)
+		for obj, err := range decls.OpenObjects(ctx) {
+			if !yield(obj, err) {
+				return
 			}
 		}
+		if err := listErr(); err != nil {
+			yield(nil, err)
+		}
 	}
-	return dirs, func() error { return walkErr }
+}
+
+// ObjectsBatch returns an iterator that uses [FileSeq.OpenObjectsBatch] to open
+// objects in the root in numgos separate goroutines, yielding the results
+func (r *Root) ObjectsBatch(ctx context.Context, numgos int) iter.Seq2[*Object, error] {
+	return func(yield func(*Object, error) bool) {
+		allFiles, listErr := WalkFiles(ctx, r.fs, r.dir)
+		objs := allFiles.
+			Filter(func(f *FileRef) bool { return f.Namaste().IsObject() }).
+			OpenObjectsBatch(ctx, numgos)
+		for obj, err := range objs {
+			if !yield(obj, err) {
+				return
+			}
+		}
+		if err := listErr(); err != nil {
+			yield(nil, err)
+		}
+	}
 }
 
 // Path returns the root's dir relative to its FS
@@ -345,6 +367,7 @@ func writeExtensionConfig(ctx context.Context, fsys WriteFS, root string, config
 	return nil
 }
 
+// RootOption is used to configure the behavior of [NewRoot]()
 type RootOption func(*Root)
 
 type initRootArgs struct {
@@ -363,6 +386,30 @@ func InitRoot(spec Spec, layoutDesc string, extensions ...extension.Extension) R
 			extensions: extensions,
 		}
 	}
+}
+
+// TODO: export a function for iterating of object root's directory entries.
+//
+// WalkObjectDirs returns an iterator that walks r's directory structure,
+// yielding paths and directory entries for all objects. If an error is
+// encountered, iteration terminates. The terminating error is accessed with the
+// returned error function.
+func (r *Root) walkObjectDirs(ctx context.Context) (iter.Seq2[string, []fs.DirEntry], func() error) {
+	var walkErr error
+	dirs := func(yield func(string, []fs.DirEntry) bool) {
+		for dir, err := range r.walkDirs(ctx) {
+			if err != nil {
+				walkErr = err
+				break
+			}
+			if ParseObjectDir(dir.entries).HasNamaste() {
+				if !yield(dir.path, dir.entries) {
+					break
+				}
+			}
+		}
+	}
+	return dirs, func() error { return walkErr }
 }
 
 func (root *Root) walkDirs(ctx context.Context) iter.Seq2[*rootDirRef, error] {
