@@ -15,7 +15,7 @@ import (
 
 const (
 	// package version
-	Version       = "0.5.0"
+	Version       = "0.6.0"
 	LogsDir       = "logs"
 	ExtensionsDir = "extensions"
 )
