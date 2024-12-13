@@ -15,6 +15,7 @@ import (
 	"github.com/srerickson/ocfl-go/extension"
 	"github.com/srerickson/ocfl-go/logging"
 	"github.com/srerickson/ocfl-go/ocflv1/codes"
+	"github.com/srerickson/ocfl-go/validation"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -139,6 +140,7 @@ func (imp OCFL) Commit(ctx context.Context, obj ocfl.ReadObject, commit *ocfl.Co
 
 func (imp OCFL) ValidateObjectRoot(ctx context.Context, fsys ocfl.FS, dir string, state *ocfl.ObjectState, vldr *ocfl.ObjectValidation) (ocfl.ReadObject, error) {
 	// validate namaste
+	specStr := string(imp.spec)
 	decl := ocfl.Namaste{Type: ocfl.NamasteTypeObject, Version: imp.spec}
 	name := path.Join(dir, decl.Name())
 	err := ocfl.ValidateNamaste(ctx, fsys, name)
@@ -146,9 +148,9 @@ func (imp OCFL) ValidateObjectRoot(ctx context.Context, fsys ocfl.FS, dir string
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
 			err = fmt.Errorf("%s: %w", name, ocfl.ErrObjectNamasteNotExist)
-			vldr.AddFatal(ec(err, codes.E001(imp.spec)))
+			vldr.AddFatal(ec(err, codes.E001(specStr)))
 		default:
-			vldr.AddFatal(ec(err, codes.E007(imp.spec)))
+			vldr.AddFatal(ec(err, codes.E007(specStr)))
 		}
 		return nil, err
 	}
@@ -157,7 +159,7 @@ func (imp OCFL) ValidateObjectRoot(ctx context.Context, fsys ocfl.FS, dir string
 	if err != nil {
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
-			vldr.AddFatal(err, ec(err, codes.E063(imp.spec)))
+			vldr.AddFatal(err, ec(err, codes.E063(specStr)))
 		default:
 			vldr.AddFatal(err)
 		}
@@ -171,9 +173,9 @@ func (imp OCFL) ValidateObjectRoot(ctx context.Context, fsys ocfl.FS, dir string
 	if err := ocfl.ValidateInventorySidecar(ctx, inv.Inventory(), fsys, dir); err != nil {
 		switch {
 		case errors.Is(err, ocfl.ErrInventorySidecarContents):
-			vldr.AddFatal(ec(err, codes.E061(imp.spec)))
+			vldr.AddFatal(ec(err, codes.E061(specStr)))
 		default:
-			vldr.AddFatal(ec(err, codes.E060(imp.spec)))
+			vldr.AddFatal(ec(err, codes.E060(specStr)))
 		}
 	}
 	vldr.PrefixAdd("extensions directory", validateExtensionsDir(ctx, imp.spec, fsys, dir))
@@ -191,7 +193,7 @@ func (imp OCFL) ValidateObjectVersion(ctx context.Context, obj ocfl.ReadObject, 
 	fsys := obj.FS()
 	vnumStr := vnum.String()
 	fullVerDir := path.Join(obj.Path(), vnumStr) // version directory path relative to FS
-	vSpec := imp.spec
+	specStr := string(imp.spec)
 	rootInv := obj.Inventory() // headInv is assumed to be valid
 	vDirEntries, err := fsys.ReadDir(ctx, fullVerDir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -203,11 +205,11 @@ func (imp OCFL) ValidateObjectVersion(ctx context.Context, obj ocfl.ReadObject, 
 	vdirState := parseVersionDirState(vDirEntries)
 	for _, f := range vdirState.extraFiles {
 		err := fmt.Errorf(`unexpected file in %s: %s`, vnum, f)
-		vldr.AddFatal(ec(err, codes.E015(vSpec)))
+		vldr.AddFatal(ec(err, codes.E015(specStr)))
 	}
 	if !vdirState.hasInventory {
 		err := fmt.Errorf("missing %s/inventory.json", vnumStr)
-		vldr.AddWarn(ec(err, codes.W010(vSpec)))
+		vldr.AddWarn(ec(err, codes.W010(specStr)))
 	}
 	if verInv != nil {
 		verInvValidation := verInv.Validate()
@@ -216,25 +218,25 @@ func (imp OCFL) ValidateObjectVersion(ctx context.Context, obj ocfl.ReadObject, 
 			err := fmt.Errorf("%s/inventory.json: %w", vnumStr, err)
 			switch {
 			case errors.Is(err, ocfl.ErrInventorySidecarContents):
-				vldr.AddFatal(ec(err, codes.E061(imp.spec)))
+				vldr.AddFatal(ec(err, codes.E061(specStr)))
 			default:
-				vldr.AddFatal(ec(err, codes.E060(imp.spec)))
+				vldr.AddFatal(ec(err, codes.E060(specStr)))
 			}
 		}
 		if prevInv != nil && verInv.Spec().Cmp(prevInv.Spec()) < 0 {
 			err := fmt.Errorf("%s/inventory.json uses an older OCFL specification than than the previous version", vnum)
-			vldr.AddFatal(ec(err, codes.E103(vSpec)))
+			vldr.AddFatal(ec(err, codes.E103(specStr)))
 		}
 		if verInv.Head() != vnum {
 			err := fmt.Errorf("%s/inventory.json: 'head' does not matchs its directory", vnum)
-			vldr.AddFatal(ec(err, codes.E040(vSpec)))
+			vldr.AddFatal(ec(err, codes.E040(specStr)))
 		}
 		if verInv.Digest() != rootInv.Digest() {
 			imp.compareVersionInventory(obj, vnum, verInv, vldr)
 			if verInv.Digest() != rootInv.Digest() {
 				if err := vldr.AddInventoryDigests(verInv); err != nil {
 					err = fmt.Errorf("%s/inventory.json digests are inconsistent with other inventories: %w", vnum, err)
-					vldr.AddFatal(ec(err, codes.E066(vSpec)))
+					vldr.AddFatal(ec(err, codes.E066(specStr)))
 				}
 			}
 		}
@@ -244,7 +246,7 @@ func (imp OCFL) ValidateObjectVersion(ctx context.Context, obj ocfl.ReadObject, 
 		// the only directory in the version directory SHOULD be the content directory
 		if d != cdName {
 			err := fmt.Errorf(`extra directory in %s: %s`, vnum, d)
-			vldr.AddWarn(ec(err, codes.W002(vSpec)))
+			vldr.AddWarn(ec(err, codes.W002(specStr)))
 			continue
 		}
 		// add version content files to validation state
@@ -264,21 +266,22 @@ func (imp OCFL) ValidateObjectVersion(ctx context.Context, obj ocfl.ReadObject, 
 		if added == 0 {
 			// content directory exists but it's empty
 			err := fmt.Errorf("content directory (%s) is empty directory", fullVerContDir)
-			vldr.AddFatal(ec(err, codes.E016(vSpec)))
+			vldr.AddFatal(ec(err, codes.E016(specStr)))
 		}
 	}
 	return nil
 }
 
 func (imp OCFL) ValidateObjectContent(ctx context.Context, obj ocfl.ReadObject, v *ocfl.ObjectValidation) error {
+	specStr := string(imp.spec)
 	newVld := &ocfl.Validation{}
 	for name := range v.MissingContent() {
 		err := fmt.Errorf("missing content: %s", name)
-		newVld.AddFatal(ec(err, codes.E092(imp.spec)))
+		newVld.AddFatal(ec(err, codes.E092(specStr)))
 	}
 	for name := range v.UnexpectedContent() {
 		err := fmt.Errorf("unexpected content: %s", name)
-		newVld.AddFatal(ec(err, codes.E023(imp.spec)))
+		newVld.AddFatal(ec(err, codes.E023(specStr)))
 	}
 	if !v.SkipDigests() {
 		alg := obj.Inventory().DigestAlgorithm()
@@ -289,7 +292,7 @@ func (imp OCFL) ValidateObjectContent(ctx context.Context, obj ocfl.ReadObject, 
 			var digestErr *digest.DigestError
 			switch {
 			case errors.As(err, &digestErr):
-				newVld.AddFatal(ec(digestErr, codes.E093(imp.spec)))
+				newVld.AddFatal(ec(digestErr, codes.E093(specStr)))
 			default:
 				newVld.AddFatal(err)
 			}
@@ -331,18 +334,18 @@ func parseVersionDirState(entries []fs.DirEntry) versionDirState {
 
 func (imp OCFL) compareVersionInventory(obj ocfl.ReadObject, dirNum ocfl.VNum, verInv ocfl.ReadInventory, vldr *ocfl.ObjectValidation) {
 	rootInv := obj.Inventory()
-	vSpec := imp.spec
+	specStr := string(imp.spec)
 	if verInv.Head() == rootInv.Head() && verInv.Digest() != rootInv.Digest() {
 		err := fmt.Errorf("%s/inventor.json is not the same as the root inventory: digests don't match", dirNum)
-		vldr.AddFatal(ec(err, codes.E064(vSpec)))
+		vldr.AddFatal(ec(err, codes.E064(specStr)))
 	}
 	if verInv.ID() != rootInv.ID() {
 		err := fmt.Errorf("%s/inventory.json: 'id' doesn't match value in root inventory", dirNum)
-		vldr.AddFatal(ec(err, codes.E037(vSpec)))
+		vldr.AddFatal(ec(err, codes.E037(specStr)))
 	}
 	if verInv.ContentDirectory() != rootInv.ContentDirectory() {
 		err := fmt.Errorf("%s/inventory.json: 'contentDirectory' doesn't match value in root inventory", dirNum)
-		vldr.AddFatal(ec(err, codes.E019(vSpec)))
+		vldr.AddFatal(ec(err, codes.E019(specStr)))
 	}
 	// check that all version blocks in the version inventory
 	// match version blocks in the root inventory
@@ -351,7 +354,7 @@ func (imp OCFL) compareVersionInventory(obj ocfl.ReadObject, dirNum ocfl.VNum, v
 		rootVersion := rootInv.Version(v.Num())
 		if rootVersion == nil {
 			err := fmt.Errorf("root inventory.json has missing version: %s", v)
-			vldr.AddFatal(ec(err, codes.E046(vSpec)))
+			vldr.AddFatal(ec(err, codes.E046(specStr)))
 			continue
 		}
 		thisVerState := logicalState{
@@ -364,19 +367,19 @@ func (imp OCFL) compareVersionInventory(obj ocfl.ReadObject, dirNum ocfl.VNum, v
 		}
 		if !thisVerState.Eq(rootVerState) {
 			err := fmt.Errorf("%s/inventory.json has different logical state in its %s version block than the root inventory.json", dirNum, v)
-			vldr.AddFatal(ec(err, codes.E066(vSpec)))
+			vldr.AddFatal(ec(err, codes.E066(specStr)))
 		}
 		if thisVersion.Message() != rootVersion.Message() {
 			err := fmt.Errorf("%s/inventory.json has different 'message' in its %s version block than the root inventory.json", dirNum, v)
-			vldr.AddWarn(ec(err, codes.W011(vSpec)))
+			vldr.AddWarn(ec(err, codes.W011(specStr)))
 		}
 		if !reflect.DeepEqual(thisVersion.User(), rootVersion.User()) {
 			err := fmt.Errorf("%s/inventory.json has different 'user' in its %s version block than the root inventory.json", dirNum, v)
-			vldr.AddWarn(ec(err, codes.W011(vSpec)))
+			vldr.AddWarn(ec(err, codes.W011(specStr)))
 		}
 		if thisVersion.Created() != rootVersion.Created() {
 			err := fmt.Errorf("%s/inventory.json has different 'created' in its %s version block than the root inventory.json", dirNum, v)
-			vldr.AddWarn(ec(err, codes.W011(vSpec)))
+			vldr.AddWarn(ec(err, codes.W011(specStr)))
 		}
 	}
 }
@@ -440,7 +443,7 @@ func copyContent(ctx context.Context, c *copyContentOpts) error {
 	return grp.Wait()
 }
 
-func ec(err error, code *ocfl.ValidationCode) error {
+func ec(err error, code *validation.ValidationCode) error {
 	if code == nil {
 		return err
 	}
@@ -450,34 +453,35 @@ func ec(err error, code *ocfl.ValidationCode) error {
 	}
 }
 
-func validateRootState(ocflV ocfl.Spec, state *ocfl.ObjectState) *ocfl.Validation {
+func validateRootState(spec ocfl.Spec, state *ocfl.ObjectState) *ocfl.Validation {
+	specStr := string(spec)
 	v := &ocfl.Validation{}
 	for _, name := range state.Invalid {
 		err := fmt.Errorf(`%w: %s`, ErrObjRootStructure, name)
-		v.AddFatal(ec(err, codes.E001(ocflV)))
+		v.AddFatal(ec(err, codes.E001(specStr)))
 	}
 	if !state.HasInventory() {
 		err := fmt.Errorf(`root inventory.json: %w`, fs.ErrNotExist)
-		v.AddFatal(ec(err, codes.E063(ocflV)))
+		v.AddFatal(ec(err, codes.E063(specStr)))
 	}
 	if !state.HasSidecar() {
 		err := fmt.Errorf(`root inventory.json sidecar: %w`, fs.ErrNotExist)
-		v.AddFatal(ec(err, codes.E058(ocflV)))
+		v.AddFatal(ec(err, codes.E058(specStr)))
 	}
 	err := state.VersionDirs.Valid()
 	if err != nil {
 		if errors.Is(err, ocfl.ErrVerEmpty) {
-			err = ec(err, codes.E008(ocflV))
+			err = ec(err, codes.E008(specStr))
 		} else if errors.Is(err, ocfl.ErrVNumPadding) {
-			err = ec(err, codes.E011(ocflV))
+			err = ec(err, codes.E011(specStr))
 		} else if errors.Is(err, ocfl.ErrVNumMissing) {
-			err = ec(err, codes.E010(ocflV))
+			err = ec(err, codes.E010(specStr))
 		}
 		v.AddFatal(err)
 	}
 	if err == nil && state.VersionDirs.Padding() > 0 {
 		err := errors.New("version directory names are zero-padded")
-		v.AddWarn(ec(err, codes.W001(ocflV)))
+		v.AddWarn(ec(err, codes.W001(specStr)))
 	}
 	// if vdirHead := state.VersionDirs.Head().Num(); vdirHead > o.inv.Head.Num() {
 	// 	err := errors.New("version directories don't reflect versions in inventory.json")
@@ -486,7 +490,8 @@ func validateRootState(ocflV ocfl.Spec, state *ocfl.ObjectState) *ocfl.Validatio
 	return v
 }
 
-func validateExtensionsDir(ctx context.Context, ocflV ocfl.Spec, fsys ocfl.FS, objDir string) *ocfl.Validation {
+func validateExtensionsDir(ctx context.Context, spec ocfl.Spec, fsys ocfl.FS, objDir string) *ocfl.Validation {
+	specStr := string(spec)
 	v := &ocfl.Validation{}
 	extDir := path.Join(objDir, extensionsDir)
 	items, err := fsys.ReadDir(ctx, extDir)
@@ -500,14 +505,14 @@ func validateExtensionsDir(ctx context.Context, ocflV ocfl.Spec, fsys ocfl.FS, o
 	for _, i := range items {
 		if !i.IsDir() {
 			err := fmt.Errorf(`invalid file: %s`, i.Name())
-			v.AddFatal(ec(err, codes.E067(ocflV)))
+			v.AddFatal(ec(err, codes.E067(specStr)))
 			continue
 		}
 		_, err := extension.Get(i.Name())
 		if err != nil {
 			// unknow extension
 			err := fmt.Errorf("%w: %s", err, i.Name())
-			v.AddWarn(ec(err, codes.W013(ocflV)))
+			v.AddWarn(ec(err, codes.W013(specStr)))
 		}
 	}
 	return v

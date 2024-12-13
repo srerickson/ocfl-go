@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/srerickson/ocfl-go/digest"
+	"github.com/srerickson/ocfl-go/validation"
 )
 
 // Validation represents multiple fatal errors and warning errors.
@@ -126,7 +127,7 @@ func (v *ObjectValidation) AddFatal(errs ...error) {
 		var validErr *ValidationError
 		switch {
 		case errors.As(err, &validErr):
-			v.logger.Error(err.Error(), "ocfl_code", validErr.ValidationCode.Code)
+			v.logger.Error(err.Error(), "ocfl_code", validErr.Code)
 		default:
 			v.logger.Error(err.Error())
 		}
@@ -144,7 +145,7 @@ func (v *ObjectValidation) AddWarn(errs ...error) {
 		var validErr *ValidationError
 		switch {
 		case errors.As(err, &validErr):
-			v.logger.Warn(err.Error(), "ocfl_code", validErr.ValidationCode.Code)
+			v.logger.Warn(err.Error(), "ocfl_code", validErr.Code)
 		default:
 			v.logger.Warn(err.Error())
 		}
@@ -316,19 +317,10 @@ type validationFileInfo struct {
 	exists   bool
 }
 
-// ValidationCode represents a validation error code defined in an
-// OCFL specification. See https://ocfl.io/1.1/spec/validation-codes.html
-type ValidationCode struct {
-	Spec        Spec   // OCFL spec that the code refers to
-	Code        string // Validation error code from OCFL Spec
-	Description string // error description from spec
-	URL         string // URL to the OCFL specification for the error
-}
-
 // ValidationError is an error that includes a reference
 // to a validation error code from the OCFL spec.
 type ValidationError struct {
-	ValidationCode
+	validation.ValidationCode
 	Err error
 }
 

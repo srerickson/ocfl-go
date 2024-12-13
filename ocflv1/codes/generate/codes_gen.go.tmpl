@@ -2,16 +2,16 @@ package codes
 
 // This is generated code. Do not modify. See gen folder.
 
-import "github.com/srerickson/ocfl-go"
+import "github.com/srerickson/ocfl-go/validation"
 
 {{- range $code, $element := . }}
 
 // {{ $element.Comment }}
-func {{ $code -}}(spec ocfl.Spec) *ocfl.ValidationCode {
+func {{ $code -}}(spec string) *validation.ValidationCode {
 	switch spec {
 	{{- range $spec, $ref := $element.Specs }}
-	case ocfl.Spec("{{ $spec -}}"):
-		return &ocfl.ValidationCode{
+	case "{{ $spec -}}":
+		return &validation.ValidationCode{
 			Spec:        spec,
 			Code:        "{{ $code }}",
 			Description: "{{ $ref.Description }}",

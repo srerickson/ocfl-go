@@ -145,7 +145,7 @@ func (inv *Inventory) Validate() *ocfl.Validation {
 		err := errors.New("missing required field: 'type'")
 		v.AddFatal(err)
 	}
-	ocflV := inv.Type.Spec
+	ocflV := string(inv.Type.Spec)
 	if inv.ID == "" {
 		err := errors.New("missing required field: 'id'")
 		v.AddFatal(ec(err, codes.E036(ocflV)))
@@ -348,11 +348,12 @@ func NewInventory(byts []byte) (*Inventory, error) {
 // internal structure of the inventory. The returned ocfl.Validation will use
 // use error codes based of the on the ocfl specificatoin spec.
 func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl.Validation) {
+	specStr := string(spec)
 	v = &ocfl.Validation{}
 	invVals := map[string]any{}
 	if err := json.Unmarshal(raw, &invVals); err != nil {
 		err = fmt.Errorf("decoding inventory json: %w", err)
-		v.AddFatal(ec(err, codes.E033(spec)))
+		v.AddFatal(ec(err, codes.E033(specStr)))
 		return nil, v
 	}
 	const requiredErrMsg = "required field is missing or has unexpected json value"
@@ -360,40 +361,40 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 	id, exists, typeOK := pullJSONValue[string](invVals, `id`)
 	if !exists || !typeOK {
 		err := errors.New(requiredErrMsg + `: 'id'`)
-		v.AddFatal(ec(err, codes.E036(spec)))
+		v.AddFatal(ec(err, codes.E036(specStr)))
 	}
 	typeStr, exists, typeOK := pullJSONValue[string](invVals, `type`)
 	if !exists || !typeOK {
 		err := errors.New(requiredErrMsg + `: 'type'`)
-		v.AddFatal(ec(err, codes.E036(spec)))
+		v.AddFatal(ec(err, codes.E036(specStr)))
 	}
 	if typeStr != "" && typeStr != spec.AsInvType().String() {
 		err := fmt.Errorf("invalid inventory type value: %q", typeStr)
-		v.AddFatal(ec(err, codes.E038(spec)))
+		v.AddFatal(ec(err, codes.E038(specStr)))
 	}
 	digestAlg, exists, typeOK := pullJSONValue[string](invVals, `digestAlgorithm`)
 	if !exists || !typeOK {
 		err := errors.New(requiredErrMsg + `: 'digestAlgorithm'`)
-		v.AddFatal(ec(err, codes.E036(spec)))
+		v.AddFatal(ec(err, codes.E036(specStr)))
 	}
 	if digestAlg != "" && digestAlg != digest.SHA512.ID() && digestAlg != digest.SHA256.ID() {
 		err := fmt.Errorf("invalid digest algorithm: %q", digestAlg)
-		v.AddFatal(ec(err, codes.E025(spec)))
+		v.AddFatal(ec(err, codes.E025(specStr)))
 	}
 	head, exists, typeOK := pullJSONValue[string](invVals, `head`)
 	if !exists || !typeOK {
 		err := errors.New(requiredErrMsg + `: 'head'`)
-		v.AddFatal(ec(err, codes.E036(spec)))
+		v.AddFatal(ec(err, codes.E036(specStr)))
 	}
 	manifestVals, exists, typeOK := pullJSONValue[map[string]any](invVals, `manifest`)
 	if !exists || !typeOK {
 		err := errors.New(requiredErrMsg + `: 'manifest'`)
-		v.AddFatal(ec(err, codes.E041(spec)))
+		v.AddFatal(ec(err, codes.E041(specStr)))
 	}
 	versionsVals, exists, typeOK := pullJSONValue[map[string]any](invVals, `versions`)
 	if !exists || !typeOK {
 		err := errors.New(requiredErrMsg + `: 'versions'`)
-		v.AddFatal(ec(err, codes.E043(spec)))
+		v.AddFatal(ec(err, codes.E043(specStr)))
 	}
 	// FIXME: not sure which error code. E108?
 	contentDirectory, exists, typeOK := pullJSONValue[string](invVals, `contentDirectory`)
@@ -406,7 +407,7 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 	fixityVals, exists, typeOK := pullJSONValue[map[string]any](invVals, `fixity`)
 	if exists && !typeOK {
 		err := errors.New(optionalErrMsg + `: 'fixity'`)
-		v.AddFatal(ec(err, codes.E111(spec)))
+		v.AddFatal(ec(err, codes.E111(specStr)))
 	}
 	// any remaining values in invVals are invalid
 	for extra := range invVals {
@@ -421,15 +422,15 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 		Versions:         make(map[ocfl.VNum]*Version),
 	}
 	if err := inv.Type.UnmarshalText([]byte(typeStr)); err != nil {
-		v.AddFatal(ec(err, codes.E038(spec)))
+		v.AddFatal(ec(err, codes.E038(specStr)))
 	}
 	if err := inv.Head.UnmarshalText([]byte(head)); err != nil {
-		v.AddFatal(ec(err, codes.E040(spec)))
+		v.AddFatal(ec(err, codes.E040(specStr)))
 	}
 	var err error
 	if inv.Manifest, err = convertJSONDigestMap(manifestVals); err != nil {
 		err = fmt.Errorf("invalid manifest: %w", err)
-		v.AddFatal(ec(err, codes.E092(spec)))
+		v.AddFatal(ec(err, codes.E092(specStr)))
 	}
 	// build versions
 	for vnumStr, val := range versionsVals {
@@ -446,55 +447,55 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 		)
 		if err := ocfl.ParseVNum(vnumStr, &vnum); err != nil {
 			err = fmt.Errorf("invalid key %q in versions block: %w", vnumStr, err)
-			v.AddFatal(ec(err, codes.E046(spec)))
+			v.AddFatal(ec(err, codes.E046(specStr)))
 			continue
 		}
 		versionErrPrefix := "version '" + vnumStr + "'"
 		versionVals, typeOK = val.(map[string]any)
 		if !typeOK {
 			err := errors.New(versionErrPrefix + ": value is not a json object")
-			v.AddFatal(ec(err, codes.E045(spec)))
+			v.AddFatal(ec(err, codes.E045(specStr)))
 		}
 		createdStr, exists, typeOK = pullJSONValue[string](versionVals, `created`)
 		if !exists || !typeOK {
 			err := fmt.Errorf("%s: %s: %s", versionErrPrefix, requiredErrMsg, `'created'`)
-			v.AddFatal(ec(err, codes.E048(spec)))
+			v.AddFatal(ec(err, codes.E048(specStr)))
 		}
 		if createdStr != "" {
 			if err := created.UnmarshalText([]byte(createdStr)); err != nil {
 				err = fmt.Errorf("%s: created: %w", versionErrPrefix, err)
-				v.AddFatal(ec(err, codes.E049(spec)))
+				v.AddFatal(ec(err, codes.E049(specStr)))
 			}
 		}
 		stateVals, exists, typeOK = pullJSONValue[map[string]any](versionVals, `state`)
 		if !exists || !typeOK {
 			err := fmt.Errorf("%s: %s: %q", versionErrPrefix, requiredErrMsg, `state`)
-			v.AddFatal(ec(err, codes.E048(spec)))
+			v.AddFatal(ec(err, codes.E048(specStr)))
 		}
 		// message is optional
 		message, exists, typeOK = pullJSONValue[string](versionVals, `message`)
 		if exists && !typeOK {
 			err := fmt.Errorf("%s: %s: %q", versionErrPrefix, optionalErrMsg, `message`)
-			v.AddFatal(ec(err, codes.E094(spec)))
+			v.AddFatal(ec(err, codes.E094(specStr)))
 		}
 		// user is optional
 		userVals, exists, typeOK := pullJSONValue[map[string]any](versionVals, `user`)
 		switch {
 		case exists && !typeOK:
 			err := fmt.Errorf("%s: %s: %q", versionErrPrefix, optionalErrMsg, `user`)
-			v.AddFatal(ec(err, codes.E054(spec)))
+			v.AddFatal(ec(err, codes.E054(specStr)))
 		case exists:
 			var userName, userAddress string
 			userName, exists, typeOK = pullJSONValue[string](userVals, `name`)
 			if !exists || !typeOK {
 				err := fmt.Errorf("%s: user: %s: %q", versionErrPrefix, requiredErrMsg, `name`)
-				v.AddFatal(ec(err, codes.E054(spec)))
+				v.AddFatal(ec(err, codes.E054(specStr)))
 			}
 			// address is optional
 			userAddress, exists, typeOK = pullJSONValue[string](userVals, `address`)
 			if exists && !typeOK {
 				err := fmt.Errorf("%s: user: %s: %q", versionErrPrefix, optionalErrMsg, `address`)
-				v.AddFatal(ec(err, codes.E054(spec)))
+				v.AddFatal(ec(err, codes.E054(specStr)))
 			}
 			user = &ocfl.User{Name: userName, Address: userAddress}
 		}
@@ -522,13 +523,13 @@ func ValidateInventoryBytes(raw []byte, spec ocfl.Spec) (inv *Inventory, v *ocfl
 		fixityErrPrefix := "fixity '" + algStr + "'"
 		if !typeOK {
 			err := fmt.Errorf("%s: value is not a json object", fixityErrPrefix)
-			v.AddFatal(ec(err, codes.E057(spec)))
+			v.AddFatal(ec(err, codes.E057(specStr)))
 			continue
 		}
 		digests, err := convertJSONDigestMap(digestVals)
 		if err != nil {
 			err = fmt.Errorf("%s: %w", fixityErrPrefix, err)
-			v.AddFatal(ec(err, codes.E057(spec)))
+			v.AddFatal(ec(err, codes.E057(specStr)))
 			continue
 		}
 		inv.Fixity[algStr] = digests
