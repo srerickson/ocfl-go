@@ -28,7 +28,9 @@ jobs:
           runCmd: |
             
             # go mod tidy shouldn't introduce changes
-            go mod tidy
-            git diff --exit-code
+            if ! git diff --exit-code --quiet; then
+              echo "go mod tidy was not updated first"
+              exit 1
+            fi
 
             go test ./... -count=5 -race
