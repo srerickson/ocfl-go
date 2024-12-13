@@ -26,4 +26,9 @@ jobs:
           imageName: ghcr.io/${{ github.repository_owner }}/ocfl-go-devcontainer
           eventFilterForPush: pull_request
           runCmd: |
+            
+            # go mod tidy shouldn't introduce changes
+            go mod tidy
+            git diff --exit-code
+
             go test ./... -count=5 -race
