@@ -24,10 +24,12 @@ jobs:
         uses: devcontainers/ci@v0.3
         with:
           imageName: ghcr.io/${{ github.repository_owner }}/ocfl-go-devcontainer
+          cacheFrom: ghcr.io/${{ github.repository_owner }}/ocfl-go-devcontainer
           eventFilterForPush: pull_request
           runCmd: |
             
-            # go mod tidy shouldn't introduce changes
+            # check go.mod is clean
+            go mod tidy
             if ! git diff --exit-code --quiet; then
               echo "go mod tidy was not updated first"
               exit 1
