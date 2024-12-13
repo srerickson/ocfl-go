@@ -5,7 +5,7 @@ services:
       context: .
       dockerfile: Dockerfile
     volumes:
-      - ../..:/workspaces:cached      
+      - ../:/workspace      
     network_mode: service:minio
     command: sleep infinity
     environment:
