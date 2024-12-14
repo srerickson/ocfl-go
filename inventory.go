@@ -1,6 +1,7 @@
 package ocfl
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -49,6 +50,22 @@ func (inv RawInventory) VNums() []VNum {
 	}
 	sort.Sort(VNums(vnums))
 	return vnums
+}
+
+func (inv *RawInventory) Digest() string {
+	return inv.jsonDigest
+}
+
+func (inv *RawInventory) setJsonDigest(raw []byte) error {
+	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(digester, bytes.NewReader(raw)); err != nil {
+		return fmt.Errorf("digesting inventory: %w", err)
+	}
+	inv.jsonDigest = digester.String()
+	return nil
 }
 
 // Version represents object version state and metadata
