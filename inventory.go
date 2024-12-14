@@ -8,6 +8,7 @@ import (
 	"io"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +21,43 @@ var (
 
 	invSidecarContentsRexp = regexp.MustCompile(`^([a-fA-F0-9]+)\s+inventory\.json[\n]?$`)
 )
+
+// RawInventory represents the contents of an object's inventory.json file
+type RawInventory struct {
+	ID               string                        `json:"id"`
+	Type             InvType                       `json:"type"`
+	DigestAlgorithm  string                        `json:"digestAlgorithm"`
+	Head             VNum                          `json:"head"`
+	ContentDirectory string                        `json:"contentDirectory,omitempty"`
+	Manifest         DigestMap                     `json:"manifest"`
+	Versions         map[VNum]*RawInventoryVersion `json:"versions"`
+	Fixity           map[string]DigestMap          `json:"fixity,omitempty"`
+
+	// digest of raw inventory using DigestAlgorithm, set during json
+	// marshal/unmarshal
+	jsonDigest string
+}
+
+// VNums returns a sorted slice of VNums corresponding to the keys in the
+// inventory's 'versions' block.
+func (inv RawInventory) VNums() []VNum {
+	vnums := make([]VNum, len(inv.Versions))
+	i := 0
+	for v := range inv.Versions {
+		vnums[i] = v
+		i++
+	}
+	sort.Sort(VNums(vnums))
+	return vnums
+}
+
+// Version represents object version state and metadata
+type RawInventoryVersion struct {
+	Created time.Time `json:"created"`
+	State   DigestMap `json:"state"`
+	Message string    `json:"message,omitempty"`
+	User    *User     `json:"user,omitempty"`
+}
 
 type ReadInventory interface {
 	FixitySource

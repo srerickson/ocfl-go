@@ -331,3 +331,14 @@ func (ver *ValidationError) Error() string {
 func (ver *ValidationError) Unwrap() error {
 	return ver.Err
 }
+
+// helper for constructing new validation code
+func verr(err error, code *validation.ValidationCode) error {
+	if code == nil {
+		return err
+	}
+	return &ValidationError{
+		Err:            err,
+		ValidationCode: *code,
+	}
+}
