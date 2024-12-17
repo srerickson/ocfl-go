@@ -1,22 +1,47 @@
 package ocfl
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"net/url"
+	"path"
+	"reflect"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/srerickson/ocfl-go/digest"
+	"github.com/srerickson/ocfl-go/extension"
+	"github.com/srerickson/ocfl-go/logging"
 	"github.com/srerickson/ocfl-go/ocflv1/codes"
+	"github.com/srerickson/ocfl-go/validation"
+	"golang.org/x/sync/errgroup"
+)
+
+const (
+	inventoryFile = "inventory.json"
+	contentDir    = "content"
+	extensionsDir = "extensions"
 )
 
 var (
 	OCFLv1_0 OCFL = &ocflV1{spec: Spec1_0}
 	OCFLv1_1 OCFL = &ocflV1{spec: Spec1_1}
+
+	ErrObjRootStructure = errors.New("object includes invalid files or directories")
 )
+
+func init() {
+	RegisterOCLF(OCFLv1_0)
+	RegisterOCLF(OCFLv1_1)
+}
 
 // implementation of ocfl v1.x
 type ocflV1 struct {
@@ -27,8 +52,21 @@ func (imp ocflV1) Spec() Spec {
 	return Spec(imp.spec)
 }
 
-func (imp ocflV1) NewReadInventory(raw []byte) (Inventory, error) {
-	return nil, errors.New("not implemented")
+func (imp ocflV1) NewReadInventory(byts []byte) (Inventory, error) {
+	inv := &inventoryV1{}
+	dec := json.NewDecoder(bytes.NewReader(byts))
+	dec.DisallowUnknownFields()
+
+	if err := dec.Decode(&inv.raw); err != nil {
+		return nil, err
+	}
+	if err := inv.setJsonDigest(byts); err != nil {
+		return nil, err
+	}
+	if err := inv.Validate().Err(); err != nil {
+		return nil, err
+	}
+	return inv, nil
 }
 
 func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
@@ -98,21 +136,23 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
 		err := fmt.Errorf("inventory json has unexpected field: %q", extra)
 		v.AddFatal(err)
 	}
-	inv := &rawInventory{
-		ID:               id,
-		ContentDirectory: contentDirectory,
-		DigestAlgorithm:  digestAlg,
-		Fixity:           map[string]DigestMap{},
-		Versions:         make(map[VNum]*rawInventoryVersion),
+	inv := &inventoryV1{
+		raw: rawInventory{
+			ID:               id,
+			ContentDirectory: contentDirectory,
+			DigestAlgorithm:  digestAlg,
+			Fixity:           map[string]DigestMap{},
+			Versions:         make(map[VNum]*rawInventoryVersion),
+		},
 	}
-	if err := inv.Type.UnmarshalText([]byte(typeStr)); err != nil {
+	if err := inv.raw.Type.UnmarshalText([]byte(typeStr)); err != nil {
 		v.AddFatal(verr(err, codes.E038(specStr)))
 	}
-	if err := inv.Head.UnmarshalText([]byte(head)); err != nil {
+	if err := inv.raw.Head.UnmarshalText([]byte(head)); err != nil {
 		v.AddFatal(verr(err, codes.E040(specStr)))
 	}
 	var err error
-	if inv.Manifest, err = convertJSONDigestMap(manifestVals); err != nil {
+	if inv.raw.Manifest, err = convertJSONDigestMap(manifestVals); err != nil {
 		err = fmt.Errorf("invalid manifest: %w", err)
 		v.AddFatal(verr(err, codes.E092(specStr)))
 	}
@@ -193,7 +233,7 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
 			err = fmt.Errorf("%s: state: %w", versionErrPrefix, err)
 			v.AddFatal(err)
 		}
-		inv.Versions[vnum] = &rawInventoryVersion{
+		inv.raw.Versions[vnum] = &rawInventoryVersion{
 			Created: created,
 			State:   state,
 			Message: message,
@@ -216,7 +256,7 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
 			v.AddFatal(verr(err, codes.E057(specStr)))
 			continue
 		}
-		inv.Fixity[algStr] = digests
+		inv.raw.Fixity[algStr] = digests
 	}
 	if err := inv.setJsonDigest(raw); err != nil {
 		v.AddFatal(err)
@@ -225,33 +265,315 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
 	if v.Err() != nil {
 		return nil, v
 	}
-	return &inventoryV1{raw: *inv}, v
-}
-func (imp *ocflV1) Newinventory(raw []byte) (Inventory, error) {
-	return nil, errors.New("not implemented")
+	return inv, v
 }
 
 func (imp *ocflV1) NewReadObject(fsys FS, path string, inv Inventory) ReadObject {
+	concreteInv, ok := inv.(*inventoryV1)
+	if !ok {
+		panic("inventory has wrong type")
+	}
+	return &objectV1{fs: fsys, path: path, inv: concreteInv}
+}
+
+func (imp *ocflV1) Commit(ctx context.Context, obj ReadObject, commit *Commit) (ReadObject, error) {
+	writeFS, ok := obj.FS().(WriteFS)
+	if !ok {
+		err := errors.New("object's backing file system doesn't support write operations")
+		return nil, &CommitError{Err: err}
+	}
+	newInv, err := buildInventory(obj.Inventory(), commit)
+	if err != nil {
+		err := fmt.Errorf("building new inventory: %w", err)
+		return nil, &CommitError{Err: err}
+	}
+	logger := commit.Logger
+	if logger == nil {
+		logger = logging.DisabledLogger()
+	}
+	logger = logger.With("path", obj.Path(), "id", newInv.ID, "head", newInv.Head, "ocfl_spec", newInv.Spec(), "alg", newInv.DigestAlgorithm)
+	// xfers is a subeset of the manifest with the new content to add
+	xfers, err := newContentMap(&newInv.raw)
+	if err != nil {
+		return nil, &CommitError{Err: err}
+	}
+	// check that the stage includes all the new content
+	for digest := range xfers {
+		if !commit.Stage.HasContent(digest) {
+			// FIXME short digest
+			err := fmt.Errorf("no content for digest: %s", digest)
+			return nil, &CommitError{Err: err}
+		}
+	}
+	// file changes start here
+	// 1. create or update NAMASTE object declaration
+	var oldSpec Spec
+	if obj.Inventory() != nil {
+		oldSpec = obj.Inventory().Spec()
+	}
+	newSpec := newInv.Spec()
+	switch {
+	case ObjectExists(obj) && oldSpec != newSpec:
+		oldDecl := Namaste{Type: NamasteTypeObject, Version: oldSpec}
+		logger.DebugContext(ctx, "deleting previous OCFL object declaration", "name", oldDecl)
+		if err = writeFS.Remove(ctx, path.Join(obj.Path(), oldDecl.Name())); err != nil {
+			return nil, &CommitError{Err: err, Dirty: true}
+		}
+		fallthrough
+	case !ObjectExists(obj):
+		newDecl := Namaste{Type: NamasteTypeObject, Version: newSpec}
+		logger.DebugContext(ctx, "writing new OCFL object declaration", "name", newDecl)
+		if err = WriteDeclaration(ctx, writeFS, obj.Path(), newDecl); err != nil {
+			return nil, &CommitError{Err: err, Dirty: true}
+		}
+	}
+	// 2. tranfser files from stage to object
+	if len(xfers) > 0 {
+		copyOpts := &copyContentOpts{
+			Source:   commit.Stage,
+			DestFS:   writeFS,
+			DestRoot: obj.Path(),
+			Manifest: xfers,
+		}
+		logger.DebugContext(ctx, "copying new object files", "count", len(xfers))
+		if err := copyContent(ctx, copyOpts); err != nil {
+			err = fmt.Errorf("transferring new object contents: %w", err)
+			return nil, &CommitError{Err: err, Dirty: true}
+		}
+	}
+	logger.DebugContext(ctx, "writing inventories for new object version")
+	// 3. write inventory to both object root and version directory
+	newVersionDir := path.Join(obj.Path(), newInv.Head().String())
+	if err := writeInventory(ctx, writeFS, newInv, obj.Path(), newVersionDir); err != nil {
+		err = fmt.Errorf("writing new inventories or inventory sidecars: %w", err)
+		return nil, &CommitError{Err: err, Dirty: true}
+	}
+	return &objectV1{
+		inv:  newInv,
+		fs:   obj.FS(),
+		path: obj.Path(),
+	}, nil
+}
+
+func (imp *ocflV1) ValidateObjectRoot(ctx context.Context, fsys FS, dir string, state *ObjectState, vldr *ObjectValidation) (ReadObject, error) {
+	// validate namaste
+	specStr := string(imp.spec)
+	decl := Namaste{Type: NamasteTypeObject, Version: imp.spec}
+	name := path.Join(dir, decl.Name())
+	err := ValidateNamaste(ctx, fsys, name)
+	if err != nil {
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			err = fmt.Errorf("%s: %w", name, ErrObjectNamasteNotExist)
+			vldr.AddFatal(ec(err, codes.E001(specStr)))
+		default:
+			vldr.AddFatal(ec(err, codes.E007(specStr)))
+		}
+		return nil, err
+	}
+	// validate root inventory
+	invBytes, err := ReadAll(ctx, fsys, path.Join(dir, inventoryFile))
+	if err != nil {
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			vldr.AddFatal(err, ec(err, codes.E063(specStr)))
+		default:
+			vldr.AddFatal(err)
+		}
+		return nil, err
+	}
+	inv, invValidation := imp.ValidateInventoryBytes(invBytes)
+	vldr.PrefixAdd("root inventory.json", invValidation)
+	if err := invValidation.Err(); err != nil {
+		return nil, err
+	}
+	if err := ValidateInventorySidecar(ctx, inv, fsys, dir); err != nil {
+		switch {
+		case errors.Is(err, ErrInventorySidecarContents):
+			vldr.AddFatal(ec(err, codes.E061(specStr)))
+		default:
+			vldr.AddFatal(ec(err, codes.E060(specStr)))
+		}
+	}
+	vldr.PrefixAdd("extensions directory", validateExtensionsDir(ctx, imp.spec, fsys, dir))
+	if err := vldr.AddInventoryDigests(inv); err != nil {
+		vldr.AddFatal(err)
+	}
+	vldr.PrefixAdd("root contents", validateRootState(imp.spec, state))
+	if err := vldr.Err(); err != nil {
+		return nil, err
+	}
+	return &objectV1{fs: fsys, path: dir, inv: inv.(*inventoryV1)}, nil
+}
+
+func (imp *ocflV1) ValidateObjectVersion(ctx context.Context, obj ReadObject, vnum VNum, verInv Inventory, prevInv Inventory, vldr *ObjectValidation) error {
+	fsys := obj.FS()
+	vnumStr := vnum.String()
+	fullVerDir := path.Join(obj.Path(), vnumStr) // version directory path relative to FS
+	specStr := string(imp.spec)
+	rootInv := obj.Inventory() // headInv is assumed to be valid
+	vDirEntries, err := fsys.ReadDir(ctx, fullVerDir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		// can't read version directory for some reason, but not because it
+		// doesn't exist.
+		vldr.AddFatal(err)
+		return err
+	}
+	vdirState := parseVersionDirState(vDirEntries)
+	for _, f := range vdirState.extraFiles {
+		err := fmt.Errorf(`unexpected file in %s: %s`, vnum, f)
+		vldr.AddFatal(ec(err, codes.E015(specStr)))
+	}
+	if !vdirState.hasInventory {
+		err := fmt.Errorf("missing %s/inventory.json", vnumStr)
+		vldr.AddWarn(ec(err, codes.W010(specStr)))
+	}
+	if verInv != nil {
+		verInvValidation := verInv.Validate()
+		vldr.PrefixAdd(vnumStr+"/inventory.json", verInvValidation)
+		if err := ValidateInventorySidecar(ctx, verInv, fsys, fullVerDir); err != nil {
+			err := fmt.Errorf("%s/inventory.json: %w", vnumStr, err)
+			switch {
+			case errors.Is(err, ErrInventorySidecarContents):
+				vldr.AddFatal(ec(err, codes.E061(specStr)))
+			default:
+				vldr.AddFatal(ec(err, codes.E060(specStr)))
+			}
+		}
+		if prevInv != nil && verInv.Spec().Cmp(prevInv.Spec()) < 0 {
+			err := fmt.Errorf("%s/inventory.json uses an older OCFL specification than than the previous version", vnum)
+			vldr.AddFatal(ec(err, codes.E103(specStr)))
+		}
+		if verInv.Head() != vnum {
+			err := fmt.Errorf("%s/inventory.json: 'head' does not matchs its directory", vnum)
+			vldr.AddFatal(ec(err, codes.E040(specStr)))
+		}
+		if verInv.Digest() != rootInv.Digest() {
+			imp.compareVersionInventory(obj, vnum, verInv, vldr)
+			if verInv.Digest() != rootInv.Digest() {
+				if err := vldr.AddInventoryDigests(verInv); err != nil {
+					err = fmt.Errorf("%s/inventory.json digests are inconsistent with other inventories: %w", vnum, err)
+					vldr.AddFatal(ec(err, codes.E066(specStr)))
+				}
+			}
+		}
+	}
+	cdName := rootInv.ContentDirectory()
+	for _, d := range vdirState.dirs {
+		// the only directory in the version directory SHOULD be the content directory
+		if d != cdName {
+			err := fmt.Errorf(`extra directory in %s: %s`, vnum, d)
+			vldr.AddWarn(ec(err, codes.W002(specStr)))
+			continue
+		}
+		// add version content files to validation state
+		var added int
+		fullVerContDir := path.Join(fullVerDir, cdName)
+		contentFiles, filesErrFn := WalkFiles(ctx, fsys, fullVerContDir)
+		for contentFile := range contentFiles {
+			// convert from path relative to version content directory to path
+			// relative to the object
+			vldr.AddExistingContent(path.Join(vnumStr, cdName, contentFile.Path))
+			added++
+		}
+		if err := filesErrFn(); err != nil {
+			vldr.AddFatal(err)
+			return err
+		}
+		if added == 0 {
+			// content directory exists but it's empty
+			err := fmt.Errorf("content directory (%s) is empty directory", fullVerContDir)
+			vldr.AddFatal(ec(err, codes.E016(specStr)))
+		}
+	}
 	return nil
 }
-func (imp *ocflV1) Commit(ctx context.Context, obj ReadObject, commit *Commit) (ReadObject, error) {
-	return nil, errors.New("not implemented")
-}
-func (imp *ocflV1) ValidateObjectRoot(ctx context.Context, fs FS, dir string, state *ObjectState, vldr *ObjectValidation) (ReadObject, error) {
-	return nil, errors.New("not implemented")
 
+func (imp *ocflV1) ValidateObjectContent(ctx context.Context, obj ReadObject, v *ObjectValidation) error {
+	specStr := string(imp.spec)
+	newVld := &Validation{}
+	for name := range v.MissingContent() {
+		err := fmt.Errorf("missing content: %s", name)
+		newVld.AddFatal(ec(err, codes.E092(specStr)))
+	}
+	for name := range v.UnexpectedContent() {
+		err := fmt.Errorf("unexpected content: %s", name)
+		newVld.AddFatal(ec(err, codes.E023(specStr)))
+	}
+	if !v.SkipDigests() {
+		alg := obj.Inventory().DigestAlgorithm()
+		digests := v.ExistingContentDigests(obj.FS(), obj.Path(), alg)
+		numgos := v.DigestConcurrency()
+		registry := v.ValidationAlgorithms()
+		for err := range digests.ValidateBatch(ctx, registry, numgos) {
+			var digestErr *digest.DigestError
+			switch {
+			case errors.As(err, &digestErr):
+				newVld.AddFatal(ec(digestErr, codes.E093(specStr)))
+			default:
+				newVld.AddFatal(err)
+			}
+		}
+	}
+	v.Add(newVld)
+	return newVld.Err()
 }
-func (imp *ocflV1) ValidateObjectVersion(ctx context.Context, obj ReadObject, vnum VNum, versionInv Inventory, prevInv Inventory, vldr *ObjectValidation) error {
-	return errors.New("not implemented")
 
-}
-func (imp *ocflV1) ValidateObjectContent(ctx context.Context, obj ReadObject, vldr *ObjectValidation) error {
-	return errors.New("not implemented")
-
+func (imp ocflV1) compareVersionInventory(obj ReadObject, dirNum VNum, verInv Inventory, vldr *ObjectValidation) {
+	rootInv := obj.Inventory()
+	specStr := string(imp.spec)
+	if verInv.Head() == rootInv.Head() && verInv.Digest() != rootInv.Digest() {
+		err := fmt.Errorf("%s/inventor.json is not the same as the root inventory: digests don't match", dirNum)
+		vldr.AddFatal(ec(err, codes.E064(specStr)))
+	}
+	if verInv.ID() != rootInv.ID() {
+		err := fmt.Errorf("%s/inventory.json: 'id' doesn't match value in root inventory", dirNum)
+		vldr.AddFatal(ec(err, codes.E037(specStr)))
+	}
+	if verInv.ContentDirectory() != rootInv.ContentDirectory() {
+		err := fmt.Errorf("%s/inventory.json: 'contentDirectory' doesn't match value in root inventory", dirNum)
+		vldr.AddFatal(ec(err, codes.E019(specStr)))
+	}
+	// check that all version blocks in the version inventory
+	// match version blocks in the root inventory
+	for _, v := range verInv.Head().Lineage() {
+		thisVersion := verInv.Version(v.Num())
+		rootVersion := rootInv.Version(v.Num())
+		if rootVersion == nil {
+			err := fmt.Errorf("root inventory.json has missing version: %s", v)
+			vldr.AddFatal(ec(err, codes.E046(specStr)))
+			continue
+		}
+		thisVerState := logicalState{
+			state:    thisVersion.State(),
+			manifest: verInv.Manifest(),
+		}
+		rootVerState := logicalState{
+			state:    rootVersion.State(),
+			manifest: rootInv.Manifest(),
+		}
+		if !thisVerState.Eq(rootVerState) {
+			err := fmt.Errorf("%s/inventory.json has different logical state in its %s version block than the root inventory.json", dirNum, v)
+			vldr.AddFatal(ec(err, codes.E066(specStr)))
+		}
+		if thisVersion.Message() != rootVersion.Message() {
+			err := fmt.Errorf("%s/inventory.json has different 'message' in its %s version block than the root inventory.json", dirNum, v)
+			vldr.AddWarn(ec(err, codes.W011(specStr)))
+		}
+		if !reflect.DeepEqual(thisVersion.User(), rootVersion.User()) {
+			err := fmt.Errorf("%s/inventory.json has different 'user' in its %s version block than the root inventory.json", dirNum, v)
+			vldr.AddWarn(ec(err, codes.W011(specStr)))
+		}
+		if thisVersion.Created() != rootVersion.Created() {
+			err := fmt.Errorf("%s/inventory.json has different 'created' in its %s version block than the root inventory.json", dirNum, v)
+			vldr.AddWarn(ec(err, codes.W011(specStr)))
+		}
+	}
 }
 
 type inventoryV1 struct {
-	raw rawInventory
+	raw        rawInventory
+	jsonDigest string
 }
 
 var _ Inventory = (*inventoryV1)(nil)
@@ -263,7 +585,7 @@ func (inv *inventoryV1) ContentDirectory() string {
 	return "content"
 }
 
-func (inv *inventoryV1) Digest() string { return inv.raw.jsonDigest }
+func (inv *inventoryV1) Digest() string { return inv.jsonDigest }
 
 func (inv *inventoryV1) DigestAlgorithm() digest.Algorithm {
 	// DigestAlgorithm should be sha512 or sha256
@@ -289,7 +611,7 @@ func (inv *inventoryV1) FixityAlgorithms() []string {
 }
 
 func (inv *inventoryV1) GetFixity(digest string) digest.Set {
-	return inv.raw.GetFixity(digest)
+	return inv.raw.getFixity(digest)
 }
 
 func (inv *inventoryV1) Head() VNum {
@@ -309,17 +631,17 @@ func (inv *inventoryV1) Spec() Spec {
 }
 
 func (inv *inventoryV1) Validate() *Validation {
-	if inv.raw.jsonDigest == "" {
-		err := errors.New("inventory was not initialized correctly: missing file digest value")
-		v := &Validation{}
-		v.AddFatal(err)
-		return v
-	}
+	// if inv.raw.jsonDigest == "" {
+	// 	err := errors.New("inventory was not initialized correctly: missing file digest value")
+	// 	v := &Validation{}
+	// 	v.AddFatal(err)
+	// 	return v
+	// }
 	switch inv.Spec() {
 	case Spec1_0:
-		return validateInventoryV1(&inv.raw, Spec1_0)
+		return validateInventoryV1(inv, Spec1_0)
 	case Spec1_1:
-		return validateInventoryV1(&inv.raw, Spec1_1)
+		return validateInventoryV1(inv, Spec1_1)
 	default:
 		err := errors.New("OCFL v1.x inventory doesn't missing spec version")
 		v := &Validation{}
@@ -329,11 +651,23 @@ func (inv *inventoryV1) Validate() *Validation {
 }
 
 func (inv *inventoryV1) Version(i int) ObjectVersion {
-	v := inv.raw.Version(i)
+	v := inv.raw.version(i)
 	if v == nil {
 		return nil
 	}
 	return &inventoryVersion{raw: v}
+}
+
+func (inv *inventoryV1) setJsonDigest(raw []byte) error {
+	digester, err := digest.DefaultRegistry().NewDigester(inv.raw.DigestAlgorithm)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(digester, bytes.NewReader(raw)); err != nil {
+		return fmt.Errorf("digesting inventory: %w", err)
+	}
+	inv.jsonDigest = digester.String()
+	return nil
 }
 
 type inventoryVersion struct {
@@ -345,38 +679,38 @@ func (v *inventoryVersion) Message() string    { return v.raw.Message }
 func (v *inventoryVersion) Created() time.Time { return v.raw.Created }
 func (v *inventoryVersion) User() *User        { return v.raw.User }
 
-func validateInventoryV1(inv *rawInventory, spec Spec) *Validation {
+func validateInventoryV1(inv *inventoryV1, spec Spec) *Validation {
 	v := &Validation{}
-	if inv.Type.Empty() {
+	if inv.raw.Type.Empty() {
 		err := errors.New("missing required field: 'type'")
 		v.AddFatal(err)
 	}
-	if inv.Type.Spec != spec {
-		err := fmt.Errorf("inventory declares v%s, not v%s", inv.Type.Spec, spec)
+	if inv.raw.Type.Spec != spec {
+		err := fmt.Errorf("inventory declares v%s, not v%s", inv.raw.Type.Spec, spec)
 		v.AddFatal(err)
 	}
 	specStr := string(spec)
-	if inv.ID == "" {
+	if inv.raw.ID == "" {
 		err := errors.New("missing required field: 'id'")
 		v.AddFatal(verr(err, codes.E036(specStr)))
 	}
-	if inv.Head.IsZero() {
+	if inv.raw.Head.IsZero() {
 		err := errors.New("missing required field: 'head'")
 		v.AddFatal(verr(err, codes.E036(specStr)))
 	}
-	if inv.Manifest == nil {
+	if inv.raw.Manifest == nil {
 		err := errors.New("missing required field 'manifest'")
 		v.AddFatal(verr(err, codes.E041(specStr)))
 	}
-	if inv.Versions == nil {
+	if inv.raw.Versions == nil {
 		err := errors.New("missing required field: 'versions'")
 		v.AddFatal(verr(err, codes.E041(specStr)))
 	}
-	if u, err := url.ParseRequestURI(inv.ID); err != nil || u.Scheme == "" {
-		err := fmt.Errorf(`object ID is not a URI: %q`, inv.ID)
+	if u, err := url.ParseRequestURI(inv.raw.ID); err != nil || u.Scheme == "" {
+		err := fmt.Errorf(`object ID is not a URI: %q`, inv.raw.ID)
 		v.AddWarn(verr(err, codes.W005(specStr)))
 	}
-	switch inv.DigestAlgorithm {
+	switch inv.raw.DigestAlgorithm {
 	case digest.SHA512.ID():
 		break
 	case digest.SHA256.ID():
@@ -386,20 +720,20 @@ func validateInventoryV1(inv *rawInventory, spec Spec) *Validation {
 		err := fmt.Errorf(`'digestAlgorithm' is not %q or %q`, digest.SHA512.ID(), digest.SHA256.ID())
 		v.AddFatal(verr(err, codes.E025(specStr)))
 	}
-	if err := inv.Head.Valid(); err != nil {
+	if err := inv.raw.Head.Valid(); err != nil {
 		err = fmt.Errorf("head is invalid: %w", err)
 		v.AddFatal(verr(err, codes.E011(specStr)))
 	}
-	if strings.Contains(inv.ContentDirectory, "/") {
+	if strings.Contains(inv.raw.ContentDirectory, "/") {
 		err := errors.New("contentDirectory contains '/'")
 		v.AddFatal(verr(err, codes.E017(specStr)))
 	}
-	if inv.ContentDirectory == "." || inv.ContentDirectory == ".." {
+	if inv.raw.ContentDirectory == "." || inv.raw.ContentDirectory == ".." {
 		err := errors.New("contentDirectory is '.' or '..'")
 		v.AddFatal(verr(err, codes.E017(specStr)))
 	}
-	if inv.Manifest != nil {
-		err := inv.Manifest.Valid()
+	if inv.raw.Manifest != nil {
+		err := inv.raw.Manifest.Valid()
 		if err != nil {
 			var dcErr *MapDigestConflictErr
 			var pcErr *MapPathConflictErr
@@ -414,9 +748,9 @@ func validateInventoryV1(inv *rawInventory, spec Spec) *Validation {
 			v.AddFatal(err)
 		}
 		// check that each manifest entry is used in at least one state
-		for _, digest := range inv.Manifest.Digests() {
+		for _, digest := range inv.raw.Manifest.Digests() {
 			var found bool
-			for _, version := range inv.Versions {
+			for _, version := range inv.raw.Versions {
 				if version == nil {
 					continue
 				}
@@ -432,7 +766,7 @@ func validateInventoryV1(inv *rawInventory, spec Spec) *Validation {
 		}
 	}
 	// version names
-	var versionNums VNums = inv.VNums()
+	var versionNums VNums = inv.raw.vnums()
 	if err := versionNums.Valid(); err != nil {
 		if errors.Is(err, ErrVerEmpty) {
 			err = verr(err, codes.E008(specStr))
@@ -443,12 +777,12 @@ func validateInventoryV1(inv *rawInventory, spec Spec) *Validation {
 		}
 		v.AddFatal(err)
 	}
-	if versionNums.Head() != inv.Head {
-		err := fmt.Errorf(`version head not most recent version: %s`, inv.Head)
+	if versionNums.Head() != inv.raw.Head {
+		err := fmt.Errorf(`version head not most recent version: %s`, inv.raw.Head)
 		v.AddFatal(verr(err, codes.E040(specStr)))
 	}
 	// version state
-	for vname, ver := range inv.Versions {
+	for vname, ver := range inv.raw.Versions {
 		if ver == nil {
 			err := fmt.Errorf(`missing required version block for %q`, vname)
 			v.AddFatal(verr(err, codes.E048(specStr)))
@@ -501,14 +835,14 @@ func validateInventoryV1(inv *rawInventory, spec Spec) *Validation {
 		}
 		// check that each state digest appears in manifest
 		for _, digest := range ver.State.Digests() {
-			if len(inv.Manifest[digest]) == 0 {
+			if len(inv.raw.Manifest[digest]) == 0 {
 				err := fmt.Errorf("digest in %s state not in manifest: %s", vname, digest)
 				v.AddFatal(verr(err, codes.E050(specStr)))
 			}
 		}
 	}
 	//fixity
-	for _, fixity := range inv.Fixity {
+	for _, fixity := range inv.raw.Fixity {
 		err := fixity.Valid()
 		if err != nil {
 			var dcErr *MapDigestConflictErr
@@ -553,4 +887,600 @@ func convertJSONDigestMap(jsonMap map[string]any) (DigestMap, error) {
 		}
 	}
 	return m, nil
+}
+
+// ReadObject implements ReadObject for OCFL v1.x objects
+type objectV1 struct {
+	fs   FS
+	path string
+	inv  *inventoryV1
+}
+
+func (o *objectV1) FS() FS { return o.fs }
+
+func (o *objectV1) Inventory() Inventory {
+	return o.inv
+}
+
+func (o *objectV1) VersionFS(ctx context.Context, i int) fs.FS {
+	ver := o.inv.raw.version(i)
+	if ver == nil {
+		return nil
+	}
+	// FIXME: This is a hack to make versionFS replicates the filemode of
+	// the undering FS. Open a random content file to get the file mode used by
+	// the underlying FS.
+	regfileType := fs.FileMode(0)
+	for _, paths := range o.inv.raw.Manifest {
+		if len(paths) < 1 {
+			break
+		}
+		f, err := o.fs.OpenFile(ctx, path.Join(o.path, paths[0]))
+		if err != nil {
+			return nil
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil {
+			return nil
+		}
+		regfileType = info.Mode().Type()
+		break
+	}
+	return &versionFS{
+		ctx:     ctx,
+		obj:     o,
+		paths:   ver.State.PathMap(),
+		created: ver.Created,
+		regMode: regfileType,
+	}
+}
+
+func (o *objectV1) Path() string { return o.path }
+
+type versionFS struct {
+	ctx     context.Context
+	obj     *objectV1
+	paths   PathMap
+	created time.Time
+	regMode fs.FileMode
+}
+
+func (vfs *versionFS) Open(logical string) (fs.File, error) {
+	if !fs.ValidPath(logical) {
+		return nil, &fs.PathError{
+			Err:  fs.ErrInvalid,
+			Op:   "open",
+			Path: logical,
+		}
+	}
+	if logical == "." {
+		return vfs.openDir(".")
+	}
+	digest := vfs.paths[logical]
+	if digest == "" {
+		// name doesn't exist in state.
+		// try opening as a directory
+		return vfs.openDir(logical)
+	}
+
+	realNames := vfs.obj.inv.raw.Manifest[digest]
+	if len(realNames) < 1 {
+		return nil, &fs.PathError{
+			Err:  fs.ErrNotExist,
+			Op:   "open",
+			Path: logical,
+		}
+	}
+	realName := realNames[0]
+	if !fs.ValidPath(realName) {
+		return nil, &fs.PathError{
+			Err:  fs.ErrInvalid,
+			Op:   "open",
+			Path: logical,
+		}
+	}
+	f, err := vfs.obj.fs.OpenFile(vfs.ctx, path.Join(vfs.obj.path, realName))
+	if err != nil {
+		err = fmt.Errorf("opening file with logical path %q: %w", logical, err)
+		return nil, err
+	}
+	return f, nil
+}
+
+func (vfs *versionFS) openDir(dir string) (fs.File, error) {
+	prefix := dir + "/"
+	if prefix == "./" {
+		prefix = ""
+	}
+	children := map[string]*vfsDirEntry{}
+	for p := range vfs.paths {
+		if !strings.HasPrefix(p, prefix) {
+			continue
+		}
+		name, _, isdir := strings.Cut(strings.TrimPrefix(p, prefix), "/")
+		if _, exists := children[name]; exists {
+			continue
+		}
+		entry := &vfsDirEntry{
+			name:    name,
+			mode:    vfs.regMode,
+			created: vfs.created,
+			open:    func() (fs.File, error) { return vfs.Open(path.Join(dir, name)) },
+		}
+		if isdir {
+			entry.mode = entry.mode | fs.ModeDir | fs.ModeIrregular
+		}
+		children[name] = entry
+	}
+	if len(children) < 1 {
+		return nil, &fs.PathError{
+			Op:   "open",
+			Path: dir,
+			Err:  fs.ErrNotExist,
+		}
+	}
+
+	dirFile := &vfsDirFile{
+		name:    dir,
+		entries: make([]fs.DirEntry, 0, len(children)),
+	}
+	for _, entry := range children {
+		dirFile.entries = append(dirFile.entries, entry)
+	}
+	slices.SortFunc(dirFile.entries, func(a, b fs.DirEntry) int {
+		return cmp.Compare(a.Name(), b.Name())
+	})
+	return dirFile, nil
+}
+
+type vfsDirEntry struct {
+	name    string
+	created time.Time
+	mode    fs.FileMode
+	open    func() (fs.File, error)
+}
+
+var _ fs.DirEntry = (*vfsDirEntry)(nil)
+
+func (info *vfsDirEntry) Name() string      { return info.name }
+func (info *vfsDirEntry) IsDir() bool       { return info.mode.IsDir() }
+func (info *vfsDirEntry) Type() fs.FileMode { return info.mode.Type() }
+
+func (info *vfsDirEntry) Info() (fs.FileInfo, error) {
+	f, err := info.open()
+	if err != nil {
+		return nil, err
+	}
+	stat, err := f.Stat()
+	return stat, errors.Join(err, f.Close())
+}
+
+func (info *vfsDirEntry) Size() int64        { return 0 }
+func (info *vfsDirEntry) Mode() fs.FileMode  { return info.mode | fs.ModeIrregular }
+func (info *vfsDirEntry) ModTime() time.Time { return info.created }
+func (info *vfsDirEntry) Sys() any           { return nil }
+
+type vfsDirFile struct {
+	name    string
+	created time.Time
+	entries []fs.DirEntry
+	offset  int
+}
+
+var _ fs.ReadDirFile = (*vfsDirFile)(nil)
+
+func (dir *vfsDirFile) ReadDir(n int) ([]fs.DirEntry, error) {
+	if n <= 0 {
+		entries := dir.entries[dir.offset:]
+		dir.offset = len(dir.entries)
+		return entries, nil
+	}
+	if remain := len(dir.entries) - dir.offset; remain < n {
+		n = remain
+	}
+	if n <= 0 {
+		return nil, io.EOF
+	}
+	entries := dir.entries[dir.offset : dir.offset+n]
+	dir.offset += n
+	return entries, nil
+}
+
+func (dir *vfsDirFile) Close() error               { return nil }
+func (dir *vfsDirFile) IsDir() bool                { return true }
+func (dir *vfsDirFile) Mode() fs.FileMode          { return fs.ModeDir | fs.ModeIrregular }
+func (dir *vfsDirFile) ModTime() time.Time         { return dir.created }
+func (dir *vfsDirFile) Name() string               { return dir.name }
+func (dir *vfsDirFile) Read(_ []byte) (int, error) { return 0, nil }
+func (dir *vfsDirFile) Size() int64                { return 0 }
+func (dir *vfsDirFile) Stat() (fs.FileInfo, error) { return dir, nil }
+func (dir *vfsDirFile) Sys() any                   { return nil }
+
+type copyContentOpts struct {
+	Source      ContentSource
+	DestFS      WriteFS
+	DestRoot    string
+	Manifest    DigestMap
+	Concurrency int
+}
+
+// transfer dst/src names in files from srcFS to dstFS
+func copyContent(ctx context.Context, c *copyContentOpts) error {
+	if c.Source == nil {
+		return errors.New("missing countent source")
+	}
+	conc := c.Concurrency
+	if conc < 1 {
+		conc = 1
+	}
+	grp, ctx := errgroup.WithContext(ctx)
+	grp.SetLimit(conc)
+	for dig, dstNames := range c.Manifest {
+		srcFS, srcPath := c.Source.GetContent(dig)
+		if srcFS == nil {
+			return fmt.Errorf("content source doesn't provide %q", dig)
+		}
+		for _, dstName := range dstNames {
+			srcPath := srcPath
+			dstPath := path.Join(c.DestRoot, dstName)
+			grp.Go(func() error {
+				return Copy(ctx, c.DestFS, dstPath, srcFS, srcPath)
+			})
+
+		}
+	}
+	return grp.Wait()
+}
+
+// newContentMap returns a DigestMap that is a subset of the inventory
+// manifest for the digests and paths of new content
+func newContentMap(inv *rawInventory) (DigestMap, error) {
+	pm := PathMap{}
+	var err error
+	inv.Manifest.EachPath(func(pth, dig string) bool {
+		// ignore manifest entries from previous versions
+		if !strings.HasPrefix(pth, inv.Head.String()+"/") {
+			return true
+		}
+		if _, exists := pm[pth]; exists {
+			err = fmt.Errorf("path duplicate in manifest: %q", pth)
+			return false
+		}
+		pm[pth] = dig
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+	return pm.DigestMapValid()
+}
+
+func ec(err error, code *validation.ValidationCode) error {
+	if code == nil {
+		return err
+	}
+	return &ValidationError{
+		Err:            err,
+		ValidationCode: *code,
+	}
+}
+
+// writeInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
+// fsys. The digest is calculated using alg and the inventory sidecar is also written to
+// dir/inventory.alg
+func writeInventory(ctx context.Context, fsys WriteFS, inv *inventoryV1, dirs ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	byts, err := json.Marshal(inv.raw)
+	if err != nil {
+		return fmt.Errorf("encoding inventory: %w", err)
+	}
+	if err := inv.setJsonDigest(byts); err != nil {
+		return fmt.Errorf("generating inventory.json checksum: %w", err)
+	}
+	// write inventory.json and sidecar
+	for _, dir := range dirs {
+		invFile := path.Join(dir, inventoryFile)
+		sideFile := invFile + "." + inv.raw.DigestAlgorithm
+		sideContent := inv.jsonDigest + " " + inventoryFile + "\n"
+		_, err = fsys.Write(ctx, invFile, bytes.NewReader(byts))
+		if err != nil {
+			return fmt.Errorf("write inventory failed: %w", err)
+		}
+		_, err = fsys.Write(ctx, sideFile, strings.NewReader(sideContent))
+		if err != nil {
+			return fmt.Errorf("write inventory sidecar failed: %w", err)
+		}
+	}
+	return nil
+}
+
+// NextInventory ...
+func buildInventory(prev Inventory, commit *Commit) (*inventoryV1, error) {
+	if commit.Stage == nil {
+		return nil, errors.New("commit is missing new version state")
+	}
+	if commit.Stage.DigestAlgorithm == nil {
+		return nil, errors.New("commit has no digest algorithm")
+
+	}
+	if commit.Stage.State == nil {
+		commit.Stage.State = DigestMap{}
+	}
+	rawInv := &rawInventory{
+		ID:               commit.ID,
+		DigestAlgorithm:  commit.Stage.DigestAlgorithm.ID(),
+		ContentDirectory: contentDir,
+	}
+	switch {
+	case prev != nil:
+		prevInv, ok := prev.(*inventoryV1)
+		if !ok {
+			err := errors.New("inventory is not an OCFLv1 inventory")
+			return nil, err
+		}
+		if rawInv.DigestAlgorithm != prev.DigestAlgorithm().ID() {
+			return nil, fmt.Errorf("commit must use same digest algorithm as existing inventory (%s)", prev.DigestAlgorithm())
+		}
+		rawInv.ID = prev.ID()
+		rawInv.ContentDirectory = prevInv.raw.ContentDirectory
+		rawInv.Type = prevInv.raw.Type
+		var err error
+		rawInv.Head, err = prev.Head().Next()
+		if err != nil {
+			return nil, fmt.Errorf("existing inventory's version scheme doesn't support additional versions: %w", err)
+		}
+		if !commit.Spec.Empty() {
+			// new inventory spec must be >= prev
+			if commit.Spec.Cmp(prev.Spec()) < 0 {
+				err = fmt.Errorf("new inventory's OCFL spec can't be lower than the existing inventory's (%s)", prev.Spec())
+				return nil, err
+			}
+			rawInv.Type = commit.Spec.AsInvType()
+		}
+		if !commit.AllowUnchanged {
+			lastV := prev.Version(0)
+			if lastV.State().Eq(commit.Stage.State) {
+				err := errors.New("version state unchanged")
+				return nil, err
+			}
+		}
+
+		// copy and normalize all digests in the inventory. If we don't do this
+		// non-normalized digests in previous version states might cause
+		// problems since the updated manifest/fixity will be normalized.
+		rawInv.Manifest, err = prev.Manifest().Normalize()
+		if err != nil {
+			return nil, fmt.Errorf("in existing inventory manifest: %w", err)
+		}
+		versions := prev.Head().Lineage()
+		rawInv.Versions = make(map[VNum]*rawInventoryVersion, len(versions))
+		for _, vnum := range versions {
+			prevVer := prev.Version(vnum.Num())
+			newVer := &rawInventoryVersion{
+				Created: prevVer.Created(),
+				Message: prevVer.Message(),
+			}
+			newVer.State, err = prevVer.State().Normalize()
+			if err != nil {
+				return nil, fmt.Errorf("in existing inventory %s state: %w", vnum, err)
+			}
+			if prevVer.User() != nil {
+				newVer.User = &User{
+					Name:    prevVer.User().Name,
+					Address: prevVer.User().Address,
+				}
+			}
+			rawInv.Versions[vnum] = newVer
+		}
+		// transfer fixity
+		rawInv.Fixity = make(map[string]DigestMap, len(prevInv.raw.Fixity))
+		for alg, m := range prevInv.raw.Fixity {
+			rawInv.Fixity[alg], err = m.Normalize()
+			if err != nil {
+				return nil, fmt.Errorf("in existing inventory %s fixity: %w", alg, err)
+			}
+		}
+	default:
+		// FIXME: how whould padding be set for new inventories?
+		rawInv.Head = V(1, 0)
+		rawInv.Manifest = DigestMap{}
+		rawInv.Fixity = map[string]DigestMap{}
+		rawInv.Versions = map[VNum]*rawInventoryVersion{}
+		rawInv.Type = commit.Spec.AsInvType()
+	}
+
+	// add new version
+	newVersion := &rawInventoryVersion{
+		State:   commit.Stage.State,
+		Created: commit.Created,
+		Message: commit.Message,
+		User:    &commit.User,
+	}
+	if newVersion.Created.IsZero() {
+		newVersion.Created = time.Now()
+	}
+	newVersion.Created = newVersion.Created.Truncate(time.Second)
+	rawInv.Versions[rawInv.Head] = newVersion
+
+	// build new manifest and fixity entries
+	newContentFunc := func(paths []string) []string {
+		// apply user-specified path transform first
+		if commit.ContentPathFunc != nil {
+			paths = commit.ContentPathFunc(paths)
+		}
+		contDir := rawInv.ContentDirectory
+		if contDir == "" {
+			contDir = contentDir
+		}
+		for i, p := range paths {
+			paths[i] = path.Join(rawInv.Head.String(), contDir, p)
+		}
+		return paths
+	}
+	for digest, logicPaths := range newVersion.State {
+		if len(rawInv.Manifest[digest]) > 0 {
+			// version content already exists in the manifest
+			continue
+		}
+		rawInv.Manifest[digest] = newContentFunc(slices.Clone(logicPaths))
+	}
+	if commit.Stage.FixitySource != nil {
+		for digest, contentPaths := range rawInv.Manifest {
+			fixSet := commit.Stage.FixitySource.GetFixity(digest)
+			if len(fixSet) < 1 {
+				continue
+			}
+			for fixAlg, fixDigest := range fixSet {
+				if rawInv.Fixity[fixAlg] == nil {
+					rawInv.Fixity[fixAlg] = DigestMap{}
+				}
+				for _, cp := range contentPaths {
+					fixPaths := rawInv.Fixity[fixAlg][fixDigest]
+					if !slices.Contains(fixPaths, cp) {
+						rawInv.Fixity[fixAlg][fixDigest] = append(fixPaths, cp)
+					}
+				}
+			}
+		}
+	}
+	inv := &inventoryV1{raw: *rawInv}
+	// check that resulting inventory is valid
+	if err := inv.Validate().Err(); err != nil {
+		return nil, fmt.Errorf("generated inventory is not valid: %w", err)
+	}
+	return inv, nil
+}
+
+type versionDirState struct {
+	hasInventory bool
+	sidecarAlg   string
+	extraFiles   []string
+	dirs         []string
+}
+
+func parseVersionDirState(entries []fs.DirEntry) versionDirState {
+	var info versionDirState
+	for _, e := range entries {
+		if e.Type().IsDir() {
+			info.dirs = append(info.dirs, e.Name())
+			continue
+		}
+		if e.Type().IsRegular() || e.Type() == fs.ModeIrregular {
+			if e.Name() == inventoryFile {
+				info.hasInventory = true
+				continue
+			}
+			if strings.HasPrefix(e.Name(), inventoryFile+".") && info.sidecarAlg == "" {
+				info.sidecarAlg = strings.TrimPrefix(e.Name(), inventoryFile+".")
+				continue
+			}
+		}
+		// unexpected files
+		info.extraFiles = append(info.extraFiles, e.Name())
+	}
+	return info
+}
+
+type logicalState struct {
+	manifest DigestMap
+	state    DigestMap
+}
+
+func (a logicalState) Eq(b logicalState) bool {
+	if a.state == nil || b.state == nil || a.manifest == nil || b.manifest == nil {
+		return false
+	}
+	if !a.state.EachPath(func(name string, dig string) bool {
+		otherDig := b.state.GetDigest(name)
+		if otherDig == "" {
+			return false
+		}
+		contentPaths := a.manifest[dig]
+		otherPaths := b.manifest[otherDig]
+		if len(contentPaths) != len(otherPaths) {
+			return false
+		}
+		sort.Strings(contentPaths)
+		sort.Strings(otherPaths)
+		for i, p := range contentPaths {
+			if otherPaths[i] != p {
+				return false
+			}
+		}
+		return true
+	}) {
+		return false
+	}
+	// make sure all logical paths in other state are also in state
+	return b.state.EachPath(func(otherName string, _ string) bool {
+		return a.state.GetDigest(otherName) != ""
+	})
+}
+
+func validateRootState(spec Spec, state *ObjectState) *Validation {
+	specStr := string(spec)
+	v := &Validation{}
+	for _, name := range state.Invalid {
+		err := fmt.Errorf(`%w: %s`, ErrObjRootStructure, name)
+		v.AddFatal(ec(err, codes.E001(specStr)))
+	}
+	if !state.HasInventory() {
+		err := fmt.Errorf(`root inventory.json: %w`, fs.ErrNotExist)
+		v.AddFatal(ec(err, codes.E063(specStr)))
+	}
+	if !state.HasSidecar() {
+		err := fmt.Errorf(`root inventory.json sidecar: %w`, fs.ErrNotExist)
+		v.AddFatal(ec(err, codes.E058(specStr)))
+	}
+	err := state.VersionDirs.Valid()
+	if err != nil {
+		if errors.Is(err, ErrVerEmpty) {
+			err = ec(err, codes.E008(specStr))
+		} else if errors.Is(err, ErrVNumPadding) {
+			err = ec(err, codes.E011(specStr))
+		} else if errors.Is(err, ErrVNumMissing) {
+			err = ec(err, codes.E010(specStr))
+		}
+		v.AddFatal(err)
+	}
+	if err == nil && state.VersionDirs.Padding() > 0 {
+		err := errors.New("version directory names are zero-padded")
+		v.AddWarn(ec(err, codes.W001(specStr)))
+	}
+	// if vdirHead := state.VersionDirs.Head().Num(); vdirHead > o.inv.Head.Num() {
+	// 	err := errors.New("version directories don't reflect versions in inventory.json")
+	// 	v.AddFatal(ec(err, codes.E046(ocflV)))
+	// }
+	return v
+}
+
+func validateExtensionsDir(ctx context.Context, spec Spec, fsys FS, objDir string) *Validation {
+	specStr := string(spec)
+	v := &Validation{}
+	extDir := path.Join(objDir, extensionsDir)
+	items, err := fsys.ReadDir(ctx, extDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		v.AddFatal(err)
+		return v
+	}
+	for _, i := range items {
+		if !i.IsDir() {
+			err := fmt.Errorf(`invalid file: %s`, i.Name())
+			v.AddFatal(ec(err, codes.E067(specStr)))
+			continue
+		}
+		_, err := extension.Get(i.Name())
+		if err != nil {
+			// unknow extension
+			err := fmt.Errorf("%w: %s", err, i.Name())
+			v.AddWarn(ec(err, codes.W013(specStr)))
+		}
+	}
+	return v
 }

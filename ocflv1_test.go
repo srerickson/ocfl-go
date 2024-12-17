@@ -733,11 +733,10 @@ func TestOCFLV1_ValidateInventoryBytes(t *testing.T) {
 			},
 		},
 	}
-	ocflv1 := ocfl.OCFLv1_0
 	for desc, test := range testInventories {
 		t.Run(desc, func(t *testing.T) {
-			inv, vldr := ocflv1.ValidateInventoryBytes([]byte(test.inventory))
-			test.expect(t, inv, vldr)
+			inv, v := ocfl.OCFLv1_0.ValidateInventoryBytes([]byte(test.inventory))
+			test.expect(t, inv, v)
 		})
 	}
 }

@@ -18,12 +18,10 @@ import (
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/local"
 	"github.com/srerickson/ocfl-go/digest"
-	"github.com/srerickson/ocfl-go/ocflv1"
 	"golang.org/x/exp/maps"
 )
 
 func TestObject(t *testing.T) {
-	ocflv1.Enable()
 	t.Run("Example", testObjectExample)
 	t.Run("New", testNewObject)
 	t.Run("Commit", testObjectCommit)

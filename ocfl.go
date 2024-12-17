@@ -45,6 +45,7 @@ type OCFL interface {
 	NewReadInventory(raw []byte) (Inventory, error)
 	NewReadObject(fsys FS, path string, inv Inventory) ReadObject
 	Commit(ctx context.Context, obj ReadObject, commit *Commit) (ReadObject, error)
+	ValidateInventoryBytes([]byte) (Inventory, *Validation)
 	ValidateObjectRoot(ctx context.Context, fs FS, dir string, state *ObjectState, vldr *ObjectValidation) (ReadObject, error)
 	ValidateObjectVersion(ctx context.Context, obj ReadObject, vnum VNum, versionInv Inventory, prevInv Inventory, vldr *ObjectValidation) error
 	ValidateObjectContent(ctx context.Context, obj ReadObject, vldr *ObjectValidation) error

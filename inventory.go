@@ -1,7 +1,6 @@
 package ocfl
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -129,14 +128,10 @@ type rawInventory struct {
 	Manifest         DigestMap                     `json:"manifest"`
 	Versions         map[VNum]*rawInventoryVersion `json:"versions"`
 	Fixity           map[string]DigestMap          `json:"fixity,omitempty"`
-
-	// digest of raw inventory using DigestAlgorithm, set during json
-	// marshal/unmarshal
-	jsonDigest string
 }
 
-// GetFixity implements ocfl.FixitySource for Inventory
-func (inv rawInventory) GetFixity(dig string) digest.Set {
+// getFixity implements ocfl.FixitySource for Inventory
+func (inv rawInventory) getFixity(dig string) digest.Set {
 	paths := inv.Manifest[dig]
 	if len(paths) < 1 {
 		return nil
@@ -154,7 +149,7 @@ func (inv rawInventory) GetFixity(dig string) digest.Set {
 	return set
 }
 
-func (inv rawInventory) Version(v int) *rawInventoryVersion {
+func (inv rawInventory) version(v int) *rawInventoryVersion {
 	if inv.Versions == nil {
 		return nil
 	}
@@ -165,9 +160,9 @@ func (inv rawInventory) Version(v int) *rawInventoryVersion {
 	return inv.Versions[vnum]
 }
 
-// VNums returns a sorted slice of VNums corresponding to the keys in the
+// vnums returns a sorted slice of vnums corresponding to the keys in the
 // inventory's 'versions' block.
-func (inv rawInventory) VNums() []VNum {
+func (inv rawInventory) vnums() []VNum {
 	vnums := make([]VNum, len(inv.Versions))
 	i := 0
 	for v := range inv.Versions {
@@ -176,22 +171,6 @@ func (inv rawInventory) VNums() []VNum {
 	}
 	sort.Sort(VNums(vnums))
 	return vnums
-}
-
-func (inv *rawInventory) Digest() string {
-	return inv.jsonDigest
-}
-
-func (inv *rawInventory) setJsonDigest(raw []byte) error {
-	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(digester, bytes.NewReader(raw)); err != nil {
-		return fmt.Errorf("digesting inventory: %w", err)
-	}
-	inv.jsonDigest = digester.String()
-	return nil
 }
 
 // Version represents object version state and metadata
