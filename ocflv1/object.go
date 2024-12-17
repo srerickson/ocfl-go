@@ -29,7 +29,7 @@ type ReadObject struct {
 
 func (o *ReadObject) FS() ocfl.FS { return o.fs }
 
-func (o *ReadObject) Inventory() ocfl.ReadInventory {
+func (o *ReadObject) Inventory() ocfl.Inventory {
 	if o.inv == nil {
 		return nil
 	}

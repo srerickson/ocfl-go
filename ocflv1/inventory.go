@@ -132,7 +132,7 @@ func (inv Inventory) GetFixity(dig string) digest.Set {
 	return set
 }
 
-func (inv Inventory) Inventory() ocfl.ReadInventory {
+func (inv Inventory) Inventory() ocfl.Inventory {
 	return &readInventory{raw: inv}
 }
 
@@ -573,7 +573,7 @@ func writeInventory(ctx context.Context, fsys ocfl.WriteFS, inv *Inventory, dirs
 }
 
 // NextInventory ...
-func buildInventory(prev ocfl.ReadInventory, commit *ocfl.Commit) (*Inventory, error) {
+func buildInventory(prev ocfl.Inventory, commit *ocfl.Commit) (*Inventory, error) {
 	if commit.Stage == nil {
 		return nil, errors.New("commit is missing new version state")
 	}

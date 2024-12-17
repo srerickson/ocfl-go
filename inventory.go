@@ -9,6 +9,7 @@ import (
 	"io"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -23,60 +24,7 @@ var (
 	invSidecarContentsRexp = regexp.MustCompile(`^([a-fA-F0-9]+)\s+inventory\.json[\n]?$`)
 )
 
-// RawInventory represents the contents of an object's inventory.json file
-type RawInventory struct {
-	ID               string                        `json:"id"`
-	Type             InvType                       `json:"type"`
-	DigestAlgorithm  string                        `json:"digestAlgorithm"`
-	Head             VNum                          `json:"head"`
-	ContentDirectory string                        `json:"contentDirectory,omitempty"`
-	Manifest         DigestMap                     `json:"manifest"`
-	Versions         map[VNum]*RawInventoryVersion `json:"versions"`
-	Fixity           map[string]DigestMap          `json:"fixity,omitempty"`
-
-	// digest of raw inventory using DigestAlgorithm, set during json
-	// marshal/unmarshal
-	jsonDigest string
-}
-
-// VNums returns a sorted slice of VNums corresponding to the keys in the
-// inventory's 'versions' block.
-func (inv RawInventory) VNums() []VNum {
-	vnums := make([]VNum, len(inv.Versions))
-	i := 0
-	for v := range inv.Versions {
-		vnums[i] = v
-		i++
-	}
-	sort.Sort(VNums(vnums))
-	return vnums
-}
-
-func (inv *RawInventory) Digest() string {
-	return inv.jsonDigest
-}
-
-func (inv *RawInventory) setJsonDigest(raw []byte) error {
-	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(digester, bytes.NewReader(raw)); err != nil {
-		return fmt.Errorf("digesting inventory: %w", err)
-	}
-	inv.jsonDigest = digester.String()
-	return nil
-}
-
-// Version represents object version state and metadata
-type RawInventoryVersion struct {
-	Created time.Time `json:"created"`
-	State   DigestMap `json:"state"`
-	Message string    `json:"message,omitempty"`
-	User    *User     `json:"user,omitempty"`
-}
-
-type ReadInventory interface {
+type Inventory interface {
 	FixitySource
 	ContentDirectory() string
 	Digest() string
@@ -126,7 +74,7 @@ func ReadSidecarDigest(ctx context.Context, fsys FS, name string) (digest string
 // algorithm (e.g., inventory.json.sha512) in directory dir and return an error
 // if the sidecar content is not formatted correctly or if the inv's digest
 // doesn't match the value found in the sidecar.
-func ValidateInventorySidecar(ctx context.Context, inv ReadInventory, fsys FS, dir string) error {
+func ValidateInventorySidecar(ctx context.Context, inv Inventory, fsys FS, dir string) error {
 	sideCar := path.Join(dir, inventoryBase+"."+inv.DigestAlgorithm().ID())
 	expSum, err := ReadSidecarDigest(ctx, fsys, sideCar)
 	if err != nil {
@@ -144,7 +92,7 @@ func ValidateInventorySidecar(ctx context.Context, inv ReadInventory, fsys FS, d
 }
 
 // return a ReadInventory for an inventory that may use any version of the ocfl spec.
-func readUnknownInventory(ctx context.Context, ocfls *OCLFRegister, fsys FS, dir string) (ReadInventory, error) {
+func readUnknownInventory(ctx context.Context, ocfls *OCLFRegister, fsys FS, dir string) (Inventory, error) {
 	f, err := fsys.OpenFile(ctx, path.Join(dir, inventoryBase))
 	if err != nil {
 		return nil, err
@@ -169,4 +117,87 @@ func readUnknownInventory(ctx context.Context, ocfls *OCLFRegister, fsys FS, dir
 		return nil, err
 	}
 	return invOCFL.NewReadInventory(raw)
+}
+
+// rawInventory represents the contents of an object's inventory.json file
+type rawInventory struct {
+	ID               string                        `json:"id"`
+	Type             InvType                       `json:"type"`
+	DigestAlgorithm  string                        `json:"digestAlgorithm"`
+	Head             VNum                          `json:"head"`
+	ContentDirectory string                        `json:"contentDirectory,omitempty"`
+	Manifest         DigestMap                     `json:"manifest"`
+	Versions         map[VNum]*rawInventoryVersion `json:"versions"`
+	Fixity           map[string]DigestMap          `json:"fixity,omitempty"`
+
+	// digest of raw inventory using DigestAlgorithm, set during json
+	// marshal/unmarshal
+	jsonDigest string
+}
+
+// GetFixity implements ocfl.FixitySource for Inventory
+func (inv rawInventory) GetFixity(dig string) digest.Set {
+	paths := inv.Manifest[dig]
+	if len(paths) < 1 {
+		return nil
+	}
+	set := digest.Set{}
+	for fixAlg, fixMap := range inv.Fixity {
+		fixMap.EachPath(func(p, fixDigest string) bool {
+			if slices.Contains(paths, p) {
+				set[fixAlg] = fixDigest
+				return false
+			}
+			return true
+		})
+	}
+	return set
+}
+
+func (inv rawInventory) Version(v int) *rawInventoryVersion {
+	if inv.Versions == nil {
+		return nil
+	}
+	if v == 0 {
+		return inv.Versions[inv.Head]
+	}
+	vnum := V(v, inv.Head.Padding())
+	return inv.Versions[vnum]
+}
+
+// VNums returns a sorted slice of VNums corresponding to the keys in the
+// inventory's 'versions' block.
+func (inv rawInventory) VNums() []VNum {
+	vnums := make([]VNum, len(inv.Versions))
+	i := 0
+	for v := range inv.Versions {
+		vnums[i] = v
+		i++
+	}
+	sort.Sort(VNums(vnums))
+	return vnums
+}
+
+func (inv *rawInventory) Digest() string {
+	return inv.jsonDigest
+}
+
+func (inv *rawInventory) setJsonDigest(raw []byte) error {
+	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(digester, bytes.NewReader(raw)); err != nil {
+		return fmt.Errorf("digesting inventory: %w", err)
+	}
+	inv.jsonDigest = digester.String()
+	return nil
+}
+
+// Version represents object version state and metadata
+type rawInventoryVersion struct {
+	Created time.Time `json:"created"`
+	State   DigestMap `json:"state"`
+	Message string    `json:"message,omitempty"`
+	User    *User     `json:"user,omitempty"`
 }

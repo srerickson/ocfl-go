@@ -42,11 +42,11 @@ func Implementations() []Spec         { return defaultOCFLs.Specs() }
 // version of the OCFL specification.
 type OCFL interface {
 	Spec() Spec
-	NewReadInventory(raw []byte) (ReadInventory, error)
-	NewReadObject(fsys FS, path string, inv ReadInventory) ReadObject
+	NewReadInventory(raw []byte) (Inventory, error)
+	NewReadObject(fsys FS, path string, inv Inventory) ReadObject
 	Commit(ctx context.Context, obj ReadObject, commit *Commit) (ReadObject, error)
 	ValidateObjectRoot(ctx context.Context, fs FS, dir string, state *ObjectState, vldr *ObjectValidation) (ReadObject, error)
-	ValidateObjectVersion(ctx context.Context, obj ReadObject, vnum VNum, versionInv ReadInventory, prevInv ReadInventory, vldr *ObjectValidation) error
+	ValidateObjectVersion(ctx context.Context, obj ReadObject, vnum VNum, versionInv Inventory, prevInv Inventory, vldr *ObjectValidation) error
 	ValidateObjectContent(ctx context.Context, obj ReadObject, vldr *ObjectValidation) error
 }
 
@@ -147,7 +147,7 @@ func (reg *OCLFRegister) Specs() []Spec {
 type ReadObject interface {
 	// Inventory returns the object's inventory or nil if
 	// the object hasn't been created yet.
-	Inventory() ReadInventory
+	Inventory() Inventory
 	// FS for accessing object contents
 	FS() FS
 	// Path returns the object's path relative to its FS()

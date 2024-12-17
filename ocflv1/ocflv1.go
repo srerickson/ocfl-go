@@ -38,7 +38,7 @@ type OCFL struct {
 
 func (imp OCFL) Spec() ocfl.Spec { return imp.spec }
 
-func (imp OCFL) NewReadInventory(raw []byte) (ocfl.ReadInventory, error) {
+func (imp OCFL) NewReadInventory(raw []byte) (ocfl.Inventory, error) {
 	inv, err := NewInventory(raw)
 	if err != nil {
 		return nil, err
@@ -49,7 +49,7 @@ func (imp OCFL) NewReadInventory(raw []byte) (ocfl.ReadInventory, error) {
 	return inv.Inventory(), nil
 }
 
-func (imp OCFL) NewReadObject(fsys ocfl.FS, path string, inv ocfl.ReadInventory) ocfl.ReadObject {
+func (imp OCFL) NewReadObject(fsys ocfl.FS, path string, inv ocfl.Inventory) ocfl.ReadObject {
 	concreteInv, ok := inv.(*readInventory)
 	if !ok {
 		panic("inventory has wrong type")
@@ -189,7 +189,7 @@ func (imp OCFL) ValidateObjectRoot(ctx context.Context, fsys ocfl.FS, dir string
 	return &ReadObject{fs: fsys, path: dir, inv: inv}, nil
 }
 
-func (imp OCFL) ValidateObjectVersion(ctx context.Context, obj ocfl.ReadObject, vnum ocfl.VNum, verInv ocfl.ReadInventory, prevInv ocfl.ReadInventory, vldr *ocfl.ObjectValidation) error {
+func (imp OCFL) ValidateObjectVersion(ctx context.Context, obj ocfl.ReadObject, vnum ocfl.VNum, verInv ocfl.Inventory, prevInv ocfl.Inventory, vldr *ocfl.ObjectValidation) error {
 	fsys := obj.FS()
 	vnumStr := vnum.String()
 	fullVerDir := path.Join(obj.Path(), vnumStr) // version directory path relative to FS
@@ -332,7 +332,7 @@ func parseVersionDirState(entries []fs.DirEntry) versionDirState {
 	return info
 }
 
-func (imp OCFL) compareVersionInventory(obj ocfl.ReadObject, dirNum ocfl.VNum, verInv ocfl.ReadInventory, vldr *ocfl.ObjectValidation) {
+func (imp OCFL) compareVersionInventory(obj ocfl.ReadObject, dirNum ocfl.VNum, verInv ocfl.Inventory, vldr *ocfl.ObjectValidation) {
 	rootInv := obj.Inventory()
 	specStr := string(imp.spec)
 	if verInv.Head() == rootInv.Head() && verInv.Digest() != rootInv.Digest() {

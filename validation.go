@@ -169,7 +169,7 @@ func (v *ObjectValidation) AddExistingContent(name string) {
 // if any name/digests entries in the inventory conflic with an existing
 // name/digest entry already added to the object validation. The returned error
 // wraps a slice of *DigestError values.
-func (v *ObjectValidation) AddInventoryDigests(inv ReadInventory) error {
+func (v *ObjectValidation) AddInventoryDigests(inv Inventory) error {
 	if v.files == nil {
 		v.files = map[string]*validationFileInfo{}
 	}

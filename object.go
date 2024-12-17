@@ -156,7 +156,7 @@ func (obj *Object) FS() FS {
 
 // Inventory returns the object's ReadInventory if it exists. If the object
 // doesn't exist, it returns nil.
-func (obj *Object) Inventory() ReadInventory {
+func (obj *Object) Inventory() Inventory {
 	return obj.reader.Inventory()
 }
 
@@ -228,7 +228,7 @@ func ValidateObject(ctx context.Context, fsys FS, dir string, opts ...ObjectVali
 		v.AddFatal(err)
 		return v
 	}
-	var prevInv ReadInventory
+	var prevInv Inventory
 	for _, vnum := range state.VersionDirs.Head().Lineage() {
 		versionDir := path.Join(dir, vnum.String())
 		versionInv, err := readUnknownInventory(ctx, v.globals.OCFLs(), fsys, versionDir)
@@ -283,7 +283,7 @@ func (c CommitError) Unwrap() error {
 type ObjectVersionFS struct {
 	fsys fs.FS
 	ver  ObjectVersion
-	inv  ReadInventory
+	inv  Inventory
 	num  int
 }
 
@@ -338,7 +338,7 @@ type uninitializedObject struct {
 var _ (ReadObject) = (*uninitializedObject)(nil)
 
 func (o *uninitializedObject) FS() FS                                     { return o.fs }
-func (o *uninitializedObject) Inventory() ReadInventory                   { return nil }
+func (o *uninitializedObject) Inventory() Inventory                       { return nil }
 func (o *uninitializedObject) Path() string                               { return o.path }
 func (o *uninitializedObject) VersionFS(ctx context.Context, v int) fs.FS { return nil }
 
