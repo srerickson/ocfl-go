@@ -13,9 +13,6 @@ import (
 )
 
 const (
-	Spec1_0 = Spec("1.0")
-	Spec1_1 = Spec("1.1")
-
 	invTypePrefix = "https://ocfl.io/"
 	invTypeSuffix = "/spec/#inventory"
 	specsDir      = "specs"

@@ -19,9 +19,9 @@ import (
 type Object struct {
 	reader ReadObject
 	// global settings
-	globals Config
+	globals config
 	// the OCFL implementation used to open the object
-	ocfl OCFL
+	ocfl implemenation
 	// object id used to open the object from the root
 	expectID string
 	// the object must exist: don't create a new object.
@@ -38,7 +38,7 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 	for _, optFn := range opts {
 		optFn(obj)
 	}
-	inv, err := readUnknownInventory(ctx, obj.globals.OCFLs(), fsys, dir)
+	inv, err := readUnknownInventory(ctx, &obj.globals, fsys, dir)
 	if err != nil {
 		var pthError *fs.PathError
 		if !errors.As(err, &pthError) {
@@ -53,7 +53,7 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 		}
 	}
 	if inv != nil {
-		obj.ocfl = obj.globals.OCFLs().MustGet(inv.Spec())
+		obj.ocfl = obj.globals.mustGetOCFL(inv.Spec())
 		obj.reader = obj.ocfl.NewReadObject(fsys, dir, inv)
 		// check that inventory has expected object ID
 		// if the expected object ID is known.
@@ -89,19 +89,19 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 		return errors.New("object's backing file system doesn't support write operations")
 	}
 	// the OCFL implementation to use to create the new object version
-	var useOCFL OCFL
+	var useOCFL implemenation
 	switch {
 	case commit.Spec.Empty():
 		switch {
 		case obj.Exists():
 			useOCFL = obj.ocfl
 		default:
-			useOCFL = defaultOCFLs.latest
+			useOCFL = obj.globals.defaultOCFL()
 		}
 		commit.Spec = useOCFL.Spec()
 	default:
 		var err error
-		useOCFL, err = obj.globals.GetSpec(commit.Spec)
+		useOCFL, err = obj.globals.getOCFL(commit.Spec)
 		if err != nil {
 			return err
 		}
@@ -133,7 +133,7 @@ func (obj *Object) Exists() bool { return ObjectExists(obj.reader) }
 // is returned. If object root does not include an extensions directory both
 // return values are nil.
 func (obj Object) ExtensionNames(ctx context.Context) ([]string, error) {
-	entries, err := obj.FS().ReadDir(ctx, path.Join(obj.Path(), ExtensionsDir))
+	entries, err := obj.FS().ReadDir(ctx, path.Join(obj.Path(), extensionsDir))
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +154,7 @@ func (obj *Object) FS() FS {
 	return obj.reader.FS()
 }
 
-// Inventory returns the object's ReadInventory if it exists. If the object
+// Inventory returns the object's Inventory if it exists. If the object
 // doesn't exist, it returns nil.
 func (obj *Object) Inventory() Inventory {
 	return obj.reader.Inventory()
@@ -212,7 +212,7 @@ func ValidateObject(ctx context.Context, fsys FS, dir string, opts ...ObjectVali
 		return v
 	}
 	state := ParseObjectDir(entries)
-	impl, err := v.globals.GetSpec(state.Spec)
+	impl, err := v.globals.getOCFL(state.Spec)
 	if err != nil {
 		v.AddFatal(err)
 		return v
@@ -222,7 +222,7 @@ func ValidateObject(ctx context.Context, fsys FS, dir string, opts ...ObjectVali
 		return v
 	}
 	// validate versions using previous specs
-	versionOCFL, err := v.globals.GetSpec(Spec1_0)
+	versionOCFL, err := v.globals.getOCFL(Spec1_0)
 	if err != nil {
 		err = fmt.Errorf("unexpected error during validation: %w", err)
 		v.AddFatal(err)
@@ -231,13 +231,13 @@ func ValidateObject(ctx context.Context, fsys FS, dir string, opts ...ObjectVali
 	var prevInv Inventory
 	for _, vnum := range state.VersionDirs.Head().Lineage() {
 		versionDir := path.Join(dir, vnum.String())
-		versionInv, err := readUnknownInventory(ctx, v.globals.OCFLs(), fsys, versionDir)
+		versionInv, err := readUnknownInventory(ctx, &v.globals, fsys, versionDir)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			v.AddFatal(fmt.Errorf("reading %s/inventory.json: %w", vnum, err))
 			continue
 		}
 		if versionInv != nil {
-			versionOCFL = v.globals.OCFLs().MustGet(versionInv.Spec())
+			versionOCFL = v.globals.mustGetOCFL(versionInv.Spec())
 		}
 		versionOCFL.ValidateObjectVersion(ctx, obj, vnum, versionInv, prevInv, v)
 		prevInv = versionInv

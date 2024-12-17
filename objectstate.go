@@ -57,9 +57,9 @@ func ParseObjectDir(entries []fs.DirEntry) *ObjectState {
 		case e.IsDir():
 			var v VNum
 			switch {
-			case name == LogsDir:
+			case name == logsDir:
 				state.Flags |= HasLogs
-			case name == ExtensionsDir:
+			case name == extensionsDir:
 				state.Flags |= HasExtensions
 			case ParseVNum(name, &v) == nil:
 				state.VersionDirs = append(state.VersionDirs, v)

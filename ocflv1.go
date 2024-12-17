@@ -25,25 +25,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const (
-	inventoryFile = "inventory.json"
-	contentDir    = "content"
-	extensionsDir = "extensions"
-)
-
-var (
-	OCFLv1_0 OCFL = &ocflV1{spec: Spec1_0}
-	OCFLv1_1 OCFL = &ocflV1{spec: Spec1_1}
-
-	ErrObjRootStructure = errors.New("object includes invalid files or directories")
-)
-
-func init() {
-	RegisterOCLF(OCFLv1_0)
-	RegisterOCLF(OCFLv1_1)
-}
-
-// implementation of ocfl v1.x
+// ocflv1 is animplementation of ocfl v1.x
 type ocflV1 struct {
 	spec Spec
 }
@@ -52,7 +34,7 @@ func (imp ocflV1) Spec() Spec {
 	return Spec(imp.spec)
 }
 
-func (imp ocflV1) NewReadInventory(byts []byte) (Inventory, error) {
+func (imp ocflV1) NewInventory(byts []byte) (Inventory, error) {
 	inv := &inventoryV1{}
 	dec := json.NewDecoder(bytes.NewReader(byts))
 	dec.DisallowUnknownFields()

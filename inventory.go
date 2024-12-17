@@ -90,8 +90,8 @@ func ValidateInventorySidecar(ctx context.Context, inv Inventory, fsys FS, dir s
 	return nil
 }
 
-// return a ReadInventory for an inventory that may use any version of the ocfl spec.
-func readUnknownInventory(ctx context.Context, ocfls *OCLFRegister, fsys FS, dir string) (Inventory, error) {
+// return a Inventory for an inventory that may use any version of the ocfl spec.
+func readUnknownInventory(ctx context.Context, config *config, fsys FS, dir string) (Inventory, error) {
 	f, err := fsys.OpenFile(ctx, path.Join(dir, inventoryBase))
 	if err != nil {
 		return nil, err
@@ -111,11 +111,11 @@ func readUnknownInventory(ctx context.Context, ocfls *OCLFRegister, fsys FS, dir
 	if err = json.Unmarshal(raw, &invFields); err != nil {
 		return nil, err
 	}
-	invOCFL, err := ocfls.Get(invFields.Type.Spec)
+	invOCFL, err := config.getOCFL(invFields.Type.Spec)
 	if err != nil {
 		return nil, err
 	}
-	return invOCFL.NewReadInventory(raw)
+	return invOCFL.NewInventory(raw)
 }
 
 // rawInventory represents the contents of an object's inventory.json file
