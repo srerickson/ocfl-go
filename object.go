@@ -1,12 +1,15 @@
 package ocfl
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"path"
+	"slices"
+	"strings"
 	"time"
 
 	"log/slog"
@@ -17,7 +20,13 @@ import (
 // Object represents and OCFL Object, typically contained in a Root. An Object
 // may not exist.
 type Object struct {
-	reader ReadObject
+	fs FS // where object is stored
+
+	path string // path in FS for object root directory
+
+	// object's root inventory
+	inventory Inventory
+
 	// global settings
 	globals config
 	// the OCFL implementation used to open the object
@@ -34,7 +43,7 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 	if !fs.ValidPath(dir) {
 		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
 	}
-	obj := &Object{}
+	obj := &Object{fs: fsys, path: dir}
 	for _, optFn := range opts {
 		optFn(obj)
 	}
@@ -54,13 +63,13 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 	}
 	if inv != nil {
 		obj.ocfl = obj.globals.mustGetOCFL(inv.Spec())
-		obj.reader = obj.ocfl.NewReadObject(fsys, dir, inv)
 		// check that inventory has expected object ID
 		// if the expected object ID is known.
 		if obj.expectID != "" && inv.ID() != obj.expectID {
 			err := fmt.Errorf("object has unexpected ID: %q; expected: %q", inv.ID(), obj.expectID)
 			return nil, err
 		}
+		obj.inventory = inv
 		return obj, nil
 	}
 	// if inventory.json doesn't exist, try to open as uninitialized object
@@ -73,8 +82,7 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 	rootState := ParseObjectDir(entries)
 	switch {
 	case rootState.Empty():
-		// open as new/uninitialized object w/o an OCFL spec.
-		obj.reader = &uninitializedObject{fs: fsys, path: dir}
+		// object doesn't exist
 		return obj, nil
 	case rootState.HasNamaste():
 		return nil, fmt.Errorf("incomplete OCFL object: %s: %w", inventoryBase, fs.ErrNotExist)
@@ -85,7 +93,7 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 
 // Commit creates a new object version based on values in commit.
 func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
-	if _, isWriteFS := obj.reader.FS().(WriteFS); !isWriteFS {
+	if _, isWriteFS := obj.FS().(WriteFS); !isWriteFS {
 		return errors.New("object's backing file system doesn't support write operations")
 	}
 	// the OCFL implementation to use to create the new object version
@@ -113,19 +121,16 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 		}
 		commit.ID = obj.expectID
 	}
-	newSpecObj, err := useOCFL.Commit(ctx, obj.reader, commit)
-	if err != nil {
+	if err := useOCFL.Commit(ctx, obj, commit); err != nil {
 		return err
-	}
-	obj.reader = newSpecObj
-	if obj.ocfl != useOCFL {
-		obj.ocfl = useOCFL
 	}
 	return nil
 }
 
 // Exists returns true if the object has an existing version.
-func (obj *Object) Exists() bool { return ObjectExists(obj.reader) }
+func (obj *Object) Exists() bool {
+	return obj.inventory != nil
+}
 
 // ExtensionNames returns the names of directories in the object's
 // extensions directory. The ObjectRoot's State is initialized if it is
@@ -151,18 +156,18 @@ func (obj Object) ExtensionNames(ctx context.Context) ([]string, error) {
 
 // FS returns the FS where object is stored.
 func (obj *Object) FS() FS {
-	return obj.reader.FS()
+	return obj.fs
 }
 
 // Inventory returns the object's Inventory if it exists. If the object
 // doesn't exist, it returns nil.
 func (obj *Object) Inventory() Inventory {
-	return obj.reader.Inventory()
+	return obj.inventory
 }
 
 // Path returns the Object's path relative to its FS.
 func (obj *Object) Path() string {
-	return obj.reader.Path()
+	return obj.path
 }
 
 // OpenVersion returns an ObjectVersionFS for the version with the given
@@ -184,7 +189,7 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 		// FIXME; better error
 		return nil, errors.New("version not found")
 	}
-	ioFS := obj.reader.VersionFS(ctx, i)
+	ioFS := obj.VersionFS(ctx, i)
 	if ioFS == nil {
 		// FIXME; better error
 		return nil, errors.New("version not found")
@@ -322,26 +327,6 @@ func (vfs *ObjectVersionFS) Stage() *Stage {
 	}
 }
 
-func ObjectExists(obj ReadObject) bool {
-	if _, isEmpty := obj.(*uninitializedObject); isEmpty {
-		return false
-	}
-	return true
-}
-
-// uninitializedObject is an ObjectReader for an object that doesn't exist yet.
-type uninitializedObject struct {
-	fs   FS
-	path string
-}
-
-var _ (ReadObject) = (*uninitializedObject)(nil)
-
-func (o *uninitializedObject) FS() FS                                     { return o.fs }
-func (o *uninitializedObject) Inventory() Inventory                       { return nil }
-func (o *uninitializedObject) Path() string                               { return o.path }
-func (o *uninitializedObject) VersionFS(ctx context.Context, v int) fs.FS { return nil }
-
 // ObjectOptions are used to configure the behavior of NewObject()
 type ObjectOption func(*Object)
 
@@ -357,3 +342,196 @@ func objectExpectedID(id string) ObjectOption {
 		o.expectID = id
 	}
 }
+
+func (o *Object) VersionFS(ctx context.Context, i int) fs.FS {
+	ver := o.inventory.Version(i)
+	if ver == nil {
+		return nil
+	}
+	// FIXME: This is a hack to make versionFS replicates the filemode of
+	// the undering FS. Open a random content file to get the file mode used by
+	// the underlying FS.
+	regfileType := fs.FileMode(0)
+	for _, paths := range o.inventory.Manifest() {
+		if len(paths) < 1 {
+			break
+		}
+		f, err := o.fs.OpenFile(ctx, path.Join(o.path, paths[0]))
+		if err != nil {
+			return nil
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil {
+			return nil
+		}
+		regfileType = info.Mode().Type()
+		break
+	}
+	return &versionFS{
+		ctx:     ctx,
+		obj:     o,
+		paths:   ver.State().PathMap(),
+		created: ver.Created(),
+		regMode: regfileType,
+	}
+}
+
+type versionFS struct {
+	ctx     context.Context
+	obj     *Object
+	paths   PathMap
+	created time.Time
+	regMode fs.FileMode
+}
+
+func (vfs *versionFS) Open(logical string) (fs.File, error) {
+	if !fs.ValidPath(logical) {
+		return nil, &fs.PathError{
+			Err:  fs.ErrInvalid,
+			Op:   "open",
+			Path: logical,
+		}
+	}
+	if logical == "." {
+		return vfs.openDir(".")
+	}
+	digest := vfs.paths[logical]
+	if digest == "" {
+		// name doesn't exist in state.
+		// try opening as a directory
+		return vfs.openDir(logical)
+	}
+
+	realNames := vfs.obj.inventory.Manifest()[digest]
+	if len(realNames) < 1 {
+		return nil, &fs.PathError{
+			Err:  fs.ErrNotExist,
+			Op:   "open",
+			Path: logical,
+		}
+	}
+	realName := realNames[0]
+	if !fs.ValidPath(realName) {
+		return nil, &fs.PathError{
+			Err:  fs.ErrInvalid,
+			Op:   "open",
+			Path: logical,
+		}
+	}
+	f, err := vfs.obj.fs.OpenFile(vfs.ctx, path.Join(vfs.obj.path, realName))
+	if err != nil {
+		err = fmt.Errorf("opening file with logical path %q: %w", logical, err)
+		return nil, err
+	}
+	return f, nil
+}
+
+func (vfs *versionFS) openDir(dir string) (fs.File, error) {
+	prefix := dir + "/"
+	if prefix == "./" {
+		prefix = ""
+	}
+	children := map[string]*vfsDirEntry{}
+	for p := range vfs.paths {
+		if !strings.HasPrefix(p, prefix) {
+			continue
+		}
+		name, _, isdir := strings.Cut(strings.TrimPrefix(p, prefix), "/")
+		if _, exists := children[name]; exists {
+			continue
+		}
+		entry := &vfsDirEntry{
+			name:    name,
+			mode:    vfs.regMode,
+			created: vfs.created,
+			open:    func() (fs.File, error) { return vfs.Open(path.Join(dir, name)) },
+		}
+		if isdir {
+			entry.mode = entry.mode | fs.ModeDir | fs.ModeIrregular
+		}
+		children[name] = entry
+	}
+	if len(children) < 1 {
+		return nil, &fs.PathError{
+			Op:   "open",
+			Path: dir,
+			Err:  fs.ErrNotExist,
+		}
+	}
+
+	dirFile := &vfsDirFile{
+		name:    dir,
+		entries: make([]fs.DirEntry, 0, len(children)),
+	}
+	for _, entry := range children {
+		dirFile.entries = append(dirFile.entries, entry)
+	}
+	slices.SortFunc(dirFile.entries, func(a, b fs.DirEntry) int {
+		return cmp.Compare(a.Name(), b.Name())
+	})
+	return dirFile, nil
+}
+
+type vfsDirEntry struct {
+	name    string
+	created time.Time
+	mode    fs.FileMode
+	open    func() (fs.File, error)
+}
+
+var _ fs.DirEntry = (*vfsDirEntry)(nil)
+
+func (info *vfsDirEntry) Name() string      { return info.name }
+func (info *vfsDirEntry) IsDir() bool       { return info.mode.IsDir() }
+func (info *vfsDirEntry) Type() fs.FileMode { return info.mode.Type() }
+
+func (info *vfsDirEntry) Info() (fs.FileInfo, error) {
+	f, err := info.open()
+	if err != nil {
+		return nil, err
+	}
+	stat, err := f.Stat()
+	return stat, errors.Join(err, f.Close())
+}
+
+func (info *vfsDirEntry) Size() int64        { return 0 }
+func (info *vfsDirEntry) Mode() fs.FileMode  { return info.mode | fs.ModeIrregular }
+func (info *vfsDirEntry) ModTime() time.Time { return info.created }
+func (info *vfsDirEntry) Sys() any           { return nil }
+
+type vfsDirFile struct {
+	name    string
+	created time.Time
+	entries []fs.DirEntry
+	offset  int
+}
+
+var _ fs.ReadDirFile = (*vfsDirFile)(nil)
+
+func (dir *vfsDirFile) ReadDir(n int) ([]fs.DirEntry, error) {
+	if n <= 0 {
+		entries := dir.entries[dir.offset:]
+		dir.offset = len(dir.entries)
+		return entries, nil
+	}
+	if remain := len(dir.entries) - dir.offset; remain < n {
+		n = remain
+	}
+	if n <= 0 {
+		return nil, io.EOF
+	}
+	entries := dir.entries[dir.offset : dir.offset+n]
+	dir.offset += n
+	return entries, nil
+}
+
+func (dir *vfsDirFile) Close() error               { return nil }
+func (dir *vfsDirFile) IsDir() bool                { return true }
+func (dir *vfsDirFile) Mode() fs.FileMode          { return fs.ModeDir | fs.ModeIrregular }
+func (dir *vfsDirFile) ModTime() time.Time         { return dir.created }
+func (dir *vfsDirFile) Name() string               { return dir.name }
+func (dir *vfsDirFile) Read(_ []byte) (int, error) { return 0, nil }
+func (dir *vfsDirFile) Size() int64                { return 0 }
+func (dir *vfsDirFile) Stat() (fs.FileInfo, error) { return dir, nil }
+func (dir *vfsDirFile) Sys() any                   { return nil }

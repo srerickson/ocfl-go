@@ -275,8 +275,8 @@ func testUpdateFixtures(t *testing.T) {
 
 				// new stage from the existing version and add a new file
 				currentVersion, err := obj.OpenVersion(ctx, 0)
-				defer be.NilErr(t, currentVersion.Close())
 				be.NilErr(t, err)
+				defer be.NilErr(t, currentVersion.Close())
 				newContent, err := ocfl.StageBytes(map[string][]byte{
 					"a-new-file": []byte("new stuff"),
 				}, currentVersion.DigestAlgorithm())

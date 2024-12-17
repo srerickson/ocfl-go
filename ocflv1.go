@@ -2,7 +2,6 @@ package ocfl
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -250,24 +249,16 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
 	return inv, v
 }
 
-func (imp *ocflV1) NewReadObject(fsys FS, path string, inv Inventory) ReadObject {
-	concreteInv, ok := inv.(*inventoryV1)
-	if !ok {
-		panic("inventory has wrong type")
-	}
-	return &objectV1{fs: fsys, path: path, inv: concreteInv}
-}
-
-func (imp *ocflV1) Commit(ctx context.Context, obj ReadObject, commit *Commit) (ReadObject, error) {
+func (imp *ocflV1) Commit(ctx context.Context, obj *Object, commit *Commit) error {
 	writeFS, ok := obj.FS().(WriteFS)
 	if !ok {
 		err := errors.New("object's backing file system doesn't support write operations")
-		return nil, &CommitError{Err: err}
+		return &CommitError{Err: err}
 	}
 	newInv, err := buildInventory(obj.Inventory(), commit)
 	if err != nil {
 		err := fmt.Errorf("building new inventory: %w", err)
-		return nil, &CommitError{Err: err}
+		return &CommitError{Err: err}
 	}
 	logger := commit.Logger
 	if logger == nil {
@@ -277,14 +268,14 @@ func (imp *ocflV1) Commit(ctx context.Context, obj ReadObject, commit *Commit) (
 	// xfers is a subeset of the manifest with the new content to add
 	xfers, err := newContentMap(&newInv.raw)
 	if err != nil {
-		return nil, &CommitError{Err: err}
+		return &CommitError{Err: err}
 	}
 	// check that the stage includes all the new content
 	for digest := range xfers {
 		if !commit.Stage.HasContent(digest) {
 			// FIXME short digest
 			err := fmt.Errorf("no content for digest: %s", digest)
-			return nil, &CommitError{Err: err}
+			return &CommitError{Err: err}
 		}
 	}
 	// file changes start here
@@ -295,18 +286,18 @@ func (imp *ocflV1) Commit(ctx context.Context, obj ReadObject, commit *Commit) (
 	}
 	newSpec := newInv.Spec()
 	switch {
-	case ObjectExists(obj) && oldSpec != newSpec:
+	case obj.Exists() && oldSpec != newSpec:
 		oldDecl := Namaste{Type: NamasteTypeObject, Version: oldSpec}
 		logger.DebugContext(ctx, "deleting previous OCFL object declaration", "name", oldDecl)
 		if err = writeFS.Remove(ctx, path.Join(obj.Path(), oldDecl.Name())); err != nil {
-			return nil, &CommitError{Err: err, Dirty: true}
+			return &CommitError{Err: err, Dirty: true}
 		}
 		fallthrough
-	case !ObjectExists(obj):
+	case !obj.Exists():
 		newDecl := Namaste{Type: NamasteTypeObject, Version: newSpec}
 		logger.DebugContext(ctx, "writing new OCFL object declaration", "name", newDecl)
 		if err = WriteDeclaration(ctx, writeFS, obj.Path(), newDecl); err != nil {
-			return nil, &CommitError{Err: err, Dirty: true}
+			return &CommitError{Err: err, Dirty: true}
 		}
 	}
 	// 2. tranfser files from stage to object
@@ -320,7 +311,7 @@ func (imp *ocflV1) Commit(ctx context.Context, obj ReadObject, commit *Commit) (
 		logger.DebugContext(ctx, "copying new object files", "count", len(xfers))
 		if err := copyContent(ctx, copyOpts); err != nil {
 			err = fmt.Errorf("transferring new object contents: %w", err)
-			return nil, &CommitError{Err: err, Dirty: true}
+			return &CommitError{Err: err, Dirty: true}
 		}
 	}
 	logger.DebugContext(ctx, "writing inventories for new object version")
@@ -328,16 +319,14 @@ func (imp *ocflV1) Commit(ctx context.Context, obj ReadObject, commit *Commit) (
 	newVersionDir := path.Join(obj.Path(), newInv.Head().String())
 	if err := writeInventory(ctx, writeFS, newInv, obj.Path(), newVersionDir); err != nil {
 		err = fmt.Errorf("writing new inventories or inventory sidecars: %w", err)
-		return nil, &CommitError{Err: err, Dirty: true}
+		return &CommitError{Err: err, Dirty: true}
 	}
-	return &objectV1{
-		inv:  newInv,
-		fs:   obj.FS(),
-		path: obj.Path(),
-	}, nil
+	obj.inventory = newInv
+	obj.ocfl = imp
+	return nil
 }
 
-func (imp *ocflV1) ValidateObjectRoot(ctx context.Context, fsys FS, dir string, state *ObjectState, vldr *ObjectValidation) (ReadObject, error) {
+func (imp *ocflV1) ValidateObjectRoot(ctx context.Context, fsys FS, dir string, state *ObjectState, vldr *ObjectValidation) (*Object, error) {
 	// validate namaste
 	specStr := string(imp.spec)
 	decl := Namaste{Type: NamasteTypeObject, Version: imp.spec}
@@ -385,10 +374,15 @@ func (imp *ocflV1) ValidateObjectRoot(ctx context.Context, fsys FS, dir string, 
 	if err := vldr.Err(); err != nil {
 		return nil, err
 	}
-	return &objectV1{fs: fsys, path: dir, inv: inv.(*inventoryV1)}, nil
+	return &Object{
+		fs:        fsys,
+		path:      dir,
+		inventory: inv,
+		ocfl:      imp,
+	}, nil
 }
 
-func (imp *ocflV1) ValidateObjectVersion(ctx context.Context, obj ReadObject, vnum VNum, verInv Inventory, prevInv Inventory, vldr *ObjectValidation) error {
+func (imp *ocflV1) ValidateObjectVersion(ctx context.Context, obj *Object, vnum VNum, verInv Inventory, prevInv Inventory, vldr *ObjectValidation) error {
 	fsys := obj.FS()
 	vnumStr := vnum.String()
 	fullVerDir := path.Join(obj.Path(), vnumStr) // version directory path relative to FS
@@ -471,7 +465,7 @@ func (imp *ocflV1) ValidateObjectVersion(ctx context.Context, obj ReadObject, vn
 	return nil
 }
 
-func (imp *ocflV1) ValidateObjectContent(ctx context.Context, obj ReadObject, v *ObjectValidation) error {
+func (imp *ocflV1) ValidateObjectContent(ctx context.Context, obj *Object, v *ObjectValidation) error {
 	specStr := string(imp.spec)
 	newVld := &Validation{}
 	for name := range v.MissingContent() {
@@ -501,7 +495,7 @@ func (imp *ocflV1) ValidateObjectContent(ctx context.Context, obj ReadObject, v 
 	return newVld.Err()
 }
 
-func (imp ocflV1) compareVersionInventory(obj ReadObject, dirNum VNum, verInv Inventory, vldr *ObjectValidation) {
+func (imp ocflV1) compareVersionInventory(obj *Object, dirNum VNum, verInv Inventory, vldr *ObjectValidation) {
 	rootInv := obj.Inventory()
 	specStr := string(imp.spec)
 	if verInv.Head() == rootInv.Head() && verInv.Digest() != rootInv.Digest() {
@@ -870,214 +864,6 @@ func convertJSONDigestMap(jsonMap map[string]any) (DigestMap, error) {
 	}
 	return m, nil
 }
-
-// ReadObject implements ReadObject for OCFL v1.x objects
-type objectV1 struct {
-	fs   FS
-	path string
-	inv  *inventoryV1
-}
-
-func (o *objectV1) FS() FS { return o.fs }
-
-func (o *objectV1) Inventory() Inventory {
-	return o.inv
-}
-
-func (o *objectV1) VersionFS(ctx context.Context, i int) fs.FS {
-	ver := o.inv.raw.version(i)
-	if ver == nil {
-		return nil
-	}
-	// FIXME: This is a hack to make versionFS replicates the filemode of
-	// the undering FS. Open a random content file to get the file mode used by
-	// the underlying FS.
-	regfileType := fs.FileMode(0)
-	for _, paths := range o.inv.raw.Manifest {
-		if len(paths) < 1 {
-			break
-		}
-		f, err := o.fs.OpenFile(ctx, path.Join(o.path, paths[0]))
-		if err != nil {
-			return nil
-		}
-		defer f.Close()
-		info, err := f.Stat()
-		if err != nil {
-			return nil
-		}
-		regfileType = info.Mode().Type()
-		break
-	}
-	return &versionFS{
-		ctx:     ctx,
-		obj:     o,
-		paths:   ver.State.PathMap(),
-		created: ver.Created,
-		regMode: regfileType,
-	}
-}
-
-func (o *objectV1) Path() string { return o.path }
-
-type versionFS struct {
-	ctx     context.Context
-	obj     *objectV1
-	paths   PathMap
-	created time.Time
-	regMode fs.FileMode
-}
-
-func (vfs *versionFS) Open(logical string) (fs.File, error) {
-	if !fs.ValidPath(logical) {
-		return nil, &fs.PathError{
-			Err:  fs.ErrInvalid,
-			Op:   "open",
-			Path: logical,
-		}
-	}
-	if logical == "." {
-		return vfs.openDir(".")
-	}
-	digest := vfs.paths[logical]
-	if digest == "" {
-		// name doesn't exist in state.
-		// try opening as a directory
-		return vfs.openDir(logical)
-	}
-
-	realNames := vfs.obj.inv.raw.Manifest[digest]
-	if len(realNames) < 1 {
-		return nil, &fs.PathError{
-			Err:  fs.ErrNotExist,
-			Op:   "open",
-			Path: logical,
-		}
-	}
-	realName := realNames[0]
-	if !fs.ValidPath(realName) {
-		return nil, &fs.PathError{
-			Err:  fs.ErrInvalid,
-			Op:   "open",
-			Path: logical,
-		}
-	}
-	f, err := vfs.obj.fs.OpenFile(vfs.ctx, path.Join(vfs.obj.path, realName))
-	if err != nil {
-		err = fmt.Errorf("opening file with logical path %q: %w", logical, err)
-		return nil, err
-	}
-	return f, nil
-}
-
-func (vfs *versionFS) openDir(dir string) (fs.File, error) {
-	prefix := dir + "/"
-	if prefix == "./" {
-		prefix = ""
-	}
-	children := map[string]*vfsDirEntry{}
-	for p := range vfs.paths {
-		if !strings.HasPrefix(p, prefix) {
-			continue
-		}
-		name, _, isdir := strings.Cut(strings.TrimPrefix(p, prefix), "/")
-		if _, exists := children[name]; exists {
-			continue
-		}
-		entry := &vfsDirEntry{
-			name:    name,
-			mode:    vfs.regMode,
-			created: vfs.created,
-			open:    func() (fs.File, error) { return vfs.Open(path.Join(dir, name)) },
-		}
-		if isdir {
-			entry.mode = entry.mode | fs.ModeDir | fs.ModeIrregular
-		}
-		children[name] = entry
-	}
-	if len(children) < 1 {
-		return nil, &fs.PathError{
-			Op:   "open",
-			Path: dir,
-			Err:  fs.ErrNotExist,
-		}
-	}
-
-	dirFile := &vfsDirFile{
-		name:    dir,
-		entries: make([]fs.DirEntry, 0, len(children)),
-	}
-	for _, entry := range children {
-		dirFile.entries = append(dirFile.entries, entry)
-	}
-	slices.SortFunc(dirFile.entries, func(a, b fs.DirEntry) int {
-		return cmp.Compare(a.Name(), b.Name())
-	})
-	return dirFile, nil
-}
-
-type vfsDirEntry struct {
-	name    string
-	created time.Time
-	mode    fs.FileMode
-	open    func() (fs.File, error)
-}
-
-var _ fs.DirEntry = (*vfsDirEntry)(nil)
-
-func (info *vfsDirEntry) Name() string      { return info.name }
-func (info *vfsDirEntry) IsDir() bool       { return info.mode.IsDir() }
-func (info *vfsDirEntry) Type() fs.FileMode { return info.mode.Type() }
-
-func (info *vfsDirEntry) Info() (fs.FileInfo, error) {
-	f, err := info.open()
-	if err != nil {
-		return nil, err
-	}
-	stat, err := f.Stat()
-	return stat, errors.Join(err, f.Close())
-}
-
-func (info *vfsDirEntry) Size() int64        { return 0 }
-func (info *vfsDirEntry) Mode() fs.FileMode  { return info.mode | fs.ModeIrregular }
-func (info *vfsDirEntry) ModTime() time.Time { return info.created }
-func (info *vfsDirEntry) Sys() any           { return nil }
-
-type vfsDirFile struct {
-	name    string
-	created time.Time
-	entries []fs.DirEntry
-	offset  int
-}
-
-var _ fs.ReadDirFile = (*vfsDirFile)(nil)
-
-func (dir *vfsDirFile) ReadDir(n int) ([]fs.DirEntry, error) {
-	if n <= 0 {
-		entries := dir.entries[dir.offset:]
-		dir.offset = len(dir.entries)
-		return entries, nil
-	}
-	if remain := len(dir.entries) - dir.offset; remain < n {
-		n = remain
-	}
-	if n <= 0 {
-		return nil, io.EOF
-	}
-	entries := dir.entries[dir.offset : dir.offset+n]
-	dir.offset += n
-	return entries, nil
-}
-
-func (dir *vfsDirFile) Close() error               { return nil }
-func (dir *vfsDirFile) IsDir() bool                { return true }
-func (dir *vfsDirFile) Mode() fs.FileMode          { return fs.ModeDir | fs.ModeIrregular }
-func (dir *vfsDirFile) ModTime() time.Time         { return dir.created }
-func (dir *vfsDirFile) Name() string               { return dir.name }
-func (dir *vfsDirFile) Read(_ []byte) (int, error) { return 0, nil }
-func (dir *vfsDirFile) Size() int64                { return 0 }
-func (dir *vfsDirFile) Stat() (fs.FileInfo, error) { return dir, nil }
-func (dir *vfsDirFile) Sys() any                   { return nil }
 
 type copyContentOpts struct {
 	Source      ContentSource

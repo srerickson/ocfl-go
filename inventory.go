@@ -130,7 +130,6 @@ type rawInventory struct {
 	Fixity           map[string]DigestMap          `json:"fixity,omitempty"`
 }
 
-// getFixity implements ocfl.FixitySource for Inventory
 func (inv rawInventory) getFixity(dig string) digest.Set {
 	paths := inv.Manifest[dig]
 	if len(paths) < 1 {

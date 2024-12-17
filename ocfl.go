@@ -38,12 +38,11 @@ var (
 type implemenation interface {
 	Spec() Spec
 	NewInventory(raw []byte) (Inventory, error)
-	NewReadObject(fsys FS, path string, inv Inventory) ReadObject
-	Commit(ctx context.Context, obj ReadObject, commit *Commit) (ReadObject, error)
+	Commit(ctx context.Context, obj *Object, commit *Commit) error
 	ValidateInventoryBytes([]byte) (Inventory, *Validation)
-	ValidateObjectRoot(ctx context.Context, fs FS, dir string, state *ObjectState, vldr *ObjectValidation) (ReadObject, error)
-	ValidateObjectVersion(ctx context.Context, obj ReadObject, vnum VNum, versionInv Inventory, prevInv Inventory, vldr *ObjectValidation) error
-	ValidateObjectContent(ctx context.Context, obj ReadObject, vldr *ObjectValidation) error
+	ValidateObjectRoot(ctx context.Context, fs FS, dir string, state *ObjectState, vldr *ObjectValidation) (*Object, error)
+	ValidateObjectVersion(ctx context.Context, obj *Object, vnum VNum, versionInv Inventory, prevInv Inventory, vldr *ObjectValidation) error
+	ValidateObjectContent(ctx context.Context, obj *Object, vldr *ObjectValidation) error
 }
 
 // config is includes shared configuration for objects and storage roots.
@@ -53,13 +52,10 @@ type config struct{}
 // getOCFL is returns the implemenation for a given version of the OCFL spec.
 func (c config) getOCFL(spec Spec) (implemenation, error) {
 	switch spec {
-	case Spec1_0:
-		return OCFLv1_0, nil
-	case Spec1_1:
-		return OCFLv1_1, nil
-	default:
-		return nil, fmt.Errorf("%w: v%s", ErrOCFLNotImplemented, spec)
+	case Spec1_0, Spec1_1:
+		return &ocflV1{spec: spec}, nil
 	}
+	return nil, fmt.Errorf("%w: v%s", ErrOCFLNotImplemented, spec)
 }
 
 // mustGetOCFL is like getOCFL except it panics if the implemenation is not
@@ -74,16 +70,3 @@ func (c config) mustGetOCFL(spec Spec) implemenation {
 
 // defaultOCFL returns the default OCFL implementation (v1.1).
 func (c config) defaultOCFL() implemenation { return OCFLv1_1 }
-
-type ReadObject interface {
-	// Inventory returns the object's inventory or nil if
-	// the object hasn't been created yet.
-	Inventory() Inventory
-	// FS for accessing object contents
-	FS() FS
-	// Path returns the object's path relative to its FS()
-	Path() string
-	// VersionFS returns an io/fs.FS for accessing the logical contents of the
-	// object version state with the index v.
-	VersionFS(ctx context.Context, v int) fs.FS
-}
