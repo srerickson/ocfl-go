@@ -1,6 +1,6 @@
-package codes
+package code
 
-// This is generated code. Do not modify. See gen folder.
+// This is generated code. Do not modify. See generate.go
 
 import "github.com/srerickson/ocfl-go/validation"
 
