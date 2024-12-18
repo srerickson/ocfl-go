@@ -43,6 +43,7 @@ func (imp ocflV1) NewInventory(byts []byte) (Inventory, error) {
 	if err := inv.setJsonDigest(byts); err != nil {
 		return nil, err
 	}
+	inv._ocfl = &imp
 	if err := inv.Validate().Err(); err != nil {
 		return nil, err
 	}
@@ -320,8 +321,7 @@ func (imp *ocflV1) Commit(ctx context.Context, obj *Object, commit *Commit) erro
 		err = fmt.Errorf("writing new inventories or inventory sidecars: %w", err)
 		return &CommitError{Err: err, Dirty: true}
 	}
-	obj.inventory = newInv
-	obj.ocfl = imp
+	obj.setInventory(newInv)
 	return nil
 }
 
@@ -381,7 +381,7 @@ func (imp *ocflV1) ValidateObjectVersion(ctx context.Context, vldr *ObjectValida
 	vnumStr := vnum.String()
 	fullVerDir := path.Join(vldr.path(), vnumStr) // version directory path relative to FS
 	specStr := string(imp.spec)
-	rootInv := vldr.obj.Inventory() // headInv is assumed to be valid
+	rootInv := vldr.obj.Inventory() // rootInv is assumed to be valid
 	vDirEntries, err := fsys.ReadDir(ctx, fullVerDir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		// can't read version directory for some reason, but not because it
@@ -544,6 +544,7 @@ func (imp ocflV1) compareVersionInventory(obj *Object, dirNum VNum, verInv Inven
 type inventoryV1 struct {
 	raw        rawInventory
 	jsonDigest string
+	_ocfl      ocflImp
 }
 
 var _ Inventory = (*inventoryV1)(nil)
@@ -626,6 +627,10 @@ func (inv *inventoryV1) Version(i int) ObjectVersion {
 		return nil
 	}
 	return &inventoryVersion{raw: v}
+}
+
+func (inv *inventoryV1) ocfl() ocflImp {
+	return inv._ocfl
 }
 
 func (inv *inventoryV1) setJsonDigest(raw []byte) error {

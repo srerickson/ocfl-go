@@ -26,9 +26,6 @@ type Object struct {
 	path string
 	// object's root inventory
 	inventory Inventory
-	// the OCFL implementation for an existing object. This will
-	// be nil for object's that don't yet exist.
-	ocfl ocflImp
 	// object id used to open the object from the root
 	expectID string
 	// the object must exist: don't create a new object.
@@ -44,7 +41,7 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 	}
 	obj := newObject(fsys, dir, opts...)
 	// read root inventory: we don't know what OCFL spec it uses.
-	inv, err := obj.readUnknownInventory(ctx, "")
+	inv, err := readUnknownInventory(ctx, fsys, dir)
 	if err != nil {
 		var pthError *fs.PathError
 		if !errors.As(err, &pthError) {
@@ -65,9 +62,7 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 			err := fmt.Errorf("object has unexpected ID: %q; expected: %q", inv.ID(), obj.expectID)
 			return nil, err
 		}
-		if err := obj.setInventory(inv); err != nil {
-			return nil, err
-		}
+		obj.setInventory(inv)
 		return obj, nil
 	}
 	// inventory.json doesn't exist: open as uninitialized object. The object
@@ -110,7 +105,7 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	case commit.Spec.Empty():
 		switch {
 		case obj.Exists():
-			useOCFL = obj.ocfl
+			useOCFL = obj.inventory.ocfl()
 		default:
 			useOCFL = defaultOCFL()
 		}
@@ -211,8 +206,8 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 	return vfs, nil
 }
 
-func (obj *Object) readUnknownInventory(ctx context.Context, dir string) (Inventory, error) {
-	f, err := obj.fs.OpenFile(ctx, path.Join(obj.path, dir, inventoryBase))
+func readUnknownInventory(ctx context.Context, fsys FS, dir string) (Inventory, error) {
+	f, err := fsys.OpenFile(ctx, path.Join(dir, inventoryBase))
 	if err != nil {
 		return nil, err
 	}
@@ -231,22 +226,15 @@ func (obj *Object) readUnknownInventory(ctx context.Context, dir string) (Invent
 	if err = json.Unmarshal(raw, &invFields); err != nil {
 		return nil, err
 	}
-	ocfl, err := getOCFL(invFields.Type.Spec)
+	imp, err := getOCFL(invFields.Type.Spec)
 	if err != nil {
 		return nil, err
 	}
-	return ocfl.NewInventory(raw)
+	return imp.NewInventory(raw)
 }
 
-func (obj *Object) setInventory(inv Inventory) error {
+func (obj *Object) setInventory(inv Inventory) {
 	obj.inventory = inv
-	ocfl, err := getOCFL(inv.Spec())
-	if err != nil {
-		return err
-	}
-	obj.inventory = inv
-	obj.ocfl = ocfl
-	return nil
 }
 
 // ValidateObject fully validates the OCFL Object at dir in fsys
@@ -276,7 +264,8 @@ func ValidateObject(ctx context.Context, fsys FS, dir string, opts ...ObjectVali
 	versionOCFL := lowestOCFL()
 	var prevInv Inventory
 	for _, vnum := range state.VersionDirs.Head().Lineage() {
-		versionInv, err := v.obj.readUnknownInventory(ctx, vnum.String())
+		versionDir := path.Join(dir, vnum.String())
+		versionInv, err := readUnknownInventory(ctx, fsys, versionDir)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			v.AddFatal(fmt.Errorf("reading %s/inventory.json: %w", vnum, err))
 			continue

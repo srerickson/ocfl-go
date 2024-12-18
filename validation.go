@@ -192,16 +192,16 @@ func (v *ObjectValidation) addExistingContent(name string) {
 	if v.files[name] == nil {
 		v.files[name] = &validationFileInfo{}
 	}
-	v.files[name].exists = true
+	v.files[name].fileExists = true
 }
 
 // addInventory adds digests from the inventory's manifest and fixity entries to
 // the object validation for later verification. An error is returned if any
-// name/digests entries in the inventory conflic with an existing name/digest
-// entry already added to the object validation. The returned error wraps a
-// slice of *DigestError values.
+// name/digests entries in the inventory conflict with previously added values.
+// The returned error wraps a slice of *DigestError values. Errors *are not*
+// automatically added to the validation's Fatal errors.
 //
-// If isRoot is true, v.object's inventory is update with the inventory
+// If isRoot is true, v.object's is set to inv
 func (v *ObjectValidation) addInventory(inv Inventory, isRoot bool) error {
 	if v.files == nil {
 		v.files = map[string]*validationFileInfo{}
@@ -211,18 +211,18 @@ func (v *ObjectValidation) addInventory(inv Inventory, isRoot bool) error {
 	inv.Manifest().EachPath(func(name string, primaryDigest string) bool {
 		allDigests := inv.GetFixity(primaryDigest)
 		allDigests[primaryAlg.ID()] = primaryDigest
-		current := v.files[name]
-		if current == nil {
+		existing := v.files[name]
+		if existing == nil {
 			v.files[name] = &validationFileInfo{
-				expected: allDigests,
+				expectedDigests: allDigests,
 			}
 			return true
 		}
-		if current.expected == nil {
-			current.expected = allDigests
+		if existing.expectedDigests == nil {
+			existing.expectedDigests = allDigests
 			return true
 		}
-		if err := current.expected.Add(allDigests); err != nil {
+		if err := existing.expectedDigests.Add(allDigests); err != nil {
 			var digestError *digest.DigestError
 			if errors.As(err, &digestError) {
 				digestError.Path = name
@@ -235,9 +235,7 @@ func (v *ObjectValidation) addInventory(inv Inventory, isRoot bool) error {
 		return err
 	}
 	if isRoot {
-		if err := v.obj.setInventory(inv); err != nil {
-			return err
-		}
+		v.obj.setInventory(inv)
 	}
 	return nil
 }
@@ -248,7 +246,7 @@ func (v *ObjectValidation) addInventory(inv Inventory, isRoot bool) error {
 func (v *ObjectValidation) existingContentDigests(fsys FS, objPath string, alg digest.Algorithm) FileDigestsSeq {
 	return func(yield func(*FileDigests) bool) {
 		for name, entry := range v.files {
-			if entry.exists && len(entry.expected) > 0 {
+			if entry.fileExists && len(entry.expectedDigests) > 0 {
 				fd := &FileDigests{
 					FileRef: FileRef{
 						FS:      fsys,
@@ -256,7 +254,7 @@ func (v *ObjectValidation) existingContentDigests(fsys FS, objPath string, alg d
 						Path:    name,
 					},
 					Algorithm: alg,
-					Digests:   entry.expected,
+					Digests:   entry.expectedDigests,
 				}
 				if !yield(fd) {
 					return
@@ -275,7 +273,7 @@ func (v *ObjectValidation) path() string { return v.obj.path }
 func (v *ObjectValidation) missingContent() iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for name, entry := range v.files {
-			if !entry.exists && len(entry.expected) > 0 {
+			if !entry.fileExists && len(entry.expectedDigests) > 0 {
 				if !yield(name) {
 					return
 				}
@@ -289,7 +287,7 @@ func (v *ObjectValidation) missingContent() iter.Seq[string] {
 func (v *ObjectValidation) unexpectedContent() iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for name, entry := range v.files {
-			if entry.exists && len(entry.expected) == 0 {
+			if entry.fileExists && len(entry.expectedDigests) == 0 {
 				if !yield(name) {
 					return
 				}
@@ -331,8 +329,8 @@ func ValidationAlgorithms(reg digest.AlgorithmRegistry) ObjectValidationOption {
 }
 
 type validationFileInfo struct {
-	expected digest.Set
-	exists   bool
+	expectedDigests digest.Set
+	fileExists      bool
 }
 
 // ValidationError is an error that includes a reference

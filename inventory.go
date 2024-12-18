@@ -34,6 +34,8 @@ type Inventory interface {
 	Validate() *Validation
 	Version(int) ObjectVersion
 	FixityAlgorithms() []string
+
+	ocfl() ocflImp
 }
 
 type ObjectVersion interface {

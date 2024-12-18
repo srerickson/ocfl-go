@@ -40,9 +40,9 @@ type ocflImp interface {
 	NewInventory(raw []byte) (Inventory, error)
 	Commit(ctx context.Context, obj *Object, commit *Commit) error
 	ValidateInventoryBytes([]byte) (Inventory, *Validation)
-	ValidateObjectRoot(ctx context.Context, vldr *ObjectValidation, state *ObjectState) error
-	ValidateObjectVersion(ctx context.Context, vldr *ObjectValidation, vnum VNum, versionInv Inventory, prevInv Inventory) error
-	ValidateObjectContent(ctx context.Context, vldr *ObjectValidation) error
+	ValidateObjectRoot(ctx context.Context, v *ObjectValidation, state *ObjectState) error
+	ValidateObjectVersion(ctx context.Context, v *ObjectValidation, vnum VNum, versionInv, prevInv Inventory) error
+	ValidateObjectContent(ctx context.Context, v *ObjectValidation) error
 }
 
 // getOCFL is returns the implemenation for a given version of the OCFL spec.
