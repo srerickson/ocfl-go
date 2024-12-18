@@ -74,7 +74,10 @@ func (v *Validation) WarnErrors() []error {
 // ObjectValidation is used to configure and track results from an object validation process.
 type ObjectValidation struct {
 	Validation
-	globals     config
+	obj *Object
+
+	// set with option
+	objOptions  []ObjectOption
 	logger      *slog.Logger
 	skipDigests bool
 	concurrency int
@@ -82,15 +85,16 @@ type ObjectValidation struct {
 	algRegistry digest.AlgorithmRegistry
 }
 
-// NewObjectValidation constructs a new *Validation with the given
+// newObjectValidation constructs a new *Validation with the given
 // options
-func NewObjectValidation(opts ...ObjectValidationOption) *ObjectValidation {
+func newObjectValidation(fsys FS, dir string, opts ...ObjectValidationOption) *ObjectValidation {
 	v := &ObjectValidation{
 		algRegistry: digest.DefaultRegistry(),
 	}
 	for _, opt := range opts {
 		opt(v)
 	}
+	v.obj = newObject(fsys, dir, v.objOptions...)
 	return v
 }
 
@@ -152,9 +156,36 @@ func (v *ObjectValidation) AddWarn(errs ...error) {
 	}
 }
 
-// AddExistingContent sets the existence status for a content file in the
+// Logger returns the validation's logger, which is nil by default.
+func (v *ObjectValidation) Logger() *slog.Logger {
+	return v.logger
+}
+
+// SkipDigests returns true if the validation is configured to skip digest
+// checks. It is false by default.
+func (v *ObjectValidation) SkipDigests() bool {
+	return v.skipDigests
+}
+
+// DigestConcurrency returns the configured number of go routines used to read
+// and digest contents during validation. The default value is runtime.NumCPU().
+func (v *ObjectValidation) DigestConcurrency() int {
+	if v.concurrency > 0 {
+		return v.concurrency
+	}
+	return runtime.NumCPU()
+}
+
+// ValidationAlgorithms returns the registry of digest algoriths
+// the object validation is configured to use. The default value is
+// digest.DefaultRegistry
+func (v *ObjectValidation) ValidationAlgorithms() digest.AlgorithmRegistry {
+	return v.algRegistry
+}
+
+// addExistingContent sets the existence status for a content file in the
 // validation state.
-func (v *ObjectValidation) AddExistingContent(name string) {
+func (v *ObjectValidation) addExistingContent(name string) {
 	if v.files == nil {
 		v.files = map[string]*validationFileInfo{}
 	}
@@ -164,12 +195,14 @@ func (v *ObjectValidation) AddExistingContent(name string) {
 	v.files[name].exists = true
 }
 
-// AddInventoryDigests adds digests from the inventory's manifest and fixity
-// entries to the object validation for later verification. An error is returned
-// if any name/digests entries in the inventory conflic with an existing
-// name/digest entry already added to the object validation. The returned error
-// wraps a slice of *DigestError values.
-func (v *ObjectValidation) AddInventoryDigests(inv Inventory) error {
+// addInventory adds digests from the inventory's manifest and fixity entries to
+// the object validation for later verification. An error is returned if any
+// name/digests entries in the inventory conflic with an existing name/digest
+// entry already added to the object validation. The returned error wraps a
+// slice of *DigestError values.
+//
+// If isRoot is true, v.object's inventory is update with the inventory
+func (v *ObjectValidation) addInventory(inv Inventory, isRoot bool) error {
 	if v.files == nil {
 		v.files = map[string]*validationFileInfo{}
 	}
@@ -198,61 +231,21 @@ func (v *ObjectValidation) AddInventoryDigests(inv Inventory) error {
 		}
 		return true
 	})
-	return allErrors.ErrorOrNil()
-}
-
-// Logger returns the validation's logger, which is nil by default.
-func (v *ObjectValidation) Logger() *slog.Logger {
-	return v.logger
-}
-
-// MissingContent returns an iterator the yields the names of files that appear
-// in an inventory added to the validation but were not marked as existing.
-func (v *ObjectValidation) MissingContent() iter.Seq[string] {
-	return func(yield func(string) bool) {
-		for name, entry := range v.files {
-			if !entry.exists && len(entry.expected) > 0 {
-				if !yield(name) {
-					return
-				}
-			}
+	if err := allErrors.ErrorOrNil(); err != nil {
+		return err
+	}
+	if isRoot {
+		if err := v.obj.setInventory(inv); err != nil {
+			return err
 		}
 	}
+	return nil
 }
 
-// SkipDigests returns true if the validation is configured to skip digest
-// checks. It is false by default.
-func (v *ObjectValidation) SkipDigests() bool {
-	return v.skipDigests
-}
-
-// DigestConcurrency returns the configured number of go routines used to read
-// and digest contents during validation. The default value is runtime.NumCPU().
-func (v *ObjectValidation) DigestConcurrency() int {
-	if v.concurrency > 0 {
-		return v.concurrency
-	}
-	return runtime.NumCPU()
-}
-
-// UnexpectedContent returns an iterator that yields the names of existing files
-// that were not included in an inventory manifest.
-func (v *ObjectValidation) UnexpectedContent() iter.Seq[string] {
-	return func(yield func(string) bool) {
-		for name, entry := range v.files {
-			if entry.exists && len(entry.expected) == 0 {
-				if !yield(name) {
-					return
-				}
-			}
-		}
-	}
-}
-
-// ExistingContent digests returns an iterator that yields the names and digests
+// existingContent digests returns an iterator that yields the names and digests
 // of files that exist and were referenced in the inventory added to the
 // valiation.
-func (v *ObjectValidation) ExistingContentDigests(fsys FS, objPath string, alg digest.Algorithm) FileDigestsSeq {
+func (v *ObjectValidation) existingContentDigests(fsys FS, objPath string, alg digest.Algorithm) FileDigestsSeq {
 	return func(yield func(*FileDigests) bool) {
 		for name, entry := range v.files {
 			if entry.exists && len(entry.expected) > 0 {
@@ -273,11 +266,36 @@ func (v *ObjectValidation) ExistingContentDigests(fsys FS, objPath string, alg d
 	}
 }
 
-// ValidationAlgorithms returns the registry of digest algoriths
-// the object validation is configured to use. The default value is
-// digest.DefaultRegistry
-func (v *ObjectValidation) ValidationAlgorithms() digest.AlgorithmRegistry {
-	return v.algRegistry
+func (v *ObjectValidation) fs() FS { return v.obj.fs }
+
+func (v *ObjectValidation) path() string { return v.obj.path }
+
+// missingContent returns an iterator the yields the names of files that appear
+// in an inventory added to the validation but were not marked as existing.
+func (v *ObjectValidation) missingContent() iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for name, entry := range v.files {
+			if !entry.exists && len(entry.expected) > 0 {
+				if !yield(name) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// unexpectedContent returns an iterator that yields the names of existing files
+// that were not included in an inventory manifest.
+func (v *ObjectValidation) unexpectedContent() iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for name, entry := range v.files {
+			if entry.exists && len(entry.expected) == 0 {
+				if !yield(name) {
+					return
+				}
+			}
+		}
+	}
 }
 
 type ObjectValidationOption func(*ObjectValidation)

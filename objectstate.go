@@ -22,11 +22,9 @@ const (
 	//HasLogs indicates that an object root includes a directory named "logs"
 	HasLogs
 
-	inventoryBase    = "inventory.json"
-	sidecarPrefix    = inventoryBase + "."
-	objectDeclPrefix = "0=" + NamasteTypeObject
-
 	maxObjectStateInvalid = 8
+	objectDeclPrefix      = "0=" + NamasteTypeObject
+	sidecarPrefix         = inventoryBase + "."
 )
 
 // ObjectState provides details of an OCFL object root based on the names of

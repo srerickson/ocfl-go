@@ -18,14 +18,14 @@ const (
 	Spec1_1 = Spec("1.1")
 
 	logsDir       = "logs"
-	inventoryFile = "inventory.json"
 	contentDir    = "content"
 	extensionsDir = "extensions"
+	inventoryBase = "inventory.json"
 )
 
 var (
-	OCFLv1_0 implemenation = &ocflV1{spec: Spec1_0}
-	OCFLv1_1 implemenation = &ocflV1{spec: Spec1_1}
+	OCFLv1_0 ocflImp = &ocflV1{spec: Spec1_0}
+	OCFLv1_1 ocflImp = &ocflV1{spec: Spec1_1}
 
 	ErrOCFLNotImplemented    = errors.New("no implementation for the given OCFL specification version")
 	ErrObjectNamasteExists   = fmt.Errorf("found existing OCFL object declaration: %w", fs.ErrExist)
@@ -33,24 +33,20 @@ var (
 	ErrObjRootStructure      = errors.New("object includes invalid files or directories")
 )
 
-// implemenation is an interface implemented by types that implement a specific
-// version of the implemenation specification.
-type implemenation interface {
+// ocflImp is an interface implemented by types that implement a specific
+// version of the ocflImp specification.
+type ocflImp interface {
 	Spec() Spec
 	NewInventory(raw []byte) (Inventory, error)
 	Commit(ctx context.Context, obj *Object, commit *Commit) error
 	ValidateInventoryBytes([]byte) (Inventory, *Validation)
-	ValidateObjectRoot(ctx context.Context, fs FS, dir string, state *ObjectState, vldr *ObjectValidation) (*Object, error)
-	ValidateObjectVersion(ctx context.Context, obj *Object, vnum VNum, versionInv Inventory, prevInv Inventory, vldr *ObjectValidation) error
-	ValidateObjectContent(ctx context.Context, obj *Object, vldr *ObjectValidation) error
+	ValidateObjectRoot(ctx context.Context, vldr *ObjectValidation, state *ObjectState) error
+	ValidateObjectVersion(ctx context.Context, vldr *ObjectValidation, vnum VNum, versionInv Inventory, prevInv Inventory) error
+	ValidateObjectContent(ctx context.Context, vldr *ObjectValidation) error
 }
 
-// config is includes shared configuration for objects and storage roots.
-// TODO: available extensions.
-type config struct{}
-
 // getOCFL is returns the implemenation for a given version of the OCFL spec.
-func (c config) getOCFL(spec Spec) (implemenation, error) {
+func getOCFL(spec Spec) (ocflImp, error) {
 	switch spec {
 	case Spec1_0, Spec1_1:
 		return &ocflV1{spec: spec}, nil
@@ -58,10 +54,16 @@ func (c config) getOCFL(spec Spec) (implemenation, error) {
 	return nil, fmt.Errorf("%w: v%s", ErrOCFLNotImplemented, spec)
 }
 
+// returns the earliest OCFL implementation (OCFL v1.0)
+func lowestOCFL() ocflImp { return &ocflV1{Spec1_0} }
+
+// returns the latest OCFL implementation (OCFL v1.1)
+func latestOCFL() ocflImp { return &ocflV1{Spec1_1} }
+
 // mustGetOCFL is like getOCFL except it panics if the implemenation is not
 // found.
-func (c config) mustGetOCFL(spec Spec) implemenation {
-	impl, err := c.getOCFL(spec)
+func mustGetOCFL(spec Spec) ocflImp {
+	impl, err := getOCFL(spec)
 	if err != nil {
 		panic(err)
 	}
@@ -69,4 +71,4 @@ func (c config) mustGetOCFL(spec Spec) implemenation {
 }
 
 // defaultOCFL returns the default OCFL implementation (v1.1).
-func (c config) defaultOCFL() implemenation { return OCFLv1_1 }
+func defaultOCFL() ocflImp { return latestOCFL() }

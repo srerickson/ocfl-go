@@ -27,7 +27,6 @@ var ErrLayoutUndefined = errors.New("storage root's layout is undefined")
 type Root struct {
 	fs           FS                // root's fs
 	dir          string            // root's director relative to FS
-	global       config            // shared OCFL settings
 	spec         Spec              // OCFL spec version in storage root declaration
 	layout       extension.Layout  // layout used to resolve object ids
 	layoutConfig map[string]string // contents of `ocfl_layout.json`
@@ -65,7 +64,7 @@ func NewRoot(ctx context.Context, fsys FS, dir string, opts ...RootOption) (*Roo
 	if err != nil {
 		return nil, fmt.Errorf("not an OCFL storage root: %w", err)
 	}
-	if _, err := r.global.getOCFL(decl.Version); err != nil {
+	if _, err := getOCFL(decl.Version); err != nil {
 		return nil, fmt.Errorf(" OCFL v%s: %w", decl.Version, err)
 	}
 	// initialize existing Root
@@ -194,12 +193,12 @@ func (r *Root) Spec() Spec {
 // ValidateObject validates the object with the given id. If the id cannot be
 // resolved, the error is reported as a fatal error in the returned
 // *ObjectValidation.
-func (r *Root) ValidateObject(ctx context.Context, id string, opts ...ObjectValidationOption) (v *ObjectValidation) {
+func (r *Root) ValidateObject(ctx context.Context, id string, opts ...ObjectValidationOption) *ObjectValidation {
 	objPath, err := r.ResolveID(id)
 	if err != nil {
-		v = NewObjectValidation(opts...)
+		v := newObjectValidation(r.fs, path.Join(r.dir, objPath), opts...)
 		v.AddFatal(err)
-		return
+		return v
 	}
 	return r.ValidateObjectDir(ctx, objPath, opts...)
 }
@@ -216,7 +215,7 @@ func (r *Root) init(ctx context.Context) error {
 	if r.initArgs.spec.Empty() {
 		return errors.New("can't initialize storage root: missing OCFL spec version")
 	}
-	if _, err := r.global.getOCFL(r.initArgs.spec); err != nil {
+	if _, err := getOCFL(r.initArgs.spec); err != nil {
 		return fmt.Errorf(" OCFL v%s: %w", r.initArgs.spec, err)
 	}
 	writeFS, isWriteFS := r.fs.(WriteFS)
