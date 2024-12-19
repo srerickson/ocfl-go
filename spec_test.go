@@ -88,7 +88,7 @@ func TestParseInventoryType(t *testing.T) {
 	}
 	for i, tcase := range testCases {
 		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
-			inv := ocfl.InvType{}
+			inv := ocfl.InventoryType{}
 			err := inv.UnmarshalText([]byte(tcase.in))
 			if tcase.valid {
 				be.NilErr(t, err)

@@ -8,7 +8,7 @@ import (
 	"github.com/srerickson/ocfl-go/internal/testutil"
 )
 
-func TestOCFLV1_ValidateInventoryBytes(t *testing.T) {
+func TestValidateInventoryBytes(t *testing.T) {
 	type testCase struct {
 		inventory string
 		expect    func(t *testing.T, inv ocfl.Inventory, v *ocfl.Validation)
@@ -735,7 +735,7 @@ func TestOCFLV1_ValidateInventoryBytes(t *testing.T) {
 	}
 	for desc, test := range testInventories {
 		t.Run(desc, func(t *testing.T) {
-			inv, v := ocfl.OCFLv1_0.ValidateInventoryBytes([]byte(test.inventory))
+			inv, v := ocfl.ValidateInventoryBytes([]byte(test.inventory))
 			test.expect(t, inv, v)
 		})
 	}

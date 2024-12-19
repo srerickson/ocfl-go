@@ -39,6 +39,9 @@ type ocflImp interface {
 	Spec() Spec
 	NewInventory(raw []byte) (Inventory, error)
 	Commit(ctx context.Context, obj *Object, commit *Commit) error
+	// validate an existing Inventory
+	ValidateInventory(Inventory) *Validation
+	// fully validate raw inventory bytes, returning it if there are no fatal errors
 	ValidateInventoryBytes([]byte) (Inventory, *Validation)
 	ValidateObjectRoot(ctx context.Context, v *ObjectValidation, state *ObjectState) error
 	ValidateObjectVersion(ctx context.Context, v *ObjectValidation, vnum VNum, versionInv, prevInv Inventory) error

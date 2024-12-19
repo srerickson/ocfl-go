@@ -2,9 +2,9 @@ package ocfl
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"path"
 	"regexp"
 	"slices"
@@ -31,7 +31,6 @@ type Inventory interface {
 	ID() string
 	Manifest() DigestMap
 	Spec() Spec
-	Validate() *Validation
 	Version(int) ObjectVersion
 	FixityAlgorithms() []string
 
@@ -51,23 +50,44 @@ type User struct {
 	Address string `json:"address,omitempty"`
 }
 
-func ReadSidecarDigest(ctx context.Context, fsys FS, name string) (digest string, err error) {
-	file, err := fsys.OpenFile(ctx, name)
+// ReadInventory reads the inventory.json file in dir
+func ReadInventory(ctx context.Context, fsys FS, dir string) (inv Inventory, err error) {
+	var byts []byte
+	var imp ocflImp
+	byts, err = ReadAll(ctx, fsys, path.Join(dir, inventoryBase))
 	if err != nil {
 		return
 	}
-	defer file.Close()
-	cont, err := io.ReadAll(file)
+	imp, err = getInventoryOCFL(byts)
 	if err != nil {
 		return
 	}
-	matches := invSidecarContentsRexp.FindSubmatch(cont)
+	return imp.NewInventory(byts)
+}
+
+// ReadSidecarDigest reads the digest from an inventory sidecar file (e.g., inventory.json.sha512)
+func ReadSidecarDigest(ctx context.Context, fsys FS, name string) (string, error) {
+	byts, err := ReadAll(ctx, fsys, name)
+	if err != nil {
+		return "", err
+	}
+	matches := invSidecarContentsRexp.FindSubmatch(byts)
 	if len(matches) != 2 {
-		err = fmt.Errorf("reading %s: %w", name, ErrInventorySidecarContents)
-		return
+		err := fmt.Errorf("reading %s: %w", name, ErrInventorySidecarContents)
+		return "", err
 	}
-	digest = string(matches[1])
-	return
+	return string(matches[1]), nil
+}
+
+// ValidateInventoryBytes parses and fully validates the byts as contents of an
+// inventory.json file.
+func ValidateInventoryBytes(byts []byte) (Inventory, *Validation) {
+	imp, _ := getInventoryOCFL(byts)
+	if imp == nil {
+		// use default OCFL spec
+		imp = defaultOCFL()
+	}
+	return imp.ValidateInventoryBytes(byts)
 }
 
 // ValidateInventorySidecar reads the inventory sidecar with inv's digest
@@ -91,10 +111,20 @@ func ValidateInventorySidecar(ctx context.Context, inv Inventory, fsys FS, dir s
 	return nil
 }
 
+func getInventoryOCFL(byts []byte) (ocflImp, error) {
+	invFields := struct {
+		Type InventoryType `json:"type"`
+	}{}
+	if err := json.Unmarshal(byts, &invFields); err != nil {
+		return nil, err
+	}
+	return getOCFL(invFields.Type.Spec)
+}
+
 // rawInventory represents the contents of an object's inventory.json file
 type rawInventory struct {
 	ID               string                        `json:"id"`
-	Type             InvType                       `json:"type"`
+	Type             InventoryType                 `json:"type"`
 	DigestAlgorithm  string                        `json:"digestAlgorithm"`
 	Head             VNum                          `json:"head"`
 	ContentDirectory string                        `json:"contentDirectory,omitempty"`
