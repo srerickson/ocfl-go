@@ -24,48 +24,58 @@ const (
 )
 
 var (
-	OCFLv1_0 ocflImp = &ocflV1{spec: Spec1_0}
-	OCFLv1_1 ocflImp = &ocflV1{spec: Spec1_1}
-
-	ErrOCFLNotImplemented    = errors.New("no implementation for the given OCFL specification version")
+	ErrOCFLNotImplemented    = errors.New("unimplemented or missing version of the OCFL specification")
 	ErrObjectNamasteExists   = fmt.Errorf("found existing OCFL object declaration: %w", fs.ErrExist)
 	ErrObjectNamasteNotExist = fmt.Errorf("the OCFL object declaration does not exist: %w", ErrNamasteNotExist)
 	ErrObjRootStructure      = errors.New("object includes invalid files or directories")
 )
 
-// ocflImp is an interface implemented by types that implement a specific
-// version of the ocflImp specification.
-type ocflImp interface {
+// ocfl is an interface implemented by types that implement a specific
+// version of the ocfl specification.
+type ocfl interface {
+	// Spec returns the implemented version of the OCFL specification
 	Spec() Spec
+	// NewInventory constructs a new Inventory from bytes. If the inventory is
+	// invalid, an error is returned. The returned error may not include all
+	// validation error codes, as ValidateInventoryBytes would.
 	NewInventory(raw []byte) (Inventory, error)
+	// Commit creates a new object version. The returned error must be a
+	// *CommitError.
 	Commit(ctx context.Context, obj *Object, commit *Commit) error
-	// validate an existing Inventory
+	// ValidateInventory validates an existing Inventory value.
 	ValidateInventory(Inventory) *Validation
-	// fully validate raw inventory bytes, returning it if there are no fatal errors
+	// ValidateInventoryBytes fully validates bytes as a json-encoded inventory.
+	// It returns the Inventory if the validation result does not included fatal
+	// errors.
 	ValidateInventoryBytes([]byte) (Inventory, *Validation)
+	// Validate all contents of an object root: NAMASTE, inventory, sidecar, etc.
 	ValidateObjectRoot(ctx context.Context, v *ObjectValidation, state *ObjectState) error
+	// Validate all contents of an object version directory and add contents to the object validation
 	ValidateObjectVersion(ctx context.Context, v *ObjectValidation, vnum VNum, versionInv, prevInv Inventory) error
+	// Validate contents added to the object validation
 	ValidateObjectContent(ctx context.Context, v *ObjectValidation) error
 }
 
 // getOCFL is returns the implemenation for a given version of the OCFL spec.
-func getOCFL(spec Spec) (ocflImp, error) {
+func getOCFL(spec Spec) (ocfl, error) {
 	switch spec {
 	case Spec1_0, Spec1_1:
-		return &ocflV1{spec: spec}, nil
+		return &ocflV1{v1Spec: spec}, nil
+	case Spec(""):
+		return nil, ErrOCFLNotImplemented
 	}
 	return nil, fmt.Errorf("%w: v%s", ErrOCFLNotImplemented, spec)
 }
 
 // returns the earliest OCFL implementation (OCFL v1.0)
-func lowestOCFL() ocflImp { return &ocflV1{Spec1_0} }
+func lowestOCFL() ocfl { return &ocflV1{Spec1_0} }
 
 // returns the latest OCFL implementation (OCFL v1.1)
-func latestOCFL() ocflImp { return &ocflV1{Spec1_1} }
+func latestOCFL() ocfl { return &ocflV1{Spec1_1} }
 
 // mustGetOCFL is like getOCFL except it panics if the implemenation is not
 // found.
-func mustGetOCFL(spec Spec) ocflImp {
+func mustGetOCFL(spec Spec) ocfl {
 	impl, err := getOCFL(spec)
 	if err != nil {
 		panic(err)
@@ -74,4 +84,4 @@ func mustGetOCFL(spec Spec) ocflImp {
 }
 
 // defaultOCFL returns the default OCFL implementation (v1.1).
-func defaultOCFL() ocflImp { return latestOCFL() }
+func defaultOCFL() ocfl { return latestOCFL() }

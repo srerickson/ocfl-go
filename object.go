@@ -98,28 +98,36 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	if _, isWriteFS := obj.FS().(WriteFS); !isWriteFS {
 		return errors.New("object's backing file system doesn't support write operations")
 	}
-	// the OCFL implementation to use to create the new object version
-	var useOCFL ocflImp
+	// the OCFL implementation for the new object version
+	var useOCFL ocfl
 	switch {
 	case commit.Spec.Empty():
 		switch {
-		case obj.Exists():
-			useOCFL = obj.inventory.ocfl()
-		default:
+		case !obj.Exists():
+			// new object and no ocfl version specified in commit
 			useOCFL = defaultOCFL()
+		default:
+			// use existing object's ocfl version
+			var err error
+			useOCFL, err = getOCFL(obj.inventory.Spec())
+			if err != nil {
+				err = fmt.Errorf("object's root inventory has errors: %w", err)
+				return &CommitError{Err: err}
+			}
 		}
 		commit.Spec = useOCFL.Spec()
 	default:
 		var err error
 		useOCFL, err = getOCFL(commit.Spec)
 		if err != nil {
-			return err
+			return &CommitError{Err: err}
 		}
 	}
 	// set commit's object id if we have an expected id and commit ID isn't set
 	if obj.expectID != "" && commit.ID != obj.expectID {
 		if commit.ID != "" {
-			return fmt.Errorf("commit includes unexpected object ID: %s; expected: %q", commit.ID, obj.expectID)
+			err := fmt.Errorf("commit includes unexpected object ID: %s; expected: %q", commit.ID, obj.expectID)
+			return &CommitError{Err: err}
 		}
 		commit.ID = obj.expectID
 	}

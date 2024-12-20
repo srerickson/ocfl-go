@@ -33,8 +33,6 @@ type Inventory interface {
 	Spec() Spec
 	Version(int) ObjectVersion
 	FixityAlgorithms() []string
-
-	ocfl() ocflImp
 }
 
 type ObjectVersion interface {
@@ -50,10 +48,11 @@ type User struct {
 	Address string `json:"address,omitempty"`
 }
 
-// ReadInventory reads the inventory.json file in dir
+// ReadInventory reads the 'inventory.json' file in dir and validates it. It returns
+// an error if the inventory cann't be paresed or if it is invalid.
 func ReadInventory(ctx context.Context, fsys FS, dir string) (inv Inventory, err error) {
 	var byts []byte
-	var imp ocflImp
+	var imp ocfl
 	byts, err = ReadAll(ctx, fsys, path.Join(dir, inventoryBase))
 	if err != nil {
 		return
@@ -65,7 +64,7 @@ func ReadInventory(ctx context.Context, fsys FS, dir string) (inv Inventory, err
 	return imp.NewInventory(byts)
 }
 
-// ReadSidecarDigest reads the digest from an inventory sidecar file (e.g., inventory.json.sha512)
+// ReadSidecarDigest reads the digest from an inventory.json sidecar file
 func ReadSidecarDigest(ctx context.Context, fsys FS, name string) (string, error) {
 	byts, err := ReadAll(ctx, fsys, name)
 	if err != nil {
@@ -111,7 +110,19 @@ func ValidateInventorySidecar(ctx context.Context, inv Inventory, fsys FS, dir s
 	return nil
 }
 
-func getInventoryOCFL(byts []byte) (ocflImp, error) {
+func validateInventory(inv Inventory) *Validation {
+	imp, err := getOCFL(inv.Spec())
+	if err != nil {
+		v := &Validation{}
+		err := fmt.Errorf("inventory uses unknown or unspecified OCFL version")
+		v.AddFatal(err)
+		return v
+	}
+	return imp.ValidateInventory(inv)
+}
+
+// get the ocfl implementation declared in the inventory bytes
+func getInventoryOCFL(byts []byte) (ocfl, error) {
 	invFields := struct {
 		Type InventoryType `json:"type"`
 	}{}

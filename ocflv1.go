@@ -25,15 +25,17 @@ import (
 
 // ocflv1 is animplementation of ocfl v1.x
 type ocflV1 struct {
-	spec Spec
+	v1Spec Spec // "1.0" or "1.1"
 }
 
+var _ ocfl = (*ocflV1)(nil)
+
 func (imp ocflV1) Spec() Spec {
-	return Spec(imp.spec)
+	return Spec(imp.v1Spec)
 }
 
 func (imp ocflV1) NewInventory(byts []byte) (Inventory, error) {
-	inv := &inventoryV1{_ocfl: imp}
+	inv := &inventoryV1{}
 	dec := json.NewDecoder(bytes.NewReader(byts))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&inv.raw); err != nil {
@@ -42,7 +44,7 @@ func (imp ocflV1) NewInventory(byts []byte) (Inventory, error) {
 	if err := inv.setJsonDigest(byts); err != nil {
 		return nil, err
 	}
-	if err := inv.validate().Err(); err != nil {
+	if err := validateInventory(inv).Err(); err != nil {
 		return nil, err
 	}
 	return inv, nil
@@ -59,11 +61,11 @@ func (imp ocflV1) ValidateInventory(inv Inventory) *Validation {
 		err := errors.New("missing required field: 'type'")
 		v.AddFatal(err)
 	}
-	if invV1.raw.Type.Spec != imp.spec {
-		err := fmt.Errorf("inventory declares v%s, not v%s", invV1.raw.Type.Spec, imp.spec)
+	if invV1.raw.Type.Spec != imp.v1Spec {
+		err := fmt.Errorf("inventory declares v%s, not v%s", invV1.raw.Type.Spec, imp.v1Spec)
 		v.AddFatal(err)
 	}
-	specStr := string(imp.spec)
+	specStr := string(imp.v1Spec)
 	if invV1.raw.ID == "" {
 		err := errors.New("missing required field: 'id'")
 		v.AddFatal(verr(err, code.E036(specStr)))
@@ -236,7 +238,7 @@ func (imp ocflV1) ValidateInventory(inv Inventory) *Validation {
 }
 
 func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
-	specStr := string(imp.spec)
+	specStr := string(imp.v1Spec)
 	v := &Validation{}
 	invMap := map[string]any{}
 	if err := json.Unmarshal(raw, &invMap); err != nil {
@@ -256,7 +258,7 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
 		err := errors.New(requiredErrMsg + `: 'type'`)
 		v.AddFatal(verr(err, code.E036(specStr)))
 	}
-	if typeStr != "" && typeStr != Spec(imp.spec).InventoryType().String() {
+	if typeStr != "" && typeStr != Spec(imp.v1Spec).InventoryType().String() {
 		err := fmt.Errorf("invalid inventory type value: %q", typeStr)
 		v.AddFatal(verr(err, code.E038(specStr)))
 	}
@@ -303,7 +305,6 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
 		v.AddFatal(err)
 	}
 	inv := &inventoryV1{
-		_ocfl: imp,
 		raw: rawInventory{
 			ID:               id,
 			ContentDirectory: contentDirectory,
@@ -428,7 +429,8 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
 	if err := inv.setJsonDigest(raw); err != nil {
 		v.AddFatal(err)
 	}
-	v.Add(inv.validate())
+
+	v.Add(validateInventory(inv))
 	if v.Err() != nil {
 		return nil, v
 	}
@@ -513,8 +515,8 @@ func (imp ocflV1) Commit(ctx context.Context, obj *Object, commit *Commit) error
 
 func (imp ocflV1) ValidateObjectRoot(ctx context.Context, vldr *ObjectValidation, state *ObjectState) error {
 	// validate namaste
-	specStr := string(imp.spec)
-	decl := Namaste{Type: NamasteTypeObject, Version: imp.spec}
+	specStr := string(imp.v1Spec)
+	decl := Namaste{Type: NamasteTypeObject, Version: imp.v1Spec}
 	name := path.Join(vldr.path(), decl.Name())
 	err := ValidateNamaste(ctx, vldr.fs(), name)
 	if err != nil {
@@ -551,11 +553,11 @@ func (imp ocflV1) ValidateObjectRoot(ctx context.Context, vldr *ObjectValidation
 			vldr.AddFatal(verr(err, code.E060(specStr)))
 		}
 	}
-	vldr.PrefixAdd("extensions directory", validateExtensionsDir(ctx, imp.spec, vldr.fs(), vldr.path()))
+	vldr.PrefixAdd("extensions directory", validateExtensionsDir(ctx, imp.v1Spec, vldr.fs(), vldr.path()))
 	if err := vldr.addInventory(inv, true); err != nil {
 		vldr.AddFatal(err)
 	}
-	vldr.PrefixAdd("root contents", validateRootState(imp.spec, state))
+	vldr.PrefixAdd("root contents", validateRootState(imp.v1Spec, state))
 	if err := vldr.Err(); err != nil {
 		return err
 	}
@@ -566,7 +568,7 @@ func (imp ocflV1) ValidateObjectVersion(ctx context.Context, vldr *ObjectValidat
 	fsys := vldr.fs()
 	vnumStr := vnum.String()
 	fullVerDir := path.Join(vldr.path(), vnumStr) // version directory path relative to FS
-	specStr := string(imp.spec)
+	specStr := string(imp.v1Spec)
 	rootInv := vldr.obj.Inventory() // rootInv is assumed to be valid
 	vDirEntries, err := fsys.ReadDir(ctx, fullVerDir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -646,7 +648,7 @@ func (imp ocflV1) ValidateObjectVersion(ctx context.Context, vldr *ObjectValidat
 }
 
 func (imp ocflV1) ValidateObjectContent(ctx context.Context, v *ObjectValidation) error {
-	specStr := string(imp.spec)
+	specStr := string(imp.v1Spec)
 	newVld := &Validation{}
 	for name := range v.missingContent() {
 		err := fmt.Errorf("missing content: %s", name)
@@ -677,7 +679,7 @@ func (imp ocflV1) ValidateObjectContent(ctx context.Context, v *ObjectValidation
 
 func (imp ocflV1) compareVersionInventory(obj *Object, dirNum VNum, verInv Inventory, vldr *ObjectValidation) {
 	rootInv := obj.Inventory()
-	specStr := string(imp.spec)
+	specStr := string(imp.v1Spec)
 	if verInv.Head() == rootInv.Head() && verInv.Digest() != rootInv.Digest() {
 		err := fmt.Errorf("%s/inventor.json is not the same as the root inventory: digests don't match", dirNum)
 		vldr.AddFatal(verr(err, code.E064(specStr)))
@@ -740,7 +742,6 @@ func (imp ocflV1) newInventoryV1(commit *Commit, prev Inventory) (*inventoryV1, 
 		commit.Stage.State = DigestMap{}
 	}
 	inv := &inventoryV1{
-		_ocfl: imp,
 		raw: rawInventory{
 			ID:               commit.ID,
 			DigestAlgorithm:  commit.Stage.DigestAlgorithm.ID(),
@@ -880,7 +881,7 @@ func (imp ocflV1) newInventoryV1(commit *Commit, prev Inventory) (*inventoryV1, 
 		}
 	}
 	// check that resulting inventory is valid
-	if err := inv.validate().Err(); err != nil {
+	if err := validateInventory(inv).Err(); err != nil {
 		return nil, fmt.Errorf("generated inventory is not valid: %w", err)
 	}
 	return inv, nil
@@ -889,7 +890,6 @@ func (imp ocflV1) newInventoryV1(commit *Commit, prev Inventory) (*inventoryV1, 
 type inventoryV1 struct {
 	raw        rawInventory
 	jsonDigest string
-	_ocfl      ocflImp
 }
 
 var _ Inventory = (*inventoryV1)(nil)
@@ -964,14 +964,6 @@ func (inv *inventoryV1) setJsonDigest(raw []byte) error {
 	}
 	inv.jsonDigest = digester.String()
 	return nil
-}
-
-func (inv *inventoryV1) ocfl() ocflImp {
-	return inv._ocfl
-}
-
-func (inv *inventoryV1) validate() *Validation {
-	return inv._ocfl.ValidateInventory(inv)
 }
 
 type inventoryVersion struct {
