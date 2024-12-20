@@ -23,13 +23,14 @@ type Object struct {
 	fs FS
 	// path in FS for object root directory
 	path string
-	// object's root inventory
+	// object's root inventory. May be nil if the object doesn't (yet) exist.
 	inventory Inventory
 	// object id used to open the object from the root
 	expectID string
 	// the object must exist: don't create a new object.
 	mustExist bool
-	//TODO pointer to object's storage root.
+	// object's storage root
+	root *Root
 }
 
 // NewObject returns an *Object for managing the OCFL object at path in fsys.
@@ -42,15 +43,11 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 	// read root inventory: we don't know what OCFL spec it uses.
 	inv, err := ReadInventory(ctx, fsys, dir)
 	if err != nil {
-		var pthError *fs.PathError
-		if !errors.As(err, &pthError) {
-			return nil, err
+		// continue of err is ErrNotExist and !mustExist
+		if !obj.mustExist && errors.Is(err, fs.ErrNotExist) {
+			err = nil
 		}
-		if path.Base(pthError.Path) != inventoryBase {
-			// error is not from opening `inventory.json`
-			return nil, err
-		}
-		if !errors.Is(err, fs.ErrNotExist) || obj.mustExist {
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -61,12 +58,12 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 			err := fmt.Errorf("object has unexpected ID: %q; expected: %q", inv.ID(), obj.expectID)
 			return nil, err
 		}
-		obj.setInventory(inv)
+		obj.inventory = inv
 		return obj, nil
 	}
-	// inventory.json doesn't exist: open as uninitialized object. The object
-	// root directory must not exist or be an empty directory. Note, the object's
-	// ocfl implementation is not set!
+	// inventory doesn't exist: open as uninitialized object. The object
+	// root directory must not exist or be an empty directory. the object's
+	// inventory is nil.
 	entries, err := fsys.ReadDir(ctx, dir)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
@@ -82,15 +79,6 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 	default:
 		return nil, fmt.Errorf("directory is not an OCFL object: %w", ErrObjectNamasteNotExist)
 	}
-}
-
-// create a new *Object with required feilds and apply options
-func newObject(fsys FS, dir string, opts ...ObjectOption) *Object {
-	obj := &Object{fs: fsys, path: dir}
-	for _, optFn := range opts {
-		optFn(obj)
-	}
-	return obj
 }
 
 // Commit creates a new object version based on values in commit.
@@ -137,7 +125,7 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	return nil
 }
 
-// Exists returns true if the object has an existing version.
+// Exists returns true if the object's inventory exists.
 func (obj *Object) Exists() bool {
 	return obj.inventory != nil
 }
@@ -184,28 +172,19 @@ func (obj *Object) Path() string {
 // index (1...HEAD). If i is 0, the most recent version is used.
 func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, error) {
 	if !obj.Exists() {
-		return nil, ErrNamasteNotExist
+		// FIXME: unified error to use here?
+		return nil, errors.New("object has no versions to open")
 	}
 	inv := obj.Inventory()
-	if inv == nil {
-		// FIXME; better error
-		return nil, errors.New("object is missing an inventory")
-	}
 	if i == 0 {
 		i = inv.Head().num
 	}
 	ver := inv.Version(i)
 	if ver == nil {
-		// FIXME; better error
-		return nil, errors.New("version not found")
-	}
-	ioFS := obj.VersionFS(ctx, i)
-	if ioFS == nil {
-		// FIXME; better error
-		return nil, errors.New("version not found")
+		return nil, fmt.Errorf("object has no version with index %d", i)
 	}
 	vfs := &ObjectVersionFS{
-		fsys: ioFS,
+		fsys: obj.versionFS(ctx, ver),
 		ver:  ver,
 		num:  i,
 		inv:  inv,
@@ -213,8 +192,40 @@ func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, er
 	return vfs, nil
 }
 
-func (obj *Object) setInventory(inv Inventory) {
-	obj.inventory = inv
+// Root returns the object's Root, if known. It is nil unless the *Object was
+// created using [Root.NewObject]
+func (o *Object) Root() *Root {
+	return o.root
+}
+
+func (o *Object) versionFS(ctx context.Context, ver ObjectVersion) fs.FS {
+	// FIXME: This is a hack to make versionFS replicates the filemode of
+	// the undering FS. Open a random content file to get the file mode used by
+	// the underlying FS.
+	regfileType := fs.FileMode(0)
+	for _, paths := range o.inventory.Manifest() {
+		if len(paths) < 1 {
+			continue
+		}
+		f, err := o.fs.OpenFile(ctx, path.Join(o.path, paths[0]))
+		if err != nil {
+			continue
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil {
+			continue
+		}
+		regfileType = info.Mode().Type()
+		break
+	}
+	return &versionFS{
+		ctx:     ctx,
+		obj:     o,
+		paths:   ver.State().PathMap(),
+		created: ver.Created(),
+		regMode: regfileType,
+	}
 }
 
 // ValidateObject fully validates the OCFL Object at dir in fsys
@@ -333,56 +344,6 @@ func (vfs *ObjectVersionFS) Stage() *Stage {
 		DigestAlgorithm: vfs.inv.DigestAlgorithm(),
 		FixitySource:    vfs.inv,
 		ContentSource:   vfs,
-	}
-}
-
-// ObjectOptions are used to configure the behavior of NewObject()
-type ObjectOption func(*Object)
-
-// ObjectMustExists requires the object to exist
-func ObjectMustExist() ObjectOption {
-	return func(o *Object) {
-		o.mustExist = true
-	}
-}
-
-func objectExpectedID(id string) ObjectOption {
-	return func(o *Object) {
-		o.expectID = id
-	}
-}
-
-func (o *Object) VersionFS(ctx context.Context, i int) fs.FS {
-	ver := o.inventory.Version(i)
-	if ver == nil {
-		return nil
-	}
-	// FIXME: This is a hack to make versionFS replicates the filemode of
-	// the undering FS. Open a random content file to get the file mode used by
-	// the underlying FS.
-	regfileType := fs.FileMode(0)
-	for _, paths := range o.inventory.Manifest() {
-		if len(paths) < 1 {
-			break
-		}
-		f, err := o.fs.OpenFile(ctx, path.Join(o.path, paths[0]))
-		if err != nil {
-			return nil
-		}
-		defer f.Close()
-		info, err := f.Stat()
-		if err != nil {
-			return nil
-		}
-		regfileType = info.Mode().Type()
-		break
-	}
-	return &versionFS{
-		ctx:     ctx,
-		obj:     o,
-		paths:   ver.State().PathMap(),
-		created: ver.Created(),
-		regMode: regfileType,
 	}
 }
 
@@ -544,3 +505,36 @@ func (dir *vfsDirFile) Read(_ []byte) (int, error) { return 0, nil }
 func (dir *vfsDirFile) Size() int64                { return 0 }
 func (dir *vfsDirFile) Stat() (fs.FileInfo, error) { return dir, nil }
 func (dir *vfsDirFile) Sys() any                   { return nil }
+
+// create a new *Object with required feilds and apply options
+func newObject(fsys FS, dir string, opts ...ObjectOption) *Object {
+	obj := &Object{fs: fsys, path: dir}
+	for _, optFn := range opts {
+		optFn(obj)
+	}
+	return obj
+}
+
+// ObjectOptions are used to configure the behavior of NewObject()
+type ObjectOption func(*Object)
+
+// ObjectMustExists requires the object to exist
+func ObjectMustExist() ObjectOption {
+	return func(o *Object) {
+		o.mustExist = true
+	}
+}
+
+// objectExpectedID is an ObjectOption to set the expected ID (i.e., from )
+func objectExpectedID(id string) ObjectOption {
+	return func(o *Object) {
+		o.expectID = id
+	}
+}
+
+// objectWithRoot is an ObjectOption that sets the object's storage root
+func objectWithRoot(root *Root) ObjectOption {
+	return func(o *Object) {
+		o.root = root
+	}
+}

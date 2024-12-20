@@ -93,8 +93,9 @@ func (f *FileRef) Open(ctx context.Context) (fs.File, error) {
 
 // OpenObject opens the f's directory as an existing object. If the the
 // directory is not an object, an error is returned.
-func (f *FileRef) OpenObject(ctx context.Context) (*Object, error) {
-	return NewObject(ctx, f.FS, f.FullPathDir(), ObjectMustExist())
+func (f *FileRef) OpenObject(ctx context.Context, opts ...ObjectOption) (*Object, error) {
+	opts = append(opts, ObjectMustExist())
+	return NewObject(ctx, f.FS, f.FullPathDir(), opts...)
 }
 
 // Stat() calls StatFile on the file at f.
@@ -181,10 +182,10 @@ func (files FileSeq) DigestBatch(ctx context.Context, numgos int, alg digest.Alg
 // OpenObjects returns an iterator with results from calling OpenObject() on
 // each *FileRef in files. Unlike [FileSeq.OpenObjectsBatch], objects are opened
 // sequentially, in the same goroutine as the caller.
-func (files FileSeq) OpenObjects(ctx context.Context) iter.Seq2[*Object, error] {
+func (files FileSeq) OpenObjects(ctx context.Context, opts ...ObjectOption) iter.Seq2[*Object, error] {
 	return func(yield func(*Object, error) bool) {
 		for file := range files {
-			if !yield(file.OpenObject(ctx)) {
+			if !yield(file.OpenObject(ctx, opts...)) {
 				break
 			}
 		}
@@ -194,8 +195,8 @@ func (files FileSeq) OpenObjects(ctx context.Context) iter.Seq2[*Object, error] 
 // OpenObjectsBatch returns an iterator with results from calling OpenObjects()
 // on each *FileRef in files. Unlike [FileSeq.OpenObjects], objects are opened
 // in separate goroutines and may not be yielded in the same order as the input.
-func (files FileSeq) OpenObjectsBatch(ctx context.Context, numgos int) iter.Seq2[*Object, error] {
-	openObj := func(ref *FileRef) (*Object, error) { return ref.OpenObject(ctx) }
+func (files FileSeq) OpenObjectsBatch(ctx context.Context, numgos int, opts ...ObjectOption) iter.Seq2[*Object, error] {
+	openObj := func(ref *FileRef) (*Object, error) { return ref.OpenObject(ctx, opts...) }
 	filesSeq := iter.Seq[*FileRef](files)
 	return func(yield func(*Object, error) bool) {
 		for result := range pipeline.Results(filesSeq, openObj, numgos) {

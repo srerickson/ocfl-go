@@ -23,7 +23,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// ocflv1 is animplementation of ocfl v1.x
+// ocflv1 is an implementation of ocfl v1.x
 type ocflV1 struct {
 	v1Spec Spec // "1.0" or "1.1"
 }
@@ -509,7 +509,7 @@ func (imp ocflV1) Commit(ctx context.Context, obj *Object, commit *Commit) error
 		err = fmt.Errorf("writing new inventories or inventory sidecars: %w", err)
 		return &CommitError{Err: err, Dirty: true}
 	}
-	obj.setInventory(newInv)
+	obj.inventory = newInv
 	return nil
 }
 

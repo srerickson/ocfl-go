@@ -79,7 +79,7 @@ func ReadSidecarDigest(ctx context.Context, fsys FS, name string) (string, error
 }
 
 // ValidateInventoryBytes parses and fully validates the byts as contents of an
-// inventory.json file.
+// inventory.json file. This is mostly used for testing.
 func ValidateInventoryBytes(byts []byte) (Inventory, *Validation) {
 	imp, _ := getInventoryOCFL(byts)
 	if imp == nil {
@@ -114,7 +114,7 @@ func validateInventory(inv Inventory) *Validation {
 	imp, err := getOCFL(inv.Spec())
 	if err != nil {
 		v := &Validation{}
-		err := fmt.Errorf("inventory uses unknown or unspecified OCFL version")
+		err := fmt.Errorf("inventory has invalid 'type':%w", err)
 		v.AddFatal(err)
 		return v
 	}
