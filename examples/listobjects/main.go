@@ -51,8 +51,7 @@ func listObjects(ctx context.Context, storeConn string, numgos int, log *slog.Lo
 			log.Error(err.Error())
 			continue
 		}
-		id := obj.Inventory().ID()
-		fmt.Println(id)
+		fmt.Println(obj.Inventory().ID())
 	}
 	return nil
 }

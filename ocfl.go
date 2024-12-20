@@ -52,7 +52,7 @@ type ocfl interface {
 	ValidateObjectRoot(ctx context.Context, v *ObjectValidation, state *ObjectState) error
 	// Validate all contents of an object version directory and add contents to the object validation
 	ValidateObjectVersion(ctx context.Context, v *ObjectValidation, vnum VNum, versionInv, prevInv Inventory) error
-	// Validate contents added to the object validation
+	// Validate contents added to the object validation.
 	ValidateObjectContent(ctx context.Context, v *ObjectValidation) error
 }
 

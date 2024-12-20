@@ -256,7 +256,7 @@ func TestValidateFileDigests(t *testing.T) {
 		fixtureFiles, walkFn := ocfl.WalkFiles(ctx, testdataFS, "content-fixture")
 		fixtureResults := fixtureFiles.Digest(ctx, digest.SHA256, digest.SHA1, digest.MD5)
 		var makeInvalid ocfl.FileDigestsSeq = func(yield func(*ocfl.FileDigests) bool) {
-			for digests, _ := range fixtureResults {
+			for digests := range fixtureResults {
 				for id := range digests.Digests {
 					digests.Digests[id] = "bad value"
 					break // just one bad value

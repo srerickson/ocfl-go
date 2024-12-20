@@ -85,6 +85,7 @@ func TestRoot(t *testing.T) {
 			for obj, err := range root.Objects(ctx) {
 				be.NilErr(t, err)
 				count++
+				be.Equal(t, root, obj.Root())
 				be.True(t, obj.Exists())
 			}
 			be.Equal(t, 3, count)
@@ -102,6 +103,7 @@ func TestRoot(t *testing.T) {
 				be.NilErr(t, err)
 				count++
 				be.True(t, obj.Exists())
+				be.Equal(t, root, obj.Root())
 			}
 			be.Equal(t, 3, count)
 		})

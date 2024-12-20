@@ -110,14 +110,16 @@ func (r *Root) NewObject(ctx context.Context, id string, opts ...ObjectOption) (
 		return nil, err
 	}
 	opts = append(opts, objectExpectedID(id))
-	return NewObject(ctx, r.fs, path.Join(r.dir, objPath), opts...)
+	return r.NewObjectDir(ctx, objPath, opts...)
 }
 
 // NewObjectDir returns an *Object for managing the OCFL object at path dir in
 // root. If the object does not exist, the returned *Object can be used to
 // create it.
 func (r *Root) NewObjectDir(ctx context.Context, dir string, opts ...ObjectOption) (*Object, error) {
-	return NewObject(ctx, r.fs, path.Join(r.dir, dir), opts...)
+	opts = append(opts, objectWithRoot(r))
+	objPath := path.Join(r.dir, dir)
+	return NewObject(ctx, r.fs, objPath, opts...)
 }
 
 // ResolveID resolves the object id to a path relative to the root. If
@@ -147,10 +149,11 @@ func (r *Root) ObjectDeclarations(ctx context.Context) (FileSeq, func() error) {
 
 // Objects returns an iterator that yields objects or an error for every object
 // declaration file in the root.
-func (r *Root) Objects(ctx context.Context) iter.Seq2[*Object, error] {
+func (r *Root) Objects(ctx context.Context, opts ...ObjectOption) iter.Seq2[*Object, error] {
 	return func(yield func(*Object, error) bool) {
+		opts = append(opts, objectWithRoot(r))
 		decls, listErr := r.ObjectDeclarations(ctx)
-		for obj, err := range decls.OpenObjects(ctx) {
+		for obj, err := range decls.OpenObjects(ctx, opts...) {
 			if !yield(obj, err) {
 				return
 			}
@@ -163,12 +166,13 @@ func (r *Root) Objects(ctx context.Context) iter.Seq2[*Object, error] {
 
 // ObjectsBatch returns an iterator that uses [FileSeq.OpenObjectsBatch] to open
 // objects in the root in numgos separate goroutines, yielding the results
-func (r *Root) ObjectsBatch(ctx context.Context, numgos int) iter.Seq2[*Object, error] {
+func (r *Root) ObjectsBatch(ctx context.Context, numgos int, opts ...ObjectOption) iter.Seq2[*Object, error] {
 	return func(yield func(*Object, error) bool) {
 		allFiles, listErr := WalkFiles(ctx, r.fs, r.dir)
+		opts = append(opts, objectWithRoot(r))
 		objs := allFiles.
 			Filter(func(f *FileRef) bool { return f.Namaste().IsObject() }).
-			OpenObjectsBatch(ctx, numgos)
+			OpenObjectsBatch(ctx, numgos, opts...)
 		for obj, err := range objs {
 			if !yield(obj, err) {
 				return
@@ -388,61 +392,61 @@ func InitRoot(spec Spec, layoutDesc string, extensions ...extension.Extension) R
 }
 
 // TODO: export a function for iterating of object root's directory entries.
-//
+
 // WalkObjectDirs returns an iterator that walks r's directory structure,
 // yielding paths and directory entries for all objects. If an error is
 // encountered, iteration terminates. The terminating error is accessed with the
 // returned error function.
-func (r *Root) walkObjectDirs(ctx context.Context) (iter.Seq2[string, []fs.DirEntry], func() error) {
-	var walkErr error
-	dirs := func(yield func(string, []fs.DirEntry) bool) {
-		for dir, err := range r.walkDirs(ctx) {
-			if err != nil {
-				walkErr = err
-				break
-			}
-			if ParseObjectDir(dir.entries).HasNamaste() {
-				if !yield(dir.path, dir.entries) {
-					break
-				}
-			}
-		}
-	}
-	return dirs, func() error { return walkErr }
-}
+// func (r *Root) walkObjectDirs(ctx context.Context) (iter.Seq2[string, []fs.DirEntry], func() error) {
+// 	var walkErr error
+// 	dirs := func(yield func(string, []fs.DirEntry) bool) {
+// 		for dir, err := range r.walkDirs(ctx) {
+// 			if err != nil {
+// 				walkErr = err
+// 				break
+// 			}
+// 			if ParseObjectDir(dir.entries).HasNamaste() {
+// 				if !yield(dir.path, dir.entries) {
+// 					break
+// 				}
+// 			}
+// 		}
+// 	}
+// 	return dirs, func() error { return walkErr }
+// }
 
-func (root *Root) walkDirs(ctx context.Context) iter.Seq2[*rootDirRef, error] {
-	return func(yield func(*rootDirRef, error) bool) {
-		root.walkDir(ctx, &rootDirRef{path: "."}, yield)
-	}
-}
+// func (root *Root) walkDirs(ctx context.Context) iter.Seq2[*rootDirRef, error] {
+// 	return func(yield func(*rootDirRef, error) bool) {
+// 		root.walkDir(ctx, &rootDirRef{path: "."}, yield)
+// 	}
+// }
 
-// rootDirRef is a directory in a storage root
-type rootDirRef struct {
-	path    string // path relative to the storage root
-	entries []fs.DirEntry
-}
+// // rootDirRef is a directory in a storage root
+// type rootDirRef struct {
+// 	path    string // path relative to the storage root
+// 	entries []fs.DirEntry
+// }
 
-// walkDir reads dir, yields the result, and calls walkDir on each subdirectory
-// unless dir is an object root
-func (root *Root) walkDir(ctx context.Context, ref *rootDirRef, yield func(*rootDirRef, error) bool) {
-	var err error
-	ref.entries, err = root.fs.ReadDir(ctx, path.Join(root.dir, ref.path))
-	if !yield(ref, err) {
-		return
-	}
-	if len(ref.entries) < 1 {
-		return
-	}
-	if ParseObjectDir(ref.entries).HasNamaste() {
-		// don't descend below object root directory
-		return
-	}
-	// TODO: don't descent below extension directories
-	for _, e := range ref.entries {
-		if e.IsDir() {
-			next := &rootDirRef{path: path.Join(ref.path, e.Name())}
-			root.walkDir(ctx, next, yield)
-		}
-	}
-}
+// // walkDir reads dir, yields the result, and calls walkDir on each subdirectory
+// // unless dir is an object root
+// func (root *Root) walkDir(ctx context.Context, ref *rootDirRef, yield func(*rootDirRef, error) bool) {
+// 	var err error
+// 	ref.entries, err = root.fs.ReadDir(ctx, path.Join(root.dir, ref.path))
+// 	if !yield(ref, err) {
+// 		return
+// 	}
+// 	if len(ref.entries) < 1 {
+// 		return
+// 	}
+// 	if ParseObjectDir(ref.entries).HasNamaste() {
+// 		// don't descend below object root directory
+// 		return
+// 	}
+// 	// TODO: don't descent below extension directories
+// 	for _, e := range ref.entries {
+// 		if e.IsDir() {
+// 			next := &rootDirRef{path: path.Join(ref.path, e.Name())}
+// 			root.walkDir(ctx, next, yield)
+// 		}
+// 	}
+// }

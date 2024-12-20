@@ -235,7 +235,7 @@ func (v *ObjectValidation) addInventory(inv Inventory, isRoot bool) error {
 		return err
 	}
 	if isRoot {
-		v.obj.setInventory(inv)
+		v.obj.inventory = inv
 	}
 	return nil
 }
