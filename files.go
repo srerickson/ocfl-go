@@ -16,13 +16,13 @@ import (
 	"github.com/srerickson/ocfl-go/internal/pipeline"
 )
 
-// Files returns an a new [FileSeq] for iterating over the named files in fsys.
+// Files returns a [FileSeq] for iterating over the named files in fsys.
 func Files(fsys FS, names ...string) FileSeq {
 	return FilesSub(fsys, ".", names...)
 }
 
-// Files returns an a new [FileSeq] for iterating over the named files, relative
-// to the directory dir in fsys.
+// Files returns a [FileSeq] for iterating over the named files, relative to the
+// directory dir in fsys.
 func FilesSub(fsys FS, dir string, files ...string) FileSeq {
 	return func(yield func(*FileRef) bool) {
 		for _, n := range files {
@@ -38,7 +38,7 @@ func FilesSub(fsys FS, dir string, files ...string) FileSeq {
 	}
 }
 
-// WalkFiles returns a new [FileSeq] for iterating over the files in dir and its
+// WalkFiles returns a [FileSeq] for iterating over the files in dir and its
 // subdirectories. If an error occurs while reading [FS], iteration terminates.
 // The terminating error is returned by errFn
 func WalkFiles(ctx context.Context, fsys FS, dir string) (files FileSeq, errFn func() error) {
@@ -79,7 +79,7 @@ func (f FileRef) FullPathDir() string {
 	return path.Dir(f.FullPath())
 }
 
-// Namastes parses the file's name as a namaste declaration and returns the
+// Namastes parses the file's name as a [Namaste] declaration and returns the
 // result. If the file is not a namaste declaration, the zero-value is returned.
 func (f FileRef) Namaste() Namaste {
 	nam, _ := ParseNamaste(path.Base(f.Path))
@@ -91,14 +91,14 @@ func (f *FileRef) Open(ctx context.Context) (fs.File, error) {
 	return f.FS.OpenFile(ctx, f.FullPath())
 }
 
-// OpenObject opens the f's directory as an existing object. If the the
-// directory is not an object, an error is returned.
+// OpenObject opens f's directory as an *Object. If the the directory is not an
+// existing object, an error is returned.
 func (f *FileRef) OpenObject(ctx context.Context, opts ...ObjectOption) (*Object, error) {
 	opts = append(opts, ObjectMustExist())
 	return NewObject(ctx, f.FS, f.FullPathDir(), opts...)
 }
 
-// Stat() calls StatFile on the file at f.
+// Stat() calls StatFile on the file at f and updates f.Info.
 func (f *FileRef) Stat(ctx context.Context) error {
 	stat, err := StatFile(ctx, f.FS, f.FullPath())
 	f.Info = stat
@@ -137,16 +137,16 @@ func (files FileSeq) IgnoreHidden() FileSeq {
 	})
 }
 
-// Digests concurrently computes digests for each file in files. It is the same
+// Digest concurrently computes digests for each file in files. It is the same
 // as DigestBatch with numgos set to [runtime.NumCPU](). The resulting iterator
 // yields digest results or an error if the file could not be digestsed.
 func (files FileSeq) Digest(ctx context.Context, alg digest.Algorithm, fixityAlgs ...digest.Algorithm) FileDigestsErrSeq {
 	return files.DigestBatch(ctx, runtime.NumCPU(), alg, fixityAlgs...)
 }
 
-// The resulting iterator yields digest results or an error if the file could
-// not be digestsed. If numgos is < 1, the value from [runtime.GOMAXPROCS](0) is
-// used.
+// DigestBatch concurrently computes digests for each file in files. The
+// resulting iterator yields digest results or an error if the file could not be
+// digestsed. If numgos is < 1, the value from [runtime.GOMAXPROCS](0) is used.
 func (files FileSeq) DigestBatch(ctx context.Context, numgos int, alg digest.Algorithm, fixityAlgs ...digest.Algorithm) FileDigestsErrSeq {
 	algs := make([]digest.Algorithm, 1+len(fixityAlgs))
 	algs[0] = alg
