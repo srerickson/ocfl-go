@@ -18,12 +18,10 @@ import (
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/local"
 	"github.com/srerickson/ocfl-go/digest"
-	"github.com/srerickson/ocfl-go/ocflv1"
 	"golang.org/x/exp/maps"
 )
 
 func TestObject(t *testing.T) {
-	ocflv1.Enable()
 	t.Run("Example", testObjectExample)
 	t.Run("New", testNewObject)
 	t.Run("Commit", testObjectCommit)
@@ -277,8 +275,8 @@ func testUpdateFixtures(t *testing.T) {
 
 				// new stage from the existing version and add a new file
 				currentVersion, err := obj.OpenVersion(ctx, 0)
-				defer be.NilErr(t, currentVersion.Close())
 				be.NilErr(t, err)
+				defer be.NilErr(t, currentVersion.Close())
 				newContent, err := ocfl.StageBytes(map[string][]byte{
 					"a-new-file": []byte("new stuff"),
 				}, currentVersion.DigestAlgorithm())

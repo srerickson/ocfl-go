@@ -10,7 +10,6 @@ import (
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/local"
 	"github.com/srerickson/ocfl-go/digest"
-	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
 var (
@@ -26,7 +25,6 @@ var (
 
 func main() {
 	ctx := context.Background()
-	ocflv1.Enable()
 	flag.StringVar(&srcDir, "obj", "", "directory of object to commit to")
 	flag.StringVar(&srcDir, "src", "", "directory with new version content")
 	flag.StringVar(&msg, "msg", "", "message field for new version")

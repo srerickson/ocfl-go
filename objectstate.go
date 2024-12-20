@@ -22,11 +22,9 @@ const (
 	//HasLogs indicates that an object root includes a directory named "logs"
 	HasLogs
 
-	inventoryBase    = "inventory.json"
-	sidecarPrefix    = inventoryBase + "."
-	objectDeclPrefix = "0=" + NamasteTypeObject
-
 	maxObjectStateInvalid = 8
+	objectDeclPrefix      = "0=" + NamasteTypeObject
+	sidecarPrefix         = inventoryBase + "."
 )
 
 // ObjectState provides details of an OCFL object root based on the names of
@@ -57,9 +55,9 @@ func ParseObjectDir(entries []fs.DirEntry) *ObjectState {
 		case e.IsDir():
 			var v VNum
 			switch {
-			case name == LogsDir:
+			case name == logsDir:
 				state.Flags |= HasLogs
-			case name == ExtensionsDir:
+			case name == extensionsDir:
 				state.Flags |= HasExtensions
 			case ParseVNum(name, &v) == nil:
 				state.VersionDirs = append(state.VersionDirs, v)

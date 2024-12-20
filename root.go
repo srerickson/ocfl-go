@@ -27,7 +27,6 @@ var ErrLayoutUndefined = errors.New("storage root's layout is undefined")
 type Root struct {
 	fs           FS                // root's fs
 	dir          string            // root's director relative to FS
-	global       Config            // shared OCFL settings
 	spec         Spec              // OCFL spec version in storage root declaration
 	layout       extension.Layout  // layout used to resolve object ids
 	layoutConfig map[string]string // contents of `ocfl_layout.json`
@@ -65,7 +64,7 @@ func NewRoot(ctx context.Context, fsys FS, dir string, opts ...RootOption) (*Roo
 	if err != nil {
 		return nil, fmt.Errorf("not an OCFL storage root: %w", err)
 	}
-	if _, err := r.global.GetSpec(decl.Version); err != nil {
+	if _, err := getOCFL(decl.Version); err != nil {
 		return nil, fmt.Errorf(" OCFL v%s: %w", decl.Version, err)
 	}
 	// initialize existing Root
@@ -194,12 +193,12 @@ func (r *Root) Spec() Spec {
 // ValidateObject validates the object with the given id. If the id cannot be
 // resolved, the error is reported as a fatal error in the returned
 // *ObjectValidation.
-func (r *Root) ValidateObject(ctx context.Context, id string, opts ...ObjectValidationOption) (v *ObjectValidation) {
+func (r *Root) ValidateObject(ctx context.Context, id string, opts ...ObjectValidationOption) *ObjectValidation {
 	objPath, err := r.ResolveID(id)
 	if err != nil {
-		v = NewObjectValidation(opts...)
+		v := newObjectValidation(r.fs, path.Join(r.dir, objPath), opts...)
 		v.AddFatal(err)
-		return
+		return v
 	}
 	return r.ValidateObjectDir(ctx, objPath, opts...)
 }
@@ -216,7 +215,7 @@ func (r *Root) init(ctx context.Context) error {
 	if r.initArgs.spec.Empty() {
 		return errors.New("can't initialize storage root: missing OCFL spec version")
 	}
-	if _, err := r.global.GetSpec(r.initArgs.spec); err != nil {
+	if _, err := getOCFL(r.initArgs.spec); err != nil {
 		return fmt.Errorf(" OCFL v%s: %w", r.initArgs.spec, err)
 	}
 	writeFS, isWriteFS := r.fs.(WriteFS)
@@ -339,7 +338,7 @@ func (r *Root) setLayout(ctx context.Context, layout extension.Layout, desc stri
 // extensions directory. The value is unmarshalled into the value pointed to by
 // ext. If the extension config does not exist, nil is returned.
 func readExtensionConfig(ctx context.Context, fsys FS, root string, name string) (extension.Extension, error) {
-	confPath := path.Join(root, ExtensionsDir, name, extensionConfigFile)
+	confPath := path.Join(root, extensionsDir, name, extensionConfigFile)
 	f, err := fsys.OpenFile(ctx, confPath)
 	if err != nil {
 		return nil, fmt.Errorf("can't open config for extension %s: %w", name, err)
@@ -355,7 +354,7 @@ func readExtensionConfig(ctx context.Context, fsys FS, root string, name string)
 // writeExtensionConfig writes the configuration files for the ext to the
 // extensions directory in the storage root with at root.
 func writeExtensionConfig(ctx context.Context, fsys WriteFS, root string, config extension.Extension) error {
-	confPath := path.Join(root, ExtensionsDir, config.Name(), extensionConfigFile)
+	confPath := path.Join(root, extensionsDir, config.Name(), extensionConfigFile)
 	b, err := json.Marshal(config)
 	if err != nil {
 		return fmt.Errorf("encoding config for extension %s: %w", config.Name(), err)

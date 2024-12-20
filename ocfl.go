@@ -8,168 +8,80 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"runtime"
-	"sync"
-	"sync/atomic"
 )
 
 const (
 	// package version
-	Version       = "0.6.0"
-	LogsDir       = "logs"
-	ExtensionsDir = "extensions"
+	Version = "0.6.0"
+
+	Spec1_0 = Spec("1.0")
+	Spec1_1 = Spec("1.1")
+
+	logsDir       = "logs"
+	contentDir    = "content"
+	extensionsDir = "extensions"
+	inventoryBase = "inventory.json"
 )
 
 var (
-	ErrOCFLNotImplemented    = errors.New("no implementation for the given OCFL specification version")
+	ErrOCFLNotImplemented    = errors.New("unimplemented or missing version of the OCFL specification")
 	ErrObjectNamasteExists   = fmt.Errorf("found existing OCFL object declaration: %w", fs.ErrExist)
 	ErrObjectNamasteNotExist = fmt.Errorf("the OCFL object declaration does not exist: %w", ErrNamasteNotExist)
-
-	commitConcurrency atomic.Int32 // FIXME: get rid of this
-
-	// map of OCFL implementations
-	defaultOCFLs OCLFRegister
+	ErrObjRootStructure      = errors.New("object includes invalid files or directories")
 )
 
-func GetOCFL(spec Spec) (OCFL, error) { return defaultOCFLs.Get(spec) }
-func MustGetOCFL(spec Spec) OCFL      { return defaultOCFLs.MustGet(spec) }
-func RegisterOCLF(imp OCFL) bool      { return defaultOCFLs.Set(imp) }
-func UnsetOCFL(spec Spec) bool        { return defaultOCFLs.Unset(spec) }
-func LatestOCFL() (OCFL, error)       { return defaultOCFLs.Latest() }
-func Implementations() []Spec         { return defaultOCFLs.Specs() }
-
-// OCFL is an interface implemented by types that implement a specific
-// version of the OCFL specification.
-type OCFL interface {
+// ocfl is an interface implemented by types that implement a specific
+// version of the ocfl specification.
+type ocfl interface {
+	// Spec returns the implemented version of the OCFL specification
 	Spec() Spec
-	NewReadInventory(raw []byte) (ReadInventory, error)
-	NewReadObject(fsys FS, path string, inv ReadInventory) ReadObject
-	Commit(ctx context.Context, obj ReadObject, commit *Commit) (ReadObject, error)
-	ValidateObjectRoot(ctx context.Context, fs FS, dir string, state *ObjectState, vldr *ObjectValidation) (ReadObject, error)
-	ValidateObjectVersion(ctx context.Context, obj ReadObject, vnum VNum, versionInv ReadInventory, prevInv ReadInventory, vldr *ObjectValidation) error
-	ValidateObjectContent(ctx context.Context, obj ReadObject, vldr *ObjectValidation) error
+	// NewInventory constructs a new Inventory from bytes. If the inventory is
+	// invalid, an error is returned. The returned error may not include all
+	// validation error codes, as ValidateInventoryBytes would.
+	NewInventory(raw []byte) (Inventory, error)
+	// Commit creates a new object version. The returned error must be a
+	// *CommitError.
+	Commit(ctx context.Context, obj *Object, commit *Commit) error
+	// ValidateInventory validates an existing Inventory value.
+	ValidateInventory(Inventory) *Validation
+	// ValidateInventoryBytes fully validates bytes as a json-encoded inventory.
+	// It returns the Inventory if the validation result does not included fatal
+	// errors.
+	ValidateInventoryBytes([]byte) (Inventory, *Validation)
+	// Validate all contents of an object root: NAMASTE, inventory, sidecar, etc.
+	ValidateObjectRoot(ctx context.Context, v *ObjectValidation, state *ObjectState) error
+	// Validate all contents of an object version directory and add contents to the object validation
+	ValidateObjectVersion(ctx context.Context, v *ObjectValidation, vnum VNum, versionInv, prevInv Inventory) error
+	// Validate contents added to the object validation
+	ValidateObjectContent(ctx context.Context, v *ObjectValidation) error
 }
 
-type Config struct {
-	ocfls *OCLFRegister
-	//algs  digest.Registry
-}
-
-func (c Config) OCFLs() *OCLFRegister {
-	if c.ocfls == nil {
-		return &defaultOCFLs
+// getOCFL is returns the implemenation for a given version of the OCFL spec.
+func getOCFL(spec Spec) (ocfl, error) {
+	switch spec {
+	case Spec1_0, Spec1_1:
+		return &ocflV1{v1Spec: spec}, nil
+	case Spec(""):
+		return nil, ErrOCFLNotImplemented
 	}
-	return c.ocfls
+	return nil, fmt.Errorf("%w: v%s", ErrOCFLNotImplemented, spec)
 }
 
-func (c Config) GetSpec(spec Spec) (OCFL, error) {
-	if c.ocfls == nil {
-		return defaultOCFLs.Get(spec)
-	}
-	return c.ocfls.Get(spec)
-}
+// returns the earliest OCFL implementation (OCFL v1.0)
+func lowestOCFL() ocfl { return &ocflV1{Spec1_0} }
 
-type OCLFRegister struct {
-	ocfls   map[Spec]OCFL
-	ocflsMx sync.RWMutex
-	latest  OCFL
-}
+// returns the latest OCFL implementation (OCFL v1.1)
+func latestOCFL() ocfl { return &ocflV1{Spec1_1} }
 
-func (reg *OCLFRegister) Get(spec Spec) (OCFL, error) {
-	reg.ocflsMx.RLock()
-	defer reg.ocflsMx.RUnlock()
-	if imp := reg.ocfls[spec]; imp != nil {
-		return imp, nil
-	}
-	return nil, ErrOCFLNotImplemented
-}
-
-func (reg *OCLFRegister) MustGet(spec Spec) OCFL {
-	imp, err := reg.Get(spec)
+// mustGetOCFL is like getOCFL except it panics if the implemenation is not
+// found.
+func mustGetOCFL(spec Spec) ocfl {
+	impl, err := getOCFL(spec)
 	if err != nil {
 		panic(err)
 	}
-	return imp
+	return impl
 }
 
-func (ocfl *OCLFRegister) Set(imp OCFL) bool {
-	newSpec := imp.Spec()
-	if err := newSpec.Valid(); err != nil {
-		return false
-	}
-	ocfl.ocflsMx.Lock()
-	defer ocfl.ocflsMx.Unlock()
-	if _, exists := ocfl.ocfls[newSpec]; exists {
-		return false
-	}
-	if ocfl.ocfls == nil {
-		ocfl.ocfls = map[Spec]OCFL{}
-	}
-	ocfl.ocfls[newSpec] = imp
-	if ocfl.latest == nil || newSpec.Cmp(ocfl.latest.Spec()) > 0 {
-		ocfl.latest = imp
-	}
-	return true
-}
-
-// UnsetOCFL removes the previously set implementation for spec, if
-// present. It returns true if the implementation was removed and false if no
-// implementation was found for the spec.
-func (reg *OCLFRegister) Unset(spec Spec) bool {
-	reg.ocflsMx.Lock()
-	defer reg.ocflsMx.Unlock()
-	if _, exists := reg.ocfls[spec]; !exists {
-		return false
-	}
-	delete(reg.ocfls, spec)
-	return true
-}
-
-func (reg *OCLFRegister) Latest() (OCFL, error) {
-	reg.ocflsMx.RLock()
-	defer reg.ocflsMx.RUnlock()
-	if reg.latest == nil {
-		return nil, ErrOCFLNotImplemented
-	}
-	return reg.latest, nil
-}
-
-func (reg *OCLFRegister) Specs() []Spec {
-	reg.ocflsMx.RLock()
-	defer reg.ocflsMx.RUnlock()
-	specs := make([]Spec, 0, len(reg.ocfls))
-	for spec := range reg.ocfls {
-		specs = append(specs, spec)
-	}
-	return specs
-}
-
-type ReadObject interface {
-	// Inventory returns the object's inventory or nil if
-	// the object hasn't been created yet.
-	Inventory() ReadInventory
-	// FS for accessing object contents
-	FS() FS
-	// Path returns the object's path relative to its FS()
-	Path() string
-	// VersionFS returns an io/fs.FS for accessing the logical contents of the
-	// object version state with the index v.
-	VersionFS(ctx context.Context, v int) fs.FS
-}
-
-// XferConcurrency is a global configuration for the maximum number of files
-// transferred concurrently during a commit operation. It defaults to
-// runtime.NumCPU().
-func XferConcurrency() int {
-	i := commitConcurrency.Load()
-	if i < 1 {
-		return runtime.NumCPU()
-	}
-	return int(i)
-}
-
-// SetXferConcurrency sets the maximum number of files transferred concurrently
-// during a commit operation.
-func SetXferConcurrency(i int) {
-	commitConcurrency.Store(int32(i))
-}
+// defaultOCFL returns the default OCFL implementation (v1.1).
+func defaultOCFL() ocfl { return latestOCFL() }

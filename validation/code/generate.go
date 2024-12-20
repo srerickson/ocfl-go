@@ -1,9 +1,8 @@
+//go:build ignore
+
 package main
 
-// This program generates error codes objects based on ocfl ocfl.
-//
-// from this directory:
-// go run gen.go > ../codes.go
+// This program generates error code for ocfl validatoin errors
 
 import (
 	_ "embed"
@@ -14,6 +13,8 @@ import (
 	"strings"
 	"text/template"
 )
+
+const filename = "codes_gen.go"
 
 //go:embed codes-ocflv1.0.csv
 var codes1_0 string
@@ -26,20 +27,26 @@ var specs = map[string]string{
 	"1.1": codes1_1,
 }
 
-type SpecRef struct {
+type specRef struct {
 	Description string // code description
 	URL         string // URL to spect
 }
 
-type CodeEntry struct {
+type codeEntry struct {
 	Num     string
 	Comment string
-	Specs   map[string]SpecRef
+	Specs   map[string]specRef
 }
 
 func main() {
 	tpl := template.Must(template.ParseFiles(`codes_gen.go.tmpl`))
-	codes := map[string]*CodeEntry{}
+	codes := map[string]*codeEntry{}
+
+	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
 
 	for specnum, raw := range specs {
 		reader := csv.NewReader(strings.NewReader(raw))
@@ -55,13 +62,13 @@ func main() {
 			url := row[2]
 			comment := fmt.Sprintf("%s: %s", num, desc)
 			if codes[num] == nil {
-				codes[num] = &CodeEntry{
+				codes[num] = &codeEntry{
 					Num:     num,
 					Comment: comment,
-					Specs:   map[string]SpecRef{},
+					Specs:   map[string]specRef{},
 				}
 			}
-			codes[num].Specs[specnum] = SpecRef{
+			codes[num].Specs[specnum] = specRef{
 				Description: desc,
 				URL:         url,
 			}
@@ -70,5 +77,5 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	tpl.Execute(os.Stdout, codes)
+	tpl.Execute(f, codes)
 }

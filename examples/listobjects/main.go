@@ -16,13 +16,11 @@ import (
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/backend/s3"
 	"github.com/srerickson/ocfl-go/logging"
-	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
 var numgos int
 
 func main() {
-	ocflv1.Enable()
 	ctx := context.Background()
 	// logging.SetDefaultLevel(slog.LevelDebug)
 	logger := logging.DefaultLogger()

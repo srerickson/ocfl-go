@@ -11,11 +11,9 @@ import (
 	"github.com/srerickson/ocfl-go/backend/local"
 	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/extension"
-	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
 func TestRoot(t *testing.T) {
-	ocflv1.Enable()
 	ctx := context.Background()
 
 	t.Run("fixture reg-extension-dir-root", func(t *testing.T) {

@@ -9,14 +9,12 @@ import (
 
 	"github.com/charmbracelet/log"
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/ocflv1"
 )
 
 var objPath string
 
 func main() {
 	ctx := context.Background()
-	ocflv1.Enable() // setup ocflv1
 	flag.Parse()
 	handl := log.New(os.Stderr)
 	handl.SetLevel(log.WarnLevel)

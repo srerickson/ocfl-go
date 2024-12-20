@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/srerickson/ocfl-go/digest"
+	"github.com/srerickson/ocfl-go/validation"
 )
 
 // Validation represents multiple fatal errors and warning errors.
@@ -73,7 +74,10 @@ func (v *Validation) WarnErrors() []error {
 // ObjectValidation is used to configure and track results from an object validation process.
 type ObjectValidation struct {
 	Validation
-	globals     Config
+	obj *Object
+
+	// set with option
+	objOptions  []ObjectOption
 	logger      *slog.Logger
 	skipDigests bool
 	concurrency int
@@ -81,15 +85,16 @@ type ObjectValidation struct {
 	algRegistry digest.AlgorithmRegistry
 }
 
-// NewObjectValidation constructs a new *Validation with the given
+// newObjectValidation constructs a new *Validation with the given
 // options
-func NewObjectValidation(opts ...ObjectValidationOption) *ObjectValidation {
+func newObjectValidation(fsys FS, dir string, opts ...ObjectValidationOption) *ObjectValidation {
 	v := &ObjectValidation{
 		algRegistry: digest.DefaultRegistry(),
 	}
 	for _, opt := range opts {
 		opt(v)
 	}
+	v.obj = newObject(fsys, dir, v.objOptions...)
 	return v
 }
 
@@ -126,7 +131,7 @@ func (v *ObjectValidation) AddFatal(errs ...error) {
 		var validErr *ValidationError
 		switch {
 		case errors.As(err, &validErr):
-			v.logger.Error(err.Error(), "ocfl_code", validErr.ValidationCode.Code)
+			v.logger.Error(err.Error(), "ocfl_code", validErr.Code)
 		default:
 			v.logger.Error(err.Error())
 		}
@@ -144,79 +149,16 @@ func (v *ObjectValidation) AddWarn(errs ...error) {
 		var validErr *ValidationError
 		switch {
 		case errors.As(err, &validErr):
-			v.logger.Warn(err.Error(), "ocfl_code", validErr.ValidationCode.Code)
+			v.logger.Warn(err.Error(), "ocfl_code", validErr.Code)
 		default:
 			v.logger.Warn(err.Error())
 		}
 	}
 }
 
-// AddExistingContent sets the existence status for a content file in the
-// validation state.
-func (v *ObjectValidation) AddExistingContent(name string) {
-	if v.files == nil {
-		v.files = map[string]*validationFileInfo{}
-	}
-	if v.files[name] == nil {
-		v.files[name] = &validationFileInfo{}
-	}
-	v.files[name].exists = true
-}
-
-// AddInventoryDigests adds digests from the inventory's manifest and fixity
-// entries to the object validation for later verification. An error is returned
-// if any name/digests entries in the inventory conflic with an existing
-// name/digest entry already added to the object validation. The returned error
-// wraps a slice of *DigestError values.
-func (v *ObjectValidation) AddInventoryDigests(inv ReadInventory) error {
-	if v.files == nil {
-		v.files = map[string]*validationFileInfo{}
-	}
-	primaryAlg := inv.DigestAlgorithm()
-	allErrors := &multierror.Error{}
-	inv.Manifest().EachPath(func(name string, primaryDigest string) bool {
-		allDigests := inv.GetFixity(primaryDigest)
-		allDigests[primaryAlg.ID()] = primaryDigest
-		current := v.files[name]
-		if current == nil {
-			v.files[name] = &validationFileInfo{
-				expected: allDigests,
-			}
-			return true
-		}
-		if current.expected == nil {
-			current.expected = allDigests
-			return true
-		}
-		if err := current.expected.Add(allDigests); err != nil {
-			var digestError *digest.DigestError
-			if errors.As(err, &digestError) {
-				digestError.Path = name
-			}
-			allErrors = multierror.Append(allErrors, err)
-		}
-		return true
-	})
-	return allErrors.ErrorOrNil()
-}
-
 // Logger returns the validation's logger, which is nil by default.
 func (v *ObjectValidation) Logger() *slog.Logger {
 	return v.logger
-}
-
-// MissingContent returns an iterator the yields the names of files that appear
-// in an inventory added to the validation but were not marked as existing.
-func (v *ObjectValidation) MissingContent() iter.Seq[string] {
-	return func(yield func(string) bool) {
-		for name, entry := range v.files {
-			if !entry.exists && len(entry.expected) > 0 {
-				if !yield(name) {
-					return
-				}
-			}
-		}
-	}
 }
 
 // SkipDigests returns true if the validation is configured to skip digest
@@ -234,27 +176,77 @@ func (v *ObjectValidation) DigestConcurrency() int {
 	return runtime.NumCPU()
 }
 
-// UnexpectedContent returns an iterator that yields the names of existing files
-// that were not included in an inventory manifest.
-func (v *ObjectValidation) UnexpectedContent() iter.Seq[string] {
-	return func(yield func(string) bool) {
-		for name, entry := range v.files {
-			if entry.exists && len(entry.expected) == 0 {
-				if !yield(name) {
-					return
-				}
-			}
-		}
-	}
+// ValidationAlgorithms returns the registry of digest algoriths
+// the object validation is configured to use. The default value is
+// digest.DefaultRegistry
+func (v *ObjectValidation) ValidationAlgorithms() digest.AlgorithmRegistry {
+	return v.algRegistry
 }
 
-// ExistingContent digests returns an iterator that yields the names and digests
+// addExistingContent sets the existence status for a content file in the
+// validation state.
+func (v *ObjectValidation) addExistingContent(name string) {
+	if v.files == nil {
+		v.files = map[string]*validationFileInfo{}
+	}
+	if v.files[name] == nil {
+		v.files[name] = &validationFileInfo{}
+	}
+	v.files[name].fileExists = true
+}
+
+// addInventory adds digests from the inventory's manifest and fixity entries to
+// the object validation for later verification. An error is returned if any
+// name/digests entries in the inventory conflict with previously added values.
+// The returned error wraps a slice of *DigestError values. Errors *are not*
+// automatically added to the validation's Fatal errors.
+//
+// If isRoot is true, v.object's is set to inv
+func (v *ObjectValidation) addInventory(inv Inventory, isRoot bool) error {
+	if v.files == nil {
+		v.files = map[string]*validationFileInfo{}
+	}
+	primaryAlg := inv.DigestAlgorithm()
+	allErrors := &multierror.Error{}
+	inv.Manifest().EachPath(func(name string, primaryDigest string) bool {
+		allDigests := inv.GetFixity(primaryDigest)
+		allDigests[primaryAlg.ID()] = primaryDigest
+		existing := v.files[name]
+		if existing == nil {
+			v.files[name] = &validationFileInfo{
+				expectedDigests: allDigests,
+			}
+			return true
+		}
+		if existing.expectedDigests == nil {
+			existing.expectedDigests = allDigests
+			return true
+		}
+		if err := existing.expectedDigests.Add(allDigests); err != nil {
+			var digestError *digest.DigestError
+			if errors.As(err, &digestError) {
+				digestError.Path = name
+			}
+			allErrors = multierror.Append(allErrors, err)
+		}
+		return true
+	})
+	if err := allErrors.ErrorOrNil(); err != nil {
+		return err
+	}
+	if isRoot {
+		v.obj.setInventory(inv)
+	}
+	return nil
+}
+
+// existingContent digests returns an iterator that yields the names and digests
 // of files that exist and were referenced in the inventory added to the
 // valiation.
-func (v *ObjectValidation) ExistingContentDigests(fsys FS, objPath string, alg digest.Algorithm) FileDigestsSeq {
+func (v *ObjectValidation) existingContentDigests(fsys FS, objPath string, alg digest.Algorithm) FileDigestsSeq {
 	return func(yield func(*FileDigests) bool) {
 		for name, entry := range v.files {
-			if entry.exists && len(entry.expected) > 0 {
+			if entry.fileExists && len(entry.expectedDigests) > 0 {
 				fd := &FileDigests{
 					FileRef: FileRef{
 						FS:      fsys,
@@ -262,7 +254,7 @@ func (v *ObjectValidation) ExistingContentDigests(fsys FS, objPath string, alg d
 						Path:    name,
 					},
 					Algorithm: alg,
-					Digests:   entry.expected,
+					Digests:   entry.expectedDigests,
 				}
 				if !yield(fd) {
 					return
@@ -272,11 +264,36 @@ func (v *ObjectValidation) ExistingContentDigests(fsys FS, objPath string, alg d
 	}
 }
 
-// ValidationAlgorithms returns the registry of digest algoriths
-// the object validation is configured to use. The default value is
-// digest.DefaultRegistry
-func (v *ObjectValidation) ValidationAlgorithms() digest.AlgorithmRegistry {
-	return v.algRegistry
+func (v *ObjectValidation) fs() FS { return v.obj.fs }
+
+func (v *ObjectValidation) path() string { return v.obj.path }
+
+// missingContent returns an iterator the yields the names of files that appear
+// in an inventory added to the validation but were not marked as existing.
+func (v *ObjectValidation) missingContent() iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for name, entry := range v.files {
+			if !entry.fileExists && len(entry.expectedDigests) > 0 {
+				if !yield(name) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// unexpectedContent returns an iterator that yields the names of existing files
+// that were not included in an inventory manifest.
+func (v *ObjectValidation) unexpectedContent() iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for name, entry := range v.files {
+			if entry.fileExists && len(entry.expectedDigests) == 0 {
+				if !yield(name) {
+					return
+				}
+			}
+		}
+	}
 }
 
 type ObjectValidationOption func(*ObjectValidation)
@@ -312,23 +329,14 @@ func ValidationAlgorithms(reg digest.AlgorithmRegistry) ObjectValidationOption {
 }
 
 type validationFileInfo struct {
-	expected digest.Set
-	exists   bool
-}
-
-// ValidationCode represents a validation error code defined in an
-// OCFL specification. See https://ocfl.io/1.1/spec/validation-codes.html
-type ValidationCode struct {
-	Spec        Spec   // OCFL spec that the code refers to
-	Code        string // Validation error code from OCFL Spec
-	Description string // error description from spec
-	URL         string // URL to the OCFL specification for the error
+	expectedDigests digest.Set
+	fileExists      bool
 }
 
 // ValidationError is an error that includes a reference
 // to a validation error code from the OCFL spec.
 type ValidationError struct {
-	ValidationCode
+	validation.ValidationCode
 	Err error
 }
 
@@ -338,4 +346,15 @@ func (ver *ValidationError) Error() string {
 
 func (ver *ValidationError) Unwrap() error {
 	return ver.Err
+}
+
+// helper for constructing new validation code
+func verr(err error, code *validation.ValidationCode) error {
+	if code == nil {
+		return err
+	}
+	return &ValidationError{
+		Err:            err,
+		ValidationCode: *code,
+	}
 }

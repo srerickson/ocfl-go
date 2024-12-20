@@ -13,9 +13,6 @@ import (
 )
 
 const (
-	Spec1_0 = Spec("1.0")
-	Spec1_1 = Spec("1.1")
-
 	invTypePrefix = "https://ocfl.io/"
 	invTypeSuffix = "/spec/#inventory"
 	specsDir      = "specs"
@@ -98,9 +95,9 @@ func (s Spec) parse() (float64, string, error) {
 	return val, suffix, nil
 }
 
-// AsInvType returns n as an InventoryType
-func (s Spec) AsInvType() InvType {
-	return InvType{Spec: s}
+// InventoryType returns n as an InventoryType
+func (s Spec) InventoryType() InventoryType {
+	return InventoryType{Spec: s}
 }
 
 func WriteSpecFile(ctx context.Context, fsys WriteFS, dir string, n Spec) (string, error) {
@@ -130,17 +127,17 @@ func WriteSpecFile(ctx context.Context, fsys WriteFS, dir string, n Spec) (strin
 	return dst, nil
 }
 
-// InvType represents an inventory type string
+// InventoryType represents an inventory type string
 // for example: https://ocfl.io/1.0/spec/#inventory
-type InvType struct {
+type InventoryType struct {
 	Spec
 }
 
-func (inv InvType) String() string {
+func (inv InventoryType) String() string {
 	return invTypePrefix + string(inv.Spec) + invTypeSuffix
 }
 
-func (invT *InvType) UnmarshalText(t []byte) error {
+func (invT *InventoryType) UnmarshalText(t []byte) error {
 	cut := strings.TrimPrefix(string(t), invTypePrefix)
 	cut = strings.TrimSuffix(cut, invTypeSuffix)
 	if err := Spec(cut).Valid(); err != nil {
@@ -150,6 +147,6 @@ func (invT *InvType) UnmarshalText(t []byte) error {
 	return nil
 }
 
-func (invT InvType) MarshalText() ([]byte, error) {
+func (invT InventoryType) MarshalText() ([]byte, error) {
 	return []byte(invT.String()), nil
 }
