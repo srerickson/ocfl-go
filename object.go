@@ -157,6 +157,17 @@ func (obj *Object) FS() FS {
 	return obj.fs
 }
 
+// ID returns obj's inventory ID if the obj exists (its inventory is not nil).
+// If obj does not exist but was constructed with [Root.NewObject](), the ID
+// used with [Root.NewObject]() is returned. Otherwise, it returns an empty
+// string.
+func (obj *Object) ID() string {
+	if obj.inventory != nil {
+		return obj.inventory.ID()
+	}
+	return obj.expectID
+}
+
 // Inventory returns the object's Inventory if it exists. If the object
 // doesn't exist, it returns nil.
 func (obj *Object) Inventory() Inventory {
