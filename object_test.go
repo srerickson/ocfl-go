@@ -38,6 +38,7 @@ func testObjectExample(t *testing.T) {
 	obj, err := ocfl.NewObject(ctx, tmpFS, "new-object-01")
 	be.NilErr(t, err)
 	be.False(t, obj.Exists()) // the object doesn't exist yet
+	be.Zero(t, obj.ID())      // its ID isn't set
 
 	// commit new object version from bytes:
 	v1Content := map[string][]byte{
@@ -75,6 +76,7 @@ func testObjectExample(t *testing.T) {
 		Spec:    ocfl.Spec1_1,
 	})
 	be.NilErr(t, err)
+	be.Equal(t, "new-object-01", obj.ID())
 	be.Equal(t, ocfl.Spec1_1, obj.Inventory().Spec())
 	be.Nonzero(t, obj.Inventory().Version(2).State().PathMap()["new-data.csv"])
 	be.DeepEqual(t, []string{"md5"}, obj.Inventory().FixityAlgorithms())

@@ -53,6 +53,7 @@ func TestRoot(t *testing.T) {
 		objID := "object-1"
 		obj, err := newRoot.NewObject(ctx, objID)
 		be.NilErr(t, err)
+		be.Equal(t, obj.ID(), objID)
 		stage, err := ocfl.StageBytes(map[string][]byte{
 			"file.txt": []byte("readme readme readme"),
 		}, digest.SHA256)
