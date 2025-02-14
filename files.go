@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"iter"
 	"path"
-	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -396,7 +395,7 @@ func walkFiles(ctx context.Context, fsys FS, dir string) (FileSeq, func() error)
 
 // fileWalk calls yield for all files in dir and its subdirectories.
 func fileWalk(ctx context.Context, fsys FS, walkRoot string, subDir string, yield func(*FileRef) bool) error {
-	entries, err := fsys.ReadDir(ctx, filepath.Join(walkRoot, subDir))
+	entries, err := fsys.ReadDir(ctx, path.Join(walkRoot, subDir))
 	if err != nil {
 		return err
 	}
