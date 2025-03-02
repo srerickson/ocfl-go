@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-// NewFS wraps an io/fs.FS as an FS
+// NewFS wraps an [io/fs.FS] as an [FS]
 func NewFS(fsys fs.FS) ReadDirFS { return &ioFS{FS: fsys} }
 
 // DirFS is shorthand for NewFS(os.DirFS(dir))
