@@ -11,7 +11,11 @@ import (
 	"strings"
 )
 
-var ErrOpUnsupported = errors.New("operation not supported by the file system")
+var (
+	ErrOpUnsupported = errors.New("operation not supported by the file system")
+	ErrNotFile       = errors.New("not a file")
+	ErrFileType      = errors.New("invalid file type for an OCFL context")
+)
 
 // FS is the minimal file system abstraction that includes the ability to read
 // named files (not directories).
@@ -129,4 +133,12 @@ func StatFile(ctx context.Context, fsys FS, name string) (fs.FileInfo, error) {
 	}
 	defer f.Close()
 	return f.Stat()
+}
+
+// FileWalker is an [FS] with an optimized implementation of WalkFiles
+type FileWalker interface {
+	FS
+	// WalkFiles returns an iterator that yields *FileRefs and/or an
+	// error.
+	WalkFiles(ctx context.Context, dir string) iter.Seq2[*FileRef, error]
 }
