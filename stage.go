@@ -4,42 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"path"
 	"sort"
 	"testing/fstest"
 
 	"github.com/srerickson/ocfl-go/digest"
+	"github.com/srerickson/ocfl-go/fs"
 )
-
-// StageBytes builds a stage from a map of filenames to file contents
-func StageBytes(content map[string][]byte, alg digest.Algorithm, fixity ...digest.Algorithm) (*Stage, error) {
-	mapFS := fstest.MapFS{}
-	for file, bytes := range content {
-		mapFS[file] = &fstest.MapFile{Data: bytes}
-	}
-	ctx := context.Background()
-	return StageDir(ctx, NewFS(mapFS), ".", alg, fixity...)
-}
-
-// StageDir builds a stage based on the contents of the directory dir in FS.
-// Files in dir and its subdirectories are digested with the given digest
-// algorithms and added to the stage. Hidden files are ignored. The alg argument
-// must be sha512 or sha256.
-func StageDir(ctx context.Context, fsys FS, dir string, alg digest.Algorithm, fixity ...digest.Algorithm) (*Stage, error) {
-	if alg.ID() != digest.SHA512.ID() && alg.ID() != digest.SHA256.ID() {
-		return nil, fmt.Errorf("at least one algorithm (sha512 or sha256) must be provided")
-	}
-	files, walkErrFn := WalkFiles(ctx, fsys, dir)
-	digests := files.IgnoreHidden().Digest(ctx, alg, fixity...)
-	stage, err := digests.Stage()
-	if err != nil {
-		return nil, err
-	}
-	if err := walkErrFn(); err != nil {
-		return nil, err
-	}
-	return stage, nil
-}
 
 // Stage is used to create/update objects.
 type Stage struct {
@@ -54,6 +26,103 @@ type Stage struct {
 	// FixitySource is used to access fixity information for new
 	// content. It may be nil
 	FixitySource
+}
+
+// StageBytes builds a stage from a map of filenames to file contents
+func StageBytes(content map[string][]byte, alg digest.Algorithm, fixity ...digest.Algorithm) (*Stage, error) {
+	mapFS := fstest.MapFS{}
+	for file, bytes := range content {
+		mapFS[file] = &fstest.MapFile{Data: bytes}
+	}
+	ctx := context.Background()
+	return StageDir(ctx, fs.NewFS(mapFS), ".", alg, fixity...)
+}
+
+// StageDir builds a stage based on the contents of the directory dir in FS.
+// Files in dir and its subdirectories are digested with the given digest
+// algorithms and added to the stage. Hidden files are ignored. The alg argument
+// must be sha512 or sha256.
+func StageDir(ctx context.Context, fsys fs.FS, dir string, alg digest.Algorithm, fixity ...digest.Algorithm) (*Stage, error) {
+	files, walkErr := fs.UntilErr(fs.WalkFiles(ctx, fsys, dir))
+	files = fs.FilterFiles(files, fs.IsNotHidden)
+	stage, err := StageFiles(ctx, files, alg, fixity...)
+	if err != nil {
+		return nil, err
+	}
+	if err := walkErr(); err != nil {
+		return nil, err
+	}
+	return stage, nil
+}
+
+// StageFiles buils a stage from entries in files. Files are digested with the
+// given digest algorithms and added to the stage. The alg argument must be
+// sha512 or sha256.
+func StageFiles(ctx context.Context, files iter.Seq[*fs.FileRef], alg digest.Algorithm, fixity ...digest.Algorithm) (*Stage, error) {
+	if alg.ID() != digest.SHA512.ID() && alg.ID() != digest.SHA256.ID() {
+		return nil, fmt.Errorf("at least one algorithm (sha512 or sha256) must be provided")
+	}
+	digests, digestErr := fs.UntilErr(digest.DigestFiles(ctx, files, alg, fixity...))
+	stage, err := newStage(digests)
+	if err != nil {
+		return nil, err
+	}
+	if err := digestErr(); err != nil {
+		return nil, err
+	}
+	return stage, nil
+}
+
+// build a stage from values in digests
+func newStage(digests iter.Seq[*digest.FileDigests]) (*Stage, error) {
+	manifest := map[string]dirManifestEntry{}
+	var primaryAlg digest.Algorithm
+	var baseDir string
+	var fsys fs.FS
+	for fileDigest := range digests {
+		if fsys == nil {
+			fsys = fileDigest.FS
+		}
+		if fsys != fileDigest.FS {
+			return nil, errors.New("inconsistent backend FS for staged files")
+		}
+		if primaryAlg == nil {
+			primaryAlg = fileDigest.Algorithm
+		}
+		if primaryAlg.ID() != fileDigest.Algorithm.ID() {
+			return nil, errors.New("inconsistent digest algorithms for staged files")
+		}
+		if baseDir == "" {
+			baseDir = fileDigest.BaseDir
+		}
+		if baseDir != fileDigest.BaseDir {
+			return nil, errors.New("inconsistent base directory for staged files")
+		}
+		primary, fixity := fileDigest.Digests.Split(primaryAlg.ID())
+		if primary == "" {
+			err := fmt.Errorf("missing %s value for %s", primaryAlg.ID(), fileDigest.FullPath())
+			return nil, err
+		}
+		entry := manifest[primary]
+		entry.addPaths(fileDigest.Path)
+		entry.addFixity(fixity)
+		manifest[primary] = entry
+	}
+	state := DigestMap{}
+	for dig, entry := range manifest {
+		state[dig] = entry.paths
+	}
+	dirMan := &dirManifest{
+		fs:       fsys,
+		baseDir:  baseDir,
+		manifest: manifest,
+	}
+	return &Stage{
+		State:           state,
+		DigestAlgorithm: primaryAlg,
+		ContentSource:   dirMan,
+		FixitySource:    dirMan,
+	}, nil
 }
 
 // HasContent returns true if the stage's content source provides an FS and path
@@ -136,7 +205,7 @@ func (s *Stage) addFixitySource(fs FixitySource) {
 type ContentSource interface {
 	// GetContent returns an FS and path to a file in FS for a file with the given digest.
 	// If no content is associated with the digest, fsys is nil and path is an empty string.
-	GetContent(digest string) (fsys FS, path string)
+	GetContent(digest string) (fsys fs.FS, path string)
 }
 
 // FixitySource is used to access alternate digests for content with a given
@@ -149,7 +218,7 @@ type FixitySource interface {
 
 type contentSources []ContentSource
 
-func (ps contentSources) GetContent(digest string) (FS, string) {
+func (ps contentSources) GetContent(digest string) (fs.FS, string) {
 	for _, provider := range ps {
 		fsys, pth := provider.GetContent(digest)
 		if fsys != nil {
@@ -172,16 +241,16 @@ func (ps fixitySources) GetFixity(dig string) digest.Set {
 }
 
 type dirManifest struct {
-	fs       FS
+	fs       fs.FS
 	baseDir  string
 	manifest map[string]dirManifestEntry
 }
 
-func (s *dirManifest) ContentFS() FS {
+func (s *dirManifest) ContentFS() fs.FS {
 	return s.fs
 }
 
-func (s *dirManifest) GetContent(digest string) (FS, string) {
+func (s *dirManifest) GetContent(digest string) (fs.FS, string) {
 	if s.fs == nil || s.manifest == nil || len(s.manifest[digest].paths) == 0 {
 		return nil, ""
 	}

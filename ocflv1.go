@@ -18,6 +18,7 @@ import (
 
 	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/extension"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/logging"
 	"github.com/srerickson/ocfl-go/validation/code"
 	"golang.org/x/sync/errgroup"
@@ -438,7 +439,7 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
 }
 
 func (imp ocflV1) Commit(ctx context.Context, obj *Object, commit *Commit) error {
-	writeFS, ok := obj.FS().(WriteFS)
+	writeFS, ok := obj.FS().(ocflfs.WriteFS)
 	if !ok {
 		err := errors.New("object's backing file system doesn't support write operations")
 		return &CommitError{Err: err}
@@ -530,7 +531,7 @@ func (imp ocflV1) ValidateObjectRoot(ctx context.Context, vldr *ObjectValidation
 		return err
 	}
 	// validate root inventory
-	invBytes, err := ReadAll(ctx, vldr.fs(), path.Join(vldr.path(), inventoryBase))
+	invBytes, err := ocflfs.ReadAll(ctx, vldr.fs(), path.Join(vldr.path(), inventoryBase))
 	if err != nil {
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
@@ -570,7 +571,7 @@ func (imp ocflV1) ValidateObjectVersion(ctx context.Context, vldr *ObjectValidat
 	fullVerDir := path.Join(vldr.path(), vnumStr) // version directory path relative to FS
 	specStr := string(imp.v1Spec)
 	rootInv := vldr.obj.Inventory() // rootInv is assumed to be valid
-	vDirEntries, err := fsys.ReadDir(ctx, fullVerDir)
+	vDirEntries, err := ocflfs.ReadDir(ctx, fsys, fullVerDir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		// can't read version directory for some reason, but not because it
 		// doesn't exist.
@@ -627,16 +628,15 @@ func (imp ocflV1) ValidateObjectVersion(ctx context.Context, vldr *ObjectValidat
 		// add version content files to validation state
 		var added int
 		fullVerContDir := path.Join(fullVerDir, cdName)
-		contentFiles, filesErrFn := WalkFiles(ctx, fsys, fullVerContDir)
-		for contentFile := range contentFiles {
+		for contentFile, err := range ocflfs.WalkFiles(ctx, fsys, fullVerContDir) {
+			if err != nil {
+				vldr.AddFatal(err)
+				return err
+			}
 			// convert from path relative to version content directory to path
 			// relative to the object
 			vldr.addExistingContent(path.Join(vnumStr, cdName, contentFile.Path))
 			added++
-		}
-		if err := filesErrFn(); err != nil {
-			vldr.AddFatal(err)
-			return err
 		}
 		if added == 0 {
 			// content directory exists but it's empty
@@ -663,7 +663,7 @@ func (imp ocflV1) ValidateObjectContent(ctx context.Context, v *ObjectValidation
 		digests := v.existingContentDigests(v.fs(), v.path(), alg)
 		numgos := v.DigestConcurrency()
 		registry := v.ValidationAlgorithms()
-		for err := range digests.ValidateBatch(ctx, registry, numgos) {
+		for err := range digest.ValidateFilesBatch(ctx, digests, registry, numgos) {
 			var digestErr *digest.DigestError
 			switch {
 			case errors.As(err, &digestErr):
@@ -1005,7 +1005,7 @@ func convertJSONDigestMap(jsonMap map[string]any) (DigestMap, error) {
 
 type copyContentOpts struct {
 	Source      ContentSource
-	DestFS      WriteFS
+	DestFS      ocflfs.WriteFS
 	DestRoot    string
 	Manifest    DigestMap
 	Concurrency int
@@ -1031,7 +1031,7 @@ func copyContent(ctx context.Context, c *copyContentOpts) error {
 			srcPath := srcPath
 			dstPath := path.Join(c.DestRoot, dstName)
 			grp.Go(func() error {
-				return Copy(ctx, c.DestFS, dstPath, srcFS, srcPath)
+				return ocflfs.Copy(ctx, c.DestFS, dstPath, srcFS, srcPath)
 			})
 
 		}
@@ -1065,7 +1065,7 @@ func newContentMap(inv *rawInventory) (DigestMap, error) {
 // writeInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
 // fsys. The digest is calculated using alg and the inventory sidecar is also written to
 // dir/inventory.alg
-func writeInventory(ctx context.Context, fsys WriteFS, inv *inventoryV1, dirs ...string) error {
+func writeInventory(ctx context.Context, fsys ocflfs.WriteFS, inv *inventoryV1, dirs ...string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1196,11 +1196,11 @@ func validateRootState(spec Spec, state *ObjectState) *Validation {
 	return v
 }
 
-func validateExtensionsDir(ctx context.Context, spec Spec, fsys FS, objDir string) *Validation {
+func validateExtensionsDir(ctx context.Context, spec Spec, fsys ocflfs.FS, objDir string) *Validation {
 	specStr := string(spec)
 	v := &Validation{}
 	extDir := path.Join(objDir, extensionsDir)
-	items, err := fsys.ReadDir(ctx, extDir)
+	items, err := ocflfs.ReadDir(ctx, fsys, extDir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil

@@ -14,7 +14,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	awsS3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/backend/s3"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
+	"github.com/srerickson/ocfl-go/fs/s3"
 	"github.com/srerickson/ocfl-go/logging"
 )
 
@@ -56,7 +57,7 @@ func listObjects(ctx context.Context, storeConn string, numgos int, log *slog.Lo
 	return nil
 }
 
-func parseStoreConn(ctx context.Context, name string) (ocfl.FS, string, error) {
+func parseStoreConn(ctx context.Context, name string) (ocflfs.FS, string, error) {
 	//if we were using s3-based backend:
 	rl, err := url.Parse(name)
 	if err != nil {
@@ -75,6 +76,6 @@ func parseStoreConn(ctx context.Context, name string) (ocfl.FS, string, error) {
 		}
 		return fsys, strings.TrimPrefix(rl.Path, "/"), nil
 	default:
-		return ocfl.DirFS(name), ".", nil
+		return ocflfs.DirFS(name), ".", nil
 	}
 }

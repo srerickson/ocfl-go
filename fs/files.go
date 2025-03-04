@@ -8,7 +8,19 @@ import (
 	"strings"
 )
 
-type Files iter.Seq[*FileRef]
+func Files(fsys FS, names ...string) iter.Seq[*FileRef] {
+	return func(yield func(*FileRef) bool) {
+		for _, n := range names {
+			ref := &FileRef{
+				FS:   fsys,
+				Path: n,
+			}
+			if !yield(ref) {
+				break
+			}
+		}
+	}
+}
 
 // FileRef includes everything needed to access a file, including a reference to
 // the [FS] where the file is stored. It may include file metadata from calling
@@ -45,7 +57,7 @@ func (f *FileRef) Stat(ctx context.Context) error {
 
 // Filter returns a new FileSeq that yields values in files that satisfy the
 // filter condition.
-func FilterFiles(files Files, filter func(*FileRef) bool) Files {
+func FilterFiles(files iter.Seq[*FileRef], filter func(*FileRef) bool) iter.Seq[*FileRef] {
 	return func(yield func(*FileRef) bool) {
 		for ref := range files {
 			if !filter(ref) {
@@ -58,8 +70,24 @@ func FilterFiles(files Files, filter func(*FileRef) bool) Files {
 	}
 }
 
-// IsHidden is used with Filter to remove hidden files.
-func IsHidden(info *FileRef) bool {
+// StatFiles returns an iterator that yields *FileRefs and an error
+// from calling [Stat]() for values in files. Values from files are not
+// modified.
+func StatFiles(ctx context.Context, files iter.Seq[*FileRef]) iter.Seq2[*FileRef, error] {
+	newFiles := func(yield func(*FileRef, error) bool) {
+		for file := range files {
+			newFile := *file
+			err := newFile.Stat(ctx)
+			if !yield(&newFile, err) {
+				break
+			}
+		}
+	}
+	return newFiles
+}
+
+// IsNotHidden is used with Filter to remove hidden files.
+func IsNotHidden(info *FileRef) bool {
 	// intentionally ignorng BasePath
 	for _, part := range strings.Split(info.Path, "/") {
 		if len(part) > 0 && part[0] == '.' {
@@ -69,58 +97,26 @@ func IsHidden(info *FileRef) bool {
 	return true
 }
 
-func WalkFiles(ctx context.Context, fsys FS, dir string) iter.Seq2[*FileRef, error] {
-	if walkFS, ok := fsys.(FileWalker); ok {
-		return walkFS.WalkFiles(ctx, dir)
-	}
-	return func(yield func(*FileRef, error) bool) {
-		fileWalk(ctx, fsys, dir, ".", yield)
-	}
-}
-
-// fileWalk calls yield for all files in dir and its subdirectories.
-func fileWalk(ctx context.Context, fsys FS, walkRoot string, subDir string, yield func(*FileRef, error) bool) bool {
-	for e, err := range ReadDir(ctx, fsys, path.Join(walkRoot, subDir)) {
-		if err != nil {
-			// any error from ReadDir stops iteration.
-			yield(nil, err)
-			return false
-		}
-		entryPath := path.Join(subDir, e.Name())
-		switch {
-		case e.IsDir():
-			if !fileWalk(ctx, fsys, walkRoot, entryPath, yield) {
-				return false
-			}
-		case !validFileType(e.Type()):
-			return yield(nil, &fs.PathError{
-				Path: entryPath,
-				Err:  ErrFileType,
-				Op:   `readdir`,
-			})
-		default:
-			info, err := e.Info()
+// UntilErr returns an iterator that yields the values from seq until seq yields
+// a non-nil error. The value yielded with the error is thrown out.
+func UntilErr[T any](seq iter.Seq2[T, error]) (iter.Seq[T], func() error) {
+	var firstErr error
+	outSeq := func(yield func(T) bool) {
+		for val, err := range seq {
 			if err != nil {
-				if !yield(nil, err) {
-					return false
-				}
+				firstErr = err
+				return
 			}
-			ref := &FileRef{
-				FS:      fsys,
-				BaseDir: walkRoot,
-				Path:    entryPath,
-				Info:    info,
-			}
-			if !yield(ref, nil) {
-				return false
+			if !yield(val) {
+				break
 			}
 		}
 	}
-	return true
+	return outSeq, func() error { return firstErr }
 }
 
-// validFileType returns true if mode is ok for a file
+// ValidFileType returns true if mode is ok for a file
 // in an OCFL object.
-func validFileType(mode fs.FileMode) bool {
+func ValidFileType(mode fs.FileMode) bool {
 	return mode.IsDir() || mode.IsRegular() || mode.Type() == fs.ModeIrregular
 }

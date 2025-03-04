@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
 const (
@@ -100,7 +102,7 @@ func (s Spec) InventoryType() InventoryType {
 	return InventoryType{Spec: s}
 }
 
-func WriteSpecFile(ctx context.Context, fsys WriteFS, dir string, n Spec) (string, error) {
+func WriteSpecFile(ctx context.Context, fsys ocflfs.WriteFS, dir string, n Spec) (string, error) {
 	if err := n.Valid(); err != nil {
 		return "", err
 	}

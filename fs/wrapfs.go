@@ -9,18 +9,18 @@ import (
 )
 
 // NewFS wraps an [io/fs.FS] as an [FS]
-func NewFS(fsys fs.FS) ReadDirFS { return &ioFS{FS: fsys} }
+func NewFS(fsys fs.FS) *WrapFS { return &WrapFS{FS: fsys} }
 
 // DirFS is shorthand for NewFS(os.DirFS(dir))
-func DirFS(dir string) ReadDirFS { return NewFS(os.DirFS(dir)) }
+func DirFS(dir string) *WrapFS { return NewFS(os.DirFS(dir)) }
 
-// ioFS wraps and fs.FS
-type ioFS struct {
+// WrapFS wraps an [io/fs.FS] an implements [DirEntriesFS].
+type WrapFS struct {
 	fs.FS
 }
 
-// OpenFile implementes FS for ioFS
-func (fsys *ioFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
+// OpenFile implementes FS for WrapFS
+func (fsys *WrapFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, &fs.PathError{
 			Op:   "openfile",
@@ -47,8 +47,8 @@ func (fsys *ioFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	return f, nil
 }
 
-// ReadDir implements FS for ioFS.
-func (fsys *ioFS) ReadDir(ctx context.Context, name string) iter.Seq2[fs.DirEntry, error] {
+// DirEntries implements DirEntriesFS for WrapFS.
+func (fsys *WrapFS) DirEntries(ctx context.Context, name string) iter.Seq2[fs.DirEntry, error] {
 	return func(yield func(fs.DirEntry, error) bool) {
 		if !fs.ValidPath(name) {
 			yield(nil, &fs.PathError{

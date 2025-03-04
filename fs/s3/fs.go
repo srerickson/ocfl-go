@@ -46,9 +46,9 @@ func (f *BucketFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	return openFile(ctx, f.S3, f.Bucket, name)
 }
 
-func (f *BucketFS) ReadDir(ctx context.Context, dir string) iter.Seq2[fs.DirEntry, error] {
+func (f *BucketFS) DirEntries(ctx context.Context, dir string) iter.Seq2[fs.DirEntry, error] {
 	f.debugLog(ctx, "s3:readdir", "bucket", f.Bucket, "name", dir)
-	return readDir(ctx, f.S3, f.Bucket, dir)
+	return dirEntries(ctx, f.S3, f.Bucket, dir)
 }
 
 func (f *BucketFS) Write(ctx context.Context, name string, r io.Reader) (int64, error) {

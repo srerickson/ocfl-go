@@ -7,7 +7,7 @@ import (
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/backend/local"
+	"github.com/srerickson/ocfl-go/fs/local"
 )
 
 func TestSpecCmp(t *testing.T) {

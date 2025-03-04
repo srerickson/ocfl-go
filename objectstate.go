@@ -146,3 +146,9 @@ func (state ObjectState) Namaste() Namaste {
 	}
 	return n
 }
+
+// validFileType returns true if mode is ok for a file
+// in an OCFL object.
+func validFileType(mode fs.FileMode) bool {
+	return mode.IsDir() || mode.IsRegular() || mode.Type() == fs.ModeIrregular
+}

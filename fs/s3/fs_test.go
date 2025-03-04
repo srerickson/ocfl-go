@@ -29,11 +29,11 @@ const (
 )
 
 var (
-	_ ocflfs.FS         = (*s3.BucketFS)(nil)
-	_ ocflfs.ReadDirFS  = (*s3.BucketFS)(nil)
-	_ ocflfs.CopyFS     = (*s3.BucketFS)(nil)
-	_ ocflfs.WriteFS    = (*s3.BucketFS)(nil)
-	_ ocflfs.FileWalker = (*s3.BucketFS)(nil)
+	_ ocflfs.FS           = (*s3.BucketFS)(nil)
+	_ ocflfs.DirEntriesFS = (*s3.BucketFS)(nil)
+	_ ocflfs.CopyFS       = (*s3.BucketFS)(nil)
+	_ ocflfs.WriteFS      = (*s3.BucketFS)(nil)
+	_ ocflfs.FileWalker   = (*s3.BucketFS)(nil)
 )
 
 func TestOpenFile(t *testing.T) {
@@ -196,7 +196,7 @@ func TestReadDir(t *testing.T) {
 				api = tcase.mock(t)
 			}
 			fsys := &s3.BucketFS{S3: api, Bucket: tcase.bucket}
-			entries, err := ocflfs.ReadDirCollect(ctx, fsys, tcase.dir)
+			entries, err := ocflfs.ReadDir(ctx, fsys, tcase.dir)
 			tcase.expect(t, entries, err)
 		})
 	}

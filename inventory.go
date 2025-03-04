@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/srerickson/ocfl-go/digest"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
 var (
@@ -50,10 +51,10 @@ type User struct {
 
 // ReadInventory reads the 'inventory.json' file in dir and validates it. It returns
 // an error if the inventory cann't be paresed or if it is invalid.
-func ReadInventory(ctx context.Context, fsys FS, dir string) (inv Inventory, err error) {
+func ReadInventory(ctx context.Context, fsys ocflfs.FS, dir string) (inv Inventory, err error) {
 	var byts []byte
 	var imp ocfl
-	byts, err = ReadAll(ctx, fsys, path.Join(dir, inventoryBase))
+	byts, err = ocflfs.ReadAll(ctx, fsys, path.Join(dir, inventoryBase))
 	if err != nil {
 		return
 	}
@@ -65,8 +66,8 @@ func ReadInventory(ctx context.Context, fsys FS, dir string) (inv Inventory, err
 }
 
 // ReadSidecarDigest reads the digest from an inventory.json sidecar file
-func ReadSidecarDigest(ctx context.Context, fsys FS, name string) (string, error) {
-	byts, err := ReadAll(ctx, fsys, name)
+func ReadSidecarDigest(ctx context.Context, fsys ocflfs.FS, name string) (string, error) {
+	byts, err := ocflfs.ReadAll(ctx, fsys, name)
 	if err != nil {
 		return "", err
 	}
@@ -93,7 +94,7 @@ func ValidateInventoryBytes(byts []byte) (Inventory, *Validation) {
 // algorithm (e.g., inventory.json.sha512) in directory dir and return an error
 // if the sidecar content is not formatted correctly or if the inv's digest
 // doesn't match the value found in the sidecar.
-func ValidateInventorySidecar(ctx context.Context, inv Inventory, fsys FS, dir string) error {
+func ValidateInventorySidecar(ctx context.Context, inv Inventory, fsys ocflfs.FS, dir string) error {
 	sideCar := path.Join(dir, inventoryBase+"."+inv.DigestAlgorithm().ID())
 	expSum, err := ReadSidecarDigest(ctx, fsys, sideCar)
 	if err != nil {
