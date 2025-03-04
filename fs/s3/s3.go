@@ -63,58 +63,69 @@ func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (f
 	return &s3File{bucket: buck, key: name, obj: obj}, nil
 }
 
-func readDir(ctx context.Context, api ReadDirAPI, buck string, dir string) ([]fs.DirEntry, error) {
-	if !fs.ValidPath(dir) {
-		return nil, pathErr("readdir", dir, fs.ErrInvalid)
-	}
-	params := &s3v2.ListObjectsV2Input{
-		Bucket:    &buck,
-		Delimiter: &delim,
-		MaxKeys:   &maxKeys,
-	}
-	if dir != "." {
-		params.Prefix = aws.String(dir + "/")
-	}
-	entries := make([]fs.DirEntry, 0, 32)
-	for {
-		list, err := api.ListObjectsV2(ctx, params)
-		if err != nil {
-			return nil, pathErr("readdir", dir, err)
+func readDir(ctx context.Context, api ReadDirAPI, buck string, dir string) iter.Seq2[fs.DirEntry, error] {
+	return func(yield func(fs.DirEntry, error) bool) {
+		if !fs.ValidPath(dir) {
+			yield(nil, pathErr("readdir", dir, fs.ErrInvalid))
+			return
 		}
-		numDirs := len(list.CommonPrefixes)
-		numFiles := len(list.Contents)
-		numEntries := numDirs + numFiles
-		if numEntries == 0 {
-			break
+		params := &s3v2.ListObjectsV2Input{
+			Bucket:    &buck,
+			Delimiter: &delim,
+			MaxKeys:   &maxKeys,
 		}
-		newEntries := make([]fs.DirEntry, numEntries)
-		for i, item := range list.CommonPrefixes {
-			newEntries[i] = &iofsInfo{
-				name: path.Base(*item.Prefix),
-				mode: fs.ModeDir,
+		if dir != "." {
+			params.Prefix = aws.String(dir + "/")
+		}
+		prefixHasContent := false
+		for {
+			list, err := api.ListObjectsV2(ctx, params)
+			if err != nil {
+				yield(nil, pathErr("readdir", dir, err))
+				return
+			}
+			numDirs := len(list.CommonPrefixes)
+			numFiles := len(list.Contents)
+			numEntries := numDirs + numFiles
+			if numEntries == 0 {
+				if !prefixHasContent {
+					// treat prefix without objects as a missing directory
+					yield(nil, pathErr("readdir", dir, fs.ErrNotExist))
+				}
+				return
+			}
+			prefixHasContent = true
+			entries := make([]fs.DirEntry, numEntries)
+			for i, item := range list.CommonPrefixes {
+				entries[i] = &iofsInfo{
+					name: path.Base(*item.Prefix),
+					mode: fs.ModeDir,
+				}
+			}
+			for i, item := range list.Contents {
+				entries[numDirs+i] = &iofsInfo{
+					name:    path.Base(*item.Key),
+					size:    *item.Size,
+					mode:    fs.ModeIrregular,
+					modTime: *item.LastModified,
+					// sys:     &item,
+				}
+			}
+			slices.SortFunc(entries, func(a, b fs.DirEntry) int {
+				return strings.Compare(a.Name(), b.Name())
+			})
+			for _, entry := range entries {
+				if !yield(entry, nil) {
+					return
+				}
+			}
+			params.ContinuationToken = list.NextContinuationToken
+			if params.ContinuationToken == nil {
+				break
 			}
 		}
-		for i, item := range list.Contents {
-			newEntries[numDirs+i] = &iofsInfo{
-				name:    path.Base(*item.Key),
-				size:    *item.Size,
-				mode:    fs.ModeIrregular,
-				modTime: *item.LastModified,
-				// sys:     &item,
-			}
-		}
-		slices.SortFunc(newEntries, cmpDirEntries)
-		entries = append(entries, newEntries...)
-		params.ContinuationToken = list.NextContinuationToken
-		if params.ContinuationToken == nil {
-			break
-		}
 	}
-	if len(entries) == 0 {
-		// treat the prefix as a non-existing directory
-		return nil, pathErr("readdir", dir, fs.ErrNotExist)
-	}
-	return entries, nil
+
 }
 
 func write(ctx context.Context, api WriteAPI, buck string, key string, r io.Reader, size int64, psize int64, conc int) (int64, error) {
@@ -449,16 +460,4 @@ func byteRange(partNum int32, partSize, totalSize int64) string {
 		end = max
 	}
 	return fmt.Sprintf("bytes=%d-%d", start, end)
-}
-
-func cmpDirEntries(a, b fs.DirEntry) int {
-	aN, bN := a.Name(), b.Name()
-	switch {
-	case aN < bN:
-		return -1
-	case aN > bN:
-		return 1
-	default:
-		return 0
-	}
 }

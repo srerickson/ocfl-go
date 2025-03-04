@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 
 	"log"
 
@@ -33,16 +34,15 @@ func run(ctx context.Context, bucket, prefix string) error {
 	if err != nil {
 		return err
 	}
-	entries, err := fsys.ReadDir(ctx, prefix)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
+	for e, err := range fsys.ReadDir(ctx, prefix) {
+		if err != nil {
+			return err
+		}
 		name := e.Name()
 		if e.IsDir() {
 			name += "/"
 		}
-		// fmt.Println(name)
+		fmt.Println(name)
 	}
 	return nil
 }
