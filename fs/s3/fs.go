@@ -42,12 +42,12 @@ type BucketFS struct {
 }
 
 func (f *BucketFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
-	f.debugLog(ctx, "s3:open_file", "bucket", f.Bucket, "name", name)
+	f.debugLog(ctx, "s3:openfile", "bucket", f.Bucket, "name", name)
 	return openFile(ctx, f.S3, f.Bucket, name)
 }
 
-func (f *BucketFS) ReadDir(ctx context.Context, dir string) ([]fs.DirEntry, error) {
-	f.debugLog(ctx, "s3:read_dir", "bucket", f.Bucket, "name", dir)
+func (f *BucketFS) ReadDir(ctx context.Context, dir string) iter.Seq2[fs.DirEntry, error] {
+	f.debugLog(ctx, "s3:readdir", "bucket", f.Bucket, "name", dir)
 	return readDir(ctx, f.S3, f.Bucket, dir)
 }
 
@@ -83,7 +83,7 @@ func (f *BucketFS) RemoveAll(ctx context.Context, name string) error {
 }
 
 func (f *BucketFS) WalkFiles(ctx context.Context, dir string) iter.Seq2[*ocflfs.FileRef, error] {
-	f.debugLog(ctx, "s3:list_files", "bucket", f.Bucket, "prefix", dir)
+	f.debugLog(ctx, "s3:walkfiles", "bucket", f.Bucket, "prefix", dir)
 	files := walkFiles(ctx, f.S3, f.Bucket, dir)
 	// The values yielded by walkfiles don't include the FS, we need to
 	// add it here.

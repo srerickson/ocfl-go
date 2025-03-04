@@ -12,7 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/srerickson/ocfl-go"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/fs/s3"
 )
 
@@ -85,7 +85,7 @@ func doTests(ctx context.Context, bucket string, size int64) error {
 	return nil
 }
 
-func createSrcFile(ctx context.Context, fsys ocfl.WriteFS, key string, size int64) error {
+func createSrcFile(ctx context.Context, fsys ocflfs.WriteFS, key string, size int64) error {
 	if f, err := fsys.OpenFile(ctx, key); err == nil {
 		info, err := f.Stat()
 		if err != nil {
