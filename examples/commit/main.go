@@ -8,8 +8,9 @@ import (
 	"os"
 
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/backend/local"
 	"github.com/srerickson/ocfl-go/digest"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
+	"github.com/srerickson/ocfl-go/fs/local"
 )
 
 var (
@@ -64,7 +65,7 @@ func main() {
 	if err != nil {
 		quit(err)
 	}
-	stage, err := ocfl.StageDir(ctx, ocfl.DirFS(srcDir), ".", alg)
+	stage, err := ocfl.StageDir(ctx, ocflfs.DirFS(srcDir), ".", alg)
 	if err != nil {
 		quit(err)
 	}

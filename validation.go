@@ -9,6 +9,7 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/srerickson/ocfl-go/digest"
+	"github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/validation"
 )
 
@@ -87,7 +88,7 @@ type ObjectValidation struct {
 
 // newObjectValidation constructs a new *Validation with the given
 // options
-func newObjectValidation(fsys FS, dir string, opts ...ObjectValidationOption) *ObjectValidation {
+func newObjectValidation(fsys fs.FS, dir string, opts ...ObjectValidationOption) *ObjectValidation {
 	v := &ObjectValidation{
 		algRegistry: digest.DefaultRegistry(),
 	}
@@ -243,12 +244,12 @@ func (v *ObjectValidation) addInventory(inv Inventory, isRoot bool) error {
 // existingContent digests returns an iterator that yields the names and digests
 // of files that exist and were referenced in the inventory added to the
 // valiation.
-func (v *ObjectValidation) existingContentDigests(fsys FS, objPath string, alg digest.Algorithm) FileDigestsSeq {
-	return func(yield func(*FileDigests) bool) {
+func (v *ObjectValidation) existingContentDigests(fsys fs.FS, objPath string, alg digest.Algorithm) iter.Seq[*digest.FileDigests] {
+	return func(yield func(*digest.FileDigests) bool) {
 		for name, entry := range v.files {
 			if entry.fileExists && len(entry.expectedDigests) > 0 {
-				fd := &FileDigests{
-					FileRef: FileRef{
+				fd := &digest.FileDigests{
+					FileRef: fs.FileRef{
 						FS:      fsys,
 						BaseDir: objPath,
 						Path:    name,
@@ -264,7 +265,7 @@ func (v *ObjectValidation) existingContentDigests(fsys FS, objPath string, alg d
 	}
 }
 
-func (v *ObjectValidation) fs() FS { return v.obj.fs }
+func (v *ObjectValidation) fs() fs.FS { return v.obj.fs }
 
 func (v *ObjectValidation) path() string { return v.obj.path }
 

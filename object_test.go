@@ -16,8 +16,10 @@ import (
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/backend/local"
 	"github.com/srerickson/ocfl-go/digest"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
+	"github.com/srerickson/ocfl-go/fs/local"
+
 	"golang.org/x/exp/maps"
 )
 
@@ -123,11 +125,10 @@ func testObjectExample(t *testing.T) {
 // OpenObject unit tests
 func testNewObject(t *testing.T) {
 	ctx := context.Background()
-	fsys := ocfl.DirFS(objectFixturesPath)
-
+	fsys := ocflfs.DirFS(objectFixturesPath)
 	type testCase struct {
 		ctx    context.Context
-		fs     ocfl.FS
+		fs     ocflfs.FS
 		path   string
 		opts   []ocfl.ObjectOption
 		expect func(*testing.T, *ocfl.Object, error)
@@ -308,7 +309,7 @@ func testUpdateFixtures(t *testing.T) {
 func testValidateObject(t *testing.T) {
 	ctx := context.Background()
 	fixturePath := filepath.Join(`testdata`, `object-fixtures`, `1.1`)
-	fsys := ocfl.DirFS(filepath.Join(fixturePath, `bad-objects`))
+	fsys := ocflfs.DirFS(filepath.Join(fixturePath, `bad-objects`))
 	t.Run("skip digests", func(t *testing.T) {
 		// object reports no validation if digests aren't checked
 		objPath := `E093_fixity_digest_mismatch`
@@ -326,8 +327,8 @@ func testValidateFixtures(t *testing.T) {
 			badObjPath := filepath.Join(fixturePath, `bad-objects`)
 			warnObjPath := filepath.Join(fixturePath, `warn-objects`)
 			t.Run("Valid objects", func(t *testing.T) {
-				fsys := ocfl.NewFS(os.DirFS(goodObjPath))
-				goodObjects, err := fsys.ReadDir(context.Background(), ".")
+				fsys := ocflfs.NewFS(os.DirFS(goodObjPath))
+				goodObjects, err := ocflfs.ReadDir(context.Background(), fsys, ".")
 				be.NilErr(t, err)
 				for _, dir := range goodObjects {
 					t.Run(dir.Name(), func(t *testing.T) {
@@ -338,8 +339,8 @@ func testValidateFixtures(t *testing.T) {
 				}
 			})
 			t.Run("Invalid objects", func(t *testing.T) {
-				fsys := ocfl.NewFS(os.DirFS(badObjPath))
-				badObjects, err := fsys.ReadDir(context.Background(), ".")
+				fsys := ocflfs.NewFS(os.DirFS(badObjPath))
+				badObjects, err := ocflfs.ReadDir(context.Background(), fsys, ".")
 				be.NilErr(t, err)
 				for _, dir := range badObjects {
 					if !dir.IsDir() {
@@ -355,8 +356,8 @@ func testValidateFixtures(t *testing.T) {
 				}
 			})
 			t.Run("Warning objects", func(t *testing.T) {
-				fsys := ocfl.NewFS(os.DirFS(warnObjPath))
-				warnObjects, err := fsys.ReadDir(context.Background(), ".")
+				fsys := ocflfs.NewFS(os.DirFS(warnObjPath))
+				warnObjects, err := ocflfs.ReadDir(context.Background(), fsys, ".")
 				be.NilErr(t, err)
 				for _, dir := range warnObjects {
 					t.Run(dir.Name(), func(t *testing.T) {
@@ -420,7 +421,7 @@ func fixtureExpectedErrs(name string, errs ...error) (bool, string) {
 // creates a temporary directory and copies files from directory dir
 // in fsys to the temporary directory. This is used to create writable
 // object copies from fixtures
-func copyFixture(fixture string, tmpFS ocfl.WriteFS, tmpDir string) error {
+func copyFixture(fixture string, tmpFS ocflfs.WriteFS, tmpDir string) error {
 	ctx := context.Background()
 	fixFS := os.DirFS(fixture)
 	return fs.WalkDir(fixFS, ".", func(name string, info fs.DirEntry, err error) error {

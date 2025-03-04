@@ -63,7 +63,7 @@ func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (f
 	return &s3File{bucket: buck, key: name, obj: obj}, nil
 }
 
-func readDir(ctx context.Context, api ReadDirAPI, buck string, dir string) iter.Seq2[fs.DirEntry, error] {
+func dirEntries(ctx context.Context, api ReadDirAPI, buck string, dir string) iter.Seq2[fs.DirEntry, error] {
 	return func(yield func(fs.DirEntry, error) bool) {
 		if !fs.ValidPath(dir) {
 			yield(nil, pathErr("readdir", dir, fs.ErrInvalid))

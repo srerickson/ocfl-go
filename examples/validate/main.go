@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/log"
 	"github.com/srerickson/ocfl-go"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
 var objPath string
@@ -30,7 +31,7 @@ func main() {
 }
 
 func validateObject(ctx context.Context, root string, logger *slog.Logger) error {
-	fsys := ocfl.NewFS(os.DirFS(root))
+	fsys := ocflfs.DirFS(root)
 	result := ocfl.ValidateObject(ctx, fsys, ".", ocfl.ValidationLogger(logger))
 	return result.Err()
 }

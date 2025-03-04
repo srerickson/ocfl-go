@@ -9,11 +9,13 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
 const (
 	NamasteTypeObject = "ocfl_object" // type string for OCFL Object declaration
-	NamasteTypeStore  = "ocfl"        // type string for OCFL Storage Root declaration
+	NamasteTypeRoot   = "ocfl"        // type string for OCFL Storage Root declaration
 )
 
 var (
@@ -73,9 +75,9 @@ func (n Namaste) IsObject() bool {
 	return n.Type == NamasteTypeObject
 }
 
-// IsStore returns true if n's type is 'ocfl'
-func (n Namaste) IsStore() bool {
-	return n.Type == NamasteTypeStore
+// IsRoot returns true if n's type is 'ocfl'
+func (n Namaste) IsRoot() bool {
+	return n.Type == NamasteTypeRoot
 }
 
 func ParseNamaste(name string) (n Namaste, err error) {
@@ -90,7 +92,7 @@ func ParseNamaste(name string) (n Namaste, err error) {
 }
 
 // ValidateNamaste validates a namaste declaration
-func ValidateNamaste(ctx context.Context, fsys FS, name string) (err error) {
+func ValidateNamaste(ctx context.Context, fsys ocflfs.FS, name string) (err error) {
 	nam, err := ParseNamaste(path.Base(name))
 	if err != nil {
 		return
@@ -121,7 +123,7 @@ func ValidateNamaste(ctx context.Context, fsys FS, name string) (err error) {
 	return
 }
 
-func WriteDeclaration(ctx context.Context, root WriteFS, dir string, d Namaste) error {
+func WriteDeclaration(ctx context.Context, root ocflfs.WriteFS, dir string, d Namaste) error {
 	cont := strings.NewReader(d.Body())
 	_, err := root.Write(ctx, path.Join(dir, d.Name()), cont)
 	if err != nil {

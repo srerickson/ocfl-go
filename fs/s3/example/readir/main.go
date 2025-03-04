@@ -34,7 +34,7 @@ func run(ctx context.Context, bucket, prefix string) error {
 	if err != nil {
 		return err
 	}
-	for e, err := range fsys.ReadDir(ctx, prefix) {
+	for e, err := range fsys.DirEntries(ctx, prefix) {
 		if err != nil {
 			return err
 		}

@@ -12,6 +12,8 @@ import (
 	"path"
 
 	"github.com/srerickson/ocfl-go/extension"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
+	"github.com/srerickson/ocfl-go/internal/pipeline"
 )
 
 const (
@@ -25,7 +27,7 @@ var ErrLayoutUndefined = errors.New("storage root's layout is undefined")
 
 // Root represents an OCFL Storage Root.
 type Root struct {
-	fs           FS                // root's fs
+	fs           ocflfs.FS         // root's fs
 	dir          string            // root's director relative to FS
 	spec         Spec              // OCFL spec version in storage root declaration
 	layout       extension.Layout  // layout used to resolve object ids
@@ -40,12 +42,12 @@ type Root struct {
 // directory dir in fsys. It can be used to initialize new storage roots if the
 // [InitRoot] option is used, fsys is an ocfl.WriteFS, and dir is a non-existing
 // or empty directory.
-func NewRoot(ctx context.Context, fsys FS, dir string, opts ...RootOption) (*Root, error) {
+func NewRoot(ctx context.Context, fsys ocflfs.FS, dir string, opts ...RootOption) (*Root, error) {
 	r := &Root{fs: fsys, dir: dir}
 	for _, opt := range opts {
 		opt(r)
 	}
-	entries, err := fsys.ReadDir(ctx, dir)
+	entries, err := ocflfs.ReadDir(ctx, fsys, dir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
@@ -58,7 +60,7 @@ func NewRoot(ctx context.Context, fsys FS, dir string, opts ...RootOption) (*Roo
 	}
 	// find storage root declaration
 	decl, err := FindNamaste(entries)
-	if err == nil && decl.Type != NamasteTypeStore {
+	if err == nil && decl.Type != NamasteTypeRoot {
 		err = fmt.Errorf("NAMASTE declaration has wrong type: %q", decl.Type)
 	}
 	if err != nil {
@@ -82,7 +84,7 @@ func (r *Root) Description() string {
 }
 
 // FS returns the Root's FS
-func (r *Root) FS() FS {
+func (r *Root) FS() ocflfs.FS {
 	return r.fs
 }
 
@@ -141,47 +143,50 @@ func (r *Root) ResolveID(id string) (string, error) {
 // ObjectDeclarations returns an iterator that yields all OCFL object
 // declaration files in r. If an error occurs during iteration, it is returned
 // by the error function.
-func (r *Root) ObjectDeclarations(ctx context.Context) (FileSeq, func() error) {
-	allFiles, errFn := WalkFiles(ctx, r.fs, r.dir)
-	decls := allFiles.Filter(func(f *FileRef) bool { return f.Namaste().IsObject() })
-	return decls, errFn
+func (r *Root) ObjectDeclarations(ctx context.Context) iter.Seq2[*ocflfs.FileRef, error] {
+	return func(yield func(*ocflfs.FileRef, error) bool) {
+		for f, err := range ocflfs.WalkFiles(ctx, r.fs, r.dir) {
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			decl, err := ParseNamaste(path.Base(f.Path))
+			if err == nil && decl.IsObject() {
+				yield(f, nil)
+			}
+		}
+	}
 }
 
 // Objects returns an iterator that yields objects or an error for every object
 // declaration file in the root.
 func (r *Root) Objects(ctx context.Context, opts ...ObjectOption) iter.Seq2[*Object, error] {
-	return func(yield func(*Object, error) bool) {
-		opts = append(opts, objectWithRoot(r))
-		decls, listErr := r.ObjectDeclarations(ctx)
-		for obj, err := range decls.OpenObjects(ctx, opts...) {
-			if !yield(obj, err) {
-				return
-			}
-		}
-		if err := listErr(); err != nil {
-			yield(nil, err)
-		}
-	}
+	return r.ObjectsBatch(ctx, 0, opts...)
 }
 
 // ObjectsBatch returns an iterator that uses [FileSeq.OpenObjectsBatch] to open
 // objects in the root in numgos separate goroutines, yielding the results
 func (r *Root) ObjectsBatch(ctx context.Context, numgos int, opts ...ObjectOption) iter.Seq2[*Object, error] {
 	return func(yield func(*Object, error) bool) {
-		allFiles, listErr := WalkFiles(ctx, r.fs, r.dir)
-		opts = append(opts, objectWithRoot(r))
-		objs := allFiles.
-			Filter(func(f *FileRef) bool { return f.Namaste().IsObject() }).
-			OpenObjectsBatch(ctx, numgos, opts...)
-		for obj, err := range objs {
-			if !yield(obj, err) {
+		opts = append(opts, ObjectMustExist(), objectWithRoot(r))
+		openObj := func(ref *ocflfs.FileRef) (*Object, error) {
+			return NewObject(ctx, ref.FS, ref.FullPathDir(), opts...)
+		}
+		declFiles, errFn := ocflfs.UntilErr(r.ObjectDeclarations(ctx))
+		for result := range pipeline.Results(declFiles, openObj, numgos) {
+			if result.Err != nil {
+				yield(nil, result.Err)
+				return
+			}
+			if !yield(result.Out, nil) {
 				return
 			}
 		}
-		if err := listErr(); err != nil {
+		if err := errFn(); err != nil {
 			yield(nil, err)
 		}
 	}
+
 }
 
 // Path returns the root's dir relative to its FS
@@ -222,11 +227,11 @@ func (r *Root) init(ctx context.Context) error {
 	if _, err := getOCFL(r.initArgs.spec); err != nil {
 		return fmt.Errorf(" OCFL v%s: %w", r.initArgs.spec, err)
 	}
-	writeFS, isWriteFS := r.fs.(WriteFS)
+	writeFS, isWriteFS := r.fs.(ocflfs.WriteFS)
 	if !isWriteFS {
 		return fmt.Errorf("storage root backend is not writable")
 	}
-	decl := Namaste{Version: r.initArgs.spec, Type: NamasteTypeStore}
+	decl := Namaste{Version: r.initArgs.spec, Type: NamasteTypeRoot}
 	if err := WriteDeclaration(ctx, writeFS, r.dir, decl); err != nil {
 		return err
 	}
@@ -301,7 +306,7 @@ func (r *Root) readLayoutConfig(ctx context.Context) error {
 // setLayout marshals the value pointe to by layout and writes the result to
 // the `ocfl_layout.json` files in the storage root.
 func (r *Root) setLayout(ctx context.Context, layout extension.Layout, desc string) error {
-	writeFS, isWriteFS := r.fs.(WriteFS)
+	writeFS, isWriteFS := r.fs.(ocflfs.WriteFS)
 	if !isWriteFS {
 		return fmt.Errorf("storage root backend is not writable")
 	}
@@ -341,7 +346,7 @@ func (r *Root) setLayout(ctx context.Context, layout extension.Layout, desc stri
 // readExtensionConfig reads the extension config file for ext in the storage root's
 // extensions directory. The value is unmarshalled into the value pointed to by
 // ext. If the extension config does not exist, nil is returned.
-func readExtensionConfig(ctx context.Context, fsys FS, root string, name string) (extension.Extension, error) {
+func readExtensionConfig(ctx context.Context, fsys ocflfs.FS, root string, name string) (extension.Extension, error) {
 	confPath := path.Join(root, extensionsDir, name, extensionConfigFile)
 	f, err := fsys.OpenFile(ctx, confPath)
 	if err != nil {
@@ -357,7 +362,7 @@ func readExtensionConfig(ctx context.Context, fsys FS, root string, name string)
 
 // writeExtensionConfig writes the configuration files for the ext to the
 // extensions directory in the storage root with at root.
-func writeExtensionConfig(ctx context.Context, fsys WriteFS, root string, config extension.Extension) error {
+func writeExtensionConfig(ctx context.Context, fsys ocflfs.WriteFS, root string, config extension.Extension) error {
 	confPath := path.Join(root, extensionsDir, config.Name(), extensionConfigFile)
 	b, err := json.Marshal(config)
 	if err != nil {

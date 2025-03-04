@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"path"
 	"slices"
 	"strings"
 )
@@ -25,14 +26,14 @@ type FS interface {
 	OpenFile(ctx context.Context, name string) (fs.File, error)
 }
 
-// ReadDirFS is an FS that also includes the ability to read
-// entries in a directory.
-type ReadDirFS interface {
+// DirEntriesFS is an FS that also includes the ability to read entries in a
+// directory.
+type DirEntriesFS interface {
 	FS
-	// ReadDir returns an iterator that will yield an fs.DirEntry from the named
+	// DirEntries returns an iterator that will yield an fs.DirEntry from the named
 	// directory or an error (not both). The entries should be yielded in sorted
 	// order. If an error is yielded, iteration terminates.
-	ReadDir(ctx context.Context, name string) iter.Seq2[fs.DirEntry, error]
+	DirEntries(ctx context.Context, name string) iter.Seq2[fs.DirEntry, error]
 }
 
 // WriteFS is a storage backend that supports write and remove operations.
@@ -54,26 +55,26 @@ type CopyFS interface {
 	Copy(ctx context.Context, dst string, src string) error
 }
 
-// ReadDir calls ReadDir if fsys implements ReadDirFS. If fsys doesn't implement
+// DirEntries calls DirEntries if fsys implements DirEntriesFS. If fsys doesn't implement
 // ReadDirFS, it returns an iterator that yields an fs.PathError that wraps
 // ErrFeatureUnsupported.
-func ReadDir(ctx context.Context, fsys FS, name string) iter.Seq2[fs.DirEntry, error] {
-	readDirFS, ok := fsys.(ReadDirFS)
+func DirEntries(ctx context.Context, fsys FS, name string) iter.Seq2[fs.DirEntry, error] {
+	readDirFS, ok := fsys.(DirEntriesFS)
 	if !ok {
 		err := &fs.PathError{Op: "readdir", Path: name, Err: ErrOpUnsupported}
 		return func(yield func(fs.DirEntry, error) bool) {
 			yield(nil, err)
 		}
 	}
-	return readDirFS.ReadDir(ctx, name)
+	return readDirFS.DirEntries(ctx, name)
 }
 
-// ReadDirCollect calls ReadDir and collects all yielded directory entries in a
+// ReadDir calls DirEntries and collects all yielded directory entries in a
 // slice. If an error is encountered, the slice will included all entries read
 // up the point of the error.
-func ReadDirCollect(ctx context.Context, fsys FS, name string) ([]fs.DirEntry, error) {
+func ReadDir(ctx context.Context, fsys FS, name string) ([]fs.DirEntry, error) {
 	var entries []fs.DirEntry
-	for entry, err := range ReadDir(ctx, fsys, name) {
+	for entry, err := range DirEntries(ctx, fsys, name) {
 		if entry != nil {
 			entries = append(entries, entry)
 		}
@@ -141,4 +142,55 @@ type FileWalker interface {
 	// WalkFiles returns an iterator that yields *FileRefs and/or an
 	// error.
 	WalkFiles(ctx context.Context, dir string) iter.Seq2[*FileRef, error]
+}
+
+// WalkFiles checks if fsys is a FileWalker and calls its WalkFiles if it is. If
+// fsys isn't a FileWalker, dir is walked using [DirEntries].
+func WalkFiles(ctx context.Context, fsys FS, dir string) iter.Seq2[*FileRef, error] {
+	if walkFS, ok := fsys.(FileWalker); ok {
+		return walkFS.WalkFiles(ctx, dir)
+	}
+	return func(yield func(*FileRef, error) bool) {
+		fileWalk(ctx, fsys, dir, ".", yield)
+	}
+}
+
+func fileWalk(ctx context.Context, fsys FS, walkRoot string, subDir string, yield func(*FileRef, error) bool) bool {
+	for e, err := range DirEntries(ctx, fsys, path.Join(walkRoot, subDir)) {
+		if err != nil {
+			if !yield(nil, err) {
+				return false
+			}
+		}
+		entryPath := path.Join(subDir, e.Name())
+		switch {
+		case e.IsDir():
+			if !fileWalk(ctx, fsys, walkRoot, entryPath, yield) {
+				return false
+			}
+		case !ValidFileType(e.Type()):
+			return yield(nil, &fs.PathError{
+				Path: entryPath,
+				Err:  ErrFileType,
+				Op:   `readdir`,
+			})
+		default:
+			info, err := e.Info()
+			if err != nil {
+				if !yield(nil, err) {
+					return false
+				}
+			}
+			ref := &FileRef{
+				FS:      fsys,
+				BaseDir: walkRoot,
+				Path:    entryPath,
+				Info:    info,
+			}
+			if !yield(ref, nil) {
+				return false
+			}
+		}
+	}
+	return true
 }

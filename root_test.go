@@ -8,16 +8,17 @@ import (
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/backend/local"
 	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/extension"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
+	"github.com/srerickson/ocfl-go/fs/local"
 )
 
 func TestRoot(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("fixture reg-extension-dir-root", func(t *testing.T) {
-		fsys := ocfl.DirFS(storeFixturePath)
+		fsys := ocflfs.DirFS(storeFixturePath)
 		dir := `1.0/good-stores/reg-extension-dir-root`
 		root, err := ocfl.NewRoot(ctx, fsys, dir)
 		be.NilErr(t, err)
@@ -28,7 +29,7 @@ func TestRoot(t *testing.T) {
 	})
 
 	t.Run("fixture simple-root", func(t *testing.T) {
-		fsys := ocfl.DirFS(storeFixturePath)
+		fsys := ocflfs.DirFS(storeFixturePath)
 		dir := `1.0/good-stores/simple-root`
 		root, err := ocfl.NewRoot(ctx, fsys, dir)
 		be.NilErr(t, err)
@@ -78,7 +79,7 @@ func TestRoot(t *testing.T) {
 	})
 	t.Run("Objects", func(t *testing.T) {
 		t.Run("simple-root", func(t *testing.T) {
-			fsys := ocfl.DirFS(storeFixturePath)
+			fsys := ocflfs.DirFS(storeFixturePath)
 			dir := `1.0/good-stores/simple-root`
 			root, err := ocfl.NewRoot(ctx, fsys, dir)
 			be.NilErr(t, err)
@@ -95,7 +96,7 @@ func TestRoot(t *testing.T) {
 
 	t.Run("ObjectsBatch", func(t *testing.T) {
 		t.Run("simple-root", func(t *testing.T) {
-			fsys := ocfl.DirFS(storeFixturePath)
+			fsys := ocflfs.DirFS(storeFixturePath)
 			dir := `1.0/good-stores/simple-root`
 			root, err := ocfl.NewRoot(ctx, fsys, dir)
 			be.NilErr(t, err)
@@ -112,7 +113,7 @@ func TestRoot(t *testing.T) {
 
 	t.Run("ValidateObjectDir", func(t *testing.T) {
 		t.Run("simple", func(t *testing.T) {
-			fsys := ocfl.DirFS(storeFixturePath)
+			fsys := ocflfs.DirFS(storeFixturePath)
 			dir := `1.0/good-stores/simple-root`
 			root, err := ocfl.NewRoot(ctx, fsys, dir)
 			be.NilErr(t, err)
@@ -121,7 +122,7 @@ func TestRoot(t *testing.T) {
 			be.NilErr(t, valid.Err())
 		})
 		t.Run("missingDir", func(t *testing.T) {
-			fsys := ocfl.DirFS(storeFixturePath)
+			fsys := ocflfs.DirFS(storeFixturePath)
 			dir := `1.0/good-stores/simple-root`
 			root, err := ocfl.NewRoot(ctx, fsys, dir)
 			be.NilErr(t, err)

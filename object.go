@@ -15,12 +15,13 @@ import (
 	"log/slog"
 
 	"github.com/srerickson/ocfl-go/digest"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
 // Object represents and OCFL Object, typically contained in a Root.
 type Object struct {
 	// object's storage backend. Must implement WriteFS to commit.
-	fs FS
+	fs ocflfs.FS
 	// path in FS for object root directory
 	path string
 	// object's root inventory. May be nil if the object doesn't (yet) exist.
@@ -35,7 +36,7 @@ type Object struct {
 
 // NewObject returns an *Object for managing the OCFL object at path in fsys.
 // The object doesn't need to exist when NewObject is called.
-func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (*Object, error) {
+func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOption) (*Object, error) {
 	if !fs.ValidPath(dir) {
 		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
 	}
@@ -64,7 +65,7 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 	// inventory doesn't exist: open as uninitialized object. The object
 	// root directory must not exist or be an empty directory. the object's
 	// inventory is nil.
-	entries, err := fsys.ReadDir(ctx, dir)
+	entries, err := ocflfs.ReadDir(ctx, fsys, dir)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("reading object root directory: %w", err)
@@ -83,7 +84,7 @@ func NewObject(ctx context.Context, fsys FS, dir string, opts ...ObjectOption) (
 
 // Commit creates a new object version based on values in commit.
 func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
-	if _, isWriteFS := obj.FS().(WriteFS); !isWriteFS {
+	if _, isWriteFS := obj.FS().(ocflfs.WriteFS); !isWriteFS {
 		return errors.New("object's backing file system doesn't support write operations")
 	}
 	// the OCFL implementation for the new object version
@@ -136,7 +137,7 @@ func (obj *Object) Exists() bool {
 // is returned. If object root does not include an extensions directory both
 // return values are nil.
 func (obj Object) ExtensionNames(ctx context.Context) ([]string, error) {
-	entries, err := obj.FS().ReadDir(ctx, path.Join(obj.path, extensionsDir))
+	entries, err := ocflfs.ReadDir(ctx, obj.FS(), path.Join(obj.path, extensionsDir))
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +154,7 @@ func (obj Object) ExtensionNames(ctx context.Context) ([]string, error) {
 }
 
 // FS returns the FS where object is stored.
-func (obj *Object) FS() FS {
+func (obj *Object) FS() ocflfs.FS {
 	return obj.fs
 }
 
@@ -240,14 +241,14 @@ func (o *Object) versionFS(ctx context.Context, ver ObjectVersion) fs.FS {
 }
 
 // ValidateObject fully validates the OCFL Object at dir in fsys
-func ValidateObject(ctx context.Context, fsys FS, dir string, opts ...ObjectValidationOption) *ObjectValidation {
+func ValidateObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectValidationOption) *ObjectValidation {
 	v := newObjectValidation(fsys, dir, opts...)
 	if !fs.ValidPath(dir) {
 		err := fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
 		v.AddFatal(err)
 		return v
 	}
-	entries, err := fsys.ReadDir(ctx, dir)
+	entries, err := ocflfs.ReadDir(ctx, fsys, dir)
 	if err != nil {
 		v.AddFatal(err)
 		return v
@@ -323,7 +324,7 @@ type ObjectVersionFS struct {
 	num  int
 }
 
-func (vfs *ObjectVersionFS) GetContent(digest string) (FS, string) {
+func (vfs *ObjectVersionFS) GetContent(digest string) (ocflfs.FS, string) {
 	dm := vfs.State()
 	if dm == nil {
 		return nil, ""
@@ -332,7 +333,7 @@ func (vfs *ObjectVersionFS) GetContent(digest string) (FS, string) {
 	if len(pths) < 1 {
 		return nil, ""
 	}
-	return &ioFS{FS: vfs.fsys}, pths[0]
+	return &ocflfs.WrapFS{FS: vfs.fsys}, pths[0]
 }
 
 func (vfs *ObjectVersionFS) Close() error {
@@ -518,7 +519,7 @@ func (dir *vfsDirFile) Stat() (fs.FileInfo, error) { return dir, nil }
 func (dir *vfsDirFile) Sys() any                   { return nil }
 
 // create a new *Object with required feilds and apply options
-func newObject(fsys FS, dir string, opts ...ObjectOption) *Object {
+func newObject(fsys ocflfs.FS, dir string, opts ...ObjectOption) *Object {
 	obj := &Object{fs: fsys, path: dir}
 	for _, optFn := range opts {
 		optFn(obj)

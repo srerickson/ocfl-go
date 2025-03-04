@@ -7,7 +7,8 @@ import (
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
-	"github.com/srerickson/ocfl-go/backend/local"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
+	"github.com/srerickson/ocfl-go/fs/local"
 )
 
 func TestParseName(t *testing.T) {
@@ -40,11 +41,11 @@ func TestValidate(t *testing.T) {
 		"1=hot_tub_12.1": &fstest.MapFile{
 			Data: []byte("hot_tub_12.1\n")},
 	}
-	err := ocfl.ValidateNamaste(context.Background(), ocfl.NewFS(fsys), "0=hot_tub_12.1")
+	err := ocfl.ValidateNamaste(context.Background(), ocflfs.NewFS(fsys), "0=hot_tub_12.1")
 	be.NilErr(t, err)
-	err = ocfl.ValidateNamaste(context.Background(), ocfl.NewFS(fsys), "0=hot_bath_12.1")
+	err = ocfl.ValidateNamaste(context.Background(), ocflfs.NewFS(fsys), "0=hot_bath_12.1")
 	be.True(t, err != nil)
-	err = ocfl.ValidateNamaste(context.Background(), ocfl.NewFS(fsys), "1=hot_tub_12.1")
+	err = ocfl.ValidateNamaste(context.Background(), ocflfs.NewFS(fsys), "1=hot_tub_12.1")
 	be.True(t, err != nil)
 }
 
@@ -55,7 +56,7 @@ func TestWriteDeclaration(t *testing.T) {
 	v := ocfl.Spec("12.1")
 	dec := &ocfl.Namaste{"ocfl", v}
 	be.NilErr(t, ocfl.WriteDeclaration(ctx, fsys, ".", *dec))
-	inf, err := fsys.ReadDir(ctx, ".")
+	inf, err := ocflfs.ReadDir(ctx, fsys, ".")
 	be.NilErr(t, err)
 	out, err := ocfl.FindNamaste(inf)
 	be.NilErr(t, err)

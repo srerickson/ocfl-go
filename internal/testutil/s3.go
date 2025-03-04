@@ -15,8 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/srerickson/ocfl-go"
-	ocflS3 "github.com/srerickson/ocfl-go/backend/s3"
+	"github.com/srerickson/ocfl-go/fs"
+	ocflS3 "github.com/srerickson/ocfl-go/fs/s3"
 )
 
 const (
@@ -45,7 +45,7 @@ func S3Client(ctx context.Context) (*s3.Client, error) {
 
 // TmpS3FS returns an *ocflS3.BucketFS backed by a tempory S3 bucket. The bucket
 // and its contents will be erased as part of the test's cleanup.
-func TmpS3FS(t *testing.T, testdata ocfl.FS) *ocflS3.BucketFS {
+func TmpS3FS(t *testing.T, testdata fs.FS) *ocflS3.BucketFS {
 	t.Helper()
 	ctx := context.Background()
 	cli, err := S3Client(ctx)
@@ -63,15 +63,15 @@ func TmpS3FS(t *testing.T, testdata ocfl.FS) *ocflS3.BucketFS {
 	})
 	s3fs := &ocflS3.BucketFS{S3: cli, Bucket: bucket}
 	if testdata != nil {
-		files, errFn := ocfl.WalkFiles(ctx, testdata, ".")
-		for file := range files {
+		files := fs.WalkFiles(ctx, testdata, ".")
+		for file, err := range files {
+			if err != nil {
+				t.Fatal("reading from testdata:", err)
+			}
 			name := file.FullPath()
-			if err := ocfl.Copy(ctx, s3fs, name, testdata, name); err != nil {
+			if err := fs.Copy(ctx, s3fs, name, testdata, name); err != nil {
 				t.Fatal("copying testdata to tmp S3 bucket: %w", err)
 			}
-		}
-		if err := errFn(); err != nil {
-			t.Fatal("reading from testdata:", err)
 		}
 	}
 

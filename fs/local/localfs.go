@@ -18,13 +18,13 @@ const (
 )
 
 type FS struct {
-	ocflfs.ReadDirFS
+	ocflfs.DirEntriesFS
 	// path is os-specific path to a directory
 	path string
 }
 
 var _ ocflfs.WriteFS = (*FS)(nil)
-var _ ocflfs.ReadDirFS = (*FS)(nil)
+var _ ocflfs.DirEntriesFS = (*FS)(nil)
 
 func NewFS(path string) (*FS, error) {
 	abs, err := filepath.Abs(path)
@@ -32,8 +32,8 @@ func NewFS(path string) (*FS, error) {
 		return nil, fmt.Errorf("new backend: %w", err)
 	}
 	return &FS{
-		path:      abs,
-		ReadDirFS: ocflfs.NewFS(os.DirFS(abs)),
+		path:         abs,
+		DirEntriesFS: ocflfs.NewFS(os.DirFS(abs)),
 	}, nil
 }
 
