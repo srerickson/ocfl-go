@@ -74,7 +74,7 @@ func StageFiles(ctx context.Context, files iter.Seq[*fs.FileRef], alg digest.Alg
 }
 
 // build a stage from values in digests
-func newStage(digests iter.Seq[*digest.FileDigests]) (*Stage, error) {
+func newStage(digests iter.Seq[*digest.FileRef]) (*Stage, error) {
 	manifest := map[string]dirManifestEntry{}
 	var primaryAlg digest.Algorithm
 	var baseDir string

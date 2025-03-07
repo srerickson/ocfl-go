@@ -244,11 +244,11 @@ func (v *ObjectValidation) addInventory(inv Inventory, isRoot bool) error {
 // existingContent digests returns an iterator that yields the names and digests
 // of files that exist and were referenced in the inventory added to the
 // valiation.
-func (v *ObjectValidation) existingContentDigests(fsys fs.FS, objPath string, alg digest.Algorithm) iter.Seq[*digest.FileDigests] {
-	return func(yield func(*digest.FileDigests) bool) {
+func (v *ObjectValidation) existingContentDigests(fsys fs.FS, objPath string, alg digest.Algorithm) iter.Seq[*digest.FileRef] {
+	return func(yield func(*digest.FileRef) bool) {
 		for name, entry := range v.files {
 			if entry.fileExists && len(entry.expectedDigests) > 0 {
-				fd := &digest.FileDigests{
+				fd := &digest.FileRef{
 					FileRef: fs.FileRef{
 						FS:      fsys,
 						BaseDir: objPath,

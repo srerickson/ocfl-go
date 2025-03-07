@@ -2,6 +2,7 @@ package digest_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -11,10 +12,14 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"maps"
+	"slices"
 	"testing"
+	"testing/fstest"
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go/digest"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"golang.org/x/crypto/blake2b"
 )
 
@@ -42,12 +47,12 @@ func TestDigester(t *testing.T) {
 				t.Errorf("ReadFrom() has unexpected result for %s: got=%q, expect=%q", alg, dig.Sum(alg), expect[alg])
 			}
 		}
-		if err := result.Validate(bytes.NewReader(data), algRegistry); err != nil {
+		if err := digest.Validate(bytes.NewReader(data), result, algRegistry); err != nil {
 			t.Error("Validate() unexpected error:", err)
 		}
 		// add invalid entry
 		result[digest.SHA1.ID()] = "invalid"
-		err := result.Validate(bytes.NewReader(data), algRegistry)
+		err := digest.Validate(bytes.NewReader(data), result, algRegistry)
 		if err == nil {
 			t.Error("Validate() didn't return an error for an invalid DigestSet")
 		}
@@ -74,6 +79,26 @@ func TestDigester(t *testing.T) {
 	t.Run("2 algs", func(t *testing.T) {
 		testDigester(t, []string{digest.MD5.ID(), digest.BLAKE2B.ID()})
 	})
+}
+
+func TestDigestFilesBatch(t *testing.T) {
+	ctx := context.Background()
+	testData := fstest.MapFS{
+		"a/file.txt": &fstest.MapFile{Data: []byte("content")},
+		"mydata.csv": &fstest.MapFile{Data: []byte("content,1,2,3")},
+	}
+	fsys := ocflfs.NewFS(testData)
+	count := 0
+	files := ocflfs.Files(fsys, slices.Collect(maps.Keys(testData))...)
+	for fa, err := range digest.DigestFilesBatch(ctx, files, 5, digest.SHA256, digest.SIZE) {
+		be.NilErr(t, err)
+		be.Nonzero(t, fa.Path)
+		be.Equal(t, "sha256", fa.Algorithm.ID())
+		be.Nonzero(t, fa.Digests["sha256"])
+		be.Nonzero(t, fa.Digests["size"])
+		count++
+	}
+	be.Equal(t, len(testData), count)
 }
 
 func testAlg(algID string, val []byte) (string, error) {
