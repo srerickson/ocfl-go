@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"path"
 	"slices"
 	"strings"
@@ -295,7 +296,7 @@ type Commit struct {
 	Spec            Spec      // OCFL specification version for the new object version
 	NewHEAD         int       // enforces new object version number
 	AllowUnchanged  bool
-	ContentPathFunc RemapFunc
+	ContentPathFunc func(oldPaths []string) (newPaths []string)
 
 	Logger *slog.Logger
 }
@@ -352,7 +353,7 @@ func (vfs *ObjectVersionFS) User() *User                       { return vfs.ver.
 
 func (vfs *ObjectVersionFS) Stage() *Stage {
 	return &Stage{
-		State:           vfs.State().Clone(),
+		State:           maps.Clone(vfs.State()),
 		DigestAlgorithm: vfs.inv.DigestAlgorithm(),
 		FixitySource:    vfs.inv,
 		ContentSource:   vfs,

@@ -152,13 +152,12 @@ func (inv rawInventory) getFixity(dig string) digest.Set {
 	}
 	set := digest.Set{}
 	for fixAlg, fixMap := range inv.Fixity {
-		fixMap.EachPath(func(p, fixDigest string) bool {
+		for p, fixDigest := range fixMap.Paths() {
 			if slices.Contains(paths, p) {
 				set[fixAlg] = fixDigest
-				return false
+				break
 			}
-			return true
-		})
+		}
 	}
 	return set
 }

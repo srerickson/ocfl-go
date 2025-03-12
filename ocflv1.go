@@ -125,7 +125,7 @@ func (imp ocflV1) ValidateInventory(inv Inventory) *Validation {
 			v.AddFatal(err)
 		}
 		// check that each manifest entry is used in at least one state
-		for _, digest := range invV1.raw.Manifest.Digests() {
+		for digest := range invV1.raw.Manifest {
 			var found bool
 			for _, version := range invV1.raw.Versions {
 				if version == nil {
@@ -211,7 +211,7 @@ func (imp ocflV1) ValidateInventory(inv Inventory) *Validation {
 			v.AddFatal(err)
 		}
 		// check that each state digest appears in manifest
-		for _, digest := range ver.State.Digests() {
+		for digest := range ver.State {
 			if len(invV1.raw.Manifest[digest]) == 0 {
 				err := fmt.Errorf("digest in %s state not in manifest: %s", vname, digest)
 				v.AddFatal(verr(err, code.E050(specStr)))
@@ -1043,23 +1043,21 @@ func copyContent(ctx context.Context, c *copyContentOpts) error {
 // manifest for the digests and paths of new content
 func newContentMap(inv *rawInventory) (DigestMap, error) {
 	pm := PathMap{}
-	var err error
-	inv.Manifest.EachPath(func(pth, dig string) bool {
+	for pth, dig := range inv.Manifest.Paths() {
 		// ignore manifest entries from previous versions
 		if !strings.HasPrefix(pth, inv.Head.String()+"/") {
-			return true
+			continue
 		}
 		if _, exists := pm[pth]; exists {
-			err = fmt.Errorf("path duplicate in manifest: %q", pth)
-			return false
+			return nil, fmt.Errorf("path duplicate in manifest: %q", pth)
 		}
 		pm[pth] = dig
-		return true
-	})
-	if err != nil {
+	}
+	dm := pm.DigestMap()
+	if err := dm.Valid(); err != nil {
 		return nil, err
 	}
-	return pm.DigestMapValid()
+	return dm, nil
 }
 
 // writeInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
@@ -1123,6 +1121,8 @@ func parseVersionDirState(entries []fs.DirEntry) versionDirState {
 	return info
 }
 
+// logicalState includes an inventory manifest and the version state,
+// both of which are needed to map from logical path -> content paths.
 type logicalState struct {
 	manifest DigestMap
 	state    DigestMap
@@ -1132,8 +1132,8 @@ func (a logicalState) Eq(b logicalState) bool {
 	if a.state == nil || b.state == nil || a.manifest == nil || b.manifest == nil {
 		return false
 	}
-	if !a.state.EachPath(func(name string, dig string) bool {
-		otherDig := b.state.GetDigest(name)
+	for name, dig := range a.state.Paths() {
+		otherDig := b.state.DigestFor(name)
 		if otherDig == "" {
 			return false
 		}
@@ -1149,14 +1149,14 @@ func (a logicalState) Eq(b logicalState) bool {
 				return false
 			}
 		}
-		return true
-	}) {
-		return false
 	}
 	// make sure all logical paths in other state are also in state
-	return b.state.EachPath(func(otherName string, _ string) bool {
-		return a.state.GetDigest(otherName) != ""
-	})
+	for otherName := range b.state.Paths() {
+		if a.state.DigestFor(otherName) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func validateRootState(spec Spec, state *ObjectState) *Validation {
