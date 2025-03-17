@@ -216,20 +216,20 @@ func TestDigestMapMerge(t *testing.T) {
 	}
 }
 
-func TestDigestMapRemap(t *testing.T) {
+func TestDigestMapMutate(t *testing.T) {
 
 	t.Run("Rename", func(t *testing.T) {
 		dm := ocfl.DigestMap{
 			"abc1": {"dir/file.txt", "delete.txt"},
 			"abc2": {"file.txt"},
 		}
-		dm.Remap(
-			ocfl.Rename("dir", "new"),
-			ocfl.Rename("file.txt", "file2.txt"),
-			ocfl.Remove("delete.txt"),
-			ocfl.Rename(".", "root"),
+		dm.Mutate(
+			ocfl.RenamePaths("dir", "new"),
+			ocfl.RenamePaths("file.txt", "file2.txt"),
+			ocfl.RemovePath("delete.txt"),
+			ocfl.RenamePaths(".", "root"),
 		)
-		paths := dm.Paths()
+		paths := dm.AllPaths()
 		sort.Strings(paths)
 		expect := []string{"root/file2.txt", "root/new/file.txt"}
 		if !reflect.DeepEqual(expect, paths) {
@@ -239,7 +239,8 @@ func TestDigestMapRemap(t *testing.T) {
 
 	t.Run("Remove", func(t *testing.T) {
 		// Remove on its own
-		out := ocfl.Remove("delete.txt")([]string{"delete.txt", "keep.txt"})
+		in := []string{"delete.txt", "keep.txt"}
+		out := ocfl.RemovePath("delete.txt")(in)
 		if len(out) != 1 || out[0] != "keep.txt" {
 			t.Error("Remove() didn't remove the expected file")
 		}
@@ -248,11 +249,11 @@ func TestDigestMapRemap(t *testing.T) {
 			"abc1": {"keep.txt", "delete.txt"},
 			"abc2": {"save.txt"},
 		}
-		dm.Remap(ocfl.Remove("delete.txt"))
-		if dm.GetDigest("delete.txt") != "" {
+		dm.Mutate(ocfl.RemovePath("delete.txt"))
+		if dm.DigestFor("delete.txt") != "" {
 			t.Error("Remap() with Remove() file not removed")
 		}
-		if dm.GetDigest("keep.txt") == "" || dm.GetDigest("save.txt") == "" {
+		if dm.DigestFor("keep.txt") == "" || dm.DigestFor("save.txt") == "" {
 			t.Error("Remap() with Remove() removed a file it shouldn't have")
 		}
 	})

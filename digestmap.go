@@ -3,6 +3,8 @@ package ocfl
 import (
 	"fmt"
 	"io/fs"
+	"iter"
+	"maps"
 	"path"
 	"slices"
 	"sort"
@@ -13,109 +15,14 @@ import (
 // DigestMap maps digests to file paths.
 type DigestMap map[string][]string
 
-// NumPaths returns the number of paths in the m
-func (m DigestMap) NumPaths() int {
-	var l int
-	for _, paths := range m {
-		l += len(paths)
-	}
-	return l
-}
-
-// Digests returns a slice of the digest values in the DigestMap. Digest strings
-// are not normalized; they may be uppercase, lowercase, or mixed.
-func (m DigestMap) Digests() []string {
-	ret := make([]string, len(m))
-	i := 0
-	for d := range m {
-		ret[i] = d
-		i++
-	}
-	return ret
-}
-
-// Paths returns a sorted slice of all path names in the DigestMap.
-func (m DigestMap) Paths() []string {
+// AllPaths returns a sorted slice of all path names in the DigestMap.
+func (m DigestMap) AllPaths() []string {
 	pths := make([]string, 0, m.NumPaths())
 	for _, paths := range m {
 		pths = append(pths, paths...)
 	}
 	sort.Strings(pths)
 	return pths
-}
-
-// PathMap returns the DigestMap's contents as a map with path names for keys
-// and digests for values. PathMap doesn't check if the same path appears
-// twice in the DigestMap.
-func (m DigestMap) PathMap() PathMap {
-	paths := make(PathMap, m.NumPaths())
-	for d, ps := range m {
-		for _, p := range ps {
-			paths[p] = d
-		}
-	}
-	return paths
-}
-
-// PathMapValid is like PathMap, except it returns an error if it encounters
-// invalid path names or if the same path appears multiple times.
-func (m DigestMap) PathMapValid() (PathMap, error) {
-	paths := make(PathMap, m.NumPaths())
-	for d, ps := range m {
-		for _, p := range ps {
-			if !validPath(p) {
-				return nil, &MapPathInvalidErr{p}
-			}
-			if _, exists := paths[p]; exists {
-				return nil, &MapPathConflictErr{Path: p}
-			}
-			paths[p] = d
-		}
-	}
-	return paths, nil
-}
-
-// GetDigest returns the digest for path p or an empty string if the digest is
-// not present.
-func (m DigestMap) GetDigest(p string) string {
-	for d, pths := range m {
-		if slices.Contains(pths, p) {
-			return d
-		}
-	}
-	return ""
-}
-
-// EachPath calls fn for each path in the Map. If fn returns false, iteration
-// stops and EachPath returns false.
-func (m DigestMap) EachPath(fn func(pth, digest string) bool) bool {
-	for d, paths := range m {
-		for _, p := range paths {
-			if !fn(p, d) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// HasDigestCase returns two booleans indicating whether m's digests use
-// lowercase and uppercase characters.
-func (m DigestMap) HasDigestCase() (hasLower bool, hasUpper bool) {
-	for digest := range m {
-		for _, r := range digest {
-			switch {
-			case unicode.IsLower(r):
-				hasLower = true
-			case unicode.IsUpper(r):
-				hasUpper = true
-			}
-			if hasLower && hasUpper {
-				return
-			}
-		}
-	}
-	return
 }
 
 // Eq returns true if m and the other have the same content: they have the
@@ -150,38 +57,18 @@ func (m DigestMap) Eq(other DigestMap) bool {
 	return true
 }
 
-func (m DigestMap) Clone() DigestMap {
-	newM := make(DigestMap, len(m))
-	for d, paths := range m {
-		newM[d] = slices.Clone(paths)
+// DigestFor returns the digest for path p or an empty string if the digest is
+// not present.
+func (m DigestMap) DigestFor(p string) string {
+	if p == "" {
+		return ""
 	}
-	return newM
-}
-
-// Normalize returns a normalized copy on m (with lowercase digests). An
-// error is returned if m has a digest conflict.
-func (m DigestMap) Normalize() (norm DigestMap, err error) {
-	norm = make(DigestMap, len(m))
-	for digest, paths := range m {
-		normDig := normalizeDigest(digest)
-		if _, exists := norm[normDig]; exists {
-			err = &MapDigestConflictErr{Digest: normDig}
-			return
-		}
-		norm[normDig] = slices.Clone(paths)
-	}
-	return
-}
-
-func (m DigestMap) Remap(fns ...RemapFunc) {
-	for digest := range m {
-		for _, fn := range fns {
-			m[digest] = fn(m[digest])
-		}
-		if len(m[digest]) == 0 {
-			delete(m, digest)
+	for d, pths := range m {
+		if slices.Contains(pths, p) {
+			return d
 		}
 	}
+	return ""
 }
 
 // Merge returns a new DigestMap constructed by normalizing and merging m1 and
@@ -196,14 +83,8 @@ func (m1 DigestMap) Merge(m2 DigestMap, replace bool) (DigestMap, error) {
 	if err != nil {
 		return nil, err
 	}
-	m1PathMap, err := m1Norm.PathMapValid()
-	if err != nil {
-		return nil, err
-	}
-	m2PathMap, err := m2Norm.PathMapValid()
-	if err != nil {
-		return nil, err
-	}
+	m1PathMap := m1Norm.PathMap()
+	m2PathMap := m2Norm.PathMap()
 	merged := DigestMap{}
 	for pth, dig := range m1PathMap {
 		if dig2, ok := m2PathMap[pth]; ok && dig != dig2 {
@@ -228,10 +109,69 @@ func (m1 DigestMap) Merge(m2 DigestMap, replace bool) (DigestMap, error) {
 		}
 	}
 	// check that paths are consistent
-	if err := validPaths(merged.Paths()); err != nil {
+	if err := validPaths(merged.AllPaths()); err != nil {
 		return nil, err
 	}
 	return merged, nil
+}
+
+// Mutate applies each path mutation function to paths for each digest in m. If
+// the mutations remove all paths for the digest, the digest key is deleted from
+// m. Mutate may make m invalid.
+func (m DigestMap) Mutate(fns ...PathMutation) {
+	for digest := range m {
+		for _, fn := range fns {
+			m[digest] = fn(m[digest])
+		}
+		if len(m[digest]) == 0 {
+			delete(m, digest)
+		}
+	}
+}
+
+// Normalize checks if m is valid and returns a normalized copy (with lowercase
+// digests).
+func (m DigestMap) Normalize() (norm DigestMap, err error) {
+	if err := m.Valid(); err != nil {
+		return nil, err
+	}
+	norm = make(DigestMap, len(m))
+	for digest, paths := range m {
+		normDig := normalizeDigest(digest)
+		norm[normDig] = slices.Clone(paths)
+	}
+	return
+}
+
+// NumPaths returns the number of paths in m
+func (m DigestMap) NumPaths() int {
+	var l int
+	for _, paths := range m {
+		l += len(paths)
+	}
+	return l
+}
+
+// PathMap returns a PathMap with m's paths and corresponding digests. The
+// returned PathMap may be invalid.
+func (m DigestMap) PathMap() PathMap {
+	paths := make(PathMap, m.NumPaths())
+	maps.Insert(paths, m.Paths())
+	return paths
+}
+
+// Paths is an iterator that yields path/digest pairs in m. The order paths are
+// yielded is not defined.
+func (m DigestMap) Paths() iter.Seq2[string, string] {
+	return func(yield func(string, string) bool) {
+		for d, paths := range m {
+			for _, p := range paths {
+				if !yield(p, d) {
+					return
+				}
+			}
+		}
+	}
 }
 
 // Valid returns a non-nil error if m is invalid.
@@ -245,48 +185,70 @@ func (m DigestMap) Valid() error {
 			return fmt.Errorf("no paths for digest %q", d)
 		}
 	}
-	return validPaths(m.Paths())
+	return validPaths(m.AllPaths())
 }
 
+// hasDigestCase returns two booleans indicating if any digests in m
+// include lowercase and uppercase characters, respectively.
+func (m DigestMap) hasDigestCase() (hasLower bool, hasUpper bool) {
+	for digest := range m {
+		for _, r := range digest {
+			switch {
+			case unicode.IsLower(r):
+				hasLower = true
+			case unicode.IsUpper(r):
+				hasUpper = true
+			}
+			if hasLower && hasUpper {
+				return
+			}
+		}
+	}
+	return
+}
+
+// validDigests return a MaptDigestConflictErr if m includes two versions of the
+// same digest (i.e., upper case and lower case hex values).
 func (m DigestMap) validDigests() error {
-	hasLower, hasUpper := m.HasDigestCase()
-	if !(hasLower && hasUpper) {
+	hasLower, hasUpper := m.hasDigestCase()
+	if !hasLower || !hasUpper {
+		// if m's digests are exclusively uppercase or lowercase then they must
+		// be valid
 		return nil
 	}
-	norms := make(map[string]struct{}, len(m))
+	norms := make(map[string]bool, len(m))
 	for d := range m {
 		norm := normalizeDigest(d)
-		if _, exists := norms[norm]; exists {
+		if norms[norm] {
 			return &MapDigestConflictErr{Digest: d}
 		}
-		norms[norm] = struct{}{}
+		norms[norm] = true
 	}
 	return nil
 }
 
+// validPaths checks paths are valid and consistent: it returns
+// *MapPathInvalidErr or *MapPathConflictErr if not.
 func validPaths(paths []string) error {
-	// check paths
-	files := map[string]struct{}{}
-	dirs := map[string]struct{}{}
 	for _, p := range paths {
 		if !validPath(p) {
-			return &MapPathInvalidErr{p}
+			return &MapPathInvalidErr{Path: p}
 		}
-		if _, exists := files[p]; exists {
-			// path appears more than once
+	}
+	// check for path conflicts. sort paths and check that each is
+	// distinct from an not treated as a directory by the following
+	// path
+	if !slices.IsSorted(paths) {
+		slices.Sort(paths)
+	}
+	n := len(paths)
+	if n <= 1 {
+		return nil
+	}
+	for i, p := range paths[:n-1] {
+		next := paths[i+1]
+		if p == next || strings.HasPrefix(next, p+"/") {
 			return &MapPathConflictErr{Path: p}
-		}
-		files[p] = struct{}{}
-		if _, exist := dirs[p]; exist {
-			// file previously treated as directory
-			return &MapPathConflictErr{p}
-		}
-		for _, parent := range parentDirs(p) {
-			// parent previously treated as file
-			if _, exists := files[parent]; exists {
-				return &MapPathConflictErr{parent}
-			}
-			dirs[parent] = struct{}{}
 		}
 	}
 	return nil
@@ -299,18 +261,6 @@ func validPath(p string) bool {
 		return false
 	}
 	return fs.ValidPath(p)
-}
-
-// parentDirs returns a slice of paths for each parent of p.
-// "a/b/c/d" -> ["a","a/b","a/b/c"]
-func parentDirs(p string) []string {
-	p = path.Clean(p)
-	names := strings.Split(path.Dir(p), "/")
-	parents := make([]string, len(names))
-	for i := range names {
-		parents[i] = strings.Join(names[:i+1], "/")
-	}
-	return parents
 }
 
 func normalizeDigest(d string) string {
@@ -330,45 +280,57 @@ func (pm PathMap) DigestMap() DigestMap {
 	return dm
 }
 
-// DigestMap returns a new DigestMap using the pathnames and digests in pm. If
-// the resulting DigestMap is invalid, an error is returned.
-func (pm PathMap) DigestMapValid() (DigestMap, error) {
-	dm := pm.DigestMap()
-	if err := dm.Valid(); err != nil {
-		return nil, err
+// SortedPaths is an iterator that yields the path/digest pairs in pm in sorted
+// order (by pathname).
+func (pm PathMap) SortedPaths() iter.Seq2[string, string] {
+	return func(yield func(string, string) bool) {
+		paths := slices.Collect(maps.Keys(pm))
+		slices.Sort(paths)
+		for _, p := range paths {
+			if !yield(p, pm[p]) {
+				return
+			}
+		}
 	}
-	return dm, nil
 }
 
-// RemapFunc is a function used to transform a DigestMap
-type RemapFunc func(oldPaths []string) (newPaths []string)
+// PathMutation is used with [DigestMap.Mutate] to change paths names
+// in a DigestMap
+type PathMutation func(oldPaths []string) (newPaths []string)
 
-// Rename returns a RemapFunc that renames from to to.
-func Rename(from, to string) RemapFunc {
+// RenamePaths returns a PathMutation function that renames occurences of src to
+// dst. If src matches a full path, it is replaced with dst. If src matches a
+// directory (including '.'), all occurences of the directory prefix are
+// replaced with dst (which may be '.').
+func RenamePaths(src, dst string) PathMutation {
 	return func(paths []string) []string {
+		if src == "." {
+			// src is root: dst is new parent directory for all paths
+			for i, p := range paths {
+				paths[i] = path.Join(dst, p)
+			}
+			return paths
+		}
+		if idx := slices.Index(paths, src); idx >= 0 {
+			// src is a file: rename to dst
+			paths[idx] = dst
+			return paths
+		}
+		// at least one path is in a directory named src
 		for i, p := range paths {
-			if p == from {
-				paths[i] = to
-				break
-			}
-			if from == "." {
-				paths[i] = path.Join(to, p)
-				continue
-			}
-			suffix, found := strings.CutPrefix(p, from+"/")
-			if found {
-				paths[i] = path.Join(to, suffix)
+			if suffix, found := strings.CutPrefix(p, src+"/"); found {
+				// src is a directory: move its contents into dir
+				paths[i] = path.Join(dst, suffix)
 			}
 		}
 		return paths
 	}
 }
 
-// Remove returns a RemapFunc that removes name.
-func Remove(name string) RemapFunc {
+// RemovePath returns a PathMutation that removes name
+func RemovePath(name string) PathMutation {
 	return func(paths []string) []string {
-		idx := slices.Index(paths, name)
-		if idx >= 0 {
+		if idx := slices.Index(paths, name); idx >= 0 {
 			return slices.Delete(paths, idx, idx+1)
 		}
 		return paths

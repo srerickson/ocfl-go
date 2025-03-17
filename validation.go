@@ -209,7 +209,7 @@ func (v *ObjectValidation) addInventory(inv Inventory, isRoot bool) error {
 	}
 	primaryAlg := inv.DigestAlgorithm()
 	allErrors := &multierror.Error{}
-	inv.Manifest().EachPath(func(name string, primaryDigest string) bool {
+	for name, primaryDigest := range inv.Manifest().Paths() {
 		allDigests := inv.GetFixity(primaryDigest)
 		allDigests[primaryAlg.ID()] = primaryDigest
 		existing := v.files[name]
@@ -217,11 +217,11 @@ func (v *ObjectValidation) addInventory(inv Inventory, isRoot bool) error {
 			v.files[name] = &validationFileInfo{
 				expectedDigests: allDigests,
 			}
-			return true
+			continue
 		}
 		if existing.expectedDigests == nil {
 			existing.expectedDigests = allDigests
-			return true
+			continue
 		}
 		if err := existing.expectedDigests.Add(allDigests); err != nil {
 			var digestError *digest.DigestError
@@ -230,8 +230,7 @@ func (v *ObjectValidation) addInventory(inv Inventory, isRoot bool) error {
 			}
 			allErrors = multierror.Append(allErrors, err)
 		}
-		return true
-	})
+	}
 	if err := allErrors.ErrorOrNil(); err != nil {
 		return err
 	}

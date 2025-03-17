@@ -24,7 +24,7 @@ func TestStageFiles(t *testing.T) {
 	be.NilErr(t, err)
 	be.Equal(t, stage.DigestAlgorithm.ID(), `sha256`)
 	for _, n := range fixtureFiles {
-		digest := stage.State.GetDigest(n)
+		digest := stage.State.DigestFor(n)
 		be.Nonzero(t, digest)
 		fsys, path := stage.GetContent(digest)
 		be.Nonzero(t, fsys)
@@ -47,7 +47,7 @@ func TestStageDir(t *testing.T) {
 	be.Equal(t, `sha256`, stage.DigestAlgorithm.ID())
 	be.Equal(t, 3, len(stage.State))
 	expectedPath := "folder1/folder2/sculpture-stone-face-head-888027.jpg"
-	expDigest := stage.State.GetDigest(expectedPath)
+	expDigest := stage.State.DigestFor(expectedPath)
 	be.Nonzero(t, expDigest)
 	resolveFS, resolvePath := stage.GetContent(expDigest)
 	be.Nonzero(t, resolveFS)
