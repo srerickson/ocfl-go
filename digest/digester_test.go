@@ -87,7 +87,7 @@ func TestDigestFilesBatch(t *testing.T) {
 		"a/file.txt": &fstest.MapFile{Data: []byte("content")},
 		"mydata.csv": &fstest.MapFile{Data: []byte("content,1,2,3")},
 	}
-	fsys := ocflfs.NewFS(testData)
+	fsys := ocflfs.NewWrapFS(testData)
 	count := 0
 	files := ocflfs.Files(fsys, slices.Collect(maps.Keys(testData))...)
 	for fa, err := range digest.DigestFilesBatch(ctx, files, 5, digest.SHA256, digest.SIZE) {

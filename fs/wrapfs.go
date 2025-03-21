@@ -8,13 +8,13 @@ import (
 	"os"
 )
 
-// NewFS wraps an [io/fs.FS] as an [FS]
-func NewFS(fsys fs.FS) *WrapFS { return &WrapFS{FS: fsys} }
+// NewWrapFS returns a *WrapFS for accessing files in fsys.
+func NewWrapFS(fsys fs.FS) *WrapFS { return &WrapFS{FS: fsys} }
 
 // DirFS is shorthand for NewFS(os.DirFS(dir))
-func DirFS(dir string) *WrapFS { return NewFS(os.DirFS(dir)) }
+func DirFS(dir string) *WrapFS { return NewWrapFS(os.DirFS(dir)) }
 
-// WrapFS wraps an [io/fs.FS] an implements [DirEntriesFS].
+// WrapFS wraps an [io/fs.FS] and implements [DirEntriesFS].
 type WrapFS struct {
 	fs.FS
 }
