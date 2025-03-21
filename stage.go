@@ -35,7 +35,7 @@ func StageBytes(content map[string][]byte, alg digest.Algorithm, fixity ...diges
 		mapFS[file] = &fstest.MapFile{Data: bytes}
 	}
 	ctx := context.Background()
-	return StageDir(ctx, fs.NewFS(mapFS), ".", alg, fixity...)
+	return StageDir(ctx, fs.NewWrapFS(mapFS), ".", alg, fixity...)
 }
 
 // StageDir builds a stage based on the contents of the directory dir in FS.

@@ -33,7 +33,7 @@ func NewFS(path string) (*FS, error) {
 	}
 	return &FS{
 		path:         abs,
-		DirEntriesFS: ocflfs.NewFS(os.DirFS(abs)),
+		DirEntriesFS: ocflfs.NewWrapFS(os.DirFS(abs)),
 	}, nil
 }
 

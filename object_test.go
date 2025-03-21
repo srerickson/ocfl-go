@@ -327,7 +327,7 @@ func testValidateFixtures(t *testing.T) {
 			badObjPath := filepath.Join(fixturePath, `bad-objects`)
 			warnObjPath := filepath.Join(fixturePath, `warn-objects`)
 			t.Run("Valid objects", func(t *testing.T) {
-				fsys := ocflfs.NewFS(os.DirFS(goodObjPath))
+				fsys := ocflfs.NewWrapFS(os.DirFS(goodObjPath))
 				goodObjects, err := ocflfs.ReadDir(context.Background(), fsys, ".")
 				be.NilErr(t, err)
 				for _, dir := range goodObjects {
@@ -339,7 +339,7 @@ func testValidateFixtures(t *testing.T) {
 				}
 			})
 			t.Run("Invalid objects", func(t *testing.T) {
-				fsys := ocflfs.NewFS(os.DirFS(badObjPath))
+				fsys := ocflfs.NewWrapFS(os.DirFS(badObjPath))
 				badObjects, err := ocflfs.ReadDir(context.Background(), fsys, ".")
 				be.NilErr(t, err)
 				for _, dir := range badObjects {
@@ -356,7 +356,7 @@ func testValidateFixtures(t *testing.T) {
 				}
 			})
 			t.Run("Warning objects", func(t *testing.T) {
-				fsys := ocflfs.NewFS(os.DirFS(warnObjPath))
+				fsys := ocflfs.NewWrapFS(os.DirFS(warnObjPath))
 				warnObjects, err := ocflfs.ReadDir(context.Background(), fsys, ".")
 				be.NilErr(t, err)
 				for _, dir := range warnObjects {

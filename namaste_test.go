@@ -41,11 +41,11 @@ func TestValidate(t *testing.T) {
 		"1=hot_tub_12.1": &fstest.MapFile{
 			Data: []byte("hot_tub_12.1\n")},
 	}
-	err := ocfl.ValidateNamaste(context.Background(), ocflfs.NewFS(fsys), "0=hot_tub_12.1")
+	err := ocfl.ValidateNamaste(context.Background(), ocflfs.NewWrapFS(fsys), "0=hot_tub_12.1")
 	be.NilErr(t, err)
-	err = ocfl.ValidateNamaste(context.Background(), ocflfs.NewFS(fsys), "0=hot_bath_12.1")
+	err = ocfl.ValidateNamaste(context.Background(), ocflfs.NewWrapFS(fsys), "0=hot_bath_12.1")
 	be.True(t, err != nil)
-	err = ocfl.ValidateNamaste(context.Background(), ocflfs.NewFS(fsys), "1=hot_tub_12.1")
+	err = ocfl.ValidateNamaste(context.Background(), ocflfs.NewWrapFS(fsys), "1=hot_tub_12.1")
 	be.True(t, err != nil)
 }
 
