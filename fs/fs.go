@@ -36,6 +36,14 @@ type DirEntriesFS interface {
 	DirEntries(ctx context.Context, name string) iter.Seq2[fs.DirEntry, error]
 }
 
+// FileWalker is an [FS] with an optimized implementation of WalkFiles
+type FileWalker interface {
+	FS
+	// WalkFiles returns an iterator that yields *FileRefs and/or an
+	// error.
+	WalkFiles(ctx context.Context, dir string) iter.Seq2[*FileRef, error]
+}
+
 // WriteFS is a storage backend that supports write and remove operations.
 type WriteFS interface {
 	FS
@@ -53,6 +61,34 @@ type CopyFS interface {
 	// Copy creates or updates the file at dst with the contents of src. If dst
 	// exists, it should be overwritten
 	Copy(ctx context.Context, dst string, src string) error
+}
+
+// Copy copies src in srcFS to dst in dstFS. If srcFS and dstFS are the same refererence
+// and it implements CopyFS, then Copy uses the fs's Copy() method.
+func Copy(ctx context.Context, dstFS WriteFS, dst string, srcFS FS, src string) (err error) {
+	cpFS, ok := dstFS.(CopyFS)
+	if ok && dstFS == srcFS {
+		if err = cpFS.Copy(ctx, dst, src); err != nil {
+			err = fmt.Errorf("during copy: %w", err)
+		}
+		return
+	}
+	// otherwise, manual copy
+	var srcF fs.File
+	srcF, err = srcFS.OpenFile(ctx, src)
+	if err != nil {
+		err = fmt.Errorf("opening for copy: %w", err)
+		return
+	}
+	defer func() {
+		if closeErr := srcF.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if _, err = dstFS.Write(ctx, dst, srcF); err != nil {
+		err = fmt.Errorf("writing during copy: %w", err)
+	}
+	return
 }
 
 // DirEntries calls DirEntries if fsys implements DirEntriesFS. If fsys doesn't implement
@@ -98,32 +134,34 @@ func ReadAll(ctx context.Context, fsys FS, name string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
-// Copy copies src in srcFS to dst in dstFS. If srcFS and dstFS are the same refererence
-// and it implements CopyFS, then Copy uses the fs's Copy() method.
-func Copy(ctx context.Context, dstFS WriteFS, dst string, srcFS FS, src string) (err error) {
-	cpFS, ok := dstFS.(CopyFS)
-	if ok && dstFS == srcFS {
-		if err = cpFS.Copy(ctx, dst, src); err != nil {
-			err = fmt.Errorf("during copy: %w", err)
-		}
-		return
+// Remove checks if fsys implements WriteFS and calls its Remove method. It
+// returns ErrOpUnsupported if fsys is not a WriteFS
+func Remove(ctx context.Context, fsys FS, name string) error {
+	writeFS, ok := fsys.(WriteFS)
+	if !ok {
+		return &fs.PathError{Op: "remove", Path: name, Err: ErrOpUnsupported}
 	}
-	// otherwise, manual copy
-	var srcF fs.File
-	srcF, err = srcFS.OpenFile(ctx, src)
-	if err != nil {
-		err = fmt.Errorf("opening for copy: %w", err)
-		return
+	return writeFS.Remove(ctx, name)
+}
+
+// RemoveAll checks if fsys implements WriteFS and calls its RemoveAll method. It
+// returns ErrOpUnsupported if fsys is not a WriteFS
+func RemoveAll(ctx context.Context, fsys FS, name string) error {
+	writeFS, ok := fsys.(WriteFS)
+	if !ok {
+		return &fs.PathError{Op: "remove_all", Path: name, Err: ErrOpUnsupported}
 	}
-	defer func() {
-		if closeErr := srcF.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-		}
-	}()
-	if _, err = dstFS.Write(ctx, dst, srcF); err != nil {
-		err = fmt.Errorf("writing during copy: %w", err)
+	return writeFS.RemoveAll(ctx, name)
+}
+
+// Write checks if fsys implements WriteFS and calls its Write method. It
+// returns ErrOpUnsupported if fsys is not a WriteFS
+func Write(ctx context.Context, fsys FS, name string, r io.Reader) (int64, error) {
+	writeFS, ok := fsys.(WriteFS)
+	if !ok {
+		return 0, &fs.PathError{Op: "write", Path: name, Err: ErrOpUnsupported}
 	}
-	return
+	return writeFS.Write(ctx, name, r)
 }
 
 // StatFile returns file informatoin for the file name in fsys.
@@ -134,14 +172,6 @@ func StatFile(ctx context.Context, fsys FS, name string) (fs.FileInfo, error) {
 	}
 	defer f.Close()
 	return f.Stat()
-}
-
-// FileWalker is an [FS] with an optimized implementation of WalkFiles
-type FileWalker interface {
-	FS
-	// WalkFiles returns an iterator that yields *FileRefs and/or an
-	// error.
-	WalkFiles(ctx context.Context, dir string) iter.Seq2[*FileRef, error]
 }
 
 // WalkFiles checks if fsys is a FileWalker and calls its WalkFiles if it is. If
