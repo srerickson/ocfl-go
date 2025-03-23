@@ -1,0 +1,12 @@
+{{ define "main" }}
+<h1>Objects</h1>
+<ul>
+{{ range .Objects }}
+    <li>
+        <span><a href="{{ .Path }}">{{ .ID }}</a></span>
+        <span>{{ .Head }}</span>
+        <span>{{ .LastUpdated }}</span>
+    </li>    
+{{ end }}
+</ul>
+{{ end }}
