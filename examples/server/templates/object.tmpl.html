@@ -1,0 +1,15 @@
+
+{{ define "main" }}
+<h1>{{ .ID }}</h1>
+
+{{ with .Version 0 }}
+    <p>{{ .Created }}</p>
+    <p>{{ .Message }}</p>
+    {{ with .State }}
+        {{ range $path, $digest := .Paths }}
+            {{ $path }}
+        {{ end }}
+    {{ end }}
+{{end }}
+
+{{ end }}
