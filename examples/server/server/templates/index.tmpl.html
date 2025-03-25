@@ -5,7 +5,7 @@
     <li>
         <span><a href="{{ objectPath .ID }}">{{ .ID }}</a></span>
         <span>{{ .Head }}</span>
-        <span>{{ .HeadCreated }}</span>
+        <span>{{ formatDate .HeadCreated }}</span>
     </li>    
 {{ end }}
 </ul>

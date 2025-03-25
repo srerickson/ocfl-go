@@ -15,12 +15,12 @@ func main() {
 	ctx := context.Background()
 	flag.Parse()
 	rootPath := flag.Arg(0)
-	if err := startServer(ctx, rootPath); err != nil {
+	if err := serveOCFL(ctx, rootPath); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func startServer(ctx context.Context, rootPath string) error {
+func serveOCFL(ctx context.Context, rootPath string) error {
 	fsys := ocflfs.DirFS(rootPath)
 	root, err := ocfl.NewRoot(ctx, fsys, ".")
 	if err != nil {
@@ -30,7 +30,7 @@ func startServer(ctx context.Context, rootPath string) error {
 	if err := index.ReIndex(root.Objects(ctx)); err != nil {
 		return err
 	}
-	srv, err := server.NewServer(root, index)
+	srv, err := server.NewOCFLServer(root, index)
 	if err != nil {
 		return err
 	}
