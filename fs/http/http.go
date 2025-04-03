@@ -69,17 +69,19 @@ func (fsys FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 		err = fmt.Errorf("http: unexpected response status: %q", resp.Status)
 		return nil, pathError(op, name, err)
 	}
-	size := resp.ContentLength
-	modtime, err := http.ParseTime(resp.Header.Get("Last-Modified"))
-	if err != nil {
-		return nil, fmt.Errorf("parsing last-modified header: %w", err)
+	var modtime time.Time
+	if m := resp.Header.Get("Last-Modified"); m != "" {
+		modtime, err = http.ParseTime(m)
+		if err != nil {
+			return nil, fmt.Errorf("parsing last-modified header: %w", err)
+		}
 	}
 	return &httpFile{
 		ctx:     ctx,
 		client:  cli,
 		uri:     requestURL,
 		name:    path.Base(name),
-		size:    size,
+		size:    resp.ContentLength,
 		modTime: modtime,
 	}, nil
 }
