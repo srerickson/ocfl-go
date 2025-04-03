@@ -2,6 +2,7 @@ package http_test
 
 import (
 	"context"
+	"embed"
 	"errors"
 	"io/fs"
 	"net/http"
@@ -16,7 +17,12 @@ import (
 	ocflhttp "github.com/srerickson/ocfl-go/fs/http"
 )
 
-var testdata = filepath.Join("..", "..", "testdata")
+var (
+	testdata = filepath.Join("..", "..", "testdata")
+
+	//go:embed testdata/*
+	testFS embed.FS
+)
 
 func TestHttpFS(t *testing.T) {
 	ctx := context.Background()
@@ -55,4 +61,17 @@ func TestHttpFS(t *testing.T) {
 		be.Equal(t, info.Size(), int64(len(buf)))
 	})
 	srv.Close()
+}
+
+func TestEmbedFS(t *testing.T) {
+	// Test the http.FS works for embed.FS backends.
+	ctx := context.Background()
+	srv := httptest.NewServer(http.FileServer(http.FS(testFS)))
+	fsys := ocflhttp.New(srv.URL)
+	f, err := fsys.OpenFile(ctx, "testdata/test.txt")
+	be.NilErr(t, err)
+	info, err := f.Stat()
+	be.NilErr(t, err)
+	be.Zero(t, info.ModTime())
+	defer srv.Close()
 }
