@@ -112,6 +112,7 @@ type S3API interface {
 
 // OpenFileAPI includes S3 methods needed for OpenFile()
 type OpenFileAPI interface {
+	HeadObject(context.Context, *s3v2.HeadObjectInput, ...func(*s3v2.Options)) (*s3v2.HeadObjectOutput, error)
 	GetObject(context.Context, *s3v2.GetObjectInput, ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error)
 }
 

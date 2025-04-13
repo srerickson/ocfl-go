@@ -47,8 +47,8 @@ func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (f
 	if !fs.ValidPath(name) || name == "." {
 		return nil, pathErr("open", name, fs.ErrInvalid)
 	}
-	params := &s3v2.GetObjectInput{Bucket: &buck, Key: &name}
-	obj, err := api.GetObject(ctx, params)
+	headIn := &s3v2.HeadObjectInput{Bucket: &buck, Key: &name}
+	headOut, err := api.HeadObject(ctx, headIn)
 	if err != nil {
 		fsErr := &fs.PathError{Op: "open", Path: name}
 		var awsErr *types.NoSuchKey
@@ -60,7 +60,14 @@ func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (f
 		}
 		return nil, fsErr
 	}
-	return &s3File{bucket: buck, key: name, obj: obj}, nil
+	f := &s3File{
+		ctx:    ctx,
+		api:    api,
+		bucket: buck,
+		key:    name,
+		info:   headOut,
+	}
+	return f, nil
 }
 
 func dirEntries(ctx context.Context, api ReadDirAPI, buck string, dir string) iter.Seq2[fs.DirEntry, error] {
@@ -368,27 +375,41 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) iter.
 
 // s3File implements fs.File
 type s3File struct {
+	ctx    context.Context
+	api    OpenFileAPI
 	bucket string
 	key    string
-	obj    *s3v2.GetObjectOutput
+	body   io.ReadCloser
+	info   *s3v2.HeadObjectOutput
 }
 
 func (f *s3File) Stat() (fs.FileInfo, error) {
 	return &iofsInfo{
 		name:    path.Base(f.key),
-		size:    *f.obj.ContentLength,
+		size:    *f.info.ContentLength,
 		mode:    fs.ModeIrregular,
-		modTime: *f.obj.LastModified,
-		sys:     f.obj,
+		modTime: *f.info.LastModified,
+		sys:     f.info,
 	}, nil
 }
 
 func (f *s3File) Read(p []byte) (int, error) {
-	return f.obj.Body.Read(p)
+	if f.body == nil {
+		params := &s3v2.GetObjectInput{Bucket: &f.bucket, Key: &f.key}
+		obj, err := f.api.GetObject(f.ctx, params)
+		if err != nil {
+			return 0, err
+		}
+		f.body = obj.Body
+	}
+	return f.body.Read(p)
 }
 
 func (f *s3File) Close() error {
-	return f.obj.Body.Close()
+	if f.body == nil {
+		return nil
+	}
+	return f.body.Close()
 }
 
 func (f *s3File) Name() string {
