@@ -12,7 +12,7 @@ import (
 
 const (
 	// package version
-	Version = "0.8.1"
+	Version = "0.8.2"
 
 	Spec1_0 = Spec("1.0")
 	Spec1_1 = Spec("1.1")
