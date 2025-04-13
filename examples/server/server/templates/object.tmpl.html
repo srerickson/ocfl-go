@@ -13,6 +13,7 @@
         {{ range $path, $digest := .SortedPaths }}
             <li>
                 <a href="{{ $.DownloadPath $digest }}" download="{{ basename $path }}">{{ $path }}</a>
+                <span>{{- $.DigestAlgorithm.ID -}}: {{ shortDigest $digest }}</span>
             </li>
         {{ end }}
         </ul>

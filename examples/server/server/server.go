@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
@@ -22,9 +23,10 @@ var (
 	templateFS embed.FS
 
 	templateFuncs = template.FuncMap{
-		"objectPath": objectPath,
-		"basename":   path.Base,
-		"formatDate": formatDate,
+		"objectPath":  objectPath,
+		"basename":    path.Base,
+		"formatDate":  formatDate,
+		"shortDigest": shortDigest,
 	}
 )
 
@@ -34,6 +36,7 @@ type OCFLServer struct {
 	index      RootIndex
 	indexView  *template.Template
 	objectView *template.Template
+	logger     *slog.Logger
 }
 
 func NewOCFLServer(root *ocfl.Root, index RootIndex) (*OCFLServer, error) {
@@ -52,6 +55,7 @@ func NewOCFLServer(root *ocfl.Root, index RootIndex) (*OCFLServer, error) {
 		root:       root,
 		indexView:  indexView,
 		objectView: objectView,
+		logger:     slog.Default(),
 	}
 	srv.HandleFunc("GET /{$}", srv.indexHandler())
 	srv.HandleFunc("GET /object/{id}", srv.objectHanlder())
@@ -92,6 +96,7 @@ func (srv *OCFLServer) downloadHandler() http.HandlerFunc {
 		w.Header().Add("Content-Length", strconv.FormatInt(info.Size(), 10))
 		if _, err := io.Copy(w, f); err != nil {
 			// log error
+			srv.logger.Error(err.Error())
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -133,6 +138,7 @@ func (srv *OCFLServer) objectHanlder() http.HandlerFunc {
 				http.NotFound(w, r)
 				return
 			}
+			srv.logger.Error(err.Error())
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -179,4 +185,11 @@ func objectPath(id string) string {
 
 func formatDate(t time.Time) string {
 	return t.Format(time.DateOnly)
+}
+
+func shortDigest(digest string) string {
+	if len(digest) > 8 {
+		return digest[0:8]
+	}
+	return digest
 }
