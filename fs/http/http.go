@@ -36,17 +36,23 @@ type FS struct {
 	baseURL string
 }
 
+// BaseURL returns the base url used to construct f
+func (f FS) BaseURL() string { return f.baseURL }
+
+// Client returns f's http client
+func (f FS) Client() *http.Client { return f.client }
+
 // OpenFile implements the ocfl/fs.FS interface for FS
-func (fsys FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
+func (f FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	const op = "openfile"
 	if !fs.ValidPath(name) || name == "." {
 		return nil, pathError(op, name, fs.ErrInvalid)
 	}
-	cli := fsys.client
+	cli := f.client
 	if cli == nil {
 		cli = http.DefaultClient
 	}
-	requestURL, err := url.JoinPath(fsys.baseURL, name)
+	requestURL, err := url.JoinPath(f.baseURL, name)
 	if err != nil {
 		return nil, pathError(op, name, err)
 	}
