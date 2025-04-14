@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/srerickson/ocfl-go"
@@ -21,6 +22,7 @@ func main() {
 }
 
 func serveOCFL(ctx context.Context, rootPath string) error {
+	logger := slog.Default()
 	fsys := ocflfs.DirFS(rootPath)
 	root, err := ocfl.NewRoot(ctx, fsys, ".")
 	if err != nil {
@@ -30,9 +32,8 @@ func serveOCFL(ctx context.Context, rootPath string) error {
 	if err := index.ReIndex(root.Objects(ctx)); err != nil {
 		return err
 	}
-	srv, err := server.NewOCFLServer(root, index)
-	if err != nil {
-		return err
-	}
+
+	srv := server.NewServer(logger, root, index, indexView, objectView)
+
 	return http.ListenAndServe(":8877", srv)
 }
