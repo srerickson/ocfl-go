@@ -11,21 +11,21 @@ import (
 var (
 	//go:embed templates
 	templateFS embed.FS
-)
 
-type Views struct {
-	Index  *template.Template
-	Object *template.Template
-}
-
-func NewViews() (*Views, error) {
-	templateFuncs := template.FuncMap{
+	templateFuncs = template.FuncMap{
 		"objectPath":  objectPath,
 		"basename":    path.Base,
 		"formatDate":  formatDate,
 		"shortDigest": shortDigest,
 	}
+)
 
+type Templates struct {
+	Index  *template.Template
+	Object *template.Template
+}
+
+func ReadTempaltes() (*Templates, error) {
 	indexView, err := template.New("index").Funcs(templateFuncs).ParseFS(templateFS, "templates/base.tmpl.html", "templates/index.tmpl.html")
 	if err != nil {
 		return nil, err
@@ -34,7 +34,7 @@ func NewViews() (*Views, error) {
 	if err != nil {
 		return nil, err
 	}
-	views := &Views{
+	views := &Templates{
 		Index:  indexView,
 		Object: objectView,
 	}

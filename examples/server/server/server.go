@@ -1,7 +1,6 @@
 package server
 
 import (
-	"html/template"
 	"iter"
 	"log/slog"
 	"net/http"
@@ -15,12 +14,10 @@ func NewServer(
 	logger *slog.Logger,
 	root *ocfl.Root,
 	index RootIndex,
-	indexView *template.Template,
-	objectView *template.Template,
-
+	tmpls *Templates,
 ) http.Handler {
 	mux := http.NewServeMux()
-	addRoutes(mux, logger, root, index, indexView, objectView)
+	addRoutes(mux, logger, root, index, tmpls)
 	return mux
 }
 

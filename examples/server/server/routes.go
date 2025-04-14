@@ -19,12 +19,11 @@ func addRoutes(
 	logger *slog.Logger,
 	root *ocfl.Root,
 	index RootIndex,
-	indexView *template.Template,
-	objectView *template.Template,
+	tmpl *Templates,
 
 ) {
-	mux.HandleFunc("GET /{$}", handleIndex(index, indexView))
-	mux.HandleFunc("GET /object/{id}", handleObject(logger, root, index, objectView))
+	mux.HandleFunc("GET /{$}", handleIndex(index, tmpl.Index))
+	mux.HandleFunc("GET /object/{id}", handleObject(logger, root, index, tmpl.Object))
 	mux.HandleFunc("GET /download/{id}/{name}", handleDownload(logger, root, index))
 }
 
