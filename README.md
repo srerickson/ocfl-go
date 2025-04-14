@@ -1,11 +1,9 @@
 # An OCFL implementation for Go
 
-<a href="https://godoc.org/github.com/srerickson/ocfl-go">
-    <img src="https://godoc.org/github.com/srerickson/ocfl-go?status.svg" alt="godocs"/>
-</a>
-<a href="https://goreportcard.com/report/github.com/srerickson/ocfl-go">
-    <img src="https://goreportcard.com/badge/github.com/srerickson/ocfl-go">
-</a>
+<a href="https://godoc.org/github.com/srerickson/ocfl-go"><img src="https://godoc.org/github.com/srerickson/ocfl-go?status.svg" alt="godocs"/></a>
+<a href="https://doi.org/10.5281/zenodo.15212966"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.15212966.svg" alt="doi"/></a>
+
+[![DOI]()](https://doi.org/10.5281/zenodo.15212967)
 
 This [Go](https://go.dev) module provide an implementation of the Oxford Common File Layout ([OCFL](https://ocfl.io/)). 
 
