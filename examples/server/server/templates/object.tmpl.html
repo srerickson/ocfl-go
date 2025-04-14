@@ -1,23 +1,23 @@
 
 {{ define "main" }}
 <h1>{{ .ID }}</h1>
-{{ range $num, $version := .Versions }}
+{{ range .Versions }}
 <section>
-    <header>
-        <h3>{{ $num }}: {{ formatDate $version.Created }}</h3>
-        <p>{{ $version.Message }}</p>
-    </header>
     <div>
-    {{ with $version.State.PathMap }}
-        <ul>
-        {{ range $path, $digest := .SortedPaths }}
-            <li>
-                <a href="{{ $.DownloadPath $digest }}" download="{{ basename $path }}">{{ $path }}</a>
-                <span>{{- $.DigestAlgorithm.ID -}}: {{ shortDigest $digest }}</span>
-            </li>
+        <h3>{{ .Num }}: {{ formatDate .Created }}</h3>
+        <p>{{ .Message }}</p>
+    </div>
+    <div>
+        {{ with .Files }}
+            <ul>
+            {{ range . }}
+                <li>
+                    <a href="{{ $.DownloadPath $digest }}" download="{{ basename .Name }}">{{ .Name }}</a>
+                    <span>{{- $.DigestAlgorithm.ID -}}: {{ shortDigest $digest }}</span>
+                </li>
+            {{ end }}
+            </ul>
         {{ end }}
-        </ul>
-    {{ end }}
     </div>
 </section>
 {{end }}

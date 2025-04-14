@@ -25,12 +25,14 @@ func main() {
 func run(args []string, stderr io.Writer) error {
 	ctx := context.Background()
 	flags := flag.NewFlagSet("", flag.ExitOnError)
-	flags.Parse(args)
-	rootPath := flag.Arg(0)
+	flags.Parse(args[1:])
+	rootPath := flags.Arg(0)
+	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{}))
 	if rootPath == "" {
 		err := errors.New("missing required argument: OCFL storage root path")
 		return err
 	}
+	logger.Info("using storage root", "path", rootPath)
 	fsys := ocflfs.DirFS(rootPath)
 	root, err := ocfl.NewRoot(ctx, fsys, ".")
 	if err != nil {
@@ -40,11 +42,10 @@ func run(args []string, stderr io.Writer) error {
 	if err := index.ReIndex(root.Objects(ctx)); err != nil {
 		return err
 	}
-	templates, err := server.ReadTempaltes()
+	templates, err := server.ReadTemplates()
 	if err != nil {
 		return err
 	}
-	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{}))
 	srv := server.NewServer(logger, root, index, templates)
 	return http.ListenAndServe(":8877", srv)
 }

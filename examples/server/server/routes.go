@@ -14,6 +14,7 @@ import (
 	"github.com/srerickson/ocfl-go"
 )
 
+// addRoutes sets up all routes for the mux
 func addRoutes(
 	mux *http.ServeMux,
 	logger *slog.Logger,
@@ -93,7 +94,7 @@ func handleObject(logger *slog.Logger, root *ocfl.Root, index RootIndex, view *t
 				http.NotFound(w, r)
 				return
 			}
-			obj, err = ocfl.NewObject(ctx, root.FS(), idxObj.Path)
+			obj, err = ocfl.NewObject(ctx, root.FS(), idxObj.Path, ocfl.ObjectMustExist())
 		default:
 			obj, err = root.NewObject(ctx, id, ocfl.ObjectMustExist())
 		}
@@ -106,7 +107,11 @@ func handleObject(logger *slog.Logger, root *ocfl.Root, index RootIndex, view *t
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		templateData := object{Inventory: obj.Inventory()}
+		templateData, err := NewObject(ctx, obj)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		if err := view.ExecuteTemplate(w, "base", &templateData); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

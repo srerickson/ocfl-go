@@ -25,7 +25,7 @@ type Templates struct {
 	Object *template.Template
 }
 
-func ReadTempaltes() (*Templates, error) {
+func ReadTemplates() (*Templates, error) {
 	indexView, err := template.New("index").Funcs(templateFuncs).ParseFS(templateFS, "templates/base.tmpl.html", "templates/index.tmpl.html")
 	if err != nil {
 		return nil, err
