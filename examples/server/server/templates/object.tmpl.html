@@ -7,18 +7,17 @@
         <h3>{{ .Num }}: {{ formatDate .Created }}</h3>
         <p>{{ .Message }}</p>
     </div>
+    {{ with .Files }}
     <div>
-        {{ with .Files }}
-            <ul>
-            {{ range . }}
-                <li>
-                    <a href="{{ $.DownloadPath $digest }}" download="{{ basename .Name }}">{{ .Name }}</a>
-                    <span>{{- $.DigestAlgorithm.ID -}}: {{ shortDigest $digest }}</span>
-                </li>
+        <ul>
+        {{ range $logical, $file := . }}
+            <li>
+                <a href="{{ downloadPath $.ID $file.Path }}" download="{{ basename $logical }}">{{ $logical }}</a>
+            </li>
             {{ end }}
             </ul>
-        {{ end }}
-    </div>
+        </div>
+    {{ end }}
 </section>
 {{end }}
 

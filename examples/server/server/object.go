@@ -3,14 +3,13 @@ package server
 import (
 	"context"
 	"errors"
-	"io/fs"
-	"net/url"
+	"iter"
 	"slices"
 	"time"
 
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
-	// "github.com/srerickson/ocfl-go/fs"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
 func NewObject(ctx context.Context, base *ocfl.Object) (*Object, error) {
@@ -18,7 +17,6 @@ func NewObject(ctx context.Context, base *ocfl.Object) (*Object, error) {
 	if inv == nil {
 		return nil, errors.New("object doesn't exist")
 	}
-	manifest := inv.Manifest()
 	vers := inv.Head().Lineage()
 	obj := &Object{
 		ID:              inv.ID(),
@@ -36,35 +34,7 @@ func NewObject(ctx context.Context, base *ocfl.Object) (*Object, error) {
 			Message: verFS.Message(),
 			Created: verFS.Created(),
 			User:    verFS.User(),
-			Files:   make([]ObjectVersionFile, 0, verFS.State().NumPaths()),
-		}
-		pathMap := verFS.State().PathMap()
-
-		err = fs.WalkDir(verFS, ".", func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			info, err := d.Info()
-			if err != nil {
-				return err
-			}
-			digest := pathMap[path]
-			contentPath := ""
-			if paths := manifest[digest]; len(paths) > 0 {
-				contentPath = paths[0]
-			}
-
-			f := ObjectVersionFile{
-				Name:         path,
-				DownloadPath: downloadPath(inv.ID(), contentPath),
-				Size:         info.Size(),
-				//Digests digest.Set
-			}
-			objVersion.Files = append(objVersion.Files, f)
-			return nil
-		})
-		if err != nil {
-			return nil, err
+			Files:   VersionFiles(base, vnum.Num()),
 		}
 		obj.Versions[i] = objVersion
 	}
@@ -83,21 +53,7 @@ type ObjectVersion struct {
 	Message string
 	User    *ocfl.User
 	Created time.Time
-	Files   []ObjectVersionFile
-}
-
-type ObjectVersionFile struct {
-	Name         string
-	DownloadPath string
-	Size         int64
-	Digests      digest.Set
-}
-
-func downloadPath(id string, contentPath string) string {
-	if contentPath == "" {
-		return ""
-	}
-	return "/download/" + url.PathEscape(id) + "/" + url.PathEscape(contentPath)
+	Files   iter.Seq2[string, *digest.FileRef]
 }
 
 // // iterate over versions in order or preesntation (reversed)
@@ -112,3 +68,43 @@ func downloadPath(id string, contentPath string) string {
 // 		}
 // 	}
 // }
+
+// VersionFiles returns an iterator that yields
+func VersionFiles(obj *ocfl.Object, num int) iter.Seq2[string, *digest.FileRef] {
+	inv := obj.Inventory()
+	if inv == nil {
+		return func(yield func(string, *digest.FileRef) bool) {}
+	}
+	version := inv.Version(num)
+	manifest := inv.Manifest()
+	if version == nil || manifest == nil {
+		return func(yield func(string, *digest.FileRef) bool) {}
+	}
+	return func(yield func(string, *digest.FileRef) bool) {
+		paths := version.State().PathMap()
+		for logicalPath, dig := range paths.SortedPaths() {
+			contentPaths := manifest[dig]
+			if len(contentPaths) < 1 {
+				return
+			}
+			fileref := &digest.FileRef{
+				FileRef: ocflfs.FileRef{
+					FS:      obj.FS(),
+					BaseDir: obj.Path(),
+					Path:    contentPaths[0],
+				},
+				Algorithm: inv.DigestAlgorithm(),
+				Digests:   inv.GetFixity(dig),
+			}
+			fileref.Digests[inv.DigestAlgorithm().ID()] = dig
+			if !yield(logicalPath, fileref) {
+				return
+			}
+		}
+	}
+}
+
+// this doesn't work so well because I need to stat the files.
+// I can't stat concurrently without messing up the order, so
+// may as well just have a map or slice instead of an  iterator:
+// doesn't really get us anything to use iterator.

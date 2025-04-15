@@ -13,10 +13,11 @@ var (
 	templateFS embed.FS
 
 	templateFuncs = template.FuncMap{
-		"objectPath":  objectPath,
-		"basename":    path.Base,
-		"formatDate":  formatDate,
-		"shortDigest": shortDigest,
+		"objectPath":   objectPath,
+		"downloadPath": downloadPath,
+		"basename":     path.Base,
+		"formatDate":   formatDate,
+		"shortDigest":  shortDigest,
 	}
 )
 
@@ -42,7 +43,17 @@ func ReadTemplates() (*Templates, error) {
 }
 
 func objectPath(id string) string {
+	if id == "" {
+		return ""
+	}
 	return "/object/" + url.PathEscape(id)
+}
+
+func downloadPath(id string, contentPath string) string {
+	if contentPath == "" || id == "" {
+		return ""
+	}
+	return "/download/" + url.PathEscape(id) + "/" + url.PathEscape(contentPath)
 }
 
 func formatDate(t time.Time) string {
