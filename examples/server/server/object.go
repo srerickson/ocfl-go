@@ -18,10 +18,13 @@ func NewObject(ctx context.Context, base *ocfl.Object) (*Object, error) {
 		return nil, errors.New("object doesn't exist")
 	}
 	vers := inv.Head().Lineage()
+	if len(vers) < 1 {
+		return nil, errors.New("object has no versions")
+	}
 	obj := &Object{
 		ID:              inv.ID(),
 		DigestAlgorithm: inv.DigestAlgorithm().ID(),
-		Versions:        make([]ObjectVersion, len(vers)),
+		Versions:        make([]ObjectVersion, len(vers)-1),
 	}
 	slices.Reverse(vers)
 	for i, vnum := range vers {
@@ -34,9 +37,13 @@ func NewObject(ctx context.Context, base *ocfl.Object) (*Object, error) {
 			Message: verFS.Message(),
 			Created: verFS.Created(),
 			User:    verFS.User(),
-			Files:   VersionFiles(base, vnum.Num()),
+			Files:   VersionFiles(ctx, base, vnum.Num()),
 		}
-		obj.Versions[i] = objVersion
+		if i == 0 {
+			obj.Head = objVersion
+			continue
+		}
+		obj.Versions[i-1] = objVersion
 	}
 
 	return obj, nil
@@ -45,6 +52,7 @@ func NewObject(ctx context.Context, base *ocfl.Object) (*Object, error) {
 type Object struct {
 	ID              string
 	DigestAlgorithm string
+	Head            ObjectVersion
 	Versions        []ObjectVersion
 }
 
@@ -70,7 +78,7 @@ type ObjectVersion struct {
 // }
 
 // VersionFiles returns an iterator that yields
-func VersionFiles(obj *ocfl.Object, num int) iter.Seq2[string, *digest.FileRef] {
+func VersionFiles(ctx context.Context, obj *ocfl.Object, num int) iter.Seq2[string, *digest.FileRef] {
 	inv := obj.Inventory()
 	if inv == nil {
 		return func(yield func(string, *digest.FileRef) bool) {}
@@ -81,8 +89,8 @@ func VersionFiles(obj *ocfl.Object, num int) iter.Seq2[string, *digest.FileRef] 
 		return func(yield func(string, *digest.FileRef) bool) {}
 	}
 	return func(yield func(string, *digest.FileRef) bool) {
-		paths := version.State().PathMap()
-		for logicalPath, dig := range paths.SortedPaths() {
+		statePathMap := version.State().PathMap()
+		for logicalPath, dig := range statePathMap.SortedPaths() {
 			contentPaths := manifest[dig]
 			if len(contentPaths) < 1 {
 				return
@@ -97,6 +105,10 @@ func VersionFiles(obj *ocfl.Object, num int) iter.Seq2[string, *digest.FileRef] 
 				Digests:   inv.GetFixity(dig),
 			}
 			fileref.Digests[inv.DigestAlgorithm().ID()] = dig
+			if err := fileref.Stat(ctx); err != nil {
+				// log error but continue
+				// return
+			}
 			if !yield(logicalPath, fileref) {
 				return
 			}

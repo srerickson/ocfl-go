@@ -1,24 +1,69 @@
 
 {{ define "main" }}
-<h1>{{ .ID }}</h1>
-{{ range .Versions }}
 <section>
+  <h1>{{ .ID }}</h1>
+  {{ with .Head }}
+  
+ 
+
+  <h2>Files</h2>
+  <div>
+    {{ range $logical, $file := .Files }}
+    <details>
+      <summary>
+        <a href="{{ downloadPath $.ID $file.Path }}" download="{{ basename $logical }}">
+          {{ $logical }}
+        </a>
+        {{ with $file.Info }}
+          (<code>{{ humanFileSize .Size }}</code>)
+        {{ end }}
+      </summary>
+      <p></p>
+    </details>
+    {{ end }}
+  </div>
+
+  <!-- version information -->
+  <details>
+    <summary>{{ .Num }} version information</summary>
+    <p>
+      
+      {{ formatDate .Created }}: {{ .Message }}
+      {{ with .User }}
+        {{ .Name }}: {{ .Address }}
+      {{ end }}
+    </p>
+  </details>
+  {{ end }}
+
+</section>
+
+  {{ range .Versions }}
+  <section>
     <div>
-        <h3>{{ .Num }}: {{ formatDate .Created }}</h3>
-        <p>{{ .Message }}</p>
+      <h3>{{ .Num }}: {{ formatDate .Created }}</h3>
+      <p>{{ .Message }}</p>
     </div>
     {{ with .Files }}
     <div>
-        <ul>
-        {{ range $logical, $file := . }}
-            <li>
-                <a href="{{ downloadPath $.ID $file.Path }}" download="{{ basename $logical }}">{{ $logical }}</a>
-            </li>
+      {{ range $logical, $file := . }}
+      <details>
+          <summary>
+            <a href="{{ downloadPath $.ID $file.Path }}" download="{{ basename $logical }}">
+              {{ $logical }}
+            </a>
+            {{ with $file.Info }}
+              (<code>{{ humanFileSize .Size }}</code>)
             {{ end }}
-            </ul>
-        </div>
+          </summary>
+          <p>
+          
+          </p>
+      </details>
+      {{ end }}
+    </div>
     {{ end }}
-</section>
-{{end }}
+  </section>
+  {{end }}
 
 {{ end }}

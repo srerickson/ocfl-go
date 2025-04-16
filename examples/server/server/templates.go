@@ -2,6 +2,7 @@ package server
 
 import (
 	"embed"
+	"fmt"
 	"html/template"
 	"net/url"
 	"path"
@@ -13,11 +14,12 @@ var (
 	templateFS embed.FS
 
 	templateFuncs = template.FuncMap{
-		"objectPath":   objectPath,
-		"downloadPath": downloadPath,
-		"basename":     path.Base,
-		"formatDate":   formatDate,
-		"shortDigest":  shortDigest,
+		"objectPath":    objectPath,
+		"downloadPath":  downloadPath,
+		"basename":      path.Base,
+		"formatDate":    formatDate,
+		"shortDigest":   shortDigest,
+		"humanFileSize": humanFileSize,
 	}
 )
 
@@ -65,4 +67,21 @@ func shortDigest(digest string) string {
 		return digest[0:8]
 	}
 	return digest
+}
+
+func humanFileSize(byteSize int64) string {
+	var units = []string{"Bytes", "KB", "MB", "GB", "TB"}
+	scaled := float64(byteSize)
+	unit := ""
+	for i := 0; i < len(units); i++ {
+		unit = units[i]
+		if scaled < 1000 {
+			break
+		}
+		scaled = scaled / 1000
+	}
+	if unit == "Bytes" {
+		return fmt.Sprintf("%d %s", int64(scaled), unit)
+	}
+	return fmt.Sprintf("%0.2f %s", scaled, unit)
 }

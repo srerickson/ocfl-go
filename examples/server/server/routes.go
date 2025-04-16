@@ -23,6 +23,7 @@ func addRoutes(
 	tmpl *Templates,
 
 ) {
+	mux.Handle("/static/", http.FileServerFS(staticFS))
 	mux.HandleFunc("GET /{$}", handleIndex(index, tmpl.Index))
 	mux.HandleFunc("GET /object/{id}", handleObject(logger, root, index, tmpl.Object))
 	mux.HandleFunc("GET /download/{id}/{name}", handleDownload(logger, root, index))
