@@ -222,13 +222,14 @@ func testObjectCommit(t *testing.T) {
 			User: ocfl.User{
 				Name: "Anna Karenina",
 			},
-			Spec: ocfl.Spec1_0,
+			Spec:           ocfl.Spec1_0,
+			AllowUnchanged: true,
 		}
 		be.NilErr(t, obj.Commit(ctx, commit))
 		commit.Stage.DigestAlgorithm = digest.SHA256
 		err = obj.Commit(ctx, commit)
 		be.True(t, err != nil)
-		be.True(t, strings.Contains(err.Error(), "must use same digest algorithm as existing inventory"))
+		be.In(t, "cannot change inventory's digest algorithm from previous value", err.Error())
 	})
 	t.Run("with extended algorithm algs", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())

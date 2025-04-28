@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"log/slog"
-
 	"github.com/srerickson/ocfl-go/digest"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
@@ -282,40 +280,6 @@ func ValidateObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...Obj
 	}
 	impl.ValidateObjectContent(ctx, v)
 	return v
-}
-
-// Commit represents an update to object.
-type Commit struct {
-	ID      string // required for new objects in storage roots without a layout.
-	Stage   *Stage // required
-	Message string // required
-	User    User   // required
-
-	// advanced options
-	Created         time.Time // time.Now is used, if not set
-	Spec            Spec      // OCFL specification version for the new object version
-	NewHEAD         int       // enforces new object version number
-	AllowUnchanged  bool
-	ContentPathFunc func(oldPaths []string) (newPaths []string)
-
-	Logger *slog.Logger
-}
-
-// Commit error wraps an error from a commit.
-type CommitError struct {
-	Err error // The wrapped error
-
-	// Dirty indicates the object may be incomplete or invalid as a result of
-	// the error.
-	Dirty bool
-}
-
-func (c CommitError) Error() string {
-	return c.Err.Error()
-}
-
-func (c CommitError) Unwrap() error {
-	return c.Err
 }
 
 type ObjectVersionFS struct {

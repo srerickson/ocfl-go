@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"path"
 	"reflect"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -19,9 +18,7 @@ import (
 	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/extension"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
-	"github.com/srerickson/ocfl-go/logging"
 	"github.com/srerickson/ocfl-go/validation/code"
-	"golang.org/x/sync/errgroup"
 )
 
 // ocflv1 is an implementation of ocfl v1.x
@@ -438,79 +435,44 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
 	return inv, v
 }
 
-func (imp ocflV1) Commit(ctx context.Context, obj *Object, commit *Commit) error {
-	writeFS, ok := obj.FS().(ocflfs.WriteFS)
-	if !ok {
-		err := errors.New("object's backing file system doesn't support write operations")
-		return &CommitError{Err: err}
-	}
+func (imp ocflV1) NewCommitPlan(ctx context.Context, obj *Object, commit *Commit) (*CommitPlan, error) {
 	newInv, err := imp.newInventoryV1(commit, obj.Inventory())
 	if err != nil {
-		err := fmt.Errorf("building new inventory: %w", err)
-		return &CommitError{Err: err}
+		return nil, fmt.Errorf("building new inventory: %w", err)
 	}
-	logger := commit.Logger
-	if logger == nil {
-		logger = logging.DisabledLogger()
-	}
-	logger = logger.With("path", obj.Path(), "id", newInv.ID, "head", newInv.Head, "ocfl_spec", newInv.Spec(), "alg", newInv.DigestAlgorithm)
-	// xfers is a subeset of the manifest with the new content to add
-	xfers, err := newContentMap(&newInv.raw)
+	// newContent is a subeset of the manifest with the new content to add
+	newContent, err := newContentMap(newInv)
 	if err != nil {
-		return &CommitError{Err: err}
+		return nil, err
 	}
 	// check that the stage includes all the new content
-	for digest := range xfers {
+	for digest := range newContent {
 		if !commit.Stage.HasContent(digest) {
 			// FIXME short digest
 			err := fmt.Errorf("no content for digest: %s", digest)
-			return &CommitError{Err: err}
+			return nil, err
 		}
 	}
-	// file changes start here
-	// 1. create or update NAMASTE object declaration
-	var oldSpec Spec
-	if obj.Inventory() != nil {
-		oldSpec = obj.Inventory().Spec()
+	plan := &CommitPlan{
+		FS:            obj.FS(),
+		Path:          obj.Path(),
+		NewInventory:  newInv,
+		PrevInventoy:  obj.Inventory(),
+		NewContent:    newContent,
+		ContentSource: commit.Stage,
 	}
-	newSpec := newInv.Spec()
-	switch {
-	case obj.Exists() && oldSpec != newSpec:
-		oldDecl := Namaste{Type: NamasteTypeObject, Version: oldSpec}
-		logger.DebugContext(ctx, "deleting previous OCFL object declaration", "name", oldDecl)
-		if err = writeFS.Remove(ctx, path.Join(obj.Path(), oldDecl.Name())); err != nil {
-			return &CommitError{Err: err, Dirty: true}
-		}
-		fallthrough
-	case !obj.Exists():
-		newDecl := Namaste{Type: NamasteTypeObject, Version: newSpec}
-		logger.DebugContext(ctx, "writing new OCFL object declaration", "name", newDecl)
-		if err = WriteDeclaration(ctx, writeFS, obj.Path(), newDecl); err != nil {
-			return &CommitError{Err: err, Dirty: true}
-		}
+	return plan, nil
+}
+
+func (imp ocflV1) Commit(ctx context.Context, obj *Object, commit *Commit) error {
+	plan, err := imp.NewCommitPlan(ctx, obj, commit)
+	if err != nil {
+		return &CommitError{Err: err}
 	}
-	// 2. tranfser files from stage to object
-	if len(xfers) > 0 {
-		copyOpts := &copyContentOpts{
-			Source:   commit.Stage,
-			DestFS:   writeFS,
-			DestRoot: obj.Path(),
-			Manifest: xfers,
-		}
-		logger.DebugContext(ctx, "copying new object files", "count", len(xfers))
-		if err := copyContent(ctx, copyOpts); err != nil {
-			err = fmt.Errorf("transferring new object contents: %w", err)
-			return &CommitError{Err: err, Dirty: true}
-		}
-	}
-	logger.DebugContext(ctx, "writing inventories for new object version")
-	// 3. write inventory to both object root and version directory
-	newVersionDir := path.Join(obj.Path(), newInv.Head().String())
-	if err := writeInventory(ctx, writeFS, newInv, obj.Path(), newVersionDir); err != nil {
-		err = fmt.Errorf("writing new inventories or inventory sidecars: %w", err)
+	if err := plan.Run(ctx, commit.Logger); err != nil {
 		return &CommitError{Err: err, Dirty: true}
 	}
-	obj.inventory = newInv
+	obj.inventory = plan.NewInventory
 	return nil
 }
 
@@ -741,39 +703,8 @@ func (imp ocflV1) newInventoryV1(commit *Commit, prev Inventory) (*inventoryV1, 
 	if commit.Stage.State == nil {
 		commit.Stage.State = DigestMap{}
 	}
-	inv := &inventoryV1{
-		raw: rawInventory{
-			ID:               commit.ID,
-			DigestAlgorithm:  commit.Stage.DigestAlgorithm.ID(),
-			ContentDirectory: contentDir,
-		},
-	}
-	switch {
-	case prev != nil:
-		prevInv, ok := prev.(*inventoryV1)
-		if !ok {
-			err := errors.New("inventory is not an OCFLv1 inventory")
-			return nil, err
-		}
-		if inv.raw.DigestAlgorithm != prev.DigestAlgorithm().ID() {
-			return nil, fmt.Errorf("commit must use same digest algorithm as existing inventory (%s)", prev.DigestAlgorithm())
-		}
-		inv.raw.ID = prev.ID()
-		inv.raw.ContentDirectory = prevInv.raw.ContentDirectory
-		inv.raw.Type = prevInv.raw.Type
-		var err error
-		inv.raw.Head, err = prev.Head().Next()
-		if err != nil {
-			return nil, fmt.Errorf("existing inventory's version scheme doesn't support additional versions: %w", err)
-		}
-		if !commit.Spec.Empty() {
-			// new inventory spec must be >= prev
-			if commit.Spec.Cmp(prev.Spec()) < 0 {
-				err = fmt.Errorf("new inventory's OCFL spec can't be lower than the existing inventory's (%s)", prev.Spec())
-				return nil, err
-			}
-			inv.raw.Type = commit.Spec.InventoryType()
-		}
+	id := commit.ID
+	if prev != nil {
 		if !commit.AllowUnchanged {
 			lastV := prev.Version(0)
 			if lastV.State().Eq(commit.Stage.State) {
@@ -781,110 +712,26 @@ func (imp ocflV1) newInventoryV1(commit *Commit, prev Inventory) (*inventoryV1, 
 				return nil, err
 			}
 		}
+		id = prev.ID()
+	}
+	newInv, err := NewInventoryBuilder(prev).
+		ID(id).
+		ContentPathFunc(commit.ContentPathFunc).
+		FixitySource(commit.Stage).
+		Spec(commit.Spec).
+		AddVersion(
+			commit.Stage.State,
+			commit.Stage.DigestAlgorithm,
+			commit.Created,
+			commit.Message,
+			&commit.User,
+		).Finalize()
 
-		// copy and normalize all digests in the inventory. If we don't do this
-		// non-normalized digests in previous version states might cause
-		// problems since the updated manifest/fixity will be normalized.
-		inv.raw.Manifest, err = prev.Manifest().Normalize()
-		if err != nil {
-			return nil, fmt.Errorf("in existing inventory manifest: %w", err)
-		}
-		versions := prev.Head().Lineage()
-		inv.raw.Versions = make(map[VNum]*rawInventoryVersion, len(versions))
-		for _, vnum := range versions {
-			prevVer := prev.Version(vnum.Num())
-			newVer := &rawInventoryVersion{
-				Created: prevVer.Created(),
-				Message: prevVer.Message(),
-			}
-			newVer.State, err = prevVer.State().Normalize()
-			if err != nil {
-				return nil, fmt.Errorf("in existing inventory %s state: %w", vnum, err)
-			}
-			if prevVer.User() != nil {
-				newVer.User = &User{
-					Name:    prevVer.User().Name,
-					Address: prevVer.User().Address,
-				}
-			}
-			inv.raw.Versions[vnum] = newVer
-		}
-		// transfer fixity
-		inv.raw.Fixity = make(map[string]DigestMap, len(prevInv.raw.Fixity))
-		for alg, m := range prevInv.raw.Fixity {
-			inv.raw.Fixity[alg], err = m.Normalize()
-			if err != nil {
-				return nil, fmt.Errorf("in existing inventory %s fixity: %w", alg, err)
-			}
-		}
-	default:
-		// FIXME: how whould padding be set for new inventories?
-		inv.raw.Head = V(1, 0)
-		inv.raw.Manifest = DigestMap{}
-		inv.raw.Fixity = map[string]DigestMap{}
-		inv.raw.Versions = map[VNum]*rawInventoryVersion{}
-		inv.raw.Type = commit.Spec.InventoryType()
+	if err != nil {
+		return nil, err
 	}
+	return newInv.(*inventoryV1), nil
 
-	// add new version
-	newVersion := &rawInventoryVersion{
-		State:   commit.Stage.State,
-		Created: commit.Created,
-		Message: commit.Message,
-		User:    &commit.User,
-	}
-	if newVersion.Created.IsZero() {
-		newVersion.Created = time.Now()
-	}
-	newVersion.Created = newVersion.Created.Truncate(time.Second)
-	inv.raw.Versions[inv.raw.Head] = newVersion
-
-	// build new manifest and fixity entries
-	newContentFunc := func(paths []string) []string {
-		// apply user-specified path transform first
-		if commit.ContentPathFunc != nil {
-			paths = commit.ContentPathFunc(paths)
-		}
-		contDir := inv.raw.ContentDirectory
-		if contDir == "" {
-			contDir = contentDir
-		}
-		for i, p := range paths {
-			paths[i] = path.Join(inv.raw.Head.String(), contDir, p)
-		}
-		return paths
-	}
-	for digest, logicPaths := range newVersion.State {
-		if len(inv.raw.Manifest[digest]) > 0 {
-			// version content already exists in the manifest
-			continue
-		}
-		inv.raw.Manifest[digest] = newContentFunc(slices.Clone(logicPaths))
-	}
-	if commit.Stage.FixitySource != nil {
-		for digest, contentPaths := range inv.raw.Manifest {
-			fixSet := commit.Stage.FixitySource.GetFixity(digest)
-			if len(fixSet) < 1 {
-				continue
-			}
-			for fixAlg, fixDigest := range fixSet {
-				if inv.raw.Fixity[fixAlg] == nil {
-					inv.raw.Fixity[fixAlg] = DigestMap{}
-				}
-				for _, cp := range contentPaths {
-					fixPaths := inv.raw.Fixity[fixAlg][fixDigest]
-					if !slices.Contains(fixPaths, cp) {
-						inv.raw.Fixity[fixAlg][fixDigest] = append(fixPaths, cp)
-					}
-				}
-			}
-		}
-	}
-	// check that resulting inventory is valid
-	if err := validateInventory(inv).Err(); err != nil {
-		return nil, fmt.Errorf("generated inventory is not valid: %w", err)
-	}
-	return inv, nil
 }
 
 type inventoryV1 struct {
@@ -1003,67 +850,10 @@ func convertJSONDigestMap(jsonMap map[string]any) (DigestMap, error) {
 	return m, nil
 }
 
-type copyContentOpts struct {
-	Source      ContentSource
-	DestFS      ocflfs.WriteFS
-	DestRoot    string
-	Manifest    DigestMap
-	Concurrency int
-}
-
-// transfer dst/src names in files from srcFS to dstFS
-func copyContent(ctx context.Context, c *copyContentOpts) error {
-	if c.Source == nil {
-		return errors.New("missing countent source")
-	}
-	conc := c.Concurrency
-	if conc < 1 {
-		conc = 1
-	}
-	grp, ctx := errgroup.WithContext(ctx)
-	grp.SetLimit(conc)
-	for dig, dstNames := range c.Manifest {
-		srcFS, srcPath := c.Source.GetContent(dig)
-		if srcFS == nil {
-			return fmt.Errorf("content source doesn't provide %q", dig)
-		}
-		for _, dstName := range dstNames {
-			srcPath := srcPath
-			dstPath := path.Join(c.DestRoot, dstName)
-			grp.Go(func() error {
-				return ocflfs.Copy(ctx, c.DestFS, dstPath, srcFS, srcPath)
-			})
-
-		}
-	}
-	return grp.Wait()
-}
-
-// newContentMap returns a DigestMap that is a subset of the inventory
-// manifest for the digests and paths of new content
-func newContentMap(inv *rawInventory) (DigestMap, error) {
-	pm := PathMap{}
-	for pth, dig := range inv.Manifest.Paths() {
-		// ignore manifest entries from previous versions
-		if !strings.HasPrefix(pth, inv.Head.String()+"/") {
-			continue
-		}
-		if _, exists := pm[pth]; exists {
-			return nil, fmt.Errorf("path duplicate in manifest: %q", pth)
-		}
-		pm[pth] = dig
-	}
-	dm := pm.DigestMap()
-	if err := dm.Valid(); err != nil {
-		return nil, err
-	}
-	return dm, nil
-}
-
 // writeInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
 // fsys. The digest is calculated using alg and the inventory sidecar is also written to
 // dir/inventory.alg
-func writeInventory(ctx context.Context, fsys ocflfs.WriteFS, inv *inventoryV1, dirs ...string) error {
+func writeInventory(ctx context.Context, fsys ocflfs.FS, inv *inventoryV1, dirs ...string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1079,11 +869,11 @@ func writeInventory(ctx context.Context, fsys ocflfs.WriteFS, inv *inventoryV1, 
 		invFile := path.Join(dir, inventoryBase)
 		sideFile := invFile + "." + inv.raw.DigestAlgorithm
 		sideContent := inv.jsonDigest + " " + inventoryBase + "\n"
-		_, err = fsys.Write(ctx, invFile, bytes.NewReader(byts))
+		_, err = ocflfs.Write(ctx, fsys, invFile, bytes.NewReader(byts))
 		if err != nil {
 			return fmt.Errorf("write inventory failed: %w", err)
 		}
-		_, err = fsys.Write(ctx, sideFile, strings.NewReader(sideContent))
+		_, err = ocflfs.Write(ctx, fsys, sideFile, strings.NewReader(sideContent))
 		if err != nil {
 			return fmt.Errorf("write inventory sidecar failed: %w", err)
 		}
