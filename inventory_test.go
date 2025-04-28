@@ -1,10 +1,13 @@
 package ocfl_test
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
+	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/internal/testutil"
 )
 
@@ -740,3 +743,190 @@ func TestValidateInventoryBytes(t *testing.T) {
 		})
 	}
 }
+
+func TestInventoryBuilder(t *testing.T) {
+	t.Run("without previous", func(t *testing.T) {
+		t.Run("complete", func(t *testing.T) {
+			now := time.Now().Truncate(time.Second)
+			user := &ocfl.User{Name: "abc", Address: "email"}
+			state := ocfl.DigestMap{"abc": []string{"file.txt"}}
+			inv, err := ocfl.NewInventoryBuilder(nil).
+				ID("test").
+				AddVersion(state, digest.SHA256, now, "message", user).
+				Finalize()
+			be.NilErr(t, err)
+			be.Equal(t, ocfl.Spec1_1, inv.Spec())
+			be.Equal(t, ocfl.V(1), inv.Head())
+			be.Equal(t, digest.SHA256.ID(), inv.DigestAlgorithm().ID())
+			be.Equal(t, "message", inv.Version(1).Message())
+			be.Equal(t, now, inv.Version(1).Created())
+			be.Equal(t, *user, *inv.Version(1).User())
+			be.True(t, state.Eq(inv.Version(1).State()))
+			be.True(t, inv.Manifest().Eq(ocfl.DigestMap{
+				"abc": []string{"v1/content/file.txt"},
+			}))
+		})
+		t.Run("custom padding", func(t *testing.T) {
+			state := ocfl.DigestMap{}
+			inv, err := ocfl.NewInventoryBuilder(nil).
+				ID("test").
+				AddVersion(state, digest.SHA256, time.Time{}, "message", nil).
+				Padding(2).
+				Finalize()
+			be.NilErr(t, err)
+			be.Equal(t, 2, inv.Head().Padding())
+		})
+
+		t.Run("custom spec", func(t *testing.T) {
+			state := ocfl.DigestMap{}
+			inv, err := ocfl.NewInventoryBuilder(nil).
+				ID("test").
+				Spec(ocfl.Spec1_0).
+				AddVersion(state, digest.SHA256, time.Time{}, "message", nil).
+				Padding(2).
+				Finalize()
+			be.NilErr(t, err)
+			be.Equal(t, ocfl.Spec1_0, inv.Spec())
+		})
+
+		t.Run("fixty source", func(t *testing.T) {
+			now := time.Now().Truncate(time.Second)
+			user := &ocfl.User{Name: "abc", Address: "email"}
+			state := ocfl.DigestMap{"abc": []string{"file.txt"}}
+			source := fixtySource{
+				"abc": digest.Set{"md5": "123"},
+			}
+			inv, err := ocfl.NewInventoryBuilder(nil).
+				ID("test").
+				AddVersion(state, digest.SHA256, now, "message", user).
+				FixitySource(source).
+				Finalize()
+			be.NilErr(t, err)
+			be.Equal(t, "123", inv.GetFixity("abc")["md5"])
+		})
+
+		t.Run("content directory", func(t *testing.T) {
+			now := time.Now().Truncate(time.Second)
+			user := &ocfl.User{Name: "abc", Address: "email"}
+			state := ocfl.DigestMap{"abc": []string{"file.txt"}}
+			inv, err := ocfl.NewInventoryBuilder(nil).
+				ID("test").
+				AddVersion(state, digest.SHA256, now, "message", user).
+				ContentDirectory("stuff").
+				Finalize()
+			be.NilErr(t, err)
+			be.True(t, inv.Manifest().Eq(ocfl.DigestMap{
+				"abc": []string{"v1/stuff/file.txt"},
+			}))
+		})
+
+		t.Run("content path func", func(t *testing.T) {
+			now := time.Now().Truncate(time.Second)
+			user := &ocfl.User{Name: "abc", Address: "email"}
+			state := ocfl.DigestMap{"abc": []string{"file.txt"}}
+			contentFunc := func(paths []string) []string {
+				for i, val := range paths {
+					paths[i] = strings.ToUpper(val)
+				}
+				return paths
+			}
+			inv, err := ocfl.NewInventoryBuilder(nil).
+				ID("test").
+				AddVersion(state, digest.SHA256, now, "message", user).
+				ContentPathFunc(contentFunc).
+				Finalize()
+			be.NilErr(t, err)
+			be.Equal(t, "v1/content/FILE.TXT", inv.Manifest()["abc"][0])
+		})
+
+		t.Run("missing id", func(t *testing.T) {
+			now := time.Now().Truncate(time.Second)
+			user := &ocfl.User{Name: "abc", Address: "email"}
+			state := ocfl.DigestMap{"abc": []string{"file.txt"}}
+			_, err := ocfl.NewInventoryBuilder(nil).
+				AddVersion(state, digest.SHA256, now, "message", user).
+				Finalize()
+			be.Nonzero(t, err)
+		})
+
+		t.Run("missing versions", func(t *testing.T) {
+			_, err := ocfl.NewInventoryBuilder(nil).
+				ID("tests").
+				Finalize()
+			be.Nonzero(t, err)
+		})
+	})
+	t.Run("with previous", func(t *testing.T) {
+		now := time.Now().Truncate(time.Second)
+		user := &ocfl.User{Name: "name", Address: "email"}
+		state := ocfl.DigestMap{"abc": []string{"file.txt"}}
+		padding := 3
+		fixty := fixtySource{"abc": digest.Set{"md5": "123"}}
+		baseInv, err := ocfl.NewInventoryBuilder(nil).
+			ID("test").
+			Spec(ocfl.Spec1_0).
+			ContentDirectory("files").
+			FixitySource(fixty).
+			Padding(padding).
+			AddVersion(state, digest.SHA256, now, "init", user).
+			Finalize()
+		be.NilErr(t, err)
+		t.Run("complete", func(t *testing.T) {
+			now := time.Now().Truncate(time.Second)
+			user := &ocfl.User{Name: "name2", Address: "email2"}
+			v2State := ocfl.DigestMap{
+				"def": []string{"file2.txt"},
+			}
+			fixty := fixtySource{
+				"abc": digest.Set{"size": "1"},
+				"def": digest.Set{"size": "2"},
+			}
+			inv, err := ocfl.NewInventoryBuilder(baseInv).
+				AddVersion(v2State, digest.SHA256, now, "update", user).
+				FixitySource(fixty).
+				Finalize()
+			be.NilErr(t, err)
+			be.Equal(t, ocfl.Spec1_0, inv.Spec())
+			be.Equal(t, ocfl.V(2, padding), inv.Head())
+			be.Equal(t, digest.SHA256.ID(), inv.DigestAlgorithm().ID())
+			be.Equal(t, "update", inv.Version(0).Message())
+			be.Equal(t, now, inv.Version(0).Created())
+			be.Equal(t, *user, *inv.Version(0).User())
+			be.True(t, v2State.Eq(inv.Version(0).State()))
+			// original and new manifest values are present
+			be.True(t, inv.Manifest().Eq(ocfl.DigestMap{
+				"abc": []string{"v001/files/file.txt"},
+				"def": []string{"v002/files/file2.txt"},
+			}))
+			// original and new fixity values are present
+			be.Equal(t, "1", inv.GetFixity("abc")["size"])
+			be.Equal(t, "2", inv.GetFixity("def")["size"])
+			be.Equal(t, "123", inv.GetFixity("abc")["md5"])
+		})
+		t.Run("padding is ignored", func(t *testing.T) {
+			inv, err := ocfl.NewInventoryBuilder(baseInv).
+				AddVersion(ocfl.DigestMap{}, digest.SHA256, time.Time{}, "message", nil).
+				Padding(2).
+				Finalize()
+			be.NilErr(t, err)
+			be.Equal(t, padding, inv.Head().Padding())
+		})
+
+		t.Run("content directory is ignored", func(t *testing.T) {
+			inv, err := ocfl.NewInventoryBuilder(baseInv).
+				AddVersion(ocfl.DigestMap{}, digest.SHA256, time.Time{}, "message", nil).
+				ContentDirectory("content").
+				Finalize()
+			be.NilErr(t, err)
+			be.Equal(t, "files", inv.ContentDirectory())
+		})
+	})
+
+}
+
+// fixity source used for testing
+type fixtySource map[string]digest.Set
+
+var _ ocfl.FixitySource = fixtySource(nil)
+
+func (s fixtySource) GetFixity(dig string) digest.Set { return s[dig] }
