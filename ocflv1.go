@@ -33,10 +33,10 @@ func (imp ocflV1) Spec() Spec {
 }
 
 func (imp ocflV1) NewInventory(byts []byte) (Inventory, error) {
-	inv := &inventoryV1{}
+	inv := &InventoryV1{}
 	dec := json.NewDecoder(bytes.NewReader(byts))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&inv.raw); err != nil {
+	if err := dec.Decode(&inv.RawInventory); err != nil {
 		return nil, err
 	}
 	if err := inv.setJsonDigest(byts); err != nil {
@@ -50,41 +50,41 @@ func (imp ocflV1) NewInventory(byts []byte) (Inventory, error) {
 
 func (imp ocflV1) ValidateInventory(inv Inventory) *Validation {
 	v := &Validation{}
-	invV1, ok := inv.(*inventoryV1)
+	invV1, ok := inv.(*InventoryV1)
 	if !ok {
 		err := errors.New("inventory does not have expected type")
 		v.AddFatal(err)
 	}
-	if invV1.raw.Type.Empty() {
+	if invV1.RawInventory.Type.Empty() {
 		err := errors.New("missing required field: 'type'")
 		v.AddFatal(err)
 	}
-	if invV1.raw.Type.Spec != imp.v1Spec {
-		err := fmt.Errorf("inventory declares v%s, not v%s", invV1.raw.Type.Spec, imp.v1Spec)
+	if invV1.RawInventory.Type.Spec != imp.v1Spec {
+		err := fmt.Errorf("inventory declares v%s, not v%s", invV1.RawInventory.Type.Spec, imp.v1Spec)
 		v.AddFatal(err)
 	}
 	specStr := string(imp.v1Spec)
-	if invV1.raw.ID == "" {
+	if invV1.RawInventory.ID == "" {
 		err := errors.New("missing required field: 'id'")
 		v.AddFatal(verr(err, code.E036(specStr)))
 	}
-	if invV1.raw.Head.IsZero() {
+	if invV1.RawInventory.Head.IsZero() {
 		err := errors.New("missing required field: 'head'")
 		v.AddFatal(verr(err, code.E036(specStr)))
 	}
-	if invV1.raw.Manifest == nil {
+	if invV1.RawInventory.Manifest == nil {
 		err := errors.New("missing required field 'manifest'")
 		v.AddFatal(verr(err, code.E041(specStr)))
 	}
-	if invV1.raw.Versions == nil {
+	if invV1.RawInventory.Versions == nil {
 		err := errors.New("missing required field: 'versions'")
 		v.AddFatal(verr(err, code.E041(specStr)))
 	}
-	if u, err := url.ParseRequestURI(invV1.raw.ID); err != nil || u.Scheme == "" {
-		err := fmt.Errorf(`object ID is not a URI: %q`, invV1.raw.ID)
+	if u, err := url.ParseRequestURI(invV1.RawInventory.ID); err != nil || u.Scheme == "" {
+		err := fmt.Errorf(`object ID is not a URI: %q`, invV1.RawInventory.ID)
 		v.AddWarn(verr(err, code.W005(specStr)))
 	}
-	switch invV1.raw.DigestAlgorithm {
+	switch invV1.RawInventory.DigestAlgorithm {
 	case digest.SHA512.ID():
 		break
 	case digest.SHA256.ID():
@@ -94,20 +94,20 @@ func (imp ocflV1) ValidateInventory(inv Inventory) *Validation {
 		err := fmt.Errorf(`'digestAlgorithm' is not %q or %q`, digest.SHA512.ID(), digest.SHA256.ID())
 		v.AddFatal(verr(err, code.E025(specStr)))
 	}
-	if err := invV1.raw.Head.Valid(); err != nil {
+	if err := invV1.RawInventory.Head.Valid(); err != nil {
 		err = fmt.Errorf("head is invalid: %w", err)
 		v.AddFatal(verr(err, code.E011(specStr)))
 	}
-	if strings.Contains(invV1.raw.ContentDirectory, "/") {
+	if strings.Contains(invV1.RawInventory.ContentDirectory, "/") {
 		err := errors.New("contentDirectory contains '/'")
 		v.AddFatal(verr(err, code.E017(specStr)))
 	}
-	if invV1.raw.ContentDirectory == "." || invV1.raw.ContentDirectory == ".." {
+	if invV1.RawInventory.ContentDirectory == "." || invV1.RawInventory.ContentDirectory == ".." {
 		err := errors.New("contentDirectory is '.' or '..'")
 		v.AddFatal(verr(err, code.E017(specStr)))
 	}
-	if invV1.raw.Manifest != nil {
-		err := invV1.raw.Manifest.Valid()
+	if invV1.RawInventory.Manifest != nil {
+		err := invV1.RawInventory.Manifest.Valid()
 		if err != nil {
 			var dcErr *MapDigestConflictErr
 			var pcErr *MapPathConflictErr
@@ -122,9 +122,9 @@ func (imp ocflV1) ValidateInventory(inv Inventory) *Validation {
 			v.AddFatal(err)
 		}
 		// check that each manifest entry is used in at least one state
-		for digest := range invV1.raw.Manifest {
+		for digest := range invV1.RawInventory.Manifest {
 			var found bool
-			for _, version := range invV1.raw.Versions {
+			for _, version := range invV1.RawInventory.Versions {
 				if version == nil {
 					continue
 				}
@@ -140,7 +140,7 @@ func (imp ocflV1) ValidateInventory(inv Inventory) *Validation {
 		}
 	}
 	// version names
-	var versionNums VNums = invV1.raw.vnums()
+	var versionNums VNums = invV1.RawInventory.vnums()
 	if err := versionNums.Valid(); err != nil {
 		if errors.Is(err, ErrVerEmpty) {
 			err = verr(err, code.E008(specStr))
@@ -151,12 +151,12 @@ func (imp ocflV1) ValidateInventory(inv Inventory) *Validation {
 		}
 		v.AddFatal(err)
 	}
-	if versionNums.Head() != invV1.raw.Head {
-		err := fmt.Errorf(`version head not most recent version: %s`, invV1.raw.Head)
+	if versionNums.Head() != invV1.RawInventory.Head {
+		err := fmt.Errorf(`version head not most recent version: %s`, invV1.RawInventory.Head)
 		v.AddFatal(verr(err, code.E040(specStr)))
 	}
 	// version state
-	for vname, ver := range invV1.raw.Versions {
+	for vname, ver := range invV1.RawInventory.Versions {
 		if ver == nil {
 			err := fmt.Errorf(`missing required version block for %q`, vname)
 			v.AddFatal(verr(err, code.E048(specStr)))
@@ -209,14 +209,14 @@ func (imp ocflV1) ValidateInventory(inv Inventory) *Validation {
 		}
 		// check that each state digest appears in manifest
 		for digest := range ver.State {
-			if len(invV1.raw.Manifest[digest]) == 0 {
+			if len(invV1.RawInventory.Manifest[digest]) == 0 {
 				err := fmt.Errorf("digest in %s state not in manifest: %s", vname, digest)
 				v.AddFatal(verr(err, code.E050(specStr)))
 			}
 		}
 	}
 	//fixity
-	for _, fixity := range invV1.raw.Fixity {
+	for _, fixity := range invV1.RawInventory.Fixity {
 		err := fixity.Valid()
 		if err != nil {
 			var dcErr *MapDigestConflictErr
@@ -302,8 +302,8 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
 		err := fmt.Errorf("inventory json has unexpected field: %q", extra)
 		v.AddFatal(err)
 	}
-	inv := &inventoryV1{
-		raw: rawInventory{
+	inv := &InventoryV1{
+		RawInventory: RawInventory{
 			ID:               id,
 			ContentDirectory: contentDirectory,
 			DigestAlgorithm:  digestAlg,
@@ -311,14 +311,14 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
 			Versions:         make(map[VNum]*rawInventoryVersion),
 		},
 	}
-	if err := inv.raw.Type.UnmarshalText([]byte(typeStr)); err != nil {
+	if err := inv.RawInventory.Type.UnmarshalText([]byte(typeStr)); err != nil {
 		v.AddFatal(verr(err, code.E038(specStr)))
 	}
-	if err := inv.raw.Head.UnmarshalText([]byte(head)); err != nil {
+	if err := inv.RawInventory.Head.UnmarshalText([]byte(head)); err != nil {
 		v.AddFatal(verr(err, code.E040(specStr)))
 	}
 	var err error
-	if inv.raw.Manifest, err = convertJSONDigestMap(manifestVals); err != nil {
+	if inv.RawInventory.Manifest, err = convertJSONDigestMap(manifestVals); err != nil {
 		err = fmt.Errorf("invalid manifest: %w", err)
 		v.AddFatal(verr(err, code.E092(specStr)))
 	}
@@ -399,7 +399,7 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
 			err = fmt.Errorf("%s: state: %w", versionErrPrefix, err)
 			v.AddFatal(err)
 		}
-		inv.raw.Versions[vnum] = &rawInventoryVersion{
+		inv.RawInventory.Versions[vnum] = &rawInventoryVersion{
 			Created: created,
 			State:   state,
 			Message: message,
@@ -422,7 +422,7 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (Inventory, *Validation) {
 			v.AddFatal(verr(err, code.E057(specStr)))
 			continue
 		}
-		inv.raw.Fixity[algStr] = digests
+		inv.RawInventory.Fixity[algStr] = digests
 	}
 	if err := inv.setJsonDigest(raw); err != nil {
 		v.AddFatal(err)
@@ -692,7 +692,7 @@ func (imp ocflV1) compareVersionInventory(obj *Object, dirNum VNum, verInv Inven
 }
 
 // build a new inventoryV1 from a commit and an optional previous inventory
-func (imp ocflV1) newInventoryV1(commit *Commit, prev Inventory) (*inventoryV1, error) {
+func (imp ocflV1) newInventoryV1(commit *Commit, prev Inventory) (*InventoryV1, error) {
 	if commit.Stage == nil {
 		return nil, errors.New("commit is missing new version state")
 	}
@@ -730,29 +730,29 @@ func (imp ocflV1) newInventoryV1(commit *Commit, prev Inventory) (*inventoryV1, 
 	if err != nil {
 		return nil, err
 	}
-	return newInv.(*inventoryV1), nil
+	return newInv.(*InventoryV1), nil
 
 }
 
-type inventoryV1 struct {
-	raw        rawInventory
+type InventoryV1 struct {
+	RawInventory
 	jsonDigest string
 }
 
-var _ Inventory = (*inventoryV1)(nil)
+var _ Inventory = (*InventoryV1)(nil)
 
-func (inv *inventoryV1) ContentDirectory() string {
-	if c := inv.raw.ContentDirectory; c != "" {
+func (inv *InventoryV1) ContentDirectory() string {
+	if c := inv.RawInventory.ContentDirectory; c != "" {
 		return c
 	}
 	return "content"
 }
 
-func (inv *inventoryV1) Digest() string { return inv.jsonDigest }
+func (inv *InventoryV1) Digest() string { return inv.jsonDigest }
 
-func (inv *inventoryV1) DigestAlgorithm() digest.Algorithm {
+func (inv *InventoryV1) DigestAlgorithm() digest.Algorithm {
 	// DigestAlgorithm should be sha512 or sha256
-	switch inv.raw.DigestAlgorithm {
+	switch inv.RawInventory.DigestAlgorithm {
 	case digest.SHA256.ID():
 		return digest.SHA256
 	case digest.SHA512.ID():
@@ -762,47 +762,51 @@ func (inv *inventoryV1) DigestAlgorithm() digest.Algorithm {
 	}
 }
 
-func (inv *inventoryV1) FixityAlgorithms() []string {
-	if len(inv.raw.Fixity) < 1 {
+func (inv *InventoryV1) FixityAlgorithms() []string {
+	if len(inv.RawInventory.Fixity) < 1 {
 		return nil
 	}
-	algs := make([]string, 0, len(inv.raw.Fixity))
-	for alg := range inv.raw.Fixity {
+	algs := make([]string, 0, len(inv.RawInventory.Fixity))
+	for alg := range inv.RawInventory.Fixity {
 		algs = append(algs, alg)
 	}
 	return algs
 }
 
-func (inv *inventoryV1) GetFixity(digest string) digest.Set {
-	return inv.raw.getFixity(digest)
+func (inv *InventoryV1) GetFixity(digest string) digest.Set {
+	return inv.RawInventory.getFixity(digest)
 }
 
-func (inv *inventoryV1) Head() VNum {
-	return inv.raw.Head
+func (inv *InventoryV1) Head() VNum {
+	return inv.RawInventory.Head
 }
 
-func (inv *inventoryV1) ID() string {
-	return inv.raw.ID
+func (inv *InventoryV1) ID() string {
+	return inv.RawInventory.ID
 }
 
-func (inv *inventoryV1) Manifest() DigestMap {
-	return inv.raw.Manifest
+func (inv *InventoryV1) Manifest() DigestMap {
+	return inv.RawInventory.Manifest
 }
 
-func (inv *inventoryV1) Spec() Spec {
-	return inv.raw.Type.Spec
+func (inv *InventoryV1) MarshalJSON() ([]byte, error) {
+	return json.Marshal(inv.RawInventory)
 }
 
-func (inv *inventoryV1) Version(i int) ObjectVersion {
-	v := inv.raw.version(i)
+func (inv *InventoryV1) Spec() Spec {
+	return inv.RawInventory.Type.Spec
+}
+
+func (inv *InventoryV1) Version(i int) ObjectVersion {
+	v := inv.RawInventory.version(i)
 	if v == nil {
 		return nil
 	}
 	return &inventoryVersion{raw: v}
 }
 
-func (inv *inventoryV1) setJsonDigest(raw []byte) error {
-	digester, err := digest.DefaultRegistry().NewDigester(inv.raw.DigestAlgorithm)
+func (inv *InventoryV1) setJsonDigest(raw []byte) error {
+	digester, err := digest.DefaultRegistry().NewDigester(inv.RawInventory.DigestAlgorithm)
 	if err != nil {
 		return err
 	}
@@ -853,11 +857,11 @@ func convertJSONDigestMap(jsonMap map[string]any) (DigestMap, error) {
 // writeInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
 // fsys. The digest is calculated using alg and the inventory sidecar is also written to
 // dir/inventory.alg
-func writeInventory(ctx context.Context, fsys ocflfs.FS, inv *inventoryV1, dirs ...string) error {
+func writeInventory(ctx context.Context, fsys ocflfs.FS, inv *InventoryV1, dirs ...string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	byts, err := json.Marshal(inv.raw)
+	byts, err := json.Marshal(inv.RawInventory)
 	if err != nil {
 		return fmt.Errorf("encoding inventory: %w", err)
 	}
@@ -867,7 +871,7 @@ func writeInventory(ctx context.Context, fsys ocflfs.FS, inv *inventoryV1, dirs 
 	// write inventory.json and sidecar
 	for _, dir := range dirs {
 		invFile := path.Join(dir, inventoryBase)
-		sideFile := invFile + "." + inv.raw.DigestAlgorithm
+		sideFile := invFile + "." + inv.RawInventory.DigestAlgorithm
 		sideContent := inv.jsonDigest + " " + inventoryBase + "\n"
 		_, err = ocflfs.Write(ctx, fsys, invFile, bytes.NewReader(byts))
 		if err != nil {

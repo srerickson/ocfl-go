@@ -59,7 +59,7 @@ type CommitPlan struct {
 }
 
 func (p *CommitPlan) Run(ctx context.Context, logger *slog.Logger) error {
-	rawInv, invOK := p.NewInventory.(*inventoryV1)
+	rawInv, invOK := p.NewInventory.(*InventoryV1)
 	if !invOK {
 		return errors.New("new inventory doesn't have expected type")
 	}

@@ -24,6 +24,7 @@ var (
 )
 
 type Inventory interface {
+	json.Marshaler
 	FixitySource
 	ContentDirectory() string
 	Digest() string
@@ -133,8 +134,8 @@ func getInventoryOCFL(byts []byte) (ocfl, error) {
 	return getOCFL(invFields.Type.Spec)
 }
 
-// rawInventory represents the contents of an object's inventory.json file
-type rawInventory struct {
+// RawInventory represents the contents of an object's inventory.json file
+type RawInventory struct {
 	ID               string                        `json:"id"`
 	Type             InventoryType                 `json:"type"`
 	DigestAlgorithm  string                        `json:"digestAlgorithm"`
@@ -145,7 +146,7 @@ type rawInventory struct {
 	Fixity           map[string]DigestMap          `json:"fixity,omitempty"`
 }
 
-func (inv rawInventory) getFixity(dig string) digest.Set {
+func (inv RawInventory) getFixity(dig string) digest.Set {
 	paths := inv.Manifest[dig]
 	if len(paths) < 1 {
 		return nil
@@ -162,7 +163,7 @@ func (inv rawInventory) getFixity(dig string) digest.Set {
 	return set
 }
 
-func (inv rawInventory) version(v int) *rawInventoryVersion {
+func (inv RawInventory) version(v int) *rawInventoryVersion {
 	if inv.Versions == nil {
 		return nil
 	}
@@ -175,7 +176,7 @@ func (inv rawInventory) version(v int) *rawInventoryVersion {
 
 // vnums returns a sorted slice of vnums corresponding to the keys in the
 // inventory's 'versions' block.
-func (inv rawInventory) vnums() []VNum {
+func (inv RawInventory) vnums() []VNum {
 	vnums := make([]VNum, len(inv.Versions))
 	i := 0
 	for v := range inv.Versions {
@@ -276,7 +277,7 @@ func (b *InventoryBuilder) Finalize() (Inventory, error) {
 	}
 	b.fillFixity(newInv)
 	//FIXME
-	v1Inv := &inventoryV1{raw: *newInv}
+	v1Inv := &InventoryV1{RawInventory: *newInv}
 	if err := validateInventory(v1Inv).Err(); err != nil {
 		return nil, fmt.Errorf("generated inventory is not valid: %w", err)
 	}
@@ -312,8 +313,8 @@ func (b *InventoryBuilder) Spec(spec Spec) *InventoryBuilder {
 	return b
 }
 
-func (b *InventoryBuilder) initialInventory() (*rawInventory, error) {
-	inv := &rawInventory{
+func (b *InventoryBuilder) initialInventory() (*RawInventory, error) {
+	inv := &RawInventory{
 		ID:               b.id,
 		Head:             b.head,
 		Type:             b.spec.InventoryType(),
@@ -325,21 +326,21 @@ func (b *InventoryBuilder) initialInventory() (*rawInventory, error) {
 	if b.prev == nil {
 		return inv, nil
 	}
-	prevInv, ok := b.prev.(*inventoryV1)
+	prevInv, ok := b.prev.(*InventoryV1)
 	if !ok {
 		return nil, errors.New("previous inventory does not have expected type")
 	}
 	// copy manifest
-	inv.DigestAlgorithm = prevInv.raw.DigestAlgorithm
+	inv.DigestAlgorithm = prevInv.RawInventory.DigestAlgorithm
 	var err error
-	inv.Manifest, err = prevInv.raw.Manifest.Normalize()
+	inv.Manifest, err = prevInv.RawInventory.Manifest.Normalize()
 	if err != nil {
 		return nil, fmt.Errorf("in existing inventory manifest: %w", err)
 	}
 	// copy versions
-	versions := prevInv.raw.Head.Lineage()
+	versions := prevInv.RawInventory.Head.Lineage()
 	inv.Versions = make(map[VNum]*rawInventoryVersion, len(versions)+1)
-	for vnum, prevVer := range prevInv.raw.Versions {
+	for vnum, prevVer := range prevInv.RawInventory.Versions {
 		newVer := &rawInventoryVersion{
 			Created: prevVer.Created,
 			Message: prevVer.Message,
@@ -355,8 +356,8 @@ func (b *InventoryBuilder) initialInventory() (*rawInventory, error) {
 		inv.Versions[vnum] = newVer
 	}
 	// copy fixity
-	inv.Fixity = make(map[string]DigestMap, len(prevInv.raw.Fixity))
-	for alg, m := range prevInv.raw.Fixity {
+	inv.Fixity = make(map[string]DigestMap, len(prevInv.RawInventory.Fixity))
+	for alg, m := range prevInv.RawInventory.Fixity {
 		inv.Fixity[alg], err = m.Normalize()
 		if err != nil {
 			return nil, fmt.Errorf("in existing inventory %s fixity: %w", alg, err)
@@ -365,7 +366,7 @@ func (b *InventoryBuilder) initialInventory() (*rawInventory, error) {
 	return inv, nil
 }
 
-func (b *InventoryBuilder) buildVersions(inv *rawInventory) error {
+func (b *InventoryBuilder) buildVersions(inv *RawInventory) error {
 	for _, addedVer := range b.addedVersions {
 		newHead, err := inv.Head.Next()
 		if err != nil {
@@ -431,7 +432,7 @@ func (b *InventoryBuilder) buildVersions(inv *rawInventory) error {
 
 // fillFixity adds fixity entries from source using for all digests found in the
 // inventory's manifest.
-func (b *InventoryBuilder) fillFixity(inv *rawInventory) {
+func (b *InventoryBuilder) fillFixity(inv *RawInventory) {
 	if b.fixtySource == nil {
 		return
 	}
