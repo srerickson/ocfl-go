@@ -203,15 +203,15 @@ func (v *ObjectValidation) addExistingContent(name string) {
 // automatically added to the validation's Fatal errors.
 //
 // If isRoot is true, v.object's is set to inv
-func (v *ObjectValidation) addInventory(inv Inventory, isRoot bool) error {
+func (v *ObjectValidation) addInventory(inv *Inventory, isRoot bool) error {
 	if v.files == nil {
 		v.files = map[string]*validationFileInfo{}
 	}
-	primaryAlg := inv.DigestAlgorithm()
+	primaryAlg := inv.DigestAlgorithm
 	allErrors := &multierror.Error{}
-	for name, primaryDigest := range inv.Manifest().Paths() {
+	for name, primaryDigest := range inv.Manifest.Paths() {
 		allDigests := inv.GetFixity(primaryDigest)
-		allDigests[primaryAlg.ID()] = primaryDigest
+		allDigests[primaryAlg] = primaryDigest
 		existing := v.files[name]
 		if existing == nil {
 			v.files[name] = &validationFileInfo{
@@ -235,7 +235,7 @@ func (v *ObjectValidation) addInventory(inv Inventory, isRoot bool) error {
 		return err
 	}
 	if isRoot {
-		v.obj.inventory = inv
+		v.obj.rootInventory = inv
 	}
 	return nil
 }

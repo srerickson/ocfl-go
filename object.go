@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"log/slog"
-
 	"github.com/srerickson/ocfl-go/digest"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
@@ -26,8 +24,9 @@ type Object struct {
 	// path in FS for object root directory
 	path string
 	// object's root inventory. May be nil if the object doesn't (yet) exist.
-	inventory Inventory
-	// object id used to open the object from the root
+	//root inventory
+	rootInventory *Inventory
+	// the expected object ID
 	expectID string
 	// the object must exist: don't create a new object.
 	mustExist bool
@@ -56,11 +55,11 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 	if inv != nil {
 		// check that inventory has expected object ID
 		// if the expected object ID is known.
-		if obj.expectID != "" && inv.ID() != obj.expectID {
-			err := fmt.Errorf("object has unexpected ID: %q; expected: %q", inv.ID(), obj.expectID)
+		if obj.expectID != "" && inv.ID != obj.expectID {
+			err := fmt.Errorf("object has unexpected ID: %q; expected: %q", inv.ID, obj.expectID)
 			return nil, err
 		}
-		obj.inventory = inv
+		obj.rootInventory = inv
 		return obj, nil
 	}
 	// inventory doesn't exist: open as uninitialized object. The object
@@ -83,6 +82,14 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 	}
 }
 
+// ContentDirectory return "content" or the value set in in the root inventory.
+func (obj *Object) ContentDirectory() string {
+	if obj.rootInventory != nil && obj.rootInventory.ContentDirectory != "" {
+		return obj.rootInventory.ContentDirectory
+	}
+	return contentDir
+}
+
 // Commit creates a new object version based on values in commit.
 func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	if _, isWriteFS := obj.FS().(ocflfs.WriteFS); !isWriteFS {
@@ -99,7 +106,7 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 		default:
 			// use existing object's ocfl version
 			var err error
-			useOCFL, err = getOCFL(obj.inventory.Spec())
+			useOCFL, err = getOCFL(obj.rootInventory.Type.Spec)
 			if err != nil {
 				err = fmt.Errorf("object's root inventory has errors: %w", err)
 				return &CommitError{Err: err}
@@ -127,9 +134,17 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	return nil
 }
 
+// DigestAlgorithm returns sha512 unless sha256 is set in the root inventory.
+func (obj *Object) DigestAlgorithm() digest.Algorithm {
+	if obj.rootInventory != nil && obj.rootInventory.DigestAlgorithm == digest.SHA256.ID() {
+		return digest.SHA256
+	}
+	return digest.SHA512
+}
+
 // Exists returns true if the object's inventory exists.
 func (obj *Object) Exists() bool {
-	return obj.inventory != nil
+	return obj.rootInventory != nil
 }
 
 // ExtensionNames returns the names of directories in the object's
@@ -154,26 +169,49 @@ func (obj Object) ExtensionNames(ctx context.Context) ([]string, error) {
 	return names, err
 }
 
+// FixityAlgorithms returns a slice of the keys from the root inventory's
+// `fixity` block, or nil of the root inventory is not set.
+func (obj Object) FixityAlgorithms() []string {
+	if obj.rootInventory == nil {
+		return nil
+	}
+	return slices.Collect(maps.Keys(obj.rootInventory.Fixity))
+}
+
 // FS returns the FS where object is stored.
 func (obj *Object) FS() ocflfs.FS {
 	return obj.fs
+}
+
+// GetFixity implement the FixitySource interface for Object
+func (obj Object) GetFixity(dig string) digest.Set {
+	if obj.rootInventory == nil {
+		return nil
+	}
+	return obj.rootInventory.GetFixity(dig)
+}
+
+// GetContent implements ContentSource
+func (obj Object) GetContent(dig string) (ocflfs.FS, string) {
+	if obj.rootInventory == nil {
+		return nil, ""
+	}
+	paths := obj.rootInventory.Manifest[dig]
+	if len(paths) < 1 {
+		return nil, ""
+	}
+	return obj.fs, path.Join(obj.path, paths[0])
 }
 
 // ID returns obj's inventory ID if the obj exists (its inventory is not nil).
 // If obj does not exist but was constructed with [Root.NewObject](), the ID
 // used with [Root.NewObject]() is returned. Otherwise, it returns an empty
 // string.
-func (obj *Object) ID() string {
-	if obj.inventory != nil {
-		return obj.inventory.ID()
+func (obj Object) ID() string {
+	if obj.rootInventory != nil {
+		return obj.rootInventory.ID
 	}
 	return obj.expectID
-}
-
-// Inventory returns the object's Inventory if it exists. If the object
-// doesn't exist, it returns nil.
-func (obj *Object) Inventory() Inventory {
-	return obj.inventory
 }
 
 // Path returns the Object's path relative to its FS.
@@ -183,24 +221,16 @@ func (obj *Object) Path() string {
 
 // OpenVersion returns an ObjectVersionFS for the version with the given
 // index (1...HEAD). If i is 0, the most recent version is used.
-func (obj *Object) OpenVersion(ctx context.Context, i int) (*ObjectVersionFS, error) {
-	if !obj.Exists() {
-		// FIXME: unified error to use here?
-		return nil, errors.New("object has no versions to open")
-	}
-	inv := obj.Inventory()
-	if i == 0 {
-		i = inv.Head().num
-	}
-	ver := inv.Version(i)
+func (obj *Object) OpenVersionFS(ctx context.Context, i int) (*ObjectVersionFS, error) {
+	ver := obj.Version(i)
 	if ver == nil {
-		return nil, fmt.Errorf("object has no version with index %d", i)
+		return nil, errors.New("version  not found")
 	}
 	vfs := &ObjectVersionFS{
 		fsys: obj.versionFS(ctx, ver),
 		ver:  ver,
 		num:  i,
-		inv:  inv,
+		inv:  obj.rootInventory,
 	}
 	return vfs, nil
 }
@@ -211,33 +241,44 @@ func (o *Object) Root() *Root {
 	return o.root
 }
 
-func (o *Object) versionFS(ctx context.Context, ver ObjectVersion) fs.FS {
-	// FIXME: This is a hack to make versionFS replicates the filemode of
-	// the undering FS. Open a random content file to get the file mode used by
-	// the underlying FS.
-	regfileType := fs.FileMode(0)
-	for _, paths := range o.inventory.Manifest() {
-		if len(paths) < 1 {
-			continue
-		}
-		f, err := o.fs.OpenFile(ctx, path.Join(o.path, paths[0]))
-		if err != nil {
-			continue
-		}
-		defer f.Close()
-		info, err := f.Stat()
-		if err != nil {
-			continue
-		}
-		regfileType = info.Mode().Type()
-		break
+func (o *Object) Spec() Spec {
+	if o.rootInventory == nil {
+		return Spec("")
 	}
+	return o.rootInventory.Type.Spec
+}
+
+func (obj *Object) StageVersion(i int) *Stage {
+	ver := obj.Version(i)
+	if ver == nil {
+		return nil
+	}
+	return &Stage{
+		State:           ver.State,
+		DigestAlgorithm: obj.DigestAlgorithm(),
+		ContentSource:   obj,
+		FixitySource:    obj,
+	}
+}
+
+func (obj *Object) Version(i int) *InventoryVersion {
+	if obj.rootInventory == nil {
+		return nil
+	}
+	inv := obj.rootInventory
+	ver := inv.Versions[inv.Head]
+	if i > 0 {
+		ver = inv.Versions[V(i, inv.Head.padding)]
+	}
+	return ver
+}
+
+func (o *Object) versionFS(ctx context.Context, ver *InventoryVersion) fs.FS {
 	return &versionFS{
 		ctx:     ctx,
 		obj:     o,
-		paths:   ver.State().PathMap(),
-		created: ver.Created(),
-		regMode: regfileType,
+		paths:   ver.State.PathMap(),
+		created: ver.Created,
 	}
 }
 
@@ -266,7 +307,7 @@ func ValidateObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...Obj
 	}
 	// validate versions using previous specs
 	versionOCFL := lowestOCFL()
-	var prevInv Inventory
+	var prevInv *Inventory
 	for _, vnum := range state.VersionDirs.Head().Lineage() {
 		versionDir := path.Join(dir, vnum.String())
 		versionInv, err := ReadInventory(ctx, fsys, versionDir)
@@ -275,7 +316,7 @@ func ValidateObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...Obj
 			continue
 		}
 		if versionInv != nil {
-			versionOCFL = mustGetOCFL(versionInv.Spec())
+			versionOCFL = mustGetOCFL(versionInv.Type.Spec)
 		}
 		versionOCFL.ValidateObjectVersion(ctx, v, vnum, versionInv, prevInv)
 		prevInv = versionInv
@@ -284,44 +325,10 @@ func ValidateObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...Obj
 	return v
 }
 
-// Commit represents an update to object.
-type Commit struct {
-	ID      string // required for new objects in storage roots without a layout.
-	Stage   *Stage // required
-	Message string // required
-	User    User   // required
-
-	// advanced options
-	Created         time.Time // time.Now is used, if not set
-	Spec            Spec      // OCFL specification version for the new object version
-	NewHEAD         int       // enforces new object version number
-	AllowUnchanged  bool
-	ContentPathFunc func(oldPaths []string) (newPaths []string)
-
-	Logger *slog.Logger
-}
-
-// Commit error wraps an error from a commit.
-type CommitError struct {
-	Err error // The wrapped error
-
-	// Dirty indicates the object may be incomplete or invalid as a result of
-	// the error.
-	Dirty bool
-}
-
-func (c CommitError) Error() string {
-	return c.Err.Error()
-}
-
-func (c CommitError) Unwrap() error {
-	return c.Err
-}
-
 type ObjectVersionFS struct {
 	fsys fs.FS
-	ver  ObjectVersion
-	inv  Inventory
+	ver  *InventoryVersion
+	inv  *Inventory
 	num  int
 }
 
@@ -343,29 +350,18 @@ func (vfs *ObjectVersionFS) Close() error {
 	}
 	return nil
 }
-func (vfs *ObjectVersionFS) Created() time.Time                { return vfs.ver.Created() }
-func (vfs *ObjectVersionFS) DigestAlgorithm() digest.Algorithm { return vfs.inv.DigestAlgorithm() }
-func (vfs *ObjectVersionFS) State() DigestMap                  { return vfs.ver.State() }
-func (vfs *ObjectVersionFS) Message() string                   { return vfs.ver.Message() }
+func (vfs *ObjectVersionFS) Created() time.Time                { return vfs.ver.Created }
+func (vfs *ObjectVersionFS) State() DigestMap                  { return vfs.ver.State }
+func (vfs *ObjectVersionFS) Message() string                   { return vfs.ver.Message }
 func (vfs *ObjectVersionFS) Num() int                          { return vfs.num }
 func (vfs *ObjectVersionFS) Open(name string) (fs.File, error) { return vfs.fsys.Open(name) }
-func (vfs *ObjectVersionFS) User() *User                       { return vfs.ver.User() }
-
-func (vfs *ObjectVersionFS) Stage() *Stage {
-	return &Stage{
-		State:           maps.Clone(vfs.State()),
-		DigestAlgorithm: vfs.inv.DigestAlgorithm(),
-		FixitySource:    vfs.inv,
-		ContentSource:   vfs,
-	}
-}
+func (vfs *ObjectVersionFS) User() *User                       { return vfs.ver.User }
 
 type versionFS struct {
 	ctx     context.Context
 	obj     *Object
 	paths   PathMap
 	created time.Time
-	regMode fs.FileMode
 }
 
 func (vfs *versionFS) Open(logical string) (fs.File, error) {
@@ -386,7 +382,7 @@ func (vfs *versionFS) Open(logical string) (fs.File, error) {
 		return vfs.openDir(logical)
 	}
 
-	realNames := vfs.obj.inventory.Manifest()[digest]
+	realNames := vfs.obj.rootInventory.Manifest[digest]
 	if len(realNames) < 1 {
 		return nil, &fs.PathError{
 			Err:  fs.ErrNotExist,
@@ -426,7 +422,7 @@ func (vfs *versionFS) openDir(dir string) (fs.File, error) {
 		}
 		entry := &vfsDirEntry{
 			name:    name,
-			mode:    vfs.regMode,
+			mode:    fs.ModeIrregular | 0666,
 			created: vfs.created,
 			open:    func() (fs.File, error) { return vfs.Open(path.Join(dir, name)) },
 		}
@@ -442,7 +438,6 @@ func (vfs *versionFS) openDir(dir string) (fs.File, error) {
 			Err:  fs.ErrNotExist,
 		}
 	}
-
 	dirFile := &vfsDirFile{
 		name:    dir,
 		entries: make([]fs.DirEntry, 0, len(children)),

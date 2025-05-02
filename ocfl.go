@@ -38,20 +38,20 @@ type ocfl interface {
 	// NewInventory constructs a new Inventory from bytes. If the inventory is
 	// invalid, an error is returned. The returned error may not include all
 	// validation error codes, as ValidateInventoryBytes would.
-	NewInventory(raw []byte) (Inventory, error)
+	NewInventory(raw []byte) (*Inventory, error)
 	// Commit creates a new object version. The returned error must be a
 	// *CommitError.
 	Commit(ctx context.Context, obj *Object, commit *Commit) error
 	// ValidateInventory validates an existing Inventory value.
-	ValidateInventory(Inventory) *Validation
+	ValidateInventory(*Inventory) *Validation
 	// ValidateInventoryBytes fully validates bytes as a json-encoded inventory.
 	// It returns the Inventory if the validation result does not included fatal
 	// errors.
-	ValidateInventoryBytes([]byte) (Inventory, *Validation)
+	ValidateInventoryBytes([]byte) (*Inventory, *Validation)
 	// Validate all contents of an object root: NAMASTE, inventory, sidecar, etc.
 	ValidateObjectRoot(ctx context.Context, v *ObjectValidation, state *ObjectState) error
 	// Validate all contents of an object version directory and add contents to the object validation
-	ValidateObjectVersion(ctx context.Context, v *ObjectValidation, vnum VNum, versionInv, prevInv Inventory) error
+	ValidateObjectVersion(ctx context.Context, v *ObjectValidation, vnum VNum, versionInv, prevInv *Inventory) error
 	// Validate contents added to the object validation.
 	ValidateObjectContent(ctx context.Context, v *ObjectValidation) error
 }

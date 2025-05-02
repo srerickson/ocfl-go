@@ -1,10 +1,12 @@
 package ocfl
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path"
 	"regexp"
 	"slices"
@@ -23,24 +25,85 @@ var (
 	invSidecarContentsRexp = regexp.MustCompile(`^([a-fA-F0-9]+)\s+inventory\.json[\n]?$`)
 )
 
-type Inventory interface {
-	FixitySource
-	ContentDirectory() string
-	Digest() string
-	DigestAlgorithm() digest.Algorithm
-	Head() VNum
-	ID() string
-	Manifest() DigestMap
-	Spec() Spec
-	Version(int) ObjectVersion
-	FixityAlgorithms() []string
+// Inventory represents the contents of an object's inventory.json file
+type Inventory struct {
+	ID               string                     `json:"id"`
+	Type             InventoryType              `json:"type"`
+	DigestAlgorithm  string                     `json:"digestAlgorithm"`
+	Head             VNum                       `json:"head"`
+	ContentDirectory string                     `json:"contentDirectory,omitempty"`
+	Manifest         DigestMap                  `json:"manifest"`
+	Versions         map[VNum]*InventoryVersion `json:"versions"`
+	Fixity           map[string]DigestMap       `json:"fixity,omitempty"`
+
+	jsonDigest string
 }
 
-type ObjectVersion interface {
-	State() DigestMap
-	User() *User
-	Message() string
-	Created() time.Time
+func (inv Inventory) GetFixity(dig string) digest.Set {
+	paths := inv.Manifest[dig]
+	if len(paths) < 1 {
+		return nil
+	}
+	set := digest.Set{}
+	for fixAlg, fixMap := range inv.Fixity {
+		for p, fixDigest := range fixMap.Paths() {
+			if slices.Contains(paths, p) {
+				set[fixAlg] = fixDigest
+				break
+			}
+		}
+	}
+	return set
+}
+
+// raw of the inventory.json file the inventory was read from. Only set if the
+// digest was read from a file.
+func (inv Inventory) Digest() string {
+	return inv.jsonDigest
+}
+
+func (inv *Inventory) setJsonDigest(raw []byte) error {
+	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(digester, bytes.NewReader(raw)); err != nil {
+		return fmt.Errorf("digesting inventory: %w", err)
+	}
+	inv.jsonDigest = digester.String()
+	return nil
+}
+
+func (inv Inventory) version(v int) *InventoryVersion {
+	if inv.Versions == nil {
+		return nil
+	}
+	if v == 0 {
+		return inv.Versions[inv.Head]
+	}
+	vnum := V(v, inv.Head.Padding())
+	return inv.Versions[vnum]
+}
+
+// vnums returns a sorted slice of vnums corresponding to the keys in the
+// inventory's 'versions' block.
+func (inv Inventory) vnums() []VNum {
+	vnums := make([]VNum, len(inv.Versions))
+	i := 0
+	for v := range inv.Versions {
+		vnums[i] = v
+		i++
+	}
+	sort.Sort(VNums(vnums))
+	return vnums
+}
+
+// Version represents object version state and metadata
+type InventoryVersion struct {
+	Created time.Time `json:"created"`
+	State   DigestMap `json:"state"`
+	Message string    `json:"message,omitempty"`
+	User    *User     `json:"user,omitempty"`
 }
 
 // User is a generic user information struct
@@ -50,8 +113,8 @@ type User struct {
 }
 
 // ReadInventory reads the 'inventory.json' file in dir and validates it. It returns
-// an error if the inventory cann't be paresed or if it is invalid.
-func ReadInventory(ctx context.Context, fsys ocflfs.FS, dir string) (inv Inventory, err error) {
+// an error if the inventory can't be paresed or if it is invalid.
+func ReadInventory(ctx context.Context, fsys ocflfs.FS, dir string) (inv *Inventory, err error) {
 	var byts []byte
 	var imp ocfl
 	byts, err = ocflfs.ReadAll(ctx, fsys, path.Join(dir, inventoryBase))
@@ -81,7 +144,7 @@ func ReadSidecarDigest(ctx context.Context, fsys ocflfs.FS, name string) (string
 
 // ValidateInventoryBytes parses and fully validates the byts as contents of an
 // inventory.json file. This is mostly used for testing.
-func ValidateInventoryBytes(byts []byte) (Inventory, *Validation) {
+func ValidateInventoryBytes(byts []byte) (*Inventory, *Validation) {
 	imp, _ := getInventoryOCFL(byts)
 	if imp == nil {
 		// use default OCFL spec
@@ -94,8 +157,8 @@ func ValidateInventoryBytes(byts []byte) (Inventory, *Validation) {
 // algorithm (e.g., inventory.json.sha512) in directory dir and return an error
 // if the sidecar content is not formatted correctly or if the inv's digest
 // doesn't match the value found in the sidecar.
-func ValidateInventorySidecar(ctx context.Context, inv Inventory, fsys ocflfs.FS, dir string) error {
-	sideCar := path.Join(dir, inventoryBase+"."+inv.DigestAlgorithm().ID())
+func ValidateInventorySidecar(ctx context.Context, inv *Inventory, fsys ocflfs.FS, dir string) error {
+	sideCar := path.Join(dir, inventoryBase+"."+inv.DigestAlgorithm)
 	expSum, err := ReadSidecarDigest(ctx, fsys, sideCar)
 	if err != nil {
 		return err
@@ -103,7 +166,7 @@ func ValidateInventorySidecar(ctx context.Context, inv Inventory, fsys ocflfs.FS
 	if !strings.EqualFold(expSum, inv.Digest()) {
 		return &digest.DigestError{
 			Path:     sideCar,
-			Alg:      inv.DigestAlgorithm().ID(),
+			Alg:      inv.DigestAlgorithm,
 			Got:      inv.Digest(),
 			Expected: expSum,
 		}
@@ -111,8 +174,8 @@ func ValidateInventorySidecar(ctx context.Context, inv Inventory, fsys ocflfs.FS
 	return nil
 }
 
-func validateInventory(inv Inventory) *Validation {
-	imp, err := getOCFL(inv.Spec())
+func validateInventory(inv *Inventory) *Validation {
+	imp, err := getOCFL(inv.Type.Spec)
 	if err != nil {
 		v := &Validation{}
 		err := fmt.Errorf("inventory has invalid 'type':%w", err)
@@ -133,69 +196,8 @@ func getInventoryOCFL(byts []byte) (ocfl, error) {
 	return getOCFL(invFields.Type.Spec)
 }
 
-// rawInventory represents the contents of an object's inventory.json file
-type rawInventory struct {
-	ID               string                        `json:"id"`
-	Type             InventoryType                 `json:"type"`
-	DigestAlgorithm  string                        `json:"digestAlgorithm"`
-	Head             VNum                          `json:"head"`
-	ContentDirectory string                        `json:"contentDirectory,omitempty"`
-	Manifest         DigestMap                     `json:"manifest"`
-	Versions         map[VNum]*rawInventoryVersion `json:"versions"`
-	Fixity           map[string]DigestMap          `json:"fixity,omitempty"`
-}
-
-func (inv rawInventory) getFixity(dig string) digest.Set {
-	paths := inv.Manifest[dig]
-	if len(paths) < 1 {
-		return nil
-	}
-	set := digest.Set{}
-	for fixAlg, fixMap := range inv.Fixity {
-		for p, fixDigest := range fixMap.Paths() {
-			if slices.Contains(paths, p) {
-				set[fixAlg] = fixDigest
-				break
-			}
-		}
-	}
-	return set
-}
-
-func (inv rawInventory) version(v int) *rawInventoryVersion {
-	if inv.Versions == nil {
-		return nil
-	}
-	if v == 0 {
-		return inv.Versions[inv.Head]
-	}
-	vnum := V(v, inv.Head.Padding())
-	return inv.Versions[vnum]
-}
-
-// vnums returns a sorted slice of vnums corresponding to the keys in the
-// inventory's 'versions' block.
-func (inv rawInventory) vnums() []VNum {
-	vnums := make([]VNum, len(inv.Versions))
-	i := 0
-	for v := range inv.Versions {
-		vnums[i] = v
-		i++
-	}
-	sort.Sort(VNums(vnums))
-	return vnums
-}
-
-// Version represents object version state and metadata
-type rawInventoryVersion struct {
-	Created time.Time `json:"created"`
-	State   DigestMap `json:"state"`
-	Message string    `json:"message,omitempty"`
-	User    *User     `json:"user,omitempty"`
-}
-
 type InventoryBuilder struct {
-	prev Inventory
+	prev *Inventory
 
 	// set by builder methodss
 	id            string
@@ -215,16 +217,16 @@ type InventoryBuilder struct {
 
 // Create a new inventory builder. If prev is not nil, the builder's initial
 // Spec, ID, and ContentDirectory are used.
-func NewInventoryBuilder(prev Inventory) *InventoryBuilder {
+func NewInventoryBuilder(prev *Inventory) *InventoryBuilder {
 	b := &InventoryBuilder{
 		spec: Spec1_1, // default inventory specification
 		prev: prev,
 	}
 	if prev != nil {
-		b.id = prev.ID()
-		b.spec = prev.Spec()
-		b.contDir = prev.ContentDirectory()
-		b.head = prev.Head()
+		b.id = prev.ID
+		b.spec = prev.Type.Spec
+		b.contDir = prev.ContentDirectory
+		b.head = prev.Head
 	}
 	return b
 }
@@ -266,7 +268,7 @@ func (b *InventoryBuilder) ContentPathFunc(f func([]string) []string) *Inventory
 }
 
 // Finalize builds and validates a new inventory.
-func (b *InventoryBuilder) Finalize() (Inventory, error) {
+func (b *InventoryBuilder) Finalize() (*Inventory, error) {
 	newInv, err := b.initialInventory()
 	if err != nil {
 		return nil, err
@@ -275,12 +277,10 @@ func (b *InventoryBuilder) Finalize() (Inventory, error) {
 		return nil, err
 	}
 	b.fillFixity(newInv)
-	//FIXME
-	v1Inv := &inventoryV1{raw: *newInv}
-	if err := validateInventory(v1Inv).Err(); err != nil {
+	if err := validateInventory(newInv).Err(); err != nil {
 		return nil, fmt.Errorf("generated inventory is not valid: %w", err)
 	}
-	return v1Inv, nil
+	return newInv, nil
 }
 
 func (b *InventoryBuilder) FixitySource(source FixitySource) *InventoryBuilder {
@@ -312,35 +312,32 @@ func (b *InventoryBuilder) Spec(spec Spec) *InventoryBuilder {
 	return b
 }
 
-func (b *InventoryBuilder) initialInventory() (*rawInventory, error) {
-	inv := &rawInventory{
+func (b *InventoryBuilder) initialInventory() (*Inventory, error) {
+	inv := &Inventory{
 		ID:               b.id,
 		Head:             b.head,
 		Type:             b.spec.InventoryType(),
 		ContentDirectory: b.contDir,
 		Manifest:         DigestMap{},
 		Fixity:           map[string]DigestMap{},
-		Versions:         map[VNum]*rawInventoryVersion{},
+		Versions:         map[VNum]*InventoryVersion{},
 	}
 	if b.prev == nil {
 		return inv, nil
 	}
-	prevInv, ok := b.prev.(*inventoryV1)
-	if !ok {
-		return nil, errors.New("previous inventory does not have expected type")
-	}
+	prevInv := b.prev
 	// copy manifest
-	inv.DigestAlgorithm = prevInv.raw.DigestAlgorithm
+	inv.DigestAlgorithm = prevInv.DigestAlgorithm
 	var err error
-	inv.Manifest, err = prevInv.raw.Manifest.Normalize()
+	inv.Manifest, err = prevInv.Manifest.Normalize()
 	if err != nil {
 		return nil, fmt.Errorf("in existing inventory manifest: %w", err)
 	}
 	// copy versions
-	versions := prevInv.raw.Head.Lineage()
-	inv.Versions = make(map[VNum]*rawInventoryVersion, len(versions)+1)
-	for vnum, prevVer := range prevInv.raw.Versions {
-		newVer := &rawInventoryVersion{
+	versions := prevInv.Head.Lineage()
+	inv.Versions = make(map[VNum]*InventoryVersion, len(versions)+1)
+	for vnum, prevVer := range prevInv.Versions {
+		newVer := &InventoryVersion{
 			Created: prevVer.Created,
 			Message: prevVer.Message,
 		}
@@ -355,8 +352,8 @@ func (b *InventoryBuilder) initialInventory() (*rawInventory, error) {
 		inv.Versions[vnum] = newVer
 	}
 	// copy fixity
-	inv.Fixity = make(map[string]DigestMap, len(prevInv.raw.Fixity))
-	for alg, m := range prevInv.raw.Fixity {
+	inv.Fixity = make(map[string]DigestMap, len(prevInv.Fixity))
+	for alg, m := range prevInv.Fixity {
 		inv.Fixity[alg], err = m.Normalize()
 		if err != nil {
 			return nil, fmt.Errorf("in existing inventory %s fixity: %w", alg, err)
@@ -365,7 +362,7 @@ func (b *InventoryBuilder) initialInventory() (*rawInventory, error) {
 	return inv, nil
 }
 
-func (b *InventoryBuilder) buildVersions(inv *rawInventory) error {
+func (b *InventoryBuilder) buildVersions(inv *Inventory) error {
 	for _, addedVer := range b.addedVersions {
 		newHead, err := inv.Head.Next()
 		if err != nil {
@@ -387,7 +384,7 @@ func (b *InventoryBuilder) buildVersions(inv *rawInventory) error {
 			return fmt.Errorf("cannot change inventory's digest algorithm from previous value: %s", inv.DigestAlgorithm)
 		}
 		inv.Head = newHead
-		newVersion := &rawInventoryVersion{
+		newVersion := &InventoryVersion{
 			State:   state,
 			Created: created,
 			Message: message,
@@ -398,7 +395,7 @@ func (b *InventoryBuilder) buildVersions(inv *rawInventory) error {
 		}
 		newVersion.Created = newVersion.Created.Truncate(time.Second)
 		if inv.Versions == nil {
-			inv.Versions = map[VNum]*rawInventoryVersion{}
+			inv.Versions = map[VNum]*InventoryVersion{}
 		}
 		inv.Versions[inv.Head] = newVersion
 		// add version state to manifest
@@ -431,7 +428,7 @@ func (b *InventoryBuilder) buildVersions(inv *rawInventory) error {
 
 // fillFixity adds fixity entries from source using for all digests found in the
 // inventory's manifest.
-func (b *InventoryBuilder) fillFixity(inv *rawInventory) {
+func (b *InventoryBuilder) fillFixity(inv *Inventory) {
 	if b.fixtySource == nil {
 		return
 	}
