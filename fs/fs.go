@@ -65,8 +65,9 @@ type CopyFS interface {
 
 // Copy copies src in srcFS to dst in dstFS. If srcFS and dstFS are the same refererence
 // and it implements CopyFS, then Copy uses the fs's Copy() method.
-func Copy(ctx context.Context, dstFS WriteFS, dst string, srcFS FS, src string) (err error) {
+func Copy(ctx context.Context, dstFS FS, dst string, srcFS FS, src string) (err error) {
 	cpFS, ok := dstFS.(CopyFS)
+	// FIXME: better way to compare src and dst FS
 	if ok && dstFS == srcFS {
 		if err = cpFS.Copy(ctx, dst, src); err != nil {
 			err = fmt.Errorf("during copy: %w", err)
@@ -85,7 +86,7 @@ func Copy(ctx context.Context, dstFS WriteFS, dst string, srcFS FS, src string) 
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	if _, err = dstFS.Write(ctx, dst, srcF); err != nil {
+	if _, err = Write(ctx, dstFS, dst, srcF); err != nil {
 		err = fmt.Errorf("writing during copy: %w", err)
 	}
 	return

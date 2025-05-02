@@ -123,9 +123,9 @@ func ValidateNamaste(ctx context.Context, fsys ocflfs.FS, name string) (err erro
 	return
 }
 
-func WriteDeclaration(ctx context.Context, root ocflfs.WriteFS, dir string, d Namaste) error {
+func WriteDeclaration(ctx context.Context, root ocflfs.FS, dir string, d Namaste) error {
 	cont := strings.NewReader(d.Body())
-	_, err := root.Write(ctx, path.Join(dir, d.Name()), cont)
+	_, err := ocflfs.Write(ctx, root, path.Join(dir, d.Name()), cont)
 	if err != nil {
 		return fmt.Errorf(`writing declaration: %w`, err)
 	}
