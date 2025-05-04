@@ -12,7 +12,7 @@ import (
 
 const (
 	// package version
-	Version = "0.8.2"
+	Version = "0.9.0"
 
 	Spec1_0 = Spec("1.0")
 	Spec1_1 = Spec("1.1")
@@ -35,10 +35,6 @@ var (
 type ocfl interface {
 	// Spec returns the implemented version of the OCFL specification
 	Spec() Spec
-	// NewInventory constructs a new Inventory from bytes. If the inventory is
-	// invalid, an error is returned. The returned error may not include all
-	// validation error codes, as ValidateInventoryBytes would.
-	NewInventory(raw []byte) (*Inventory, error)
 	// Commit creates a new object version. The returned error must be a
 	// *CommitError.
 	Commit(ctx context.Context, obj *Object, commit *Commit) error

@@ -62,6 +62,17 @@ func (inv Inventory) Digest() string {
 	return inv.jsonDigest
 }
 
+func (inv *Inventory) Validate() *Validation {
+	imp, err := getOCFL(inv.Type.Spec)
+	if err != nil {
+		v := &Validation{}
+		err := fmt.Errorf("inventory has invalid 'type':%w", err)
+		v.AddFatal(err)
+		return v
+	}
+	return imp.ValidateInventory(inv)
+}
+
 func (inv *Inventory) setJsonDigest(raw []byte) error {
 	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
 	if err != nil {
@@ -81,8 +92,7 @@ func (inv Inventory) version(v int) *InventoryVersion {
 	if v == 0 {
 		return inv.Versions[inv.Head]
 	}
-	vnum := V(v, inv.Head.Padding())
-	return inv.Versions[vnum]
+	return inv.Versions[V(v, inv.Head.padding)]
 }
 
 // vnums returns a sorted slice of vnums corresponding to the keys in the
@@ -116,16 +126,23 @@ type User struct {
 // an error if the inventory can't be paresed or if it is invalid.
 func ReadInventory(ctx context.Context, fsys ocflfs.FS, dir string) (inv *Inventory, err error) {
 	var byts []byte
-	var imp ocfl
 	byts, err = ocflfs.ReadAll(ctx, fsys, path.Join(dir, inventoryBase))
 	if err != nil {
 		return
 	}
-	imp, err = getInventoryOCFL(byts)
-	if err != nil {
-		return
+	inv = &Inventory{}
+	dec := json.NewDecoder(bytes.NewReader(byts))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(inv); err != nil {
+		return nil, err
 	}
-	return imp.NewInventory(byts)
+	if err := inv.setJsonDigest(byts); err != nil {
+		return nil, err
+	}
+	if err := inv.Validate().Err(); err != nil {
+		return nil, err
+	}
+	return inv, nil
 }
 
 // ReadSidecarDigest reads the digest from an inventory.json sidecar file
@@ -172,17 +189,6 @@ func ValidateInventorySidecar(ctx context.Context, inv *Inventory, fsys ocflfs.F
 		}
 	}
 	return nil
-}
-
-func validateInventory(inv *Inventory) *Validation {
-	imp, err := getOCFL(inv.Type.Spec)
-	if err != nil {
-		v := &Validation{}
-		err := fmt.Errorf("inventory has invalid 'type':%w", err)
-		v.AddFatal(err)
-		return v
-	}
-	return imp.ValidateInventory(inv)
 }
 
 // get the ocfl implementation declared in the inventory bytes
@@ -277,7 +283,7 @@ func (b *InventoryBuilder) Finalize() (*Inventory, error) {
 		return nil, err
 	}
 	b.fillFixity(newInv)
-	if err := validateInventory(newInv).Err(); err != nil {
+	if err := newInv.Validate().Err(); err != nil {
 		return nil, fmt.Errorf("generated inventory is not valid: %w", err)
 	}
 	return newInv, nil

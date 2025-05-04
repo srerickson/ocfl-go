@@ -1,20 +1,17 @@
 package ocfl
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"maps"
 	"path"
 	"slices"
-	"strings"
-	"time"
 
 	"github.com/srerickson/ocfl-go/digest"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
+	"github.com/srerickson/ocfl-go/internal/logical-fs"
 )
 
 // Object represents and OCFL Object, typically contained in a Root.
@@ -82,8 +79,8 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 	}
 }
 
-// ContentDirectory return "content" or the value set in in the root inventory.
-func (obj *Object) ContentDirectory() string {
+// ContentDirectory return "content" or the value set in the root inventory.
+func (obj Object) ContentDirectory() string {
 	if obj.rootInventory != nil && obj.rootInventory.ContentDirectory != "" {
 		return obj.rootInventory.ContentDirectory
 	}
@@ -135,15 +132,15 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 }
 
 // DigestAlgorithm returns sha512 unless sha256 is set in the root inventory.
-func (obj *Object) DigestAlgorithm() digest.Algorithm {
+func (obj Object) DigestAlgorithm() digest.Algorithm {
 	if obj.rootInventory != nil && obj.rootInventory.DigestAlgorithm == digest.SHA256.ID() {
 		return digest.SHA256
 	}
 	return digest.SHA512
 }
 
-// Exists returns true if the object's inventory exists.
-func (obj *Object) Exists() bool {
+// Exists returns true if the object has an existing version.
+func (obj Object) Exists() bool {
 	return obj.rootInventory != nil
 }
 
@@ -183,7 +180,7 @@ func (obj *Object) FS() ocflfs.FS {
 	return obj.fs
 }
 
-// GetFixity implement the FixitySource interface for Object
+// GetFixity implement the FixitySource interface for Object, for use in Stage.
 func (obj Object) GetFixity(dig string) digest.Set {
 	if obj.rootInventory == nil {
 		return nil
@@ -191,7 +188,7 @@ func (obj Object) GetFixity(dig string) digest.Set {
 	return obj.rootInventory.GetFixity(dig)
 }
 
-// GetContent implements ContentSource
+// GetContent implements ContentSource for Object, for use in Stage.
 func (obj Object) GetContent(dig string) (ocflfs.FS, string) {
 	if obj.rootInventory == nil {
 		return nil, ""
@@ -201,6 +198,15 @@ func (obj Object) GetContent(dig string) (ocflfs.FS, string) {
 		return nil, ""
 	}
 	return obj.fs, path.Join(obj.path, paths[0])
+}
+
+// Head returns the most recent version number. If obj has no root inventory, it
+// returns the zero value.
+func (obj Object) Head() VNum {
+	if obj.rootInventory == nil {
+		return VNum{}
+	}
+	return obj.rootInventory.Head
 }
 
 // ID returns obj's inventory ID if the obj exists (its inventory is not nil).
@@ -219,28 +225,14 @@ func (obj *Object) Path() string {
 	return obj.path
 }
 
-// OpenVersion returns an ObjectVersionFS for the version with the given
-// index (1...HEAD). If i is 0, the most recent version is used.
-func (obj *Object) OpenVersionFS(ctx context.Context, i int) (*ObjectVersionFS, error) {
-	ver := obj.Version(i)
-	if ver == nil {
-		return nil, errors.New("version  not found")
-	}
-	vfs := &ObjectVersionFS{
-		fsys: obj.versionFS(ctx, ver),
-		ver:  ver,
-		num:  i,
-		inv:  obj.rootInventory,
-	}
-	return vfs, nil
-}
-
 // Root returns the object's Root, if known. It is nil unless the *Object was
 // created using [Root.NewObject]
 func (o *Object) Root() *Root {
 	return o.root
 }
 
+// Spec returns the OCFL spec number from the object's root inventory, or an
+// empty Spec if the root inventory does not exist.
 func (o *Object) Spec() Spec {
 	if o.rootInventory == nil {
 		return Spec("")
@@ -248,8 +240,41 @@ func (o *Object) Spec() Spec {
 	return o.rootInventory.Type.Spec
 }
 
-func (obj *Object) StageVersion(i int) *Stage {
-	ver := obj.Version(i)
+// Version return the *InventoryVersion with the given number from obj's root
+// inventory. if v is 0, the most recent version is returned. If the version
+// does not exist, nil is returned.
+func (obj Object) Version(v int) *InventoryVersion {
+	if obj.rootInventory == nil {
+		return nil
+	}
+	return obj.rootInventory.version(v)
+}
+
+// VersionFSS returns an io/fs.FS representing the logical state for the version
+// with the given index (1...HEAD). If i is 0, the most recent version is used.
+func (obj *Object) VersionFS(ctx context.Context, v int) (fs.FS, error) {
+	ver := obj.Version(v)
+	if ver == nil {
+		return nil, errors.New("version not found")
+	}
+	names := make(map[string]string, ver.State.NumPaths())
+	for name, digest := range ver.State.Paths() {
+		names[name] = obj.rootInventory.Manifest[digest][0]
+	}
+	fsys := logical.NewLogicalFS(
+		ctx,
+		obj.fs,
+		obj.path,
+		names,
+		ver.Created,
+	)
+	return fsys, nil
+}
+
+// VersionStage returns a *Stage matching the content of version with the given
+// number. If ther version does not exist, nil is returned.
+func (obj *Object) VersionStage(v int) *Stage {
+	ver := obj.Version(v)
 	if ver == nil {
 		return nil
 	}
@@ -258,27 +283,6 @@ func (obj *Object) StageVersion(i int) *Stage {
 		DigestAlgorithm: obj.DigestAlgorithm(),
 		ContentSource:   obj,
 		FixitySource:    obj,
-	}
-}
-
-func (obj *Object) Version(i int) *InventoryVersion {
-	if obj.rootInventory == nil {
-		return nil
-	}
-	inv := obj.rootInventory
-	ver := inv.Versions[inv.Head]
-	if i > 0 {
-		ver = inv.Versions[V(i, inv.Head.padding)]
-	}
-	return ver
-}
-
-func (o *Object) versionFS(ctx context.Context, ver *InventoryVersion) fs.FS {
-	return &versionFS{
-		ctx:     ctx,
-		obj:     o,
-		paths:   ver.State.PathMap(),
-		created: ver.Created,
 	}
 }
 
@@ -324,195 +328,6 @@ func ValidateObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...Obj
 	impl.ValidateObjectContent(ctx, v)
 	return v
 }
-
-type ObjectVersionFS struct {
-	fsys fs.FS
-	ver  *InventoryVersion
-	inv  *Inventory
-	num  int
-}
-
-func (vfs *ObjectVersionFS) GetContent(digest string) (ocflfs.FS, string) {
-	dm := vfs.State()
-	if dm == nil {
-		return nil, ""
-	}
-	pths := dm[digest]
-	if len(pths) < 1 {
-		return nil, ""
-	}
-	return &ocflfs.WrapFS{FS: vfs.fsys}, pths[0]
-}
-
-func (vfs *ObjectVersionFS) Close() error {
-	if closer, isCloser := vfs.fsys.(io.Closer); isCloser {
-		return closer.Close()
-	}
-	return nil
-}
-func (vfs *ObjectVersionFS) Created() time.Time                { return vfs.ver.Created }
-func (vfs *ObjectVersionFS) State() DigestMap                  { return vfs.ver.State }
-func (vfs *ObjectVersionFS) Message() string                   { return vfs.ver.Message }
-func (vfs *ObjectVersionFS) Num() int                          { return vfs.num }
-func (vfs *ObjectVersionFS) Open(name string) (fs.File, error) { return vfs.fsys.Open(name) }
-func (vfs *ObjectVersionFS) User() *User                       { return vfs.ver.User }
-
-type versionFS struct {
-	ctx     context.Context
-	obj     *Object
-	paths   PathMap
-	created time.Time
-}
-
-func (vfs *versionFS) Open(logical string) (fs.File, error) {
-	if !fs.ValidPath(logical) {
-		return nil, &fs.PathError{
-			Err:  fs.ErrInvalid,
-			Op:   "open",
-			Path: logical,
-		}
-	}
-	if logical == "." {
-		return vfs.openDir(".")
-	}
-	digest := vfs.paths[logical]
-	if digest == "" {
-		// name doesn't exist in state.
-		// try opening as a directory
-		return vfs.openDir(logical)
-	}
-
-	realNames := vfs.obj.rootInventory.Manifest[digest]
-	if len(realNames) < 1 {
-		return nil, &fs.PathError{
-			Err:  fs.ErrNotExist,
-			Op:   "open",
-			Path: logical,
-		}
-	}
-	realName := realNames[0]
-	if !fs.ValidPath(realName) {
-		return nil, &fs.PathError{
-			Err:  fs.ErrInvalid,
-			Op:   "open",
-			Path: logical,
-		}
-	}
-	f, err := vfs.obj.fs.OpenFile(vfs.ctx, path.Join(vfs.obj.path, realName))
-	if err != nil {
-		err = fmt.Errorf("opening file with logical path %q: %w", logical, err)
-		return nil, err
-	}
-	return f, nil
-}
-
-func (vfs *versionFS) openDir(dir string) (fs.File, error) {
-	prefix := dir + "/"
-	if prefix == "./" {
-		prefix = ""
-	}
-	children := map[string]*vfsDirEntry{}
-	for p := range vfs.paths {
-		if !strings.HasPrefix(p, prefix) {
-			continue
-		}
-		name, _, isdir := strings.Cut(strings.TrimPrefix(p, prefix), "/")
-		if _, exists := children[name]; exists {
-			continue
-		}
-		entry := &vfsDirEntry{
-			name:    name,
-			mode:    fs.ModeIrregular | 0666,
-			created: vfs.created,
-			open:    func() (fs.File, error) { return vfs.Open(path.Join(dir, name)) },
-		}
-		if isdir {
-			entry.mode = entry.mode | fs.ModeDir | fs.ModeIrregular
-		}
-		children[name] = entry
-	}
-	if len(children) < 1 {
-		return nil, &fs.PathError{
-			Op:   "open",
-			Path: dir,
-			Err:  fs.ErrNotExist,
-		}
-	}
-	dirFile := &vfsDirFile{
-		name:    dir,
-		entries: make([]fs.DirEntry, 0, len(children)),
-	}
-	for _, entry := range children {
-		dirFile.entries = append(dirFile.entries, entry)
-	}
-	slices.SortFunc(dirFile.entries, func(a, b fs.DirEntry) int {
-		return cmp.Compare(a.Name(), b.Name())
-	})
-	return dirFile, nil
-}
-
-type vfsDirEntry struct {
-	name    string
-	created time.Time
-	mode    fs.FileMode
-	open    func() (fs.File, error)
-}
-
-var _ fs.DirEntry = (*vfsDirEntry)(nil)
-
-func (info *vfsDirEntry) Name() string      { return info.name }
-func (info *vfsDirEntry) IsDir() bool       { return info.mode.IsDir() }
-func (info *vfsDirEntry) Type() fs.FileMode { return info.mode.Type() }
-
-func (info *vfsDirEntry) Info() (fs.FileInfo, error) {
-	f, err := info.open()
-	if err != nil {
-		return nil, err
-	}
-	stat, err := f.Stat()
-	return stat, errors.Join(err, f.Close())
-}
-
-func (info *vfsDirEntry) Size() int64        { return 0 }
-func (info *vfsDirEntry) Mode() fs.FileMode  { return info.mode | fs.ModeIrregular }
-func (info *vfsDirEntry) ModTime() time.Time { return info.created }
-func (info *vfsDirEntry) Sys() any           { return nil }
-
-type vfsDirFile struct {
-	name    string
-	created time.Time
-	entries []fs.DirEntry
-	offset  int
-}
-
-var _ fs.ReadDirFile = (*vfsDirFile)(nil)
-
-func (dir *vfsDirFile) ReadDir(n int) ([]fs.DirEntry, error) {
-	if n <= 0 {
-		entries := dir.entries[dir.offset:]
-		dir.offset = len(dir.entries)
-		return entries, nil
-	}
-	if remain := len(dir.entries) - dir.offset; remain < n {
-		n = remain
-	}
-	if n <= 0 {
-		return nil, io.EOF
-	}
-	entries := dir.entries[dir.offset : dir.offset+n]
-	dir.offset += n
-	return entries, nil
-}
-
-func (dir *vfsDirFile) Close() error               { return nil }
-func (dir *vfsDirFile) IsDir() bool                { return true }
-func (dir *vfsDirFile) Mode() fs.FileMode          { return fs.ModeDir | fs.ModeIrregular }
-func (dir *vfsDirFile) ModTime() time.Time         { return dir.created }
-func (dir *vfsDirFile) Name() string               { return dir.name }
-func (dir *vfsDirFile) Read(_ []byte) (int, error) { return 0, nil }
-func (dir *vfsDirFile) Size() int64                { return 0 }
-func (dir *vfsDirFile) Stat() (fs.FileInfo, error) { return dir, nil }
-func (dir *vfsDirFile) Sys() any                   { return nil }
 
 // create a new *Object with required feilds and apply options
 func newObject(fsys ocflfs.FS, dir string, opts ...ObjectOption) *Object {
