@@ -31,22 +31,6 @@ func (imp ocflV1) Spec() Spec {
 	return Spec(imp.v1Spec)
 }
 
-func (imp ocflV1) NewInventory(byts []byte) (*Inventory, error) {
-	inv := &Inventory{}
-	dec := json.NewDecoder(bytes.NewReader(byts))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(inv); err != nil {
-		return nil, err
-	}
-	if err := inv.setJsonDigest(byts); err != nil {
-		return nil, err
-	}
-	if err := validateInventory(inv).Err(); err != nil {
-		return nil, err
-	}
-	return inv, nil
-}
-
 func (imp ocflV1) ValidateInventory(inv *Inventory) *Validation {
 	v := &Validation{}
 	if inv.Type.Empty() {
@@ -419,14 +403,14 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (*Inventory, *Validation) {
 	if err := inv.setJsonDigest(raw); err != nil {
 		v.AddFatal(err)
 	}
-	v.Add(validateInventory(inv))
+	v.Add(inv.Validate())
 	if v.Err() != nil {
 		return nil, v
 	}
 	return inv, v
 }
 
-func (imp ocflV1) NewCommitPlan(ctx context.Context, obj *Object, commit *Commit) (*commitPlan, error) {
+func (imp ocflV1) newCommitPlan(ctx context.Context, obj *Object, commit *Commit) (*commitPlan, error) {
 	newInv, err := imp.newInventoryV1(commit, obj.rootInventory)
 	if err != nil {
 		return nil, fmt.Errorf("building new inventory: %w", err)
@@ -456,7 +440,7 @@ func (imp ocflV1) NewCommitPlan(ctx context.Context, obj *Object, commit *Commit
 }
 
 func (imp ocflV1) Commit(ctx context.Context, obj *Object, commit *Commit) error {
-	plan, err := imp.NewCommitPlan(ctx, obj, commit)
+	plan, err := imp.newCommitPlan(ctx, obj, commit)
 	if err != nil {
 		return &CommitError{Err: err}
 	}

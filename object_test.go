@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
@@ -20,15 +21,7 @@ import (
 	"github.com/srerickson/ocfl-go/fs/local"
 )
 
-func TestObject(t *testing.T) {
-	t.Run("Example", testObjectExample)
-	t.Run("New", testNewObject)
-	t.Run("Commit", testObjectCommit)
-	t.Run("ValidateObject", testValidateObject)
-	t.Run("ValidateFixtures", testValidateFixtures)
-}
-
-func testObjectExample(t *testing.T) {
+func TestObject_Example(t *testing.T) {
 	ctx := context.Background()
 	tmpFS, err := local.NewFS(t.TempDir())
 	be.NilErr(t, err)
@@ -57,9 +50,9 @@ func testObjectExample(t *testing.T) {
 
 	// object has expected inventory values
 	be.Equal(t, "new-object-01", obj.ID())
-	ver := obj.Version(1)
-	be.Nonzero(t, ver)
-	be.Nonzero(t, ver.State.PathMap()["README.txt"])
+	sourceVersion := obj.Version(1)
+	be.Nonzero(t, sourceVersion)
+	be.Nonzero(t, sourceVersion.State.PathMap()["README.txt"])
 
 	// commit a new version and upgrade to OCFL v1.1
 	v2Content := map[string][]byte{
@@ -86,47 +79,44 @@ func testObjectExample(t *testing.T) {
 	be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 	// be.NilErr(t, result.Warning)
 
-	// open an object version to access files
-	ver = obj.Version(0)
-	be.Nonzero(t, ver)
+	// create a logical FS of the version state
+	logicalFS, err := obj.VersionFS(ctx, 0)
+	be.NilErr(t, err)
 
-	// // vfs implements fs.FS for the version state
-	// be.NilErr(t, fstest.TestFS(vfs, maps.Keys(v2Content)...))
+	// we can list files in a directory
+	entries, err := fs.ReadDir(logicalFS, "docs")
+	be.NilErr(t, err)
+	be.Equal(t, 1, len(entries))
 
-	// // we can list files in a directory
-	// entries, err := fs.ReadDir(vfs, "docs")
-	// be.NilErr(t, err)
-	// be.Equal(t, 1, len(entries))
+	// we can read files from the logical FS
+	gotBytes, err := fs.ReadFile(logicalFS, "new-data.csv")
+	be.NilErr(t, err)
+	be.Equal(t, "1,2,3", string(gotBytes))
 
-	// // we can read files
-	// gotBytes, err := fs.ReadFile(vfs, "new-data.csv")
-	// be.NilErr(t, err)
-	// be.Equal(t, "1,2,3", string(gotBytes))
-
-	// create a new object by forking new-object-01
+	// create a new object by forking head version of new-object-01
 	forkID := "new-object-02"
+	sourceVersion = obj.Version(0)
+	be.Nonzero(t, sourceVersion)
 	fork := &ocfl.Commit{
 		ID: forkID,
 		Stage: &ocfl.Stage{
-			State:           ver.State,
+			State:           sourceVersion.State,
 			DigestAlgorithm: obj.DigestAlgorithm(),
 			FixitySource:    obj,
 			ContentSource:   obj,
 		},
-		Message: ver.Message,
-		User:    *ver.User,
+		Message: sourceVersion.Message,
+		User:    *sourceVersion.User,
 	}
 	forkObj, err := ocfl.NewObject(ctx, tmpFS, forkID)
 	be.NilErr(t, err)
 	be.NilErr(t, forkObj.Commit(ctx, fork))
 	be.NilErr(t, ocfl.ValidateObject(ctx, forkObj.FS(), forkObj.Path()).Err())
-	// TODO
-	// roll-back an object to a previous version
-	// interact with an object's extensions: list them, add an extension, remove an extension.
+	be.True(t, sourceVersion.State.Eq(forkObj.Version(0).State))
 }
 
 // OpenObject unit tests
-func testNewObject(t *testing.T) {
+func TestNewObject(t *testing.T) {
 	ctx := context.Background()
 	fsys := ocflfs.DirFS(objectFixturesPath)
 	type testCase struct {
@@ -191,7 +181,7 @@ func testNewObject(t *testing.T) {
 	}
 }
 
-func testObjectCommit(t *testing.T) {
+func TestObject_Commit(t *testing.T) {
 	ctx := context.Background()
 	t.Run("minimal", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
@@ -234,7 +224,7 @@ func testObjectCommit(t *testing.T) {
 		be.True(t, err != nil)
 		be.In(t, "cannot change inventory's digest algorithm from previous value", err.Error())
 	})
-	t.Run("with extended algorithm algs", func(t *testing.T) {
+	t.Run("with extended digest algs", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
 		obj, err := ocfl.NewObject(ctx, fsys, ".")
@@ -260,10 +250,9 @@ func testObjectCommit(t *testing.T) {
 		v := ocfl.ValidateObject(ctx, fsys, ".", ocfl.ValidationAlgorithms(algReg))
 		be.NilErr(t, v.Err())
 	})
-	t.Run("update fixtures", testUpdateFixtures)
 }
 
-func testUpdateFixtures(t *testing.T) {
+func TestObject_UpdateFixtures(t *testing.T) {
 	ctx := context.Background()
 	for _, spec := range []string{`1.0`, `1.1`} {
 		fixturesDir := filepath.Join(`testdata`, `object-fixtures`, spec, `good-objects`)
@@ -281,7 +270,7 @@ func testUpdateFixtures(t *testing.T) {
 				be.NilErr(t, err)
 				be.True(t, obj.Exists())
 
-				newStage := obj.StageVersion(0)
+				newStage := obj.VersionStage(0)
 				be.Nonzero(t, newStage)
 
 				newContent, err := ocfl.StageBytes(map[string][]byte{
@@ -299,9 +288,8 @@ func testUpdateFixtures(t *testing.T) {
 				}))
 				be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 				// check content
-				newVersion, err := obj.OpenVersionFS(ctx, 0)
+				newVersion, err := obj.VersionFS(ctx, 0)
 				be.NilErr(t, err)
-				defer be.NilErr(t, newVersion.Close())
 				cont, err := fs.ReadFile(newVersion, "a-new-file")
 				be.NilErr(t, err)
 				be.Equal(t, "new stuff", string(cont))
@@ -310,7 +298,29 @@ func testUpdateFixtures(t *testing.T) {
 	}
 }
 
-func testValidateObject(t *testing.T) {
+func TestObject_VersionFS(t *testing.T) {
+	ctx := context.Background()
+	fixturesDir := filepath.Join(`testdata`, `object-fixtures`, `1.1`, `good-objects`)
+	fsys := ocflfs.DirFS(fixturesDir)
+	fixtures := []string{"minimal_no_content", "updates_all_actions"}
+	for _, fixture := range fixtures {
+		t.Run(fixture, func(t *testing.T) {
+			obj, err := ocfl.NewObject(ctx, fsys, fixture)
+			be.NilErr(t, err)
+			for _, vnum := range obj.Head().Lineage() {
+				t.Run(vnum.String(), func(t *testing.T) {
+					ver := obj.Version(vnum.Num())
+					logicalFS, err := obj.VersionFS(ctx, vnum.Num())
+					be.NilErr(t, err)
+					err = fstest.TestFS(logicalFS, ver.State.AllPaths()...)
+					be.NilErr(t, err)
+				})
+			}
+		})
+	}
+}
+
+func TestValidateObject(t *testing.T) {
 	ctx := context.Background()
 	fixturePath := filepath.Join(`testdata`, `object-fixtures`, `1.1`)
 	fsys := ocflfs.DirFS(filepath.Join(fixturePath, `bad-objects`))
@@ -322,7 +332,7 @@ func testValidateObject(t *testing.T) {
 	})
 }
 
-func testValidateFixtures(t *testing.T) {
+func TestValidateObject_Fixtures(t *testing.T) {
 	ctx := context.Background()
 	for _, spec := range []string{`1.0`, `1.1`} {
 		t.Run(spec, func(t *testing.T) {
