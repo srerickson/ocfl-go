@@ -220,6 +220,18 @@ func (obj Object) ID() string {
 	return obj.expectID
 }
 
+// Manifest returns a copy of the root inventory manifest. If the object has no
+// root inventory (e.g., it doesn't yet exist), nil is returned.
+func (obj Object) Manifest() DigestMap {
+	if obj.rootInventory == nil {
+		return nil
+	}
+	if obj.rootInventory.Manifest == nil {
+		return DigestMap{}
+	}
+	return obj.rootInventory.Manifest.Clone()
+}
+
 // Path returns the Object's path relative to its FS.
 func (obj *Object) Path() string {
 	return obj.path
@@ -240,41 +252,58 @@ func (o *Object) Spec() Spec {
 	return o.rootInventory.Type.Spec
 }
 
-// Version return the *InventoryVersion with the given number from obj's root
-// inventory. if v is 0, the most recent version is returned. If the version
-// does not exist, nil is returned.
-func (obj Object) Version(v int) *InventoryVersion {
+// Version returns a pointer to a copy of the InventoryVersion with the given
+// number (1...HEAD) from the root inventory. For example, v == 1 refers to "v1"
+// or "v001" version block. If v < 1, the most recent version is returned. If
+// the version does not exist, nil is returned. The returned
+func (obj Object) Version(v int) *ObjectVersion {
 	if obj.rootInventory == nil {
 		return nil
 	}
-	return obj.rootInventory.version(v)
+	vnum := obj.rootInventory.Head
+	if v > 0 {
+		vnum = V(v, obj.rootInventory.Head.padding)
+	}
+	ver := obj.rootInventory.Versions[vnum]
+	if ver == nil {
+		return nil
+	}
+	return &ObjectVersion{
+		vnum:    vnum,
+		version: ver,
+	}
 }
 
-// VersionFSS returns an io/fs.FS representing the logical state for the version
-// with the given index (1...HEAD). If i is 0, the most recent version is used.
+// VersionFS returns an io/fs.FS representing the logical state for the version
+// with the given number (1...HEAD). If v < 1, the most recent version is used.
 func (obj *Object) VersionFS(ctx context.Context, v int) (fs.FS, error) {
-	ver := obj.Version(v)
+	ver := obj.version(v)
 	if ver == nil {
 		return nil, errors.New("version not found")
 	}
-	names := make(map[string]string, ver.State.NumPaths())
+	// map logical names to content paths
+	logicalNames := make(map[string]string, ver.State.NumPaths())
 	for name, digest := range ver.State.Paths() {
-		names[name] = obj.rootInventory.Manifest[digest][0]
+		realNames := obj.rootInventory.Manifest[digest]
+		if len(realNames) < 1 {
+			err := errors.New("missing manifest entry for digest: " + digest)
+			return nil, err
+		}
+		logicalNames[name] = path.Join(obj.path, realNames[0])
 	}
 	fsys := logical.NewLogicalFS(
 		ctx,
 		obj.fs,
-		obj.path,
-		names,
+		logicalNames,
 		ver.Created,
 	)
 	return fsys, nil
 }
 
-// VersionStage returns a *Stage matching the content of version with the given
-// number. If ther version does not exist, nil is returned.
+// VersionStage returns a *Stage matching the content of the version with the
+// given number (1...HEAD). If ther version does not exist, nil is returned.
 func (obj *Object) VersionStage(v int) *Stage {
-	ver := obj.Version(v)
+	ver := obj.version(v)
 	if ver == nil {
 		return nil
 	}
@@ -284,6 +313,13 @@ func (obj *Object) VersionStage(v int) *Stage {
 		ContentSource:   obj,
 		FixitySource:    obj,
 	}
+}
+
+func (obj Object) version(v int) *InventoryVersion {
+	if obj.rootInventory == nil {
+		return nil
+	}
+	return obj.rootInventory.version(v)
 }
 
 // ValidateObject fully validates the OCFL Object at dir in fsys
@@ -361,3 +397,29 @@ func objectWithRoot(root *Root) ObjectOption {
 		o.root = root
 	}
 }
+
+// ObjectVersion is used to access version information from an object's root
+// inventory.
+type ObjectVersion struct {
+	vnum    VNum
+	version *InventoryVersion
+}
+
+// Message returns the version's message
+func (o ObjectVersion) Message() string { return o.version.Message }
+
+// State returns a copy of the version's state
+func (o ObjectVersion) State() DigestMap { return o.version.State.Clone() }
+
+// User returns the version's user information, which may be nil
+func (o ObjectVersion) User() *User {
+	var user *User
+	if o.version.User != nil {
+		user = &User{}
+		*user = *o.version.User
+	}
+	return user
+}
+
+// VNum returns o's version number
+func (o ObjectVersion) VNum() VNum { return o.vnum }

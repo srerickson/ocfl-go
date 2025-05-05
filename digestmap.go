@@ -25,6 +25,15 @@ func (m DigestMap) AllPaths() []string {
 	return pths
 }
 
+// Clone returns a copy of dm
+func (m DigestMap) Clone() DigestMap {
+	newM := maps.Clone(m)
+	for d, p := range newM {
+		newM[d] = slices.Clone(p)
+	}
+	return newM
+}
+
 // Eq returns true if m and the other have the same content: they have the
 // same (normalized) digests corresponding to the same set of paths. If either
 // map has a digest conflict (same digest appears twice with different case), Eq
@@ -130,7 +139,7 @@ func (m DigestMap) Mutate(fns ...PathMutation) {
 }
 
 // Normalize checks if m is valid and returns a normalized copy (with lowercase
-// digests).
+// digests) and sorted paths.
 func (m DigestMap) Normalize() (norm DigestMap, err error) {
 	if err := m.Valid(); err != nil {
 		return nil, err
@@ -138,7 +147,9 @@ func (m DigestMap) Normalize() (norm DigestMap, err error) {
 	norm = make(DigestMap, len(m))
 	for digest, paths := range m {
 		normDig := normalizeDigest(digest)
-		norm[normDig] = slices.Clone(paths)
+		normPaths := slices.Clone(paths)
+		slices.Sort(normPaths)
+		norm[normDig] = normPaths
 	}
 	return
 }
