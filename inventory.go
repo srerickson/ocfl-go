@@ -89,7 +89,7 @@ func (inv Inventory) version(v int) *InventoryVersion {
 	if inv.Versions == nil {
 		return nil
 	}
-	if v == 0 {
+	if v < 1 {
 		return inv.Versions[inv.Head]
 	}
 	return inv.Versions[V(v, inv.Head.padding)]
@@ -217,7 +217,7 @@ type InventoryBuilder struct {
 		messsage string
 		user     *User
 	}
-	contentPath func([]string) []string
+	contentPath PathMutation
 	fixtySource FixitySource
 }
 
@@ -268,8 +268,8 @@ func (b *InventoryBuilder) ContentDirectory(name string) *InventoryBuilder {
 
 // ContentPathFunc sets a function used to generate content directory names for
 // new manifest entries.
-func (b *InventoryBuilder) ContentPathFunc(f func([]string) []string) *InventoryBuilder {
-	b.contentPath = f
+func (b *InventoryBuilder) ContentPathFunc(mutate PathMutation) *InventoryBuilder {
+	b.contentPath = mutate
 	return b
 }
 
@@ -331,18 +331,17 @@ func (b *InventoryBuilder) initialInventory() (*Inventory, error) {
 	if b.prev == nil {
 		return inv, nil
 	}
-	prevInv := b.prev
 	// copy manifest
-	inv.DigestAlgorithm = prevInv.DigestAlgorithm
+	inv.DigestAlgorithm = b.prev.DigestAlgorithm
 	var err error
-	inv.Manifest, err = prevInv.Manifest.Normalize()
+	inv.Manifest, err = b.prev.Manifest.Normalize()
 	if err != nil {
 		return nil, fmt.Errorf("in existing inventory manifest: %w", err)
 	}
 	// copy versions
-	versions := prevInv.Head.Lineage()
+	versions := b.prev.Head.Lineage()
 	inv.Versions = make(map[VNum]*InventoryVersion, len(versions)+1)
-	for vnum, prevVer := range prevInv.Versions {
+	for vnum, prevVer := range b.prev.Versions {
 		newVer := &InventoryVersion{
 			Created: prevVer.Created,
 			Message: prevVer.Message,
@@ -358,8 +357,8 @@ func (b *InventoryBuilder) initialInventory() (*Inventory, error) {
 		inv.Versions[vnum] = newVer
 	}
 	// copy fixity
-	inv.Fixity = make(map[string]DigestMap, len(prevInv.Fixity))
-	for alg, m := range prevInv.Fixity {
+	inv.Fixity = make(map[string]DigestMap, len(b.prev.Fixity))
+	for alg, m := range b.prev.Fixity {
 		inv.Fixity[alg], err = m.Normalize()
 		if err != nil {
 			return nil, fmt.Errorf("in existing inventory %s fixity: %w", alg, err)
@@ -369,32 +368,27 @@ func (b *InventoryBuilder) initialInventory() (*Inventory, error) {
 }
 
 func (b *InventoryBuilder) buildVersions(inv *Inventory) error {
-	for _, addedVer := range b.addedVersions {
+	for _, versionInput := range b.addedVersions {
 		newHead, err := inv.Head.Next()
 		if err != nil {
 			return fmt.Errorf("existing inventory's version scheme doesn't support additional versions: %w", err)
 		}
-		state, err := addedVer.state.Normalize()
+		newState, err := versionInput.state.Normalize()
 		if err != nil {
 			return fmt.Errorf("%s version state: %w", newHead, err)
 		}
-		alg := addedVer.alg
-		message := addedVer.messsage
-		user := addedVer.user
-		created := addedVer.created
-
+		alg := versionInput.alg
 		if inv.DigestAlgorithm == "" {
 			inv.DigestAlgorithm = alg.ID()
 		}
 		if inv.DigestAlgorithm != alg.ID() {
 			return fmt.Errorf("cannot change inventory's digest algorithm from previous value: %s", inv.DigestAlgorithm)
 		}
-		inv.Head = newHead
 		newVersion := &InventoryVersion{
-			State:   state,
-			Created: created,
-			Message: message,
-			User:    user,
+			State:   newState,
+			Created: versionInput.created,
+			Message: versionInput.messsage,
+			User:    versionInput.user,
 		}
 		if newVersion.Created.IsZero() {
 			newVersion.Created = time.Now()
@@ -403,7 +397,8 @@ func (b *InventoryBuilder) buildVersions(inv *Inventory) error {
 		if inv.Versions == nil {
 			inv.Versions = map[VNum]*InventoryVersion{}
 		}
-		inv.Versions[inv.Head] = newVersion
+		inv.Head = newHead
+		inv.Versions[newHead] = newVersion
 		// add version state to manifest
 		contentDirectory := inv.ContentDirectory
 		if contentDirectory == "" {
@@ -421,7 +416,7 @@ func (b *InventoryBuilder) buildVersions(inv *Inventory) error {
 			}
 			return paths
 		}
-		for digest, logicPaths := range state {
+		for digest, logicPaths := range newState {
 			if len(inv.Manifest[digest]) > 0 {
 				continue // version content already exists in the manifest
 			}
@@ -429,7 +424,6 @@ func (b *InventoryBuilder) buildVersions(inv *Inventory) error {
 		}
 	}
 	return nil
-
 }
 
 // fillFixity adds fixity entries from source using for all digests found in the

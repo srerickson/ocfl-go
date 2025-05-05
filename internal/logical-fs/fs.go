@@ -18,14 +18,12 @@ import (
 func NewLogicalFS(
 	ctx context.Context,
 	fsys ocflfs.FS,
-	dir string,
 	nameLookup map[string]string,
 	created time.Time,
 ) *LogicalFS {
 	return &LogicalFS{
 		ctx:        ctx,
 		fs:         fsys,
-		basePath:   dir,
 		nameLookup: nameLookup,
 		created:    created,
 	}
@@ -34,7 +32,6 @@ func NewLogicalFS(
 type LogicalFS struct {
 	ctx        context.Context
 	fs         ocflfs.FS
-	basePath   string
 	nameLookup map[string]string
 	created    time.Time
 }
@@ -60,7 +57,7 @@ func (fsys *LogicalFS) openFile(name string) (fs.File, error) {
 		// try opening as a directory
 		return fsys.openDir(name)
 	}
-	f, err := fsys.fs.OpenFile(fsys.ctx, path.Join(fsys.basePath, realName))
+	f, err := fsys.fs.OpenFile(fsys.ctx, realName)
 	if err != nil {
 		err = fmt.Errorf("opening file with logical path %q: %w", name, err)
 		return nil, err

@@ -52,7 +52,7 @@ func TestObject_Example(t *testing.T) {
 	be.Equal(t, "new-object-01", obj.ID())
 	sourceVersion := obj.Version(1)
 	be.Nonzero(t, sourceVersion)
-	be.Nonzero(t, sourceVersion.State.PathMap()["README.txt"])
+	be.Nonzero(t, sourceVersion.State().PathMap()["README.txt"])
 
 	// commit a new version and upgrade to OCFL v1.1
 	v2Content := map[string][]byte{
@@ -72,7 +72,7 @@ func TestObject_Example(t *testing.T) {
 	be.NilErr(t, err)
 	be.Equal(t, "new-object-01", obj.ID())
 	be.Equal(t, ocfl.Spec1_1, obj.Spec())
-	be.Nonzero(t, obj.Version(2).State.PathMap()["new-data.csv"])
+	be.Nonzero(t, obj.Version(2).State().PathMap()["new-data.csv"])
 	be.DeepEqual(t, []string{"md5"}, obj.FixityAlgorithms())
 
 	// check that the object is valid
@@ -97,22 +97,19 @@ func TestObject_Example(t *testing.T) {
 	forkID := "new-object-02"
 	sourceVersion = obj.Version(0)
 	be.Nonzero(t, sourceVersion)
+	sourceStage := obj.VersionStage(0)
+	be.Nonzero(t, sourceStage)
 	fork := &ocfl.Commit{
-		ID: forkID,
-		Stage: &ocfl.Stage{
-			State:           sourceVersion.State,
-			DigestAlgorithm: obj.DigestAlgorithm(),
-			FixitySource:    obj,
-			ContentSource:   obj,
-		},
-		Message: sourceVersion.Message,
-		User:    *sourceVersion.User,
+		ID:      forkID,
+		Stage:   sourceStage,
+		Message: sourceVersion.Message(),
+		User:    *sourceVersion.User(),
 	}
 	forkObj, err := ocfl.NewObject(ctx, tmpFS, forkID)
 	be.NilErr(t, err)
 	be.NilErr(t, forkObj.Commit(ctx, fork))
 	be.NilErr(t, ocfl.ValidateObject(ctx, forkObj.FS(), forkObj.Path()).Err())
-	be.True(t, sourceVersion.State.Eq(forkObj.Version(0).State))
+	be.True(t, sourceVersion.State().Eq(forkObj.Version(0).State()))
 }
 
 // OpenObject unit tests
@@ -312,7 +309,7 @@ func TestObject_VersionFS(t *testing.T) {
 					ver := obj.Version(vnum.Num())
 					logicalFS, err := obj.VersionFS(ctx, vnum.Num())
 					be.NilErr(t, err)
-					err = fstest.TestFS(logicalFS, ver.State.AllPaths()...)
+					err = fstest.TestFS(logicalFS, ver.State().AllPaths()...)
 					be.NilErr(t, err)
 				})
 			}
