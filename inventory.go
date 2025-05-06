@@ -74,6 +74,7 @@ func (inv *Inventory) Validate() *Validation {
 	return imp.ValidateInventory(inv)
 }
 
+// sets inv's jsonDigest value by digesting the raw inventory bytes.
 func (inv *Inventory) setJsonDigest(raw []byte) error {
 	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
 	if err != nil {
@@ -189,6 +190,37 @@ func ValidateInventorySidecar(ctx context.Context, inv *Inventory, fsys ocflfs.F
 			Alg:      inv.DigestAlgorithm,
 			Got:      inv.Digest(),
 			Expected: expSum,
+		}
+	}
+	return nil
+}
+
+// writeInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
+// fsys. The digest is calculated using alg and the inventory sidecar is also written to
+// dir/inventory.json.alg
+func writeInventory(ctx context.Context, fsys ocflfs.FS, inv *Inventory, dirs ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	inventoryContent, err := json.Marshal(inv)
+	if err != nil {
+		return fmt.Errorf("encoding inventory: %w", err)
+	}
+	if err := inv.setJsonDigest(inventoryContent); err != nil {
+		return fmt.Errorf("generating inventory.json checksum: %w", err)
+	}
+	sidecarContent := inv.jsonDigest + " " + inventoryBase + "\n"
+	// write inventory.json and sidecar
+	for _, dir := range dirs {
+		invFile := path.Join(dir, inventoryBase)
+		sideFile := invFile + "." + inv.DigestAlgorithm
+		_, err = ocflfs.Write(ctx, fsys, invFile, bytes.NewReader(inventoryContent))
+		if err != nil {
+			return fmt.Errorf("writing inventory: %w", err)
+		}
+		_, err = ocflfs.Write(ctx, fsys, sideFile, strings.NewReader(sidecarContent))
+		if err != nil {
+			return fmt.Errorf("writing inventory sidecar: %w", err)
 		}
 	}
 	return nil
