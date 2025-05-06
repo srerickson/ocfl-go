@@ -1,6 +1,10 @@
 package ocfl_test
 
 import (
+	"context"
+	"errors"
+	"io/fs"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +12,7 @@ import (
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/internal/testutil"
 )
 
@@ -933,3 +938,27 @@ type fixtySource map[string]digest.Set
 var _ ocfl.FixitySource = fixtySource(nil)
 
 func (s fixtySource) GetFixity(dig string) digest.Set { return s[dig] }
+
+func TestReadInventorySidecar(t *testing.T) {
+	ctx := context.Background()
+	goodObjectFixtures := filepath.Join(`testdata`, `object-fixtures`, `1.1`, `good-objects`)
+	badObjectFixtures := filepath.Join(`testdata`, `object-fixtures`, `1.1`, `bad-objects`)
+
+	t.Run("ok", func(t *testing.T) {
+		expectDigest := "8e280eb94af68d27f635c2013531d4cf41c6089dfa8ffeeb4f0230500203fab9c10f929c08057f5d1b5084ab4dff7d72fb20010bf4cbf713569fadfc9257770a"
+		digest, err := ocfl.ReadInventorySidecar(ctx, ocflfs.DirFS(goodObjectFixtures), "spec-ex-full", "sha512")
+		be.NilErr(t, err)
+		be.Equal(t, expectDigest, digest)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, err := ocfl.ReadInventorySidecar(ctx, ocflfs.DirFS(badObjectFixtures), "spec-ex-full", "sha256")
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+	})
+
+	t.Run("invalid sidecar contents", func(t *testing.T) {
+		_, err := ocfl.ReadInventorySidecar(ctx, ocflfs.DirFS(badObjectFixtures), "E061_invalid_sidecar", "sha512")
+		be.Nonzero(t, err)
+		be.True(t, errors.Is(err, ocfl.ErrInventorySidecarContents))
+	})
+}

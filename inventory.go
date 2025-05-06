@@ -19,7 +19,8 @@ import (
 )
 
 var (
-	// Error: invalid contents of inventory sidecar file
+	// ErrInventorySidecarContents indicates the inventory sidecar contents is
+	// not formatted correctly.
 	ErrInventorySidecarContents = errors.New("invalid contents of inventory sidecar file")
 
 	invSidecarContentsRexp = regexp.MustCompile(`^([a-fA-F0-9]+)\s+inventory\.json[\n]?$`)
@@ -145,15 +146,17 @@ func ReadInventory(ctx context.Context, fsys ocflfs.FS, dir string) (inv *Invent
 	return inv, nil
 }
 
-// ReadSidecarDigest reads the digest from an inventory.json sidecar file
-func ReadSidecarDigest(ctx context.Context, fsys ocflfs.FS, name string) (string, error) {
-	byts, err := ocflfs.ReadAll(ctx, fsys, name)
+// ReadInventorySidecar reads the digest from an inventory sidecar file in
+// dir, using the digest algorithm alg.
+func ReadInventorySidecar(ctx context.Context, fsys ocflfs.FS, dir, alg string) (string, error) {
+	sideCar := path.Join(dir, inventoryBase+"."+alg)
+	byts, err := ocflfs.ReadAll(ctx, fsys, sideCar)
 	if err != nil {
 		return "", err
 	}
 	matches := invSidecarContentsRexp.FindSubmatch(byts)
 	if len(matches) != 2 {
-		err := fmt.Errorf("reading %s: %w", name, ErrInventorySidecarContents)
+		err := fmt.Errorf("reading %s: %w", sideCar, ErrInventorySidecarContents)
 		return "", err
 	}
 	return string(matches[1]), nil
@@ -176,7 +179,7 @@ func ValidateInventoryBytes(byts []byte) (*Inventory, *Validation) {
 // doesn't match the value found in the sidecar.
 func ValidateInventorySidecar(ctx context.Context, inv *Inventory, fsys ocflfs.FS, dir string) error {
 	sideCar := path.Join(dir, inventoryBase+"."+inv.DigestAlgorithm)
-	expSum, err := ReadSidecarDigest(ctx, fsys, sideCar)
+	expSum, err := ReadInventorySidecar(ctx, fsys, dir, inv.DigestAlgorithm)
 	if err != nil {
 		return err
 	}
