@@ -1,7 +1,6 @@
 package ocfl
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -734,37 +733,6 @@ func convertJSONDigestMap(jsonMap map[string]any) (DigestMap, error) {
 		}
 	}
 	return m, nil
-}
-
-// writeInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
-// fsys. The digest is calculated using alg and the inventory sidecar is also written to
-// dir/inventory.alg
-func writeInventory(ctx context.Context, fsys ocflfs.FS, inv *Inventory, dirs ...string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	byts, err := json.Marshal(inv)
-	if err != nil {
-		return fmt.Errorf("encoding inventory: %w", err)
-	}
-	if err := inv.setJsonDigest(byts); err != nil {
-		return fmt.Errorf("generating inventory.json checksum: %w", err)
-	}
-	// write inventory.json and sidecar
-	for _, dir := range dirs {
-		invFile := path.Join(dir, inventoryBase)
-		sideFile := invFile + "." + inv.DigestAlgorithm
-		sideContent := inv.jsonDigest + " " + inventoryBase + "\n"
-		_, err = ocflfs.Write(ctx, fsys, invFile, bytes.NewReader(byts))
-		if err != nil {
-			return fmt.Errorf("write inventory failed: %w", err)
-		}
-		_, err = ocflfs.Write(ctx, fsys, sideFile, strings.NewReader(sideContent))
-		if err != nil {
-			return fmt.Errorf("write inventory sidecar failed: %w", err)
-		}
-	}
-	return nil
 }
 
 type versionDirState struct {

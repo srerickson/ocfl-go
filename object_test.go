@@ -186,6 +186,7 @@ func TestObject_Commit(t *testing.T) {
 		obj, err := ocfl.NewObject(ctx, fsys, ".")
 		be.NilErr(t, err)
 		be.False(t, obj.Exists())
+		be.Zero(t, obj.InventoryDigest())
 		commit := &ocfl.Commit{
 			ID:      "new-object",
 			Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA256},
@@ -197,6 +198,8 @@ func TestObject_Commit(t *testing.T) {
 		}
 		be.NilErr(t, obj.Commit(ctx, commit))
 		be.True(t, obj.Exists())
+		be.Nonzero(t, obj.InventoryDigest())
+		be.Equal(t, "new object", obj.Version(0).Message())
 		be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 	})
 	t.Run("with wrong alg", func(t *testing.T) {

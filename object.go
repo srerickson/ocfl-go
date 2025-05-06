@@ -176,7 +176,7 @@ func (obj Object) FixityAlgorithms() []string {
 }
 
 // FS returns the FS where object is stored.
-func (obj *Object) FS() ocflfs.FS {
+func (obj Object) FS() ocflfs.FS {
 	return obj.fs
 }
 
@@ -209,6 +209,16 @@ func (obj Object) Head() VNum {
 	return obj.rootInventory.Head
 }
 
+// InventoryDigest returns the digest of the object's root inventory using the
+// declarate digest algorithm. This is the actual inventory digest, not the
+// digest recorded inventory sidecar (they should be the same).
+func (obj Object) InventoryDigest() string {
+	if obj.rootInventory == nil {
+		return ""
+	}
+	return obj.rootInventory.jsonDigest
+}
+
 // ID returns obj's inventory ID if the obj exists (its inventory is not nil).
 // If obj does not exist but was constructed with [Root.NewObject](), the ID
 // used with [Root.NewObject]() is returned. Otherwise, it returns an empty
@@ -233,29 +243,29 @@ func (obj Object) Manifest() DigestMap {
 }
 
 // Path returns the Object's path relative to its FS.
-func (obj *Object) Path() string {
+func (obj Object) Path() string {
 	return obj.path
 }
 
 // Root returns the object's Root, if known. It is nil unless the *Object was
 // created using [Root.NewObject]
-func (o *Object) Root() *Root {
+func (o Object) Root() *Root {
 	return o.root
 }
 
 // Spec returns the OCFL spec number from the object's root inventory, or an
 // empty Spec if the root inventory does not exist.
-func (o *Object) Spec() Spec {
+func (o Object) Spec() Spec {
 	if o.rootInventory == nil {
 		return Spec("")
 	}
 	return o.rootInventory.Type.Spec
 }
 
-// Version returns a pointer to a copy of the InventoryVersion with the given
-// number (1...HEAD) from the root inventory. For example, v == 1 refers to "v1"
-// or "v001" version block. If v < 1, the most recent version is returned. If
-// the version does not exist, nil is returned. The returned
+// Version returns an *ObjectVersion that can be used to access details for the
+// version with the given number (1...HEAD) from the root inventory. For
+// example, v == 1 refers to "v1" or "v001" version block. If v < 1, the most
+// recent version is returned. If the version does not exist, nil is returned.
 func (obj Object) Version(v int) *ObjectVersion {
 	if obj.rootInventory == nil {
 		return nil
