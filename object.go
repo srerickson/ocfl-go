@@ -38,10 +38,33 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
 	}
 	obj := newObject(fsys, dir, opts...)
-	// read root inventory: we don't know what OCFL spec it uses.
+
+	// inventory may be set by options
+	if obj.rootInventory != nil {
+		expectInvDigest := obj.rootInventory.jsonDigest
+		if expectInvDigest == "" {
+			return obj, nil
+		}
+		alg := obj.rootInventory.DigestAlgorithm
+		sidecarInvDigest, err := ReadInventorySidecar(ctx, fsys, dir, alg)
+		if err != nil {
+			return nil, err
+		}
+		if sidecarInvDigest != obj.expectID {
+			return nil, &digest.DigestError{
+				Path:     path.Join(dir, inventoryBase+"."+alg),
+				Alg:      alg,
+				Got:      sidecarInvDigest,
+				Expected: expectInvDigest,
+			}
+		}
+		return obj, nil
+	}
+
+	// read root inventory: we don't know what OCFL spec it uses
 	inv, err := ReadInventory(ctx, fsys, dir)
 	if err != nil {
-		// continue of err is ErrNotExist and !mustExist
+		// continue if err is ErrNotExist and !mustExist
 		if !obj.mustExist && errors.Is(err, fs.ErrNotExist) {
 			err = nil
 		}
@@ -210,8 +233,8 @@ func (obj Object) Head() VNum {
 }
 
 // InventoryDigest returns the digest of the object's root inventory using the
-// declarate digest algorithm. This is the actual inventory digest, not the
-// digest recorded inventory sidecar (they should be the same).
+// declarate digest algorithm. It is the expected content of the root
+// inventory's sidecar file.
 func (obj Object) InventoryDigest() string {
 	if obj.rootInventory == nil {
 		return ""
@@ -387,10 +410,27 @@ func newObject(fsys ocflfs.FS, dir string, opts ...ObjectOption) *Object {
 // ObjectOptions are used to configure the behavior of NewObject()
 type ObjectOption func(*Object)
 
-// ObjectMustExists requires the object to exist
+// ObjectMustExists is an ObjectOption used to indicate that the initialized
+// object instance must be an existing OCFL object.
 func ObjectMustExist() ObjectOption {
 	return func(o *Object) {
 		o.mustExist = true
+	}
+}
+
+// ObjectWithInventory is an ObjectOption used to initialize an *Object with an
+// existing *Inventory value. This can be used, for example, in conjunction with
+// an inventory cache to make object initialization more efficient. If the
+// digest is not empty, it is compared to contents of the root inventory
+// sidecar: if the sidecar digest doesn't match, the object initialization will
+// return an error.
+func ObjectWithInventory(inv *Inventory, invDigest string) ObjectOption {
+	return func(o *Object) {
+		if o.rootInventory != nil {
+			return
+		}
+		inv.jsonDigest = invDigest
+		o.rootInventory = inv
 	}
 }
 
@@ -404,7 +444,9 @@ func objectExpectedID(id string) ObjectOption {
 // objectWithRoot is an ObjectOption that sets the object's storage root
 func objectWithRoot(root *Root) ObjectOption {
 	return func(o *Object) {
-		o.root = root
+		if o.root == nil {
+			o.root = root
+		}
 	}
 }
 
