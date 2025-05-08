@@ -29,6 +29,9 @@ type Object struct {
 	mustExist bool
 	// object's storage root
 	root *Root
+
+	// inventory cache
+	cache InventoryCache
 }
 
 // NewObject returns an *Object for managing the OCFL object at path in fsys.
@@ -38,29 +41,15 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
 	}
 	obj := newObject(fsys, dir, opts...)
-
-	// inventory may be set by options
-	if obj.rootInventory != nil {
-		expectInvDigest := obj.rootInventory.jsonDigest
-		if expectInvDigest == "" {
-			return obj, nil
-		}
-		alg := obj.rootInventory.DigestAlgorithm
-		sidecarInvDigest, err := ReadInventorySidecar(ctx, fsys, dir, alg)
+	if obj.cache != nil {
+		cached, err := obj.cache.GetInventory(ctx, fsys, dir)
 		if err != nil {
-			return nil, err
+
 		}
-		if sidecarInvDigest != obj.expectID {
-			return nil, &digest.DigestError{
-				Path:     path.Join(dir, inventoryBase+"."+alg),
-				Alg:      alg,
-				Got:      sidecarInvDigest,
-				Expected: expectInvDigest,
-			}
-		}
+		obj.rootInventory = &cached.Inventory
+		obj.rootInventory.jsonDigest = cached.Digest
 		return obj, nil
 	}
-
 	// read root inventory: we don't know what OCFL spec it uses
 	inv, err := ReadInventory(ctx, fsys, dir)
 	if err != nil {
@@ -78,6 +67,11 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 		if obj.expectID != "" && inv.ID != obj.expectID {
 			err := fmt.Errorf("object has unexpected ID: %q; expected: %q", inv.ID, obj.expectID)
 			return nil, err
+		}
+		if obj.cache != nil {
+			if err := obj.cache.SetInventory(ctx, fsys, dir, inv); err != nil {
+				return nil, fmt.Errorf("adding inventory to cache: %w", err)
+			}
 		}
 		obj.rootInventory = inv
 		return obj, nil
