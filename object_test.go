@@ -117,7 +117,6 @@ func TestNewObject(t *testing.T) {
 	ctx := context.Background()
 	fsys := ocflfs.DirFS(objectFixturesPath)
 	type testCase struct {
-		ctx    context.Context
 		fs     ocflfs.FS
 		path   string
 		opts   []ocfl.ObjectOption
@@ -139,7 +138,6 @@ func TestNewObject(t *testing.T) {
 			},
 		},
 		"not existing": {
-			ctx:  ctx,
 			fs:   fsys,
 			path: "new-dir",
 			expect: func(t *testing.T, obj *ocfl.Object, err error) {
@@ -147,7 +145,6 @@ func TestNewObject(t *testing.T) {
 			},
 		},
 		"not existing, must exist": {
-			ctx:  ctx,
 			fs:   fsys,
 			path: "new-dir",
 			opts: []ocfl.ObjectOption{ocfl.ObjectMustExist()},
@@ -155,11 +152,27 @@ func TestNewObject(t *testing.T) {
 				be.True(t, errors.Is(err, fs.ErrNotExist))
 			},
 		},
+		"with skip inventory sidecar validation": {
+			fs:   fsys,
+			path: "1.1/bad-objects/E060_E064_root_inventory_digest_mismatch",
+			opts: []ocfl.ObjectOption{
+				ocfl.ObjectSkipSidecarValidation(),
+			},
+			expect: func(t *testing.T, _ *ocfl.Object, err error) {
+				be.NilErr(t, err)
+			},
+		},
+		"without skip inventory sidecar validation": {
+			fs:   fsys,
+			path: "1.1/bad-objects/E060_E064_root_inventory_digest_mismatch",
+			expect: func(t *testing.T, _ *ocfl.Object, err error) {
+				var expectErr *digest.DigestError
+				be.True(t, errors.As(err, &expectErr))
+			},
+		},
 		"empty": {
-			ctx:  ctx,
 			fs:   fsys,
 			path: "1.1/bad-objects/E003_E063_empty",
-			opts: []ocfl.ObjectOption{},
 			expect: func(t *testing.T, _ *ocfl.Object, err error) {
 				be.Nonzero(t, err)
 			},
@@ -168,10 +181,7 @@ func TestNewObject(t *testing.T) {
 	i := 0
 	for name, tCase := range testCases {
 		t.Run(fmt.Sprintf("%d-%s", i, name), func(t *testing.T) {
-			if tCase.ctx == nil {
-				tCase.ctx = ctx
-			}
-			obj, err := ocfl.NewObject(tCase.ctx, tCase.fs, tCase.path, tCase.opts...)
+			obj, err := ocfl.NewObject(ctx, tCase.fs, tCase.path, tCase.opts...)
 			tCase.expect(t, obj, err)
 		})
 		i++
