@@ -10,7 +10,6 @@ import (
 	restate "github.com/restatedev/sdk-go"
 	"github.com/restatedev/sdk-go/server"
 	"github.com/srerickson/ocfl-go"
-	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/fs/local"
 )
 
@@ -74,14 +73,14 @@ type invCache struct {
 	ctx restate.ObjectContext
 }
 
-func (c invCache) GetInventory(ctx context.Context, _ ocflfs.FS, _ string) (*ocfl.CachedInventory, error) {
+func (c invCache) GetInventory(ctx context.Context, _ string) (*ocfl.CachedInventory, error) {
 	objCtx, notRestate := ctx.(restate.ObjectContext)
 	if !notRestate {
 		return nil, errors.New("expected restate object context")
 	}
 	return restate.Get[*ocfl.CachedInventory](objCtx, "inventory")
 }
-func (c invCache) SetInventory(ctx context.Context, _ ocflfs.FS, _ string, inv *ocfl.Inventory) error {
+func (c invCache) SetInventory(ctx context.Context, _ string, inv *ocfl.Inventory) error {
 	objCtx, notRestate := ctx.(restate.ObjectContext)
 	if !notRestate {
 		return errors.New("expected restate object context")

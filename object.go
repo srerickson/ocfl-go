@@ -8,6 +8,7 @@ import (
 	"maps"
 	"path"
 	"slices"
+	"strings"
 
 	"github.com/srerickson/ocfl-go/digest"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
@@ -27,9 +28,11 @@ type Object struct {
 	expectID string
 	// the object must exist: don't create a new object.
 	mustExist bool
+	// during initialization, don't check that the inventory's digest matches
+	// the contents of the inventory sidecar file.
+	skipSidecarValidation bool
 	// object's storage root
 	root *Root
-
 	// inventory cache
 	cache InventoryCache
 }
@@ -43,7 +46,10 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 	obj := newObject(fsys, dir, opts...)
 	var inv *Inventory
 	if obj.cache != nil {
-		cached, _ := obj.cache.GetInventory(ctx, fsys, dir)
+		cached, err := obj.cache.GetInventory(ctx, dir)
+		if err != nil {
+			return nil, err
+		}
 		if cached != nil {
 			inv = cached.Inventory
 			inv.jsonDigest = cached.Digest
@@ -53,8 +59,8 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 		var err error
 		inv, err = ReadInventory(ctx, fsys, dir)
 		if err != nil {
-			// continue if err is ErrNotExist and !mustExist
 			if !obj.mustExist && errors.Is(err, fs.ErrNotExist) {
+				// ignore if err is ErrNotExist and !mustExist
 				err = nil
 			}
 			if err != nil {
@@ -69,8 +75,23 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 			err := fmt.Errorf("object has unexpected ID: %q; expected: %q", inv.ID, obj.expectID)
 			return nil, err
 		}
+		if !obj.skipSidecarValidation {
+			expectedDigest, err := ReadInventorySidecar(ctx, fsys, dir, inv.DigestAlgorithm)
+			if err != nil {
+				return nil, err
+			}
+			if !strings.EqualFold(expectedDigest, inv.Digest()) {
+				err := &digest.DigestError{
+					Path:     path.Join(dir, inventoryBase),
+					Alg:      inv.DigestAlgorithm,
+					Got:      inv.Digest(),
+					Expected: expectedDigest,
+				}
+				return nil, fmt.Errorf("inventory digest doesn't match digest in sidecar: %w", err)
+			}
+		}
 		if obj.cache != nil {
-			if err := obj.cache.SetInventory(ctx, fsys, dir, inv); err != nil {
+			if err := obj.cache.SetInventory(ctx, dir, inv); err != nil {
 				return nil, fmt.Errorf("adding inventory to cache: %w", err)
 			}
 		}
@@ -198,7 +219,7 @@ func (obj Object) FS() ocflfs.FS {
 	return obj.fs
 }
 
-// GetFixity implement the FixitySource interface for Object, for use in Stage.
+// GetFixity implements the FixitySource interface for Object, for use in Stage.
 func (obj Object) GetFixity(dig string) digest.Set {
 	if obj.rootInventory == nil {
 		return nil
@@ -413,6 +434,16 @@ func ObjectMustExist() ObjectOption {
 	}
 }
 
+// ObjectSkipSidecarValidation is used to skip validating the inventory.json
+// digest with the inventory sidecar file during initialization.
+func ObjectSkipSidecarValidation() ObjectOption {
+	return func(o *Object) {
+		o.skipSidecarValidation = true
+	}
+}
+
+// ObjectWithInventoryCache sets an InventoryCache to use when initializing
+// new *Objects.
 func ObjectWithInventoryCache(cache InventoryCache) ObjectOption {
 	return func(o *Object) {
 		o.cache = cache
