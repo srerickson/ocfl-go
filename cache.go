@@ -7,12 +7,12 @@ import (
 )
 
 type CachedInventory struct {
-	Inventory
+	*Inventory
 	Digest string
 }
 
 type InventoryCache interface {
 	GetInventory(ctx context.Context, fsys ocflfs.FS, dir string) (*CachedInventory, error)
 	SetInventory(ctx context.Context, fsys ocflfs.FS, dir string, inv *Inventory) error
-	UnsetInventory(ctx context.Context, fsys ocflfs.FS, dir string) error
+	//UnsetInventory(ctx context.Context, fsys ocflfs.FS, dir string) error
 }

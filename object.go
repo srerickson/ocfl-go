@@ -41,24 +41,25 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
 	}
 	obj := newObject(fsys, dir, opts...)
+	var inv *Inventory
 	if obj.cache != nil {
-		cached, err := obj.cache.GetInventory(ctx, fsys, dir)
-		if err != nil {
-
+		cached, _ := obj.cache.GetInventory(ctx, fsys, dir)
+		if cached != nil {
+			inv = cached.Inventory
+			inv.jsonDigest = cached.Digest
 		}
-		obj.rootInventory = &cached.Inventory
-		obj.rootInventory.jsonDigest = cached.Digest
-		return obj, nil
 	}
-	// read root inventory: we don't know what OCFL spec it uses
-	inv, err := ReadInventory(ctx, fsys, dir)
-	if err != nil {
-		// continue if err is ErrNotExist and !mustExist
-		if !obj.mustExist && errors.Is(err, fs.ErrNotExist) {
-			err = nil
-		}
+	if inv == nil {
+		var err error
+		inv, err = ReadInventory(ctx, fsys, dir)
 		if err != nil {
-			return nil, err
+			// continue if err is ErrNotExist and !mustExist
+			if !obj.mustExist && errors.Is(err, fs.ErrNotExist) {
+				err = nil
+			}
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	if inv != nil {
@@ -412,19 +413,9 @@ func ObjectMustExist() ObjectOption {
 	}
 }
 
-// ObjectWithInventory is an ObjectOption used to initialize an *Object with an
-// existing *Inventory value. This can be used, for example, in conjunction with
-// an inventory cache to make object initialization more efficient. If the
-// digest is not empty, it is compared to contents of the root inventory
-// sidecar: if the sidecar digest doesn't match, the object initialization will
-// return an error.
-func ObjectWithInventory(inv *Inventory, invDigest string) ObjectOption {
+func ObjectWithInventoryCache(cache InventoryCache) ObjectOption {
 	return func(o *Object) {
-		if o.rootInventory != nil {
-			return
-		}
-		inv.jsonDigest = invDigest
-		o.rootInventory = inv
+		o.cache = cache
 	}
 }
 
