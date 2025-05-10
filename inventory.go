@@ -110,6 +110,19 @@ func (inv Inventory) vnums() []VNum {
 	return vnums
 }
 
+// versionContent returns a DigestMap with manifest entries
+// for content in the specified version.
+func (inv Inventory) versionContent(vnum VNum) PathMap {
+	prefix := vnum.String() + "/"
+	pm := PathMap{}
+	for pth, dig := range inv.Manifest.Paths() {
+		if strings.HasPrefix(pth, prefix) {
+			pm[pth] = dig
+		}
+	}
+	return pm
+}
+
 // Version represents object version state and metadata
 type InventoryVersion struct {
 	Created time.Time `json:"created"`

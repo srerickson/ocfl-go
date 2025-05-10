@@ -409,13 +409,12 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (*Inventory, *Validation) {
 	return inv, v
 }
 
-func (imp ocflV1) newCommitPlan(obj *Object, commit *Commit) (*commitPlan, error) {
+func (imp ocflV1) NewCommitPlan(obj *Object, commit *Commit) (*CommitPlan, error) {
 	if commit.Stage == nil {
 		return nil, errors.New("commit is missing new version state")
 	}
 	if commit.Stage.DigestAlgorithm == nil {
 		return nil, errors.New("commit has no digest algorithm")
-
 	}
 	if commit.Stage.State == nil {
 		commit.Stage.State = DigestMap{}
@@ -447,38 +446,79 @@ func (imp ocflV1) newCommitPlan(obj *Object, commit *Commit) (*commitPlan, error
 	if err != nil {
 		return nil, fmt.Errorf("building new inventory: %w", err)
 	}
-	// newContent is a subeset of the manifest with the new content to add
-	newContent, err := newContentMap(newInv)
-	if err != nil {
-		return nil, err
+	saga := CommitPlan{
+		NewInventory: newInv,
 	}
-	// check that the stage includes all the new content
-	for digest := range newContent {
-		if !commit.Stage.HasContent(digest) {
-			// FIXME short digest
-			err := fmt.Errorf("no content for digest: %s", digest)
-			return nil, err
+	newSpec := newInv.Type.Spec
+	var oldSpec Spec
+	if obj.rootInventory != nil {
+		oldSpec = obj.rootInventory.Type.Spec
+	}
+	if oldSpec != newSpec {
+		if !oldSpec.Empty() {
+			oldDecl := Namaste{Type: NamasteTypeObject, Version: oldSpec}
+			oldDeclName := path.Join(obj.path, oldDecl.Name())
+			saga.append(CommitStep{
+				Name: "remove" + oldDeclName,
+				run: func(ctx context.Context) error {
+					if err := ocflfs.Remove(ctx, obj.fs, oldDeclName); err != nil {
+						return &CommitError{Err: err, Dirty: true}
+					}
+					return nil
+				},
+				compensate: func(ctx context.Context) error {
+					return WriteDeclaration(ctx, obj.fs, obj.path, oldDecl)
+				},
+			})
 		}
+		newDecl := Namaste{Type: NamasteTypeObject, Version: newSpec}
+		newDeclName := path.Join(obj.Path(), newDecl.Name())
+		saga.append(CommitStep{
+			Name: "write " + newDeclName,
+			run: func(ctx context.Context) error {
+				if err := WriteDeclaration(ctx, obj.fs, obj.path, newDecl); err != nil {
+					return &CommitError{Err: err, Dirty: true}
+				}
+				return nil
+			},
+			compensate: func(ctx context.Context) error {
+				return ocflfs.Remove(ctx, obj.fs, newDeclName)
+			},
+		})
 	}
-	plan := &commitPlan{
-		Object:        obj,
-		NewInventory:  newInv,
-		NewContent:    newContent,
-		ContentSource: commit.Stage,
+	// 2. tranfser files from stage to object
+	src := commit.Stage.ContentSource
+	for dstName, dig := range newInv.versionContent(newInv.Head).SortedPaths() {
+		srcFS, srcPath := src.GetContent(dig)
+		if srcFS == nil {
+			return nil, fmt.Errorf("content source doesn't provide %q", dig)
+		}
+		dstPath := path.Join(obj.path, dstName)
+		saga.append(CommitStep{
+			Name: "copy" + dstPath,
+			run: func(ctx context.Context) error {
+				return ocflfs.Copy(ctx, obj.fs, dstPath, srcFS, srcPath)
+			},
+			compensate: func(ctx context.Context) error {
+				return ocflfs.Remove(ctx, obj.fs, dstPath)
+			},
+		})
 	}
-	return plan, nil
-}
-
-func (imp ocflV1) Commit(ctx context.Context, obj *Object, commit *Commit) error {
-	plan, err := imp.newCommitPlan(obj, commit)
-	if err != nil {
-		return &CommitError{Err: err}
-	}
-	if err := plan.Run(ctx, commit.Logger); err != nil {
-		return &CommitError{Err: err, Dirty: true}
-	}
-	obj.rootInventory = plan.NewInventory
-	return nil
+	// 3. write inventory to both object root and version directory
+	saga.append(CommitStep{
+		Name: "write inventory.json",
+		run: func(ctx context.Context) error {
+			newVersionDir := path.Join(obj.path, newInv.Head.String())
+			if err := writeInventory(ctx, obj.fs, newInv, obj.path, newVersionDir); err != nil {
+				err = fmt.Errorf("writing new inventories or inventory sidecars: %w", err)
+				return &CommitError{Err: err, Dirty: true}
+			}
+			return nil
+		},
+		// TODO: compensation: If there was no previous inventory, delete new inventories and sidecars.
+		// if there was an old inventory, write it again (we need a copy).
+	})
+	return &saga, nil
 }
 
 func (imp ocflV1) ValidateObjectRoot(ctx context.Context, vldr *ObjectValidation, state *ObjectState) error {

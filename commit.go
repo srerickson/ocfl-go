@@ -2,16 +2,8 @@ package ocfl
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"log/slog"
-	"path"
-	"strings"
 	"time"
-
-	ocflfs "github.com/srerickson/ocfl-go/fs"
-	"github.com/srerickson/ocfl-go/logging"
-	"golang.org/x/sync/errgroup"
 )
 
 // Commit represents an update to object.
@@ -31,6 +23,47 @@ type Commit struct {
 	Logger *slog.Logger
 }
 
+type CommitPlan struct {
+	NewInventory *Inventory   `json:"new_inventory"`
+	Steps        []CommitStep `json:"steps"`
+}
+
+func (s *CommitPlan) Apply(ctx context.Context) error {
+	for _, step := range s.Steps {
+		if err := step.Run(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *CommitPlan) append(step CommitStep) {
+	s.Steps = append(s.Steps, step)
+}
+
+type CommitStep struct {
+	Name string `json:"name"`
+	//Async          []CommitStep `json:"async,omitempty"`
+	Err  string `json:"error,omitempty"`
+	Done bool   `json:"done,omitempty"`
+	//CompensateErr  string       `json:"compensate_error"`
+	//CompensateDone bool         `json:"compensate_done"`
+
+	run        func(ctx context.Context) error
+	compensate func(ctx context.Context) error
+}
+
+func (step *CommitStep) Run(ctx context.Context) error {
+	if step.run != nil {
+		if err := step.run(ctx); err != nil {
+			step.Err = err.Error()
+			return err
+		}
+	}
+	step.Done = true
+	return nil
+}
+
 // Commit error wraps an error from a commit.
 type CommitError struct {
 	Err error // The wrapped error
@@ -46,119 +79,4 @@ func (c CommitError) Error() string {
 
 func (c CommitError) Unwrap() error {
 	return c.Err
-}
-
-// commitPlan represents the set of actions need to complete an object update.
-type commitPlan struct {
-	Object        *Object
-	NewInventory  *Inventory
-	NewContent    DigestMap
-	ContentSource ContentSource
-}
-
-func (p *commitPlan) Run(ctx context.Context, logger *slog.Logger) error {
-	if logger == nil {
-		logger = logging.DisabledLogger()
-	}
-	obj := p.Object
-	// file changes start here
-	// 1. create or update NAMASTE object declaration
-	newSpec := p.NewInventory.Type.Spec
-	var oldSpec Spec
-	if obj.rootInventory != nil {
-		oldSpec = obj.rootInventory.Type.Spec
-	}
-	if oldSpec != newSpec {
-		if !oldSpec.Empty() {
-			oldDecl := Namaste{Type: NamasteTypeObject, Version: oldSpec}
-			logger.DebugContext(ctx, "deleting previous OCFL object declaration", "name", oldDecl)
-			if err := ocflfs.Remove(ctx, obj.fs, path.Join(obj.path, oldDecl.Name())); err != nil {
-				return &CommitError{Err: err, Dirty: true}
-			}
-		}
-		newDecl := Namaste{Type: NamasteTypeObject, Version: newSpec}
-		logger.DebugContext(ctx, "writing new OCFL object declaration", "name", newDecl)
-		if err := WriteDeclaration(ctx, obj.fs, obj.path, newDecl); err != nil {
-			return &CommitError{Err: err, Dirty: true}
-		}
-	}
-	// 2. tranfser files from stage to object
-	if len(p.NewContent) > 0 {
-		copyOpts := &copyContentOpts{
-			Source:   p.ContentSource,
-			DestFS:   obj.fs,
-			DestRoot: obj.path,
-			Manifest: p.NewContent,
-		}
-		logger.DebugContext(ctx, "copying new object files", "count", len(p.NewContent))
-		if err := copyContent(ctx, copyOpts); err != nil {
-			err = fmt.Errorf("transferring new object contents: %w", err)
-			return &CommitError{Err: err, Dirty: true}
-		}
-	}
-	logger.DebugContext(ctx, "writing inventories for new object version")
-	// 3. write inventory to both object root and version directory
-	newVersionDir := path.Join(obj.path, p.NewInventory.Head.String())
-	if err := writeInventory(ctx, obj.fs, p.NewInventory, obj.path, newVersionDir); err != nil {
-		err = fmt.Errorf("writing new inventories or inventory sidecars: %w", err)
-		return &CommitError{Err: err, Dirty: true}
-	}
-	return nil
-}
-
-// newContentMap returns a DigestMap that is a subset of the inventory
-// manifest for the digests and paths of new content
-func newContentMap(inv *Inventory) (DigestMap, error) {
-	pm := PathMap{}
-	for pth, dig := range inv.Manifest.Paths() {
-		// ignore manifest entries from previous versions
-		if !strings.HasPrefix(pth, inv.Head.String()+"/") {
-			continue
-		}
-		if _, exists := pm[pth]; exists {
-			return nil, fmt.Errorf("path duplicate in manifest: %q", pth)
-		}
-		pm[pth] = dig
-	}
-	dm := pm.DigestMap()
-	if err := dm.Valid(); err != nil {
-		return nil, err
-	}
-	return dm, nil
-}
-
-type copyContentOpts struct {
-	Source      ContentSource
-	DestFS      ocflfs.FS
-	DestRoot    string
-	Manifest    DigestMap
-	Concurrency int
-}
-
-// transfer dst/src names in files from srcFS to dstFS
-func copyContent(ctx context.Context, c *copyContentOpts) error {
-	if c.Source == nil {
-		return errors.New("missing countent source")
-	}
-	conc := c.Concurrency
-	if conc < 1 {
-		conc = 1
-	}
-	grp, ctx := errgroup.WithContext(ctx)
-	grp.SetLimit(conc)
-	for dig, dstNames := range c.Manifest {
-		srcFS, srcPath := c.Source.GetContent(dig)
-		if srcFS == nil {
-			return fmt.Errorf("content source doesn't provide %q", dig)
-		}
-		for _, dstName := range dstNames {
-			srcPath := srcPath
-			dstPath := path.Join(c.DestRoot, dstName)
-			grp.Go(func() error {
-				return ocflfs.Copy(ctx, c.DestFS, dstPath, srcFS, srcPath)
-			})
-
-		}
-	}
-	return grp.Wait()
 }

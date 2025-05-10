@@ -164,9 +164,16 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 		}
 		commit.ID = obj.expectID
 	}
-	if err := useOCFL.Commit(ctx, obj, commit); err != nil {
+	saga, err := useOCFL.NewCommitPlan(obj, commit)
+	if err != nil {
 		return err
 	}
+	for _, step := range saga.Steps {
+		if err := step.Run(ctx); err != nil {
+			return err
+		}
+	}
+	obj.rootInventory = saga.NewInventory
 	return nil
 }
 
