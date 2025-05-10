@@ -409,8 +409,41 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (*Inventory, *Validation) {
 	return inv, v
 }
 
-func (imp ocflV1) newCommitPlan(ctx context.Context, obj *Object, commit *Commit) (*commitPlan, error) {
-	newInv, err := imp.newInventoryV1(commit, obj.rootInventory)
+func (imp ocflV1) newCommitPlan(obj *Object, commit *Commit) (*commitPlan, error) {
+	if commit.Stage == nil {
+		return nil, errors.New("commit is missing new version state")
+	}
+	if commit.Stage.DigestAlgorithm == nil {
+		return nil, errors.New("commit has no digest algorithm")
+
+	}
+	if commit.Stage.State == nil {
+		commit.Stage.State = DigestMap{}
+	}
+	id := commit.ID
+	prev := obj.rootInventory
+	if prev != nil {
+		if !commit.AllowUnchanged {
+			lastV := prev.Versions[prev.Head]
+			if lastV != nil && lastV.State.Eq(commit.Stage.State) {
+				err := errors.New("version state unchanged")
+				return nil, err
+			}
+		}
+		id = prev.ID
+	}
+	newInv, err := NewInventoryBuilder(prev).
+		ID(id).
+		ContentPathFunc(commit.ContentPathFunc).
+		FixitySource(commit.Stage).
+		Spec(imp.Spec()).
+		AddVersion(
+			commit.Stage.State,
+			commit.Stage.DigestAlgorithm,
+			commit.Created,
+			commit.Message,
+			&commit.User,
+		).Finalize()
 	if err != nil {
 		return nil, fmt.Errorf("building new inventory: %w", err)
 	}
@@ -428,10 +461,8 @@ func (imp ocflV1) newCommitPlan(ctx context.Context, obj *Object, commit *Commit
 		}
 	}
 	plan := &commitPlan{
-		FS:            obj.FS(),
-		Path:          obj.Path(),
+		Object:        obj,
 		NewInventory:  newInv,
-		PrevInventoy:  obj.rootInventory,
 		NewContent:    newContent,
 		ContentSource: commit.Stage,
 	}
@@ -439,7 +470,7 @@ func (imp ocflV1) newCommitPlan(ctx context.Context, obj *Object, commit *Commit
 }
 
 func (imp ocflV1) Commit(ctx context.Context, obj *Object, commit *Commit) error {
-	plan, err := imp.newCommitPlan(ctx, obj, commit)
+	plan, err := imp.newCommitPlan(obj, commit)
 	if err != nil {
 		return &CommitError{Err: err}
 	}
@@ -663,48 +694,6 @@ func (imp ocflV1) compareVersionInventory(obj *Object, dirNum VNum, verInv *Inve
 			vldr.AddWarn(verr(err, code.W011(specStr)))
 		}
 	}
-}
-
-// build a new inventoryV1 from a commit and an optional previous inventory
-func (imp ocflV1) newInventoryV1(commit *Commit, prev *Inventory) (*Inventory, error) {
-	if commit.Stage == nil {
-		return nil, errors.New("commit is missing new version state")
-	}
-	if commit.Stage.DigestAlgorithm == nil {
-		return nil, errors.New("commit has no digest algorithm")
-
-	}
-	if commit.Stage.State == nil {
-		commit.Stage.State = DigestMap{}
-	}
-	id := commit.ID
-	if prev != nil {
-		if !commit.AllowUnchanged {
-			lastV := prev.Versions[prev.Head]
-			if lastV != nil && lastV.State.Eq(commit.Stage.State) {
-				err := errors.New("version state unchanged")
-				return nil, err
-			}
-		}
-		id = prev.ID
-	}
-	newInv, err := NewInventoryBuilder(prev).
-		ID(id).
-		ContentPathFunc(commit.ContentPathFunc).
-		FixitySource(commit.Stage).
-		Spec(commit.Spec).
-		AddVersion(
-			commit.Stage.State,
-			commit.Stage.DigestAlgorithm,
-			commit.Created,
-			commit.Message,
-			&commit.User,
-		).Finalize()
-
-	if err != nil {
-		return nil, err
-	}
-	return newInv, nil
 }
 
 func jsonMapGet[T any](m map[string]any, key string) (val T, exists bool, typeOK bool) {

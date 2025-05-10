@@ -14,10 +14,6 @@ var (
 	ErrVNumPadding = errors.New(`inconsistent version padding in version sequence`)
 	ErrVNumMissing = errors.New(`missing version in version sequence`)
 	ErrVerEmpty    = errors.New("no versions found")
-
-	// Some functions in this package use the zero value VNum to indicate the
-	// most recent, "head" version.
-	Head = VNum{}
 )
 
 // VNum represents an OCFL object version number (e.g., "v1", "v02"). A VNum has
@@ -100,7 +96,7 @@ func (v VNum) Padding() int {
 
 // IsZero returns if v is the zero value
 func (v VNum) IsZero() bool {
-	return v == Head
+	return v.num == 0 && v.padding == 0
 }
 
 // First returns true if v is a version 1.
@@ -120,18 +116,6 @@ func (v VNum) Next() (VNum, error) {
 		return VNum{}, err
 	}
 	return next, nil
-}
-
-// Prev returns the previous version before v, with the same padding.
-// An error is returned if v.Num() == 1
-func (v VNum) Prev() (VNum, error) {
-	if v.num == 1 {
-		return Head, errors.New("no previous version")
-	}
-	return VNum{
-		num:     v.num - 1,
-		padding: v.padding,
-	}, nil
 }
 
 // String returns string representation of v

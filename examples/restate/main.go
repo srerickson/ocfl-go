@@ -17,6 +17,10 @@ type OCFLObject struct {
 	Root *ocfl.Root
 }
 
+// func (o OCFLObject) Update(ctx restate.ObjectContext, new ocfl.Inventory) error {
+
+// }
+
 func (o OCFLObject) GetState(ctx restate.ObjectContext, v int) (ocfl.DigestMap, error) {
 	cache := newCache(ctx)
 	objID := restate.Key(ctx)

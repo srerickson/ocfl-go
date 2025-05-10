@@ -50,10 +50,8 @@ func (c CommitError) Unwrap() error {
 
 // commitPlan represents the set of actions need to complete an object update.
 type commitPlan struct {
-	FS            ocflfs.FS
-	Path          string
+	Object        *Object
 	NewInventory  *Inventory
-	PrevInventoy  *Inventory
 	NewContent    DigestMap
 	ContentSource ContentSource
 }
@@ -62,24 +60,25 @@ func (p *commitPlan) Run(ctx context.Context, logger *slog.Logger) error {
 	if logger == nil {
 		logger = logging.DisabledLogger()
 	}
+	obj := p.Object
 	// file changes start here
 	// 1. create or update NAMASTE object declaration
 	newSpec := p.NewInventory.Type.Spec
 	var oldSpec Spec
-	if p.PrevInventoy != nil {
-		oldSpec = p.PrevInventoy.Type.Spec
+	if obj.rootInventory != nil {
+		oldSpec = obj.rootInventory.Type.Spec
 	}
 	if oldSpec != newSpec {
 		if !oldSpec.Empty() {
 			oldDecl := Namaste{Type: NamasteTypeObject, Version: oldSpec}
 			logger.DebugContext(ctx, "deleting previous OCFL object declaration", "name", oldDecl)
-			if err := ocflfs.Remove(ctx, p.FS, path.Join(p.Path, oldDecl.Name())); err != nil {
+			if err := ocflfs.Remove(ctx, obj.fs, path.Join(obj.path, oldDecl.Name())); err != nil {
 				return &CommitError{Err: err, Dirty: true}
 			}
 		}
 		newDecl := Namaste{Type: NamasteTypeObject, Version: newSpec}
 		logger.DebugContext(ctx, "writing new OCFL object declaration", "name", newDecl)
-		if err := WriteDeclaration(ctx, p.FS, p.Path, newDecl); err != nil {
+		if err := WriteDeclaration(ctx, obj.fs, obj.path, newDecl); err != nil {
 			return &CommitError{Err: err, Dirty: true}
 		}
 	}
@@ -87,8 +86,8 @@ func (p *commitPlan) Run(ctx context.Context, logger *slog.Logger) error {
 	if len(p.NewContent) > 0 {
 		copyOpts := &copyContentOpts{
 			Source:   p.ContentSource,
-			DestFS:   p.FS,
-			DestRoot: p.Path,
+			DestFS:   obj.fs,
+			DestRoot: obj.path,
 			Manifest: p.NewContent,
 		}
 		logger.DebugContext(ctx, "copying new object files", "count", len(p.NewContent))
@@ -99,8 +98,8 @@ func (p *commitPlan) Run(ctx context.Context, logger *slog.Logger) error {
 	}
 	logger.DebugContext(ctx, "writing inventories for new object version")
 	// 3. write inventory to both object root and version directory
-	newVersionDir := path.Join(p.Path, p.NewInventory.Head.String())
-	if err := writeInventory(ctx, p.FS, p.NewInventory, p.Path, newVersionDir); err != nil {
+	newVersionDir := path.Join(obj.path, p.NewInventory.Head.String())
+	if err := writeInventory(ctx, obj.fs, p.NewInventory, obj.path, newVersionDir); err != nil {
 		err = fmt.Errorf("writing new inventories or inventory sidecars: %w", err)
 		return &CommitError{Err: err, Dirty: true}
 	}
