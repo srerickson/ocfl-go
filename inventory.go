@@ -37,7 +37,8 @@ type Inventory struct {
 	Versions         map[VNum]*InventoryVersion `json:"versions"`
 	Fixity           map[string]DigestMap       `json:"fixity,omitempty"`
 
-	jsonDigest string
+	rawDigest string // digest of raw json byte
+	raw       []byte // raw json bytes
 }
 
 func (inv Inventory) GetFixity(dig string) digest.Set {
@@ -60,7 +61,7 @@ func (inv Inventory) GetFixity(dig string) digest.Set {
 // raw of the inventory.json file the inventory was read from. Only set if the
 // digest was read from a file.
 func (inv Inventory) Digest() string {
-	return inv.jsonDigest
+	return inv.rawDigest
 }
 
 func (inv *Inventory) Validate() *Validation {
@@ -74,8 +75,20 @@ func (inv *Inventory) Validate() *Validation {
 	return imp.ValidateInventory(inv)
 }
 
+// marshal marshal's inv and calls inv.setRawDigest
+func (inv *Inventory) marshal() error {
+	raw, err := json.Marshal(inv)
+	if err != nil {
+		return fmt.Errorf("encoding inventory json: %w", err)
+	}
+	if err := inv.setRawDigest(raw); err != nil {
+		return err
+	}
+	return nil
+}
+
 // sets inv's jsonDigest value by digesting the raw inventory bytes.
-func (inv *Inventory) setJsonDigest(raw []byte) error {
+func (inv *Inventory) setRawDigest(raw []byte) error {
 	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
 	if err != nil {
 		return err
@@ -83,7 +96,8 @@ func (inv *Inventory) setJsonDigest(raw []byte) error {
 	if _, err := io.Copy(digester, bytes.NewReader(raw)); err != nil {
 		return fmt.Errorf("digesting inventory: %w", err)
 	}
-	inv.jsonDigest = digester.String()
+	inv.rawDigest = digester.String()
+	inv.raw = raw
 	return nil
 }
 
@@ -151,7 +165,7 @@ func ReadInventory(ctx context.Context, fsys ocflfs.FS, dir string) (inv *Invent
 	if err := dec.Decode(inv); err != nil {
 		return nil, err
 	}
-	if err := inv.setJsonDigest(byts); err != nil {
+	if err := inv.setRawDigest(byts); err != nil {
 		return nil, err
 	}
 	if err := inv.Validate().Err(); err != nil {
@@ -215,26 +229,32 @@ func writeInventory(ctx context.Context, fsys ocflfs.FS, inv *Inventory, dirs ..
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	inventoryContent, err := json.Marshal(inv)
-	if err != nil {
-		return fmt.Errorf("encoding inventory: %w", err)
+	if err := inv.marshal(); err != nil {
+		return err
 	}
-	if err := inv.setJsonDigest(inventoryContent); err != nil {
-		return fmt.Errorf("generating inventory.json checksum: %w", err)
-	}
-	sidecarContent := inv.jsonDigest + " " + inventoryBase + "\n"
 	// write inventory.json and sidecar
 	for _, dir := range dirs {
-		invFile := path.Join(dir, inventoryBase)
-		sideFile := invFile + "." + inv.DigestAlgorithm
-		_, err = ocflfs.Write(ctx, fsys, invFile, bytes.NewReader(inventoryContent))
+		err := writeInventoryBytesAndSidecar(ctx, fsys, dir, inv.raw, inv.rawDigest, inv.DigestAlgorithm)
 		if err != nil {
-			return fmt.Errorf("writing inventory: %w", err)
+			return err
 		}
-		_, err = ocflfs.Write(ctx, fsys, sideFile, strings.NewReader(sidecarContent))
-		if err != nil {
-			return fmt.Errorf("writing inventory sidecar: %w", err)
-		}
+	}
+	return nil
+}
+
+func writeInventoryBytesAndSidecar(ctx context.Context, fsys ocflfs.FS, dir string, invBytes []byte, invDigest string, alg string) error {
+	invFile := path.Join(dir, inventoryBase)
+	if _, err := ocflfs.Write(ctx, fsys, invFile, bytes.NewReader(invBytes)); err != nil {
+		return fmt.Errorf("writing inventory file: %w", err)
+	}
+	return writeInventorySidecar(ctx, fsys, dir, invDigest, alg)
+}
+
+func writeInventorySidecar(ctx context.Context, fsys ocflfs.FS, dir string, invDigest string, alg string) error {
+	sidecarContent := invDigest + " " + inventoryBase + "\n"
+	sideFile := path.Join(dir, inventoryBase+"."+alg)
+	if _, err := ocflfs.Write(ctx, fsys, sideFile, strings.NewReader(sidecarContent)); err != nil {
+		return fmt.Errorf("writing inventory sidecar file: %w", err)
 	}
 	return nil
 }

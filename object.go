@@ -52,7 +52,7 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 		}
 		if cached != nil {
 			inv = cached.Inventory
-			inv.jsonDigest = cached.Digest
+			inv.rawDigest = cached.Digest
 		}
 	}
 	if inv == nil {
@@ -262,7 +262,7 @@ func (obj Object) InventoryDigest() string {
 	if obj.rootInventory == nil {
 		return ""
 	}
-	return obj.rootInventory.jsonDigest
+	return obj.rootInventory.rawDigest
 }
 
 // ID returns obj's inventory ID if the obj exists (its inventory is not nil).
