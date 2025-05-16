@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ocflfs "github.com/srerickson/ocfl-go/fs"
+	"golang.org/x/sync/errgroup"
 )
 
 // Commit represents an update to object.
@@ -55,16 +56,16 @@ func NewCommitSteps(fsys ocflfs.FS, dir string, newInv *Inventory, src ContentSo
 	if newInv.prev != nil {
 		lastSpec = newInv.prev.Type.Spec
 	}
-	steps, err := commitStepsObjectDeclaration(fsys, dir, newSpec, lastSpec)
+	steps, err := commitObjectDeclaration(fsys, dir, newSpec, lastSpec)
 	if err != nil {
 		return nil, err
 	}
-	nextSteps, err := commitStepsCopyContents(fsys, dir, newInv, src)
+	nextSteps, err := commitContents(fsys, dir, newInv, src)
 	if err != nil {
 		return nil, err
 	}
 	steps = append(steps, nextSteps...)
-	nextSteps, err = commitStepsUpdateInventories(fsys, dir, newInv)
+	nextSteps, err = commitInventories(fsys, dir, newInv)
 	if err != nil {
 		return nil, err
 	}
@@ -72,20 +73,53 @@ func NewCommitSteps(fsys ocflfs.FS, dir string, newInv *Inventory, src ContentSo
 	return steps, nil
 }
 
-func (s CommitSteps) Apply(ctx context.Context) error {
-	for _, step := range s {
-		if err := step.Run(ctx); err != nil {
+func (s CommitSteps) ApplyLog(prev CommitSteps) error {
+	err := errors.New("previous commit log doesn't match current commit plan")
+	if len(s) != len(prev) {
+		return err
+	}
+	for i := range s {
+		if s[i].Name != prev[i].Name {
 			return err
 		}
+	}
+	for i := range s {
+		s[i].Done = prev[i].Done
+		s[i].Err = prev[i].Err
 	}
 	return nil
 }
 
+// RunAsync calls Run for every step in s that is not Done. Consecutive steps with Async == true are
+// run concurrently using gos goroutines.
+func (s CommitSteps) RunAsync(ctx context.Context, gos int) error {
+	group := &errgroup.Group{}
+	group.SetLimit(gos)
+	for i := range s {
+		step := &s[i]
+		if step.Done {
+			continue
+		}
+		if step.Async {
+			group.Go(func() error { return step.Run(ctx) })
+			continue
+		}
+		// wait for previous async steps to complete
+		if err := group.Wait(); err != nil {
+			return err
+		}
+		if err := step.Run(ctx); err != nil {
+			return err
+		}
+	}
+	return group.Wait()
+}
+
 type CommitStep struct {
-	Name string `json:"name"`
-	//Async          []CommitStep `json:"async,omitempty"`
-	Err  string `json:"error,omitempty"`
-	Done bool   `json:"done,omitempty"`
+	Name  string `json:"name"`
+	Err   string `json:"error,omitempty"`
+	Done  bool   `json:"done,omitempty"`
+	Async bool   `json:"async,omitempty"`
 	//CompensateErr  string       `json:"compensate_error"`
 	//CompensateDone bool         `json:"compensate_done"`
 
@@ -104,8 +138,7 @@ func (step *CommitStep) Run(ctx context.Context) error {
 	return nil
 }
 
-func commitStepsObjectDeclaration(fsys ocflfs.FS, dir string, newSpec, oldSpec Spec) ([]CommitStep, error) {
-
+func commitObjectDeclaration(fsys ocflfs.FS, dir string, newSpec, oldSpec Spec) ([]CommitStep, error) {
 	var steps []CommitStep
 	if newSpec == oldSpec {
 		return steps, nil
@@ -141,7 +174,7 @@ func commitStepsObjectDeclaration(fsys ocflfs.FS, dir string, newSpec, oldSpec S
 	return steps, nil
 }
 
-func commitStepsCopyContents(objFS ocflfs.FS, objDir string, newInv *Inventory, src ContentSource) ([]CommitStep, error) {
+func commitContents(objFS ocflfs.FS, objDir string, newInv *Inventory, src ContentSource) ([]CommitStep, error) {
 	newContent := newInv.versionContent(newInv.Head).SortedPaths()
 	for _, dig := range newContent {
 		if fsys, _ := src.GetContent(dig); fsys == nil {
@@ -152,7 +185,8 @@ func commitStepsCopyContents(objFS ocflfs.FS, objDir string, newInv *Inventory, 
 	for dstName, dig := range newContent {
 		dstPath := path.Join(objDir, dstName)
 		steps = append(steps, CommitStep{
-			Name: "copy" + dstPath,
+			Name:  "copy" + dstPath,
+			Async: true,
 			run: func(ctx context.Context) error {
 				srcFS, srcPath := src.GetContent(dig)
 				if srcFS == nil {
@@ -170,7 +204,7 @@ func commitStepsCopyContents(objFS ocflfs.FS, objDir string, newInv *Inventory, 
 
 // steps for updating object's version and root inventories. the newInv should
 // have been constructed with inventory builder.
-func commitStepsUpdateInventories(objFS ocflfs.FS, objDir string, newInv *Inventory) ([]CommitStep, error) {
+func commitInventories(objFS ocflfs.FS, objDir string, newInv *Inventory) ([]CommitStep, error) {
 	var steps []CommitStep
 	lastInv := newInv.prev
 	if newInv.Head.num > 1 {
@@ -178,8 +212,11 @@ func commitStepsUpdateInventories(objFS ocflfs.FS, objDir string, newInv *Invent
 			return nil, errors.New("inventory is missing its previous inventory reference")
 		}
 		if newInv.Head.num != lastInv.Head.num+1 {
-			return nil, fmt.Errorf("inventory's has unexpected 'head': %q", newInv.Head)
+			return nil, errors.New("new inventory includes more than one new version")
 		}
+	}
+	if err := newInv.marshal(); err != nil {
+		return nil, err
 	}
 	rootInv := path.Join(objDir, inventoryBase)
 	rootInvSidecar := rootInv + "." + newInv.DigestAlgorithm
@@ -252,13 +289,4 @@ func commitStepsUpdateInventories(objFS ocflfs.FS, objDir string, newInv *Invent
 		},
 	})
 	return steps, nil
-}
-
-type CommitSagaLogEntry struct {
-	Name string `json:"name"`
-	//Async          []CommitStep `json:"async,omitempty"`
-	Err  string `json:"error,omitempty"`
-	Done bool   `json:"done,omitempty"`
-	//CompensateErr  string       `json:"compensate_error"`
-	//CompensateDone bool         `json:"compensate_done"`
 }

@@ -85,14 +85,14 @@ func (inv *Inventory) marshal() error {
 	if err != nil {
 		return fmt.Errorf("encoding inventory json: %w", err)
 	}
-	if err := inv.setRawDigest(raw); err != nil {
+	if err := inv.setRaw(raw); err != nil {
 		return err
 	}
 	return nil
 }
 
 // sets inv's jsonDigest value by digesting the raw inventory bytes.
-func (inv *Inventory) setRawDigest(raw []byte) error {
+func (inv *Inventory) setRaw(raw []byte) error {
 	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
 	if err != nil {
 		return err
@@ -169,7 +169,7 @@ func ReadInventory(ctx context.Context, fsys ocflfs.FS, dir string) (inv *Invent
 	if err := dec.Decode(inv); err != nil {
 		return nil, err
 	}
-	if err := inv.setRawDigest(byts); err != nil {
+	if err := inv.setRaw(byts); err != nil {
 		return nil, err
 	}
 	if err := inv.Validate().Err(); err != nil {
@@ -226,34 +226,6 @@ func ValidateInventorySidecar(ctx context.Context, inv *Inventory, fsys ocflfs.F
 	return nil
 }
 
-// writeInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
-// fsys. The digest is calculated using alg and the inventory sidecar is also written to
-// dir/inventory.json.alg
-func writeInventory(ctx context.Context, fsys ocflfs.FS, inv *Inventory, dirs ...string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := inv.marshal(); err != nil {
-		return err
-	}
-	// write inventory.json and sidecar
-	for _, dir := range dirs {
-		err := writeInventoryBytesAndSidecar(ctx, fsys, dir, inv.raw, inv.rawDigest, inv.DigestAlgorithm)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func writeInventoryBytesAndSidecar(ctx context.Context, fsys ocflfs.FS, dir string, invBytes []byte, invDigest string, alg string) error {
-	invFile := path.Join(dir, inventoryBase)
-	if _, err := ocflfs.Write(ctx, fsys, invFile, bytes.NewReader(invBytes)); err != nil {
-		return fmt.Errorf("writing inventory file: %w", err)
-	}
-	return writeInventorySidecar(ctx, fsys, dir, invDigest, alg)
-}
-
 func writeInventorySidecar(ctx context.Context, fsys ocflfs.FS, dir string, invDigest string, alg string) error {
 	sidecarContent := invDigest + " " + inventoryBase + "\n"
 	sideFile := path.Join(dir, inventoryBase+"."+alg)
@@ -297,7 +269,7 @@ type InventoryBuilder struct {
 // Spec, ID, and ContentDirectory are used.
 func NewInventoryBuilder(prev *Inventory) *InventoryBuilder {
 	b := &InventoryBuilder{
-		spec: Spec1_1, // default inventory specification
+		spec: defaultOCFL().Spec(), // default inventory specification
 		prev: prev,
 	}
 	if prev != nil {

@@ -126,60 +126,32 @@ func (obj Object) ContentDirectory() string {
 	return contentDir
 }
 
-// Commit creates a new object version based on values in commit.
-func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
+func (obj *Object) NewInventoryBuilder() *InventoryBuilder {
+	return NewInventoryBuilder(obj.rootInventory).ID(obj.ID())
+}
+
+func (obj *Object) CommitSteps(commit *Commit) (CommitSteps, error) {
 	if _, isWriteFS := obj.FS().(ocflfs.WriteFS); !isWriteFS {
-		return errors.New("object's backing file system doesn't support write operations")
+		return nil, errors.New("object's backing file system doesn't support write operations")
 	}
-	// the OCFL implementation for the new object version
-	var useOCFL ocfl
-	switch {
-	case commit.Spec.Empty():
-		switch {
-		case !obj.Exists():
-			// new object and no ocfl version specified in commit
-			useOCFL = defaultOCFL()
-		default:
-			// use existing object's ocfl version
-			var err error
-			useOCFL, err = getOCFL(obj.rootInventory.Type.Spec)
-			if err != nil {
-				err = fmt.Errorf("object's root inventory has errors: %w", err)
-				return &CommitError{Err: err}
-			}
-		}
-		commit.Spec = useOCFL.Spec()
-	default:
-		var err error
-		useOCFL, err = getOCFL(commit.Spec)
-		if err != nil {
-			return &CommitError{Err: err}
-		}
-	}
-	// set commit's object id if we have an expected id and commit ID isn't set
-	if obj.expectID != "" && commit.ID != obj.expectID {
-		if commit.ID != "" {
-			err := fmt.Errorf("commit includes unexpected object ID: %s; expected: %q", commit.ID, obj.expectID)
-			return &CommitError{Err: err}
-		}
-		commit.ID = obj.expectID
-	}
-	id := commit.ID
 	lastInv := obj.rootInventory
-	if lastInv != nil {
+	if obj.rootInventory != nil {
 		if !commit.AllowUnchanged {
 			lastV := lastInv.Versions[lastInv.Head]
 			if lastV != nil && lastV.State.Eq(commit.Stage.State) {
-				return errors.New("version state unchanged")
+				return nil, errors.New("version state unchanged")
 			}
 		}
-		id = lastInv.ID
 	}
-	newInv, err := NewInventoryBuilder(lastInv).
+	id := obj.ID()
+	if id == "" {
+		id = commit.ID
+	}
+	newInv, err := obj.NewInventoryBuilder().
 		ID(id).
 		ContentPathFunc(commit.ContentPathFunc).
 		FixitySource(commit.Stage).
-		Spec(useOCFL.Spec()).
+		Spec(commit.Spec).
 		AddVersion(
 			commit.Stage.State,
 			commit.Stage.DigestAlgorithm,
@@ -188,21 +160,35 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 			&commit.User,
 		).Finalize()
 	if err != nil {
-		return fmt.Errorf("building new inventory: %w", err)
+		return nil, fmt.Errorf("building new inventory: %w", err)
 	}
-	if err := newInv.marshal(); err != nil {
-		return err
+	steps, err := NewCommitSteps(obj.fs, obj.path, newInv, commit.Stage.ContentSource)
+	if err != nil {
+		return nil, err
 	}
-	saga, err := NewCommitSteps(obj.fs, obj.path, newInv, commit.Stage.ContentSource)
+	steps = append(steps, CommitStep{
+		Name: "setting object inventory reference",
+		run: func(ctx context.Context) error {
+			obj.rootInventory = newInv
+			return nil
+		},
+		compensate: func(ctx context.Context) error {
+			obj.rootInventory = lastInv
+			return nil
+		},
+	})
+	return steps, nil
+}
+
+// Commit creates a new object version based on values in commit.
+func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
+	steps, err := obj.CommitSteps(commit)
 	if err != nil {
 		return err
 	}
-	for _, step := range saga {
-		if err := step.Run(ctx); err != nil {
-			return err
-		}
+	if err := steps.RunAsync(ctx, 5); err != nil {
+		return err
 	}
-	obj.rootInventory = newInv
 	return nil
 }
 
