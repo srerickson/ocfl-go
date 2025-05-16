@@ -30,22 +30,15 @@ type Commit struct {
 	Logger *slog.Logger
 }
 
-type CommitPlan struct {
-	NewInventory *Inventory   `json:"new_inventory"`
-	Steps        []CommitStep `json:"steps"`
-}
+type CommitPlan []CommitStep
 
-func (s *CommitPlan) Apply(ctx context.Context) error {
-	for _, step := range s.Steps {
+func (s CommitPlan) Apply(ctx context.Context) error {
+	for _, step := range s {
 		if err := step.Run(ctx); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func (s *CommitPlan) append(step CommitStep) {
-	s.Steps = append(s.Steps, step)
 }
 
 type CommitStep struct {
@@ -88,29 +81,14 @@ func (c CommitError) Unwrap() error {
 	return c.Err
 }
 
-type CommitSaga struct {
-	ObjectFS           ocflfs.FS
-	ObjectDir          string
-	Source             ContentSource
-	NewInventory       *Inventory
-	PrevInventory      *Inventory
-	PrevInventoryBytes []byte
-
-	steps []CommitSagaStep
-}
-
-func (s CommitSaga) Run(ctx context.Context, fsys ocflfs.FS, dir string, src ContentSource) error {
-	return nil
-}
-
-func commitStepsObjectDeclaration(fsys ocflfs.FS, dir string, newSpec, oldSpec Spec) []CommitSagaStep {
-	var steps []CommitSagaStep
+func commitStepsObjectDeclaration(fsys ocflfs.FS, dir string, newSpec, oldSpec Spec) []CommitStep {
+	var steps []CommitStep
 	if newSpec == oldSpec {
 		return steps
 	}
 	newDecl := Namaste{Type: NamasteTypeObject, Version: newSpec}
 	newDeclName := path.Join(dir, newDecl.Name())
-	steps = append(steps, CommitSagaStep{
+	steps = append(steps, CommitStep{
 		Name: "write " + newDeclName,
 		run: func(ctx context.Context) error {
 			return WriteDeclaration(ctx, fsys, dir, newDecl)
@@ -122,7 +100,7 @@ func commitStepsObjectDeclaration(fsys ocflfs.FS, dir string, newSpec, oldSpec S
 	if !oldSpec.Empty() {
 		oldDecl := Namaste{Type: NamasteTypeObject, Version: oldSpec}
 		oldDeclName := path.Join(dir, oldDecl.Name())
-		steps = append(steps, CommitSagaStep{
+		steps = append(steps, CommitStep{
 			Name: "remove" + oldDeclName,
 			run: func(ctx context.Context) error {
 				return ocflfs.Remove(ctx, fsys, oldDeclName)
@@ -135,11 +113,11 @@ func commitStepsObjectDeclaration(fsys ocflfs.FS, dir string, newSpec, oldSpec S
 	return steps
 }
 
-func commitStepsCopyContents(objFS ocflfs.FS, objDir string, newInv *Inventory, src ContentSource) []CommitSagaStep {
-	var steps []CommitSagaStep
+func commitStepsCopyContents(objFS ocflfs.FS, objDir string, newInv *Inventory, src ContentSource) []CommitStep {
+	var steps []CommitStep
 	for dstName, dig := range newInv.versionContent(newInv.Head).SortedPaths() {
 		dstPath := path.Join(objDir, dstName)
-		steps = append(steps, CommitSagaStep{
+		steps = append(steps, CommitStep{
 			Name: "copy" + dstPath,
 			run: func(ctx context.Context) error {
 				srcFS, srcPath := src.GetContent(dig)
@@ -156,15 +134,15 @@ func commitStepsCopyContents(objFS ocflfs.FS, objDir string, newInv *Inventory, 
 	return steps
 }
 
-func updateInventorySteps(objFS ocflfs.FS, objDir string, newInv, lastInv *Inventory) []CommitSagaStep {
-	var steps []CommitSagaStep
+func commitStepsInventory(objFS ocflfs.FS, objDir string, newInv, lastInv *Inventory) []CommitStep {
+	var steps []CommitStep
 	rootInv := path.Join(objDir, inventoryBase)
 	rootInvSidecar := rootInv + "." + newInv.DigestAlgorithm
 	verDir := path.Join(objDir, newInv.Head.String())
 	verDirInv := path.Join(verDir, inventoryBase)
 	verDirInvSidecar := verDirInv + "." + newInv.DigestAlgorithm
 	// write version directory inventory.json
-	steps = append(steps, CommitSagaStep{
+	steps = append(steps, CommitStep{
 		Name: "write " + verDirInv,
 		run: func(ctx context.Context) error {
 			_, err := ocflfs.Write(ctx, objFS, verDirInv, bytes.NewReader(newInv.raw))
@@ -175,7 +153,7 @@ func updateInventorySteps(objFS ocflfs.FS, objDir string, newInv, lastInv *Inven
 		},
 	})
 	// write version directory inventory sidecar
-	steps = append(steps, CommitSagaStep{
+	steps = append(steps, CommitStep{
 		Name: "write " + verDirInvSidecar,
 		run: func(ctx context.Context) error {
 			return writeInventorySidecar(ctx, objFS, verDir, newInv.rawDigest, newInv.DigestAlgorithm)
@@ -185,7 +163,7 @@ func updateInventorySteps(objFS ocflfs.FS, objDir string, newInv, lastInv *Inven
 		},
 	})
 	// write root inventory.json
-	steps = append(steps, CommitSagaStep{
+	steps = append(steps, CommitStep{
 		Name: "write " + rootInv,
 		run: func(ctx context.Context) error {
 			_, err := ocflfs.Write(ctx, objFS, rootInv, bytes.NewReader(newInv.raw))
@@ -208,7 +186,7 @@ func updateInventorySteps(objFS ocflfs.FS, objDir string, newInv, lastInv *Inven
 		},
 	})
 	// write root inventory sidecar
-	steps = append(steps, CommitSagaStep{
+	steps = append(steps, CommitStep{
 		Name: "set " + rootInvSidecar,
 		run: func(ctx context.Context) error {
 			err := writeInventorySidecar(ctx, objFS, objDir, newInv.rawDigest, newInv.DigestAlgorithm)
@@ -229,12 +207,6 @@ func updateInventorySteps(objFS ocflfs.FS, objDir string, newInv, lastInv *Inven
 		},
 	})
 	return steps
-}
-
-type CommitSagaStep struct {
-	Name       string `json:"name"`
-	run        func(ctx context.Context) error
-	compensate func(ctx context.Context) error
 }
 
 type CommitSagaLogEntry struct {

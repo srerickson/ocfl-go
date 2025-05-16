@@ -35,9 +35,6 @@ var (
 type ocfl interface {
 	// Spec returns the implemented version of the OCFL specification
 	Spec() Spec
-	//NewCommitPlan returns a CommitPlan representing all steps
-	// for completing an object update.
-	NewCommitPlan(obj *Object, commit *Commit) (*CommitPlan, error)
 	// ValidateInventory validates an existing Inventory value.
 	ValidateInventory(*Inventory) *Validation
 	// ValidateInventoryBytes fully validates bytes as a json-encoded inventory.

@@ -164,16 +164,46 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 		}
 		commit.ID = obj.expectID
 	}
-	saga, err := useOCFL.NewCommitPlan(obj, commit)
+	id := commit.ID
+	lastInv := obj.rootInventory
+	var lastSpec Spec
+	if lastInv != nil {
+		if !commit.AllowUnchanged {
+			lastV := lastInv.Versions[lastInv.Head]
+			if lastV != nil && lastV.State.Eq(commit.Stage.State) {
+				return errors.New("version state unchanged")
+			}
+		}
+		id = lastInv.ID
+		lastSpec = lastInv.Type.Spec
+	}
+	newInv, err := NewInventoryBuilder(lastInv).
+		ID(id).
+		ContentPathFunc(commit.ContentPathFunc).
+		FixitySource(commit.Stage).
+		Spec(useOCFL.Spec()).
+		AddVersion(
+			commit.Stage.State,
+			commit.Stage.DigestAlgorithm,
+			commit.Created,
+			commit.Message,
+			&commit.User,
+		).Finalize()
 	if err != nil {
+		return fmt.Errorf("building new inventory: %w", err)
+	}
+	if err := newInv.marshal(); err != nil {
 		return err
 	}
-	for _, step := range saga.Steps {
+	saga := commitStepsObjectDeclaration(obj.fs, obj.path, useOCFL.Spec(), lastSpec)
+	saga = append(saga, commitStepsCopyContents(obj.fs, obj.path, newInv, commit.Stage.ContentSource)...)
+	saga = append(saga, commitStepsInventory(obj.fs, obj.path, newInv, lastInv)...)
+	for _, step := range saga {
 		if err := step.Run(ctx); err != nil {
 			return err
 		}
 	}
-	obj.rootInventory = saga.NewInventory
+	obj.rootInventory = newInv
 	return nil
 }
 
