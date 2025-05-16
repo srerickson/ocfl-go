@@ -30,9 +30,49 @@ type Commit struct {
 	Logger *slog.Logger
 }
 
-type CommitPlan []CommitStep
+// Commit error wraps an error from a commit.
+type CommitError struct {
+	Err error // The wrapped error
 
-func (s CommitPlan) Apply(ctx context.Context) error {
+	// Dirty indicates the object may be incomplete or invalid as a result of
+	// the error.
+	Dirty bool
+}
+
+func (c CommitError) Error() string {
+	return c.Err.Error()
+}
+
+func (c CommitError) Unwrap() error {
+	return c.Err
+}
+
+type CommitSteps []CommitStep
+
+func NewCommitSteps(fsys ocflfs.FS, dir string, newInv *Inventory, src ContentSource) (CommitSteps, error) {
+	var lastSpec, newSpec Spec
+	newSpec = newInv.Type.Spec
+	if newInv.prev != nil {
+		lastSpec = newInv.prev.Type.Spec
+	}
+	steps, err := commitStepsObjectDeclaration(fsys, dir, newSpec, lastSpec)
+	if err != nil {
+		return nil, err
+	}
+	nextSteps, err := commitStepsCopyContents(fsys, dir, newInv, src)
+	if err != nil {
+		return nil, err
+	}
+	steps = append(steps, nextSteps...)
+	nextSteps, err = commitStepsUpdateInventories(fsys, dir, newInv)
+	if err != nil {
+		return nil, err
+	}
+	steps = append(steps, nextSteps...)
+	return steps, nil
+}
+
+func (s CommitSteps) Apply(ctx context.Context) error {
 	for _, step := range s {
 		if err := step.Run(ctx); err != nil {
 			return err
@@ -64,27 +104,15 @@ func (step *CommitStep) Run(ctx context.Context) error {
 	return nil
 }
 
-// Commit error wraps an error from a commit.
-type CommitError struct {
-	Err error // The wrapped error
+func commitStepsObjectDeclaration(fsys ocflfs.FS, dir string, newSpec, oldSpec Spec) ([]CommitStep, error) {
 
-	// Dirty indicates the object may be incomplete or invalid as a result of
-	// the error.
-	Dirty bool
-}
-
-func (c CommitError) Error() string {
-	return c.Err.Error()
-}
-
-func (c CommitError) Unwrap() error {
-	return c.Err
-}
-
-func commitStepsObjectDeclaration(fsys ocflfs.FS, dir string, newSpec, oldSpec Spec) []CommitStep {
 	var steps []CommitStep
 	if newSpec == oldSpec {
-		return steps
+		return steps, nil
+	}
+	if newSpec.Cmp(oldSpec) < 0 {
+		err := fmt.Errorf("new version's OCFL spec (%q) cannot be lower than the previous version's (%q)", newSpec, oldSpec)
+		return nil, err
 	}
 	newDecl := Namaste{Type: NamasteTypeObject, Version: newSpec}
 	newDeclName := path.Join(dir, newDecl.Name())
@@ -110,12 +138,18 @@ func commitStepsObjectDeclaration(fsys ocflfs.FS, dir string, newSpec, oldSpec S
 			},
 		})
 	}
-	return steps
+	return steps, nil
 }
 
-func commitStepsCopyContents(objFS ocflfs.FS, objDir string, newInv *Inventory, src ContentSource) []CommitStep {
+func commitStepsCopyContents(objFS ocflfs.FS, objDir string, newInv *Inventory, src ContentSource) ([]CommitStep, error) {
+	newContent := newInv.versionContent(newInv.Head).SortedPaths()
+	for _, dig := range newContent {
+		if fsys, _ := src.GetContent(dig); fsys == nil {
+			return nil, fmt.Errorf("content source doesn't provide %q", dig)
+		}
+	}
 	var steps []CommitStep
-	for dstName, dig := range newInv.versionContent(newInv.Head).SortedPaths() {
+	for dstName, dig := range newContent {
 		dstPath := path.Join(objDir, dstName)
 		steps = append(steps, CommitStep{
 			Name: "copy" + dstPath,
@@ -131,11 +165,22 @@ func commitStepsCopyContents(objFS ocflfs.FS, objDir string, newInv *Inventory, 
 			},
 		})
 	}
-	return steps
+	return steps, nil
 }
 
-func commitStepsInventory(objFS ocflfs.FS, objDir string, newInv, lastInv *Inventory) []CommitStep {
+// steps for updating object's version and root inventories. the newInv should
+// have been constructed with inventory builder.
+func commitStepsUpdateInventories(objFS ocflfs.FS, objDir string, newInv *Inventory) ([]CommitStep, error) {
 	var steps []CommitStep
+	lastInv := newInv.prev
+	if newInv.Head.num > 1 {
+		if lastInv == nil {
+			return nil, errors.New("inventory is missing its previous inventory reference")
+		}
+		if newInv.Head.num != lastInv.Head.num+1 {
+			return nil, fmt.Errorf("inventory's has unexpected 'head': %q", newInv.Head)
+		}
+	}
 	rootInv := path.Join(objDir, inventoryBase)
 	rootInvSidecar := rootInv + "." + newInv.DigestAlgorithm
 	verDir := path.Join(objDir, newInv.Head.String())
@@ -206,7 +251,7 @@ func commitStepsInventory(objFS ocflfs.FS, objDir string, newInv, lastInv *Inven
 			return nil
 		},
 	})
-	return steps
+	return steps, nil
 }
 
 type CommitSagaLogEntry struct {

@@ -166,7 +166,6 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	}
 	id := commit.ID
 	lastInv := obj.rootInventory
-	var lastSpec Spec
 	if lastInv != nil {
 		if !commit.AllowUnchanged {
 			lastV := lastInv.Versions[lastInv.Head]
@@ -175,7 +174,6 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 			}
 		}
 		id = lastInv.ID
-		lastSpec = lastInv.Type.Spec
 	}
 	newInv, err := NewInventoryBuilder(lastInv).
 		ID(id).
@@ -195,9 +193,10 @@ func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
 	if err := newInv.marshal(); err != nil {
 		return err
 	}
-	saga := commitStepsObjectDeclaration(obj.fs, obj.path, useOCFL.Spec(), lastSpec)
-	saga = append(saga, commitStepsCopyContents(obj.fs, obj.path, newInv, commit.Stage.ContentSource)...)
-	saga = append(saga, commitStepsInventory(obj.fs, obj.path, newInv, lastInv)...)
+	saga, err := NewCommitSteps(obj.fs, obj.path, newInv, commit.Stage.ContentSource)
+	if err != nil {
+		return err
+	}
 	for _, step := range saga {
 		if err := step.Run(ctx); err != nil {
 			return err

@@ -39,6 +39,10 @@ type Inventory struct {
 
 	rawDigest string // digest of raw json byte
 	raw       []byte // raw json bytes
+
+	// when inventory is created using InventoryBuilder, the completed inventory
+	// maintains a reference to the previous inventory
+	prev *Inventory
 }
 
 func (inv Inventory) GetFixity(dig string) digest.Set {
@@ -395,6 +399,7 @@ func (b *InventoryBuilder) initialInventory() (*Inventory, error) {
 		Manifest:         DigestMap{},
 		Fixity:           map[string]DigestMap{},
 		Versions:         map[VNum]*InventoryVersion{},
+		prev:             b.prev,
 	}
 	if b.prev == nil {
 		return inv, nil

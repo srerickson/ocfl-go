@@ -234,6 +234,27 @@ func TestObject_Commit(t *testing.T) {
 		be.True(t, err != nil)
 		be.In(t, "cannot change inventory's digest algorithm from previous value", err.Error())
 	})
+	t.Run("invalid spec", func(t *testing.T) {
+		fsys, err := local.NewFS(t.TempDir())
+		be.NilErr(t, err)
+		obj, err := ocfl.NewObject(ctx, fsys, ".")
+		be.NilErr(t, err)
+		be.False(t, obj.Exists())
+		commit := &ocfl.Commit{
+			ID:      "new-object",
+			Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA512},
+			Message: "new object",
+			User: ocfl.User{
+				Name: "Anna Karenina",
+			},
+			Spec:           ocfl.Spec1_1,
+			AllowUnchanged: true,
+		}
+		be.NilErr(t, obj.Commit(ctx, commit))
+		commit.Spec = ocfl.Spec1_0
+		err = obj.Commit(ctx, commit)
+		be.Nonzero(t, err)
+	})
 	t.Run("with extended digest algs", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
