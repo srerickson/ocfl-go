@@ -52,6 +52,11 @@ func StageDir(ctx context.Context, fsys fs.FS, dir string, alg digest.Algorithm,
 	if err := walkErr(); err != nil {
 		return nil, err
 	}
+	// if files didn't yield anyting, we still need to set the
+	// digest algorithm
+	if stage.DigestAlgorithm == nil {
+		stage.DigestAlgorithm = alg
+	}
 	return stage, nil
 }
 
