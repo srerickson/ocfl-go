@@ -142,15 +142,11 @@ func (obj *Object) Update(ctx context.Context, stage *Stage, msg string, user Us
 	if err != nil {
 		return err
 	}
-	if err := plan.Apply(ctx); err != nil {
+	updatedObj, err := plan.Apply(ctx)
+	if err != nil {
 		return err
 	}
-	inv, err := newStoredInventory(plan.NewInventoryBytes)
-	if err != nil {
-		return fmt.Errorf("recently commited inventory has unexpected errors (this is a bug): %w", err)
-	}
-	obj.rootInventory = inv
-	obj.rootInventoryBytes = plan.NewInventoryBytes
+	*obj = *updatedObj
 	return nil
 }
 
