@@ -36,10 +36,10 @@ type Inventory struct {
 	Manifest         DigestMap                  `json:"manifest"`
 	Versions         map[VNum]*InventoryVersion `json:"versions"`
 	Fixity           map[string]DigestMap       `json:"fixity,omitempty"`
-
-	jsonDigest string
 }
 
+// GetFixity provides alternate digests associated with all files with the given
+// primary digest.
 func (inv Inventory) GetFixity(dig string) digest.Set {
 	paths := inv.Manifest[dig]
 	if len(paths) < 1 {
@@ -57,12 +57,7 @@ func (inv Inventory) GetFixity(dig string) digest.Set {
 	return set
 }
 
-// raw of the inventory.json file the inventory was read from. Only set if the
-// digest was read from a file.
-func (inv Inventory) Digest() string {
-	return inv.jsonDigest
-}
-
+// Validate runs validates inv using its declarate OCFL spec.
 func (inv *Inventory) Validate() *Validation {
 	imp, err := getOCFL(inv.Type.Spec)
 	if err != nil {
@@ -74,17 +69,21 @@ func (inv *Inventory) Validate() *Validation {
 	return imp.ValidateInventory(inv)
 }
 
-// sets inv's jsonDigest value by digesting the raw inventory bytes.
-func (inv *Inventory) setJsonDigest(raw []byte) error {
+// marshal returns the json marshalled inventory with its digest
+func (inv Inventory) marshal() ([]byte, string, error) {
+	buff, err := json.Marshal(inv)
+	if err != nil {
+		return nil, "", err
+	}
 	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
-	if _, err := io.Copy(digester, bytes.NewReader(raw)); err != nil {
-		return fmt.Errorf("digesting inventory: %w", err)
+	if _, err := io.Copy(digester, bytes.NewReader(buff)); err != nil {
+		err := fmt.Errorf("digesting inventory: %w", err)
+		return nil, "", err
 	}
-	inv.jsonDigest = digester.String()
-	return nil
+	return buff, digester.String(), nil
 }
 
 func (inv Inventory) version(v int) *InventoryVersion {
@@ -110,6 +109,19 @@ func (inv Inventory) vnums() []VNum {
 	return vnums
 }
 
+// versionContent returns a DigestMap with manifest entries
+// for content in the specified version.
+func (inv Inventory) versionContent(vnum VNum) PathMap {
+	prefix := vnum.String() + "/"
+	pm := PathMap{}
+	for pth, dig := range inv.Manifest.Paths() {
+		if strings.HasPrefix(pth, prefix) {
+			pm[pth] = dig
+		}
+	}
+	return pm
+}
+
 // Version represents object version state and metadata
 type InventoryVersion struct {
 	Created time.Time `json:"created"`
@@ -124,27 +136,76 @@ type User struct {
 	Address string `json:"address,omitempty"`
 }
 
-// ReadInventory reads the 'inventory.json' file in dir and validates it. It returns
-// an error if the inventory can't be paresed or if it is invalid.
-func ReadInventory(ctx context.Context, fsys ocflfs.FS, dir string) (inv *Inventory, err error) {
-	var byts []byte
-	byts, err = ocflfs.ReadAll(ctx, fsys, path.Join(dir, inventoryBase))
-	if err != nil {
-		return
-	}
-	inv = &Inventory{}
-	dec := json.NewDecoder(bytes.NewReader(byts))
+// StoredInventory is an unmarshalled inventory with the digest of its source data.
+type StoredInventory struct {
+	Inventory
+	// digest is the digest of inventory's source data using the inventory's
+	// digest algorithm
+	digest string
+}
+
+func newStoredInventory(raw []byte) (*StoredInventory, error) {
+	var inv StoredInventory
+	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(inv); err != nil {
+	if err := dec.Decode(&inv.Inventory); err != nil {
 		return nil, err
 	}
-	if err := inv.setJsonDigest(byts); err != nil {
+	if err := inv.setDigest(raw); err != nil {
 		return nil, err
 	}
 	if err := inv.Validate().Err(); err != nil {
 		return nil, err
 	}
-	return inv, nil
+	return &inv, nil
+}
+
+// sets inv's jsonDigest value by digesting the raw inventory bytes.
+func (inv *StoredInventory) setDigest(raw []byte) error {
+	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(digester, bytes.NewReader(raw)); err != nil {
+		return fmt.Errorf("digesting inventory: %w", err)
+	}
+	inv.digest = digester.String()
+	return nil
+}
+
+// Digest returns the digest of the inventory's source data
+func (inv StoredInventory) Digest() string { return inv.digest }
+
+// ValidateSidecar reads the inventory sidecar with inv's digest
+// algorithm (e.g., inventory.json.sha512) in directory dir and return an error
+// if the sidecar content is not formatted correctly or if the inv's digest
+// doesn't match the value found in the sidecar.
+func (inv StoredInventory) ValidateSidecar(ctx context.Context, fsys ocflfs.FS, dir string) error {
+	sideCar := path.Join(dir, inventoryBase+"."+inv.DigestAlgorithm)
+	expSum, err := ReadInventorySidecar(ctx, fsys, dir, inv.DigestAlgorithm)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(expSum, inv.digest) {
+		return &digest.DigestError{
+			Path:     sideCar,
+			Alg:      inv.DigestAlgorithm,
+			Got:      inv.digest,
+			Expected: expSum,
+		}
+	}
+	return nil
+}
+
+// ReadInventory reads the 'inventory.json' file in dir and validates it. It returns
+// an error if the inventory can't be paresed or if it is invalid.
+func ReadInventory(ctx context.Context, fsys ocflfs.FS, dir string) (*StoredInventory, error) {
+	var byts []byte
+	byts, err := ocflfs.ReadAll(ctx, fsys, path.Join(dir, inventoryBase))
+	if err != nil {
+		return nil, err
+	}
+	return newStoredInventory(byts)
 }
 
 // ReadInventorySidecar reads the digest from an inventory sidecar file in
@@ -165,7 +226,7 @@ func ReadInventorySidecar(ctx context.Context, fsys ocflfs.FS, dir, alg string) 
 
 // ValidateInventoryBytes parses and fully validates the byts as contents of an
 // inventory.json file. This is mostly used for testing.
-func ValidateInventoryBytes(byts []byte) (*Inventory, *Validation) {
+func ValidateInventoryBytes(byts []byte) (*StoredInventory, *Validation) {
 	imp, _ := getInventoryOCFL(byts)
 	if imp == nil {
 		// use default OCFL spec
@@ -174,54 +235,11 @@ func ValidateInventoryBytes(byts []byte) (*Inventory, *Validation) {
 	return imp.ValidateInventoryBytes(byts)
 }
 
-// ValidateInventorySidecar reads the inventory sidecar with inv's digest
-// algorithm (e.g., inventory.json.sha512) in directory dir and return an error
-// if the sidecar content is not formatted correctly or if the inv's digest
-// doesn't match the value found in the sidecar.
-func ValidateInventorySidecar(ctx context.Context, inv *Inventory, fsys ocflfs.FS, dir string) error {
-	sideCar := path.Join(dir, inventoryBase+"."+inv.DigestAlgorithm)
-	expSum, err := ReadInventorySidecar(ctx, fsys, dir, inv.DigestAlgorithm)
-	if err != nil {
-		return err
-	}
-	if !strings.EqualFold(expSum, inv.Digest()) {
-		return &digest.DigestError{
-			Path:     sideCar,
-			Alg:      inv.DigestAlgorithm,
-			Got:      inv.Digest(),
-			Expected: expSum,
-		}
-	}
-	return nil
-}
-
-// writeInventory marshals the value pointed to by inv, writing the json to dir/inventory.json in
-// fsys. The digest is calculated using alg and the inventory sidecar is also written to
-// dir/inventory.json.alg
-func writeInventory(ctx context.Context, fsys ocflfs.FS, inv *Inventory, dirs ...string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	inventoryContent, err := json.Marshal(inv)
-	if err != nil {
-		return fmt.Errorf("encoding inventory: %w", err)
-	}
-	if err := inv.setJsonDigest(inventoryContent); err != nil {
-		return fmt.Errorf("generating inventory.json checksum: %w", err)
-	}
-	sidecarContent := inv.jsonDigest + " " + inventoryBase + "\n"
-	// write inventory.json and sidecar
-	for _, dir := range dirs {
-		invFile := path.Join(dir, inventoryBase)
-		sideFile := invFile + "." + inv.DigestAlgorithm
-		_, err = ocflfs.Write(ctx, fsys, invFile, bytes.NewReader(inventoryContent))
-		if err != nil {
-			return fmt.Errorf("writing inventory: %w", err)
-		}
-		_, err = ocflfs.Write(ctx, fsys, sideFile, strings.NewReader(sidecarContent))
-		if err != nil {
-			return fmt.Errorf("writing inventory sidecar: %w", err)
-		}
+func writeInventorySidecar(ctx context.Context, fsys ocflfs.FS, dir string, invDigest string, alg string) error {
+	sidecarContent := invDigest + " " + inventoryBase + "\n"
+	sideFile := path.Join(dir, inventoryBase+"."+alg)
+	if _, err := ocflfs.Write(ctx, fsys, sideFile, strings.NewReader(sidecarContent)); err != nil {
+		return fmt.Errorf("writing inventory sidecar file: %w", err)
 	}
 	return nil
 }
@@ -260,7 +278,7 @@ type InventoryBuilder struct {
 // Spec, ID, and ContentDirectory are used.
 func NewInventoryBuilder(prev *Inventory) *InventoryBuilder {
 	b := &InventoryBuilder{
-		spec: Spec1_1, // default inventory specification
+		spec: defaultOCFL().Spec(), // default inventory specification
 		prev: prev,
 	}
 	if prev != nil {

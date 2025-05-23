@@ -212,7 +212,7 @@ func (imp ocflV1) ValidateInventory(inv *Inventory) *Validation {
 	return v
 }
 
-func (imp ocflV1) ValidateInventoryBytes(raw []byte) (*Inventory, *Validation) {
+func (imp ocflV1) ValidateInventoryBytes(raw []byte) (*StoredInventory, *Validation) {
 	specStr := string(imp.v1Spec)
 	v := &Validation{}
 	invMap := map[string]any{}
@@ -279,12 +279,14 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (*Inventory, *Validation) {
 		err := fmt.Errorf("inventory json has unexpected field: %q", extra)
 		v.AddFatal(err)
 	}
-	inv := &Inventory{
-		ID:               id,
-		ContentDirectory: contentDirectory,
-		DigestAlgorithm:  digestAlg,
-		Fixity:           map[string]DigestMap{},
-		Versions:         make(map[VNum]*InventoryVersion),
+	inv := &StoredInventory{
+		Inventory: Inventory{
+			ID:               id,
+			ContentDirectory: contentDirectory,
+			DigestAlgorithm:  digestAlg,
+			Fixity:           map[string]DigestMap{},
+			Versions:         make(map[VNum]*InventoryVersion),
+		},
 	}
 	if err := inv.Type.UnmarshalText([]byte(typeStr)); err != nil {
 		v.AddFatal(verr(err, code.E038(specStr)))
@@ -399,7 +401,7 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (*Inventory, *Validation) {
 		}
 		inv.Fixity[algStr] = digests
 	}
-	if err := inv.setJsonDigest(raw); err != nil {
+	if err := inv.setDigest(raw); err != nil {
 		v.AddFatal(err)
 	}
 	v.Add(inv.Validate())
@@ -407,47 +409,6 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (*Inventory, *Validation) {
 		return nil, v
 	}
 	return inv, v
-}
-
-func (imp ocflV1) newCommitPlan(ctx context.Context, obj *Object, commit *Commit) (*commitPlan, error) {
-	newInv, err := imp.newInventoryV1(commit, obj.rootInventory)
-	if err != nil {
-		return nil, fmt.Errorf("building new inventory: %w", err)
-	}
-	// newContent is a subeset of the manifest with the new content to add
-	newContent, err := newContentMap(newInv)
-	if err != nil {
-		return nil, err
-	}
-	// check that the stage includes all the new content
-	for digest := range newContent {
-		if !commit.Stage.HasContent(digest) {
-			// FIXME short digest
-			err := fmt.Errorf("no content for digest: %s", digest)
-			return nil, err
-		}
-	}
-	plan := &commitPlan{
-		FS:            obj.FS(),
-		Path:          obj.Path(),
-		NewInventory:  newInv,
-		PrevInventoy:  obj.rootInventory,
-		NewContent:    newContent,
-		ContentSource: commit.Stage,
-	}
-	return plan, nil
-}
-
-func (imp ocflV1) Commit(ctx context.Context, obj *Object, commit *Commit) error {
-	plan, err := imp.newCommitPlan(ctx, obj, commit)
-	if err != nil {
-		return &CommitError{Err: err}
-	}
-	if err := plan.Run(ctx, commit.Logger); err != nil {
-		return &CommitError{Err: err, Dirty: true}
-	}
-	obj.rootInventory = plan.NewInventory
-	return nil
 }
 
 func (imp ocflV1) ValidateObjectRoot(ctx context.Context, vldr *ObjectValidation, state *ObjectState) error {
@@ -482,7 +443,7 @@ func (imp ocflV1) ValidateObjectRoot(ctx context.Context, vldr *ObjectValidation
 	if err := invValidation.Err(); err != nil {
 		return err
 	}
-	if err := ValidateInventorySidecar(ctx, inv, vldr.fs(), vldr.path()); err != nil {
+	if err := inv.ValidateSidecar(ctx, vldr.fs(), vldr.path()); err != nil {
 		switch {
 		case errors.Is(err, ErrInventorySidecarContents):
 			vldr.AddFatal(verr(err, code.E061(specStr)))
@@ -501,7 +462,7 @@ func (imp ocflV1) ValidateObjectRoot(ctx context.Context, vldr *ObjectValidation
 	return nil
 }
 
-func (imp ocflV1) ValidateObjectVersion(ctx context.Context, vldr *ObjectValidation, vnum VNum, verInv *Inventory, prevInv *Inventory) error {
+func (imp ocflV1) ValidateObjectVersion(ctx context.Context, vldr *ObjectValidation, vnum VNum, verInv, prevInv *StoredInventory) error {
 	fsys := vldr.fs()
 	vnumStr := vnum.String()
 	fullVerDir := path.Join(vldr.path(), vnumStr) // version directory path relative to FS
@@ -524,9 +485,9 @@ func (imp ocflV1) ValidateObjectVersion(ctx context.Context, vldr *ObjectValidat
 		vldr.AddWarn(verr(err, code.W010(specStr)))
 	}
 	if verInv != nil {
-		verInvValidation := imp.ValidateInventory(verInv)
+		verInvValidation := imp.ValidateInventory(&verInv.Inventory)
 		vldr.PrefixAdd(vnumStr+"/inventory.json", verInvValidation)
-		if err := ValidateInventorySidecar(ctx, verInv, fsys, fullVerDir); err != nil {
+		if err := verInv.ValidateSidecar(ctx, fsys, fullVerDir); err != nil {
 			err := fmt.Errorf("%s/inventory.json: %w", vnumStr, err)
 			switch {
 			case errors.Is(err, ErrInventorySidecarContents):
@@ -613,7 +574,7 @@ func (imp ocflV1) ValidateObjectContent(ctx context.Context, v *ObjectValidation
 	return newVld.Err()
 }
 
-func (imp ocflV1) compareVersionInventory(obj *Object, dirNum VNum, verInv *Inventory, vldr *ObjectValidation) {
+func (imp ocflV1) compareVersionInventory(obj *Object, dirNum VNum, verInv *StoredInventory, vldr *ObjectValidation) {
 	rootInv := obj.rootInventory
 	specStr := string(imp.v1Spec)
 	if verInv.Head == rootInv.Head && verInv.Digest() != rootInv.Digest() {
@@ -663,48 +624,6 @@ func (imp ocflV1) compareVersionInventory(obj *Object, dirNum VNum, verInv *Inve
 			vldr.AddWarn(verr(err, code.W011(specStr)))
 		}
 	}
-}
-
-// build a new inventoryV1 from a commit and an optional previous inventory
-func (imp ocflV1) newInventoryV1(commit *Commit, prev *Inventory) (*Inventory, error) {
-	if commit.Stage == nil {
-		return nil, errors.New("commit is missing new version state")
-	}
-	if commit.Stage.DigestAlgorithm == nil {
-		return nil, errors.New("commit has no digest algorithm")
-
-	}
-	if commit.Stage.State == nil {
-		commit.Stage.State = DigestMap{}
-	}
-	id := commit.ID
-	if prev != nil {
-		if !commit.AllowUnchanged {
-			lastV := prev.Versions[prev.Head]
-			if lastV != nil && lastV.State.Eq(commit.Stage.State) {
-				err := errors.New("version state unchanged")
-				return nil, err
-			}
-		}
-		id = prev.ID
-	}
-	newInv, err := NewInventoryBuilder(prev).
-		ID(id).
-		ContentPathFunc(commit.ContentPathFunc).
-		FixitySource(commit.Stage).
-		Spec(commit.Spec).
-		AddVersion(
-			commit.Stage.State,
-			commit.Stage.DigestAlgorithm,
-			commit.Created,
-			commit.Message,
-			&commit.User,
-		).Finalize()
-
-	if err != nil {
-		return nil, err
-	}
-	return newInv, nil
 }
 
 func jsonMapGet[T any](m map[string]any, key string) (val T, exists bool, typeOK bool) {
