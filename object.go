@@ -8,6 +8,7 @@ import (
 	"maps"
 	"path"
 	"slices"
+	"time"
 
 	"github.com/srerickson/ocfl-go/digest"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
@@ -16,19 +17,19 @@ import (
 
 // Object represents and OCFL Object, typically contained in a Root.
 type Object struct {
-	// object's storage backend. Must implement WriteFS to commit.
+	// object's storage backend. Must implement WriteFS to update.
 	fs ocflfs.FS
 	// path in FS for object root directory
 	path string
 	// object's root inventory. May be nil if the object doesn't (yet) exist.
 	//root inventory
-	rootInventory *Inventory
-	// the expected object ID
-	expectID string
-	// the object must exist: don't create a new object.
-	mustExist bool
+	rootInventory *StoredInventory
+	//rootInventoryBytes is raw root inventory data
+	rootInventoryBytes []byte
 	// object's storage root
 	root *Root
+	// expected object ID
+	requiredID string
 }
 
 // NewObject returns an *Object for managing the OCFL object at path in fsys.
@@ -37,26 +38,27 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 	if !fs.ValidPath(dir) {
 		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
 	}
-	obj := newObject(fsys, dir, opts...)
-	// read root inventory: we don't know what OCFL spec it uses.
-	inv, err := ReadInventory(ctx, fsys, dir)
-	if err != nil {
-		// continue of err is ErrNotExist and !mustExist
-		if !obj.mustExist && errors.Is(err, fs.ErrNotExist) {
-			err = nil
+	obj, config := newObjectAndConfig(fsys, dir, opts...)
+	if err := obj.SyncInventory(ctx); err != nil {
+		if !config.mustExist && errors.Is(err, fs.ErrNotExist) {
+			err = nil //it's ok that the inventory doesn't exist
 		}
 		if err != nil {
 			return nil, err
 		}
 	}
-	if inv != nil {
-		// check that inventory has expected object ID
-		// if the expected object ID is known.
-		if obj.expectID != "" && inv.ID != obj.expectID {
-			err := fmt.Errorf("object has unexpected ID: %q; expected: %q", inv.ID, obj.expectID)
+	if obj.rootInventory != nil {
+		inv := obj.rootInventory
+		if obj.requiredID != "" && inv.ID != obj.requiredID {
+			err := fmt.Errorf("object has unexpected ID: %q; expected: %q", inv.ID, obj.requiredID)
 			return nil, err
 		}
-		obj.rootInventory = inv
+		if !config.skipSidecarValidation {
+			err := inv.ValidateSidecar(ctx, fsys, dir)
+			if err != nil {
+				return nil, err
+			}
+		}
 		return obj, nil
 	}
 	// inventory doesn't exist: open as uninitialized object. The object
@@ -87,46 +89,56 @@ func (obj Object) ContentDirectory() string {
 	return contentDir
 }
 
-// Commit creates a new object version based on values in commit.
-func (obj *Object) Commit(ctx context.Context, commit *Commit) error {
-	if _, isWriteFS := obj.FS().(ocflfs.WriteFS); !isWriteFS {
-		return errors.New("object's backing file system doesn't support write operations")
+// NewInventoryBuidler returns a new *InventoryBuilder that can be used to
+// generate obj's next root inventory.
+func (obj *Object) NewInventoryBuilder() *InventoryBuilder {
+	var base *Inventory
+	if obj.rootInventory != nil {
+		base = &obj.rootInventory.Inventory
 	}
-	// the OCFL implementation for the new object version
-	var useOCFL ocfl
-	switch {
-	case commit.Spec.Empty():
-		switch {
-		case !obj.Exists():
-			// new object and no ocfl version specified in commit
-			useOCFL = defaultOCFL()
-		default:
-			// use existing object's ocfl version
-			var err error
-			useOCFL, err = getOCFL(obj.rootInventory.Type.Spec)
-			if err != nil {
-				err = fmt.Errorf("object's root inventory has errors: %w", err)
-				return &CommitError{Err: err}
-			}
-		}
-		commit.Spec = useOCFL.Spec()
-	default:
-		var err error
-		useOCFL, err = getOCFL(commit.Spec)
-		if err != nil {
-			return &CommitError{Err: err}
+	return NewInventoryBuilder(base).ID(obj.ID())
+}
+
+// NewUpdatePlan returns a new *UpdatePlan for updating obj with a new object
+// version using the state and contents of the stage. It does not apply the
+// updat plan.
+func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
+	objUpdateOptions := newObjectUpdateOptions(opts...)
+	newInv, err := obj.NewInventoryBuilder().
+		FixitySource(stage).
+		ContentPathFunc(objUpdateOptions.ContentPathFunc).
+		Spec(objUpdateOptions.Spec).
+		AddVersion(
+			stage.State,
+			stage.DigestAlgorithm,
+			objUpdateOptions.Created,
+			msg,
+			&user,
+		).Finalize()
+	if err != nil {
+		return nil, fmt.Errorf("building new inventory: %w", err)
+	}
+	currentInv := obj.rootInventory
+	if !objUpdateOptions.AllowUnchanged && currentInv != nil {
+		lastV := currentInv.Versions[currentInv.Head]
+		if lastV != nil && lastV.State.Eq(stage.State) {
+			return nil, errors.New("version state unchanged")
 		}
 	}
-	// set commit's object id if we have an expected id and commit ID isn't set
-	if obj.expectID != "" && commit.ID != obj.expectID {
-		if commit.ID != "" {
-			err := fmt.Errorf("commit includes unexpected object ID: %s; expected: %q", commit.ID, obj.expectID)
-			return &CommitError{Err: err}
-		}
-		commit.ID = obj.expectID
-	}
-	if err := useOCFL.Commit(ctx, obj, commit); err != nil {
+	return NewUpdatePlan(obj, newInv, stage.ContentSource)
+}
+
+// Update create an update plan and applies it.
+func (obj *Object) Update(ctx context.Context, stage *Stage, msg string, user User, opts ...ObjectUpdateOption) error {
+	plan, err := obj.NewUpdatePlan(stage, msg, user, opts...)
+	if err != nil {
 		return err
+	}
+	if err := plan.Apply(ctx); err != nil {
+		return err
+	}
+	if err := obj.SyncInventory(ctx); err != nil {
+		return fmt.Errorf("reading new object inventory: %w", err)
 	}
 	return nil
 }
@@ -180,7 +192,7 @@ func (obj Object) FS() ocflfs.FS {
 	return obj.fs
 }
 
-// GetFixity implement the FixitySource interface for Object, for use in Stage.
+// GetFixity implements the FixitySource interface for Object, for use in Stage.
 func (obj Object) GetFixity(dig string) digest.Set {
 	if obj.rootInventory == nil {
 		return nil
@@ -210,13 +222,13 @@ func (obj Object) Head() VNum {
 }
 
 // InventoryDigest returns the digest of the object's root inventory using the
-// declarate digest algorithm. This is the actual inventory digest, not the
-// digest recorded inventory sidecar (they should be the same).
+// declarate digest algorithm. It is the expected content of the root
+// inventory's sidecar file.
 func (obj Object) InventoryDigest() string {
 	if obj.rootInventory == nil {
 		return ""
 	}
-	return obj.rootInventory.jsonDigest
+	return obj.rootInventory.Digest()
 }
 
 // ID returns obj's inventory ID if the obj exists (its inventory is not nil).
@@ -227,7 +239,7 @@ func (obj Object) ID() string {
 	if obj.rootInventory != nil {
 		return obj.rootInventory.ID
 	}
-	return obj.expectID
+	return obj.requiredID
 }
 
 // Manifest returns a copy of the root inventory manifest. If the object has no
@@ -332,6 +344,21 @@ func (obj Object) version(v int) *InventoryVersion {
 	return obj.rootInventory.version(v)
 }
 
+// SyncInventory re-reads the object's root inventory, updating obj's internal state
+func (obj *Object) SyncInventory(ctx context.Context) error {
+	byts, err := ocflfs.ReadAll(ctx, obj.fs, path.Join(obj.path, inventoryBase))
+	if err != nil {
+		return fmt.Errorf("reading %q inventory: %w", obj.ID(), err)
+	}
+	inv, err := newStoredInventory(byts)
+	if err != nil {
+		return fmt.Errorf("in %q inventory: %w", obj.ID(), err)
+	}
+	obj.rootInventory = inv
+	obj.rootInventoryBytes = byts
+	return nil
+}
+
 // ValidateObject fully validates the OCFL Object at dir in fsys
 func ValidateObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectValidationOption) *ObjectValidation {
 	v := newObjectValidation(fsys, dir, opts...)
@@ -357,7 +384,7 @@ func ValidateObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...Obj
 	}
 	// validate versions using previous specs
 	versionOCFL := lowestOCFL()
-	var prevInv *Inventory
+	var prevInv *StoredInventory
 	for _, vnum := range state.VersionDirs.Head().Lineage() {
 		versionDir := path.Join(dir, vnum.String())
 		versionInv, err := ReadInventory(ctx, fsys, versionDir)
@@ -375,37 +402,67 @@ func ValidateObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...Obj
 	return v
 }
 
-// create a new *Object with required feilds and apply options
-func newObject(fsys ocflfs.FS, dir string, opts ...ObjectOption) *Object {
-	obj := &Object{fs: fsys, path: dir}
-	for _, optFn := range opts {
-		optFn(obj)
-	}
-	return obj
-}
-
 // ObjectOptions are used to configure the behavior of NewObject()
-type ObjectOption func(*Object)
+type ObjectOption func(*newObjectConfig)
 
-// ObjectMustExists requires the object to exist
+// ObjectMustExists is an ObjectOption used to indicate that the initialized
+// object instance must be an existing OCFL object.
 func ObjectMustExist() ObjectOption {
-	return func(o *Object) {
+	return func(o *newObjectConfig) {
 		o.mustExist = true
 	}
 }
 
-// objectExpectedID is an ObjectOption to set the expected ID (i.e., from )
-func objectExpectedID(id string) ObjectOption {
-	return func(o *Object) {
-		o.expectID = id
+// ObjectSkipSidecarValidation is used to skip validating the inventory.json
+// digest with the inventory sidecar file during initialization.
+func ObjectSkipSidecarValidation() ObjectOption {
+	return func(o *newObjectConfig) {
+		o.skipSidecarValidation = true
+	}
+}
+
+// ObjectWithID is an ObjectOption used to set an explict object ID
+// in contexts where the object ID is not known or must match a certain
+// value.
+func ObjectWithID(id string) ObjectOption {
+	return func(o *newObjectConfig) {
+		o.requiredID = id
 	}
 }
 
 // objectWithRoot is an ObjectOption that sets the object's storage root
 func objectWithRoot(root *Root) ObjectOption {
-	return func(o *Object) {
-		o.root = root
+	return func(o *newObjectConfig) {
+		if o.root == nil {
+			o.root = root
+		}
 	}
+}
+
+type newObjectConfig struct {
+	// object's expected id
+	requiredID string
+	// the object must exist: don't create a new object.
+	mustExist bool
+	// during initialization, don't check that the inventory's digest matches
+	// the contents of the inventory sidecar file.
+	skipSidecarValidation bool
+	// object's storage root
+	root *Root
+}
+
+// create a new *Object with required feilds and apply options
+func newObjectAndConfig(fsys ocflfs.FS, dir string, opts ...ObjectOption) (*Object, *newObjectConfig) {
+	var config newObjectConfig
+	for _, optFn := range opts {
+		optFn(&config)
+	}
+	return &Object{
+		fs:         fsys,
+		path:       dir,
+		root:       config.root,
+		requiredID: config.requiredID,
+	}, &config
 }
 
 // ObjectVersion is used to access version information from an object's root
@@ -433,3 +490,53 @@ func (o ObjectVersion) User() *User {
 
 // VNum returns o's version number
 func (o ObjectVersion) VNum() VNum { return o.vnum }
+
+type objectUpdateOptions struct {
+	Created         time.Time // time.Now is used, if not set
+	Spec            Spec      // OCFL specification version for the new object version
+	NewHEAD         int       // enforces new object version number
+	AllowUnchanged  bool
+	ContentPathFunc func(oldPaths []string) (newPaths []string)
+}
+
+func newObjectUpdateOptions(opts ...ObjectUpdateOption) *objectUpdateOptions {
+	combinedOpts := &objectUpdateOptions{}
+	for _, o := range opts {
+		o(combinedOpts)
+	}
+	if combinedOpts.Created.IsZero() {
+		combinedOpts.Created = time.Now()
+	}
+	return combinedOpts
+}
+
+type ObjectUpdateOption func(*objectUpdateOptions)
+
+func UpdateWithVersionCreated(t time.Time) ObjectUpdateOption {
+	return func(o *objectUpdateOptions) {
+		o.Created = t
+	}
+}
+
+func UpdateWithOCFLSpec(s Spec) ObjectUpdateOption {
+	return func(o *objectUpdateOptions) {
+		o.Spec = s
+	}
+}
+
+func UpdateWithNewHead(v int) ObjectUpdateOption {
+	return func(o *objectUpdateOptions) {
+		o.NewHEAD = v
+	}
+}
+func UpdateWithUnchangedVersionState() ObjectUpdateOption {
+	return func(o *objectUpdateOptions) {
+		o.AllowUnchanged = true
+	}
+}
+
+func UpdateWithContentPathFunc(mutate PathMutation) ObjectUpdateOption {
+	return func(o *objectUpdateOptions) {
+		o.ContentPathFunc = mutate
+	}
+}

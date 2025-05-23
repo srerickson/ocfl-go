@@ -36,7 +36,7 @@ func TestRoot(t *testing.T) {
 		be.Equal(t, ocfl.Spec1_0, root.Spec())
 	})
 
-	t.Run("init root and commit", func(t *testing.T) {
+	t.Run("init root and update", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
 
@@ -50,7 +50,7 @@ func TestRoot(t *testing.T) {
 		be.Equal(t, ocfl.Spec1_1, newRoot.Spec())
 		be.Equal(t, desc, newRoot.Description())
 
-		// commit an object
+		// update an object
 		objID := "object-1"
 		obj, err := newRoot.NewObject(ctx, objID)
 		be.NilErr(t, err)
@@ -59,13 +59,8 @@ func TestRoot(t *testing.T) {
 			"file.txt": []byte("readme readme readme"),
 		}, digest.SHA256)
 		be.NilErr(t, err)
-		err = obj.Commit(ctx, &ocfl.Commit{
-			Stage:   stage,
-			Message: "first version",
-			User:    ocfl.User{Name: "Stinky & Dirty"},
-		})
+		err = obj.Update(ctx, stage, "first version", ocfl.User{Name: "Stinky & Dirty"})
 		be.NilErr(t, err)
-
 		// re-open and validate object
 		sameRoot, err := ocfl.NewRoot(ctx, fsys, dir)
 		be.NilErr(t, err)
