@@ -51,9 +51,10 @@ func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (f
 	headOut, err := api.HeadObject(ctx, headIn)
 	if err != nil {
 		fsErr := &fs.PathError{Op: "open", Path: name}
-		var awsErr *types.NoSuchKey
+		var noKeyErr *types.NoSuchKey
+		var notFoundErr *types.NotFound
 		switch {
-		case errors.As(err, &awsErr):
+		case errors.As(err, &noKeyErr) || errors.As(err, &notFoundErr):
 			fsErr.Err = fs.ErrNotExist
 		default:
 			fsErr.Err = err
