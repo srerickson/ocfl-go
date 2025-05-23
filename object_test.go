@@ -197,15 +197,6 @@ func TestObject_Update(t *testing.T) {
 		be.NilErr(t, err)
 		be.False(t, obj.Exists())
 		be.Zero(t, obj.InventoryDigest())
-		// update := &ocfl.Update{
-		// 	ID:      "new-object",
-		// 	Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA256},
-		// 	Message: "new object",
-		// 	User: ocfl.User{
-		// 		Name: "Anna Karenina",
-		// 	},
-		// 	Spec: ocfl.Spec1_0,
-		// }
 		err = obj.Update(
 			ctx,
 			&ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA256},
