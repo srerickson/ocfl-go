@@ -27,25 +27,25 @@ func TestObject_Example(t *testing.T) {
 	be.NilErr(t, err)
 
 	// open new-object-01, which doesn't exist
-	obj, err := ocfl.NewObject(ctx, tmpFS, "new-object-01")
+	id := "new-object-01"
+	obj, err := ocfl.NewObject(ctx, tmpFS, id, ocfl.ObjectWithID(id))
 	be.NilErr(t, err)
 	be.False(t, obj.Exists()) // the object doesn't exist yet
-	be.Zero(t, obj.ID())      // its ID isn't set
+	be.Equal(t, id, obj.ID()) // its ID isn't set
 
-	// commit new object version from bytes:
+	// update new object version from bytes:
 	v1Content := map[string][]byte{
 		"README.txt": []byte("this is a test file"),
 	}
 	stage, err := ocfl.StageBytes(v1Content, digest.SHA512, digest.MD5)
 	be.NilErr(t, err)
-	err = obj.Commit(ctx, &ocfl.Commit{
-		Spec:    ocfl.Spec1_0,
-		ID:      "new-object-01",
-		Stage:   stage,
-		User:    ocfl.User{Name: "Mx. Robot"},
-		Message: "first version",
-	})
-	be.NilErr(t, err)        // commit worked
+	err = obj.Update(
+		ctx,
+		stage,
+		"first version",
+		ocfl.User{Name: "Mx. Robot"},
+	)
+	be.NilErr(t, err)        // update worked
 	be.True(t, obj.Exists()) // the object was created
 
 	// object has expected inventory values
@@ -54,7 +54,7 @@ func TestObject_Example(t *testing.T) {
 	be.Nonzero(t, sourceVersion)
 	be.Nonzero(t, sourceVersion.State().PathMap()["README.txt"])
 
-	// commit a new version and upgrade to OCFL v1.1
+	// update a new version and upgrade to OCFL v1.1
 	v2Content := map[string][]byte{
 		"README.txt":    []byte("this is a test file (v2)"),
 		"new-data.csv":  []byte("1,2,3"),
@@ -62,13 +62,13 @@ func TestObject_Example(t *testing.T) {
 	}
 	stage, err = ocfl.StageBytes(v2Content, digest.SHA512, digest.MD5)
 	be.NilErr(t, err)
-	err = obj.Commit(ctx, &ocfl.Commit{
-		ID:      "new-object-01",
-		Stage:   stage,
-		User:    ocfl.User{Name: "Dr. Robot"},
-		Message: "second version",
-		Spec:    ocfl.Spec1_1,
-	})
+	err = obj.Update(
+		ctx,
+		stage,
+		"second version",
+		ocfl.User{Name: "Dr. Robot"},
+		ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1),
+	)
 	be.NilErr(t, err)
 	be.Equal(t, "new-object-01", obj.ID())
 	be.Equal(t, ocfl.Spec1_1, obj.Spec())
@@ -99,15 +99,15 @@ func TestObject_Example(t *testing.T) {
 	be.Nonzero(t, sourceVersion)
 	sourceStage := obj.VersionStage(0)
 	be.Nonzero(t, sourceStage)
-	fork := &ocfl.Commit{
-		ID:      forkID,
-		Stage:   sourceStage,
-		Message: sourceVersion.Message(),
-		User:    *sourceVersion.User(),
-	}
-	forkObj, err := ocfl.NewObject(ctx, tmpFS, forkID)
+	forkObj, err := ocfl.NewObject(ctx, tmpFS, forkID, ocfl.ObjectWithID(forkID))
 	be.NilErr(t, err)
-	be.NilErr(t, forkObj.Commit(ctx, fork))
+	err = forkObj.Update(
+		ctx,
+		sourceStage,
+		sourceVersion.Message(),
+		*sourceVersion.User(),
+	)
+	be.NilErr(t, err)
 	be.NilErr(t, ocfl.ValidateObject(ctx, forkObj.FS(), forkObj.Path()).Err())
 	be.True(t, sourceVersion.State().Eq(forkObj.Version(0).State()))
 }
@@ -117,7 +117,6 @@ func TestNewObject(t *testing.T) {
 	ctx := context.Background()
 	fsys := ocflfs.DirFS(objectFixturesPath)
 	type testCase struct {
-		ctx    context.Context
 		fs     ocflfs.FS
 		path   string
 		opts   []ocfl.ObjectOption
@@ -139,7 +138,6 @@ func TestNewObject(t *testing.T) {
 			},
 		},
 		"not existing": {
-			ctx:  ctx,
 			fs:   fsys,
 			path: "new-dir",
 			expect: func(t *testing.T, obj *ocfl.Object, err error) {
@@ -147,7 +145,6 @@ func TestNewObject(t *testing.T) {
 			},
 		},
 		"not existing, must exist": {
-			ctx:  ctx,
 			fs:   fsys,
 			path: "new-dir",
 			opts: []ocfl.ObjectOption{ocfl.ObjectMustExist()},
@@ -155,11 +152,27 @@ func TestNewObject(t *testing.T) {
 				be.True(t, errors.Is(err, fs.ErrNotExist))
 			},
 		},
+		"with skip inventory sidecar validation": {
+			fs:   fsys,
+			path: "1.1/bad-objects/E060_E064_root_inventory_digest_mismatch",
+			opts: []ocfl.ObjectOption{
+				ocfl.ObjectSkipSidecarValidation(),
+			},
+			expect: func(t *testing.T, _ *ocfl.Object, err error) {
+				be.NilErr(t, err)
+			},
+		},
+		"without skip inventory sidecar validation": {
+			fs:   fsys,
+			path: "1.1/bad-objects/E060_E064_root_inventory_digest_mismatch",
+			expect: func(t *testing.T, _ *ocfl.Object, err error) {
+				var expectErr *digest.DigestError
+				be.True(t, errors.As(err, &expectErr))
+			},
+		},
 		"empty": {
-			ctx:  ctx,
 			fs:   fsys,
 			path: "1.1/bad-objects/E003_E063_empty",
-			opts: []ocfl.ObjectOption{},
 			expect: func(t *testing.T, _ *ocfl.Object, err error) {
 				be.Nonzero(t, err)
 			},
@@ -168,35 +181,39 @@ func TestNewObject(t *testing.T) {
 	i := 0
 	for name, tCase := range testCases {
 		t.Run(fmt.Sprintf("%d-%s", i, name), func(t *testing.T) {
-			if tCase.ctx == nil {
-				tCase.ctx = ctx
-			}
-			obj, err := ocfl.NewObject(tCase.ctx, tCase.fs, tCase.path, tCase.opts...)
+			obj, err := ocfl.NewObject(ctx, tCase.fs, tCase.path, tCase.opts...)
 			tCase.expect(t, obj, err)
 		})
 		i++
 	}
 }
 
-func TestObject_Commit(t *testing.T) {
+func TestObject_Update(t *testing.T) {
 	ctx := context.Background()
 	t.Run("minimal", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
-		obj, err := ocfl.NewObject(ctx, fsys, ".")
+		obj, err := ocfl.NewObject(ctx, fsys, ".", ocfl.ObjectWithID("new-object"))
 		be.NilErr(t, err)
 		be.False(t, obj.Exists())
 		be.Zero(t, obj.InventoryDigest())
-		commit := &ocfl.Commit{
-			ID:      "new-object",
-			Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA256},
-			Message: "new object",
-			User: ocfl.User{
-				Name: "Anna Karenina",
-			},
-			Spec: ocfl.Spec1_0,
-		}
-		be.NilErr(t, obj.Commit(ctx, commit))
+		// update := &ocfl.Update{
+		// 	ID:      "new-object",
+		// 	Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA256},
+		// 	Message: "new object",
+		// 	User: ocfl.User{
+		// 		Name: "Anna Karenina",
+		// 	},
+		// 	Spec: ocfl.Spec1_0,
+		// }
+		err = obj.Update(
+			ctx,
+			&ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA256},
+			"new object",
+			ocfl.User{Name: "Anna Karenina"},
+			ocfl.UpdateWithOCFLSpec(ocfl.Spec1_0),
+		)
+		be.NilErr(t, err)
 		be.True(t, obj.Exists())
 		be.Nonzero(t, obj.InventoryDigest())
 		be.Equal(t, "new object", obj.Version(0).Message())
@@ -205,51 +222,201 @@ func TestObject_Commit(t *testing.T) {
 	t.Run("with wrong alg", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
-		obj, err := ocfl.NewObject(ctx, fsys, ".")
+		obj, err := ocfl.NewObject(ctx, fsys, ".", ocfl.ObjectWithID("new-object"))
 		be.NilErr(t, err)
 		be.False(t, obj.Exists())
-		commit := &ocfl.Commit{
-			ID:      "new-object",
-			Stage:   &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA512},
-			Message: "new object",
-			User: ocfl.User{
-				Name: "Anna Karenina",
-			},
-			Spec:           ocfl.Spec1_0,
-			AllowUnchanged: true,
-		}
-		be.NilErr(t, obj.Commit(ctx, commit))
-		commit.Stage.DigestAlgorithm = digest.SHA256
-		err = obj.Commit(ctx, commit)
-		be.True(t, err != nil)
+		err = obj.Update(
+			ctx,
+			&ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA512},
+			"new object",
+			ocfl.User{Name: "Anna Karenina"},
+			ocfl.UpdateWithUnchangedVersionState(),
+		)
+		be.NilErr(t, err)
+		err = obj.Update(
+			ctx,
+			&ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA256},
+			"new object",
+			ocfl.User{Name: "Anna Karenina"},
+			ocfl.UpdateWithUnchangedVersionState(),
+		)
+		be.Nonzero(t, err)
 		be.In(t, "cannot change inventory's digest algorithm from previous value", err.Error())
+	})
+	t.Run("invalid spec", func(t *testing.T) {
+		fsys, err := local.NewFS(t.TempDir())
+		be.NilErr(t, err)
+		obj, err := ocfl.NewObject(ctx, fsys, ".", ocfl.ObjectWithID("new-object"))
+		be.NilErr(t, err)
+		be.False(t, obj.Exists())
+		err = obj.Update(
+			ctx,
+			&ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA512},
+			"new object",
+			ocfl.User{Name: "Anna Karenina"},
+			ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1),
+		)
+		be.NilErr(t, err)
+		err = obj.Update(
+			ctx,
+			&ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA512},
+			"new object",
+			ocfl.User{Name: "Anna Karenina"},
+			ocfl.UpdateWithOCFLSpec(ocfl.Spec1_0),
+			ocfl.UpdateWithUnchangedVersionState(),
+		)
+		be.Nonzero(t, err)
 	})
 	t.Run("with extended digest algs", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
-		obj, err := ocfl.NewObject(ctx, fsys, ".")
+		obj, err := ocfl.NewObject(ctx, fsys, ".", ocfl.ObjectWithID("new-object"))
 		be.NilErr(t, err)
-		// commit new object version from bytes:
+		// update new object version from bytes:
 		content := map[string][]byte{
 			"README.txt": []byte("this is a test file"),
 		}
 		stage, err := ocfl.StageBytes(content, digest.SHA512, digest.SIZE)
 		be.NilErr(t, err)
-		commit := &ocfl.Commit{
-			ID:      "new-object",
-			Stage:   stage,
-			Message: "new object",
-			User: ocfl.User{
-				Name: "Anna Karenina",
-			},
-			Spec: ocfl.Spec1_1,
-		}
-		be.NilErr(t, obj.Commit(ctx, commit))
+		err = obj.Update(
+			ctx,
+			stage, "new object",
+			ocfl.User{Name: "Anna Karenina"},
+		)
+		be.NilErr(t, err)
 		be.DeepEqual(t, []string{"size"}, obj.FixityAlgorithms())
 		algReg := digest.NewAlgorithmRegistry(digest.SHA512, digest.SIZE)
 		v := ocfl.ValidateObject(ctx, fsys, ".", ocfl.ValidationAlgorithms(algReg))
 		be.NilErr(t, v.Err())
 	})
+}
+
+func TestObject_PartialUpdate(t *testing.T) {
+	ctx := context.Background()
+	fixture := filepath.Join(`testdata`, `object-fixtures`, `1.0`, `good-objects`, `spec-ex-full`)
+	content := filepath.Join(`testdata`, `content-fixture`)
+	stagedContent, err := ocfl.StageDir(ctx, ocflfs.DirFS(content), ".", digest.SHA512)
+	be.NilErr(t, err)
+	errMaxSteps := errors.New("max steps reached")
+	// partialUpdate does a partial update and returns the marshalled update
+	// value. The update is canceled during the step set by cancelOnStep
+	partialUpdate := func(ctx context.Context, objFS *local.FS, cancelOnStep int) ([]byte, error) {
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		obj, err := ocfl.NewObject(ctx, objFS, ".", ocfl.ObjectWithID("ark:/12345/bcd987"))
+		if err != nil {
+			return nil, err
+		}
+		update, err := obj.NewUpdatePlan(
+			stagedContent, "updated version",
+			ocfl.User{Name: "Me"},
+			ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1),
+		)
+		if err != nil {
+			return nil, err
+		}
+		if cancelOnStep > len(update.Steps) {
+			return nil, errMaxSteps
+		}
+		for i := range update.Steps {
+			if i >= cancelOnStep {
+				cancel()
+			}
+			if err := update.Steps[i].Run(ctx); err != nil {
+				break
+			}
+		}
+		return update.Marshal()
+	}
+	t.Run("resume update to new object", func(t *testing.T) {
+		cancelOnStep := 0
+		for {
+			objFS, err := local.NewFS(t.TempDir())
+			be.NilErr(t, err)
+			updateBytes, err := partialUpdate(ctx, objFS, cancelOnStep)
+			if errors.Is(err, errMaxSteps) {
+				return
+			}
+			be.NilErr(t, err)
+			resumeUpdate, err := ocfl.RecoverUpdatePlan(updateBytes, objFS, ".", stagedContent)
+			be.NilErr(t, err)
+			err = resumeUpdate.Apply(ctx)
+			be.NilErr(t, err)
+			err = ocfl.ValidateObject(ctx, objFS, ".").Err()
+			be.NilErr(t, err)
+			obj, err := ocfl.NewObject(ctx, objFS, ".")
+			be.NilErr(t, err)
+			be.Equal(t, ocfl.V(1), obj.Head())
+			cancelOnStep++
+		}
+	})
+	t.Run("undo update to new object", func(t *testing.T) {
+		cancelOnStep := 0
+		for {
+			objFS, err := local.NewFS(t.TempDir())
+			be.NilErr(t, err)
+			updateBytes, err := partialUpdate(ctx, objFS, cancelOnStep)
+			if errors.Is(err, errMaxSteps) {
+				return
+			}
+			be.NilErr(t, err)
+			resumeUpdate, err := ocfl.RecoverUpdatePlan(updateBytes, objFS, ".", stagedContent)
+			be.NilErr(t, err)
+			err = resumeUpdate.Revert(ctx)
+			be.NilErr(t, err)
+			entries, err := ocflfs.ReadDir(ctx, objFS, ".")
+			be.NilErr(t, err)
+			be.Zero(t, len(entries))
+			cancelOnStep++
+		}
+	})
+
+	t.Run("resume update for existing object", func(t *testing.T) {
+		cancelOnStep := 0
+		for {
+			objFS, err := local.NewFS(TempDirFixtureCopy(t, fixture))
+			be.NilErr(t, err)
+			updateBytes, err := partialUpdate(ctx, objFS, cancelOnStep)
+			if errors.Is(err, errMaxSteps) {
+				return
+			}
+			be.NilErr(t, err)
+			resumeUpdate, err := ocfl.RecoverUpdatePlan(updateBytes, objFS, ".", stagedContent)
+			be.NilErr(t, err)
+			err = resumeUpdate.Apply(ctx)
+			be.NilErr(t, err)
+			err = ocfl.ValidateObject(ctx, objFS, ".").Err()
+			be.NilErr(t, err)
+			obj, err := ocfl.NewObject(ctx, objFS, ".")
+			be.NilErr(t, err)
+			be.Equal(t, ocfl.V(4), obj.Head())
+			cancelOnStep++
+		}
+	})
+
+	t.Run("undo update to existing object", func(t *testing.T) {
+		cancelOnStep := 0
+		for {
+			objFS, err := local.NewFS(TempDirFixtureCopy(t, fixture))
+			be.NilErr(t, err)
+			updateBytes, err := partialUpdate(ctx, objFS, cancelOnStep)
+			if errors.Is(err, errMaxSteps) {
+				return
+			}
+			be.NilErr(t, err)
+			resumeUpdate, err := ocfl.RecoverUpdatePlan(updateBytes, objFS, ".", stagedContent)
+			be.NilErr(t, err)
+			err = resumeUpdate.Revert(ctx)
+			be.NilErr(t, err)
+			err = ocfl.ValidateObject(ctx, objFS, ".").Err()
+			be.NilErr(t, err)
+			obj, err := ocfl.NewObject(ctx, objFS, ".")
+			be.NilErr(t, err)
+			be.Equal(t, ocfl.V(3), obj.Head())
+			cancelOnStep++
+		}
+	})
+
 }
 
 func TestObject_UpdateFixtures(t *testing.T) {
@@ -261,12 +428,9 @@ func TestObject_UpdateFixtures(t *testing.T) {
 		for _, dir := range fixtures {
 			fixture := filepath.Join(fixturesDir, dir.Name())
 			t.Run(fixture, func(t *testing.T) {
-				objPath := "test-object"
-				tmpFS, err := local.NewFS(t.TempDir())
+				tmpFS, err := local.NewFS(TempDirFixtureCopy(t, fixture))
 				be.NilErr(t, err)
-				be.NilErr(t, copyFixture(fixture, tmpFS, objPath))
-
-				obj, err := ocfl.NewObject(ctx, tmpFS, objPath)
+				obj, err := ocfl.NewObject(ctx, tmpFS, ".")
 				be.NilErr(t, err)
 				be.True(t, obj.Exists())
 
@@ -280,12 +444,9 @@ func TestObject_UpdateFixtures(t *testing.T) {
 
 				be.NilErr(t, newStage.Overlay(newContent))
 
-				// do commit
-				be.NilErr(t, obj.Commit(ctx, &ocfl.Commit{
-					Stage:   newStage,
-					Message: "update",
-					User:    ocfl.User{Name: "Tristram Shandy"},
-				}))
+				// do update
+				err = obj.Update(ctx, newStage, "update", ocfl.User{Name: "Tristram Shandy"})
+				be.NilErr(t, err)
 				be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 				// check content
 				newVersion, err := obj.VersionFS(ctx, 0)
@@ -432,25 +593,11 @@ func fixtureExpectedErrs(name string, errs ...error) (bool, string) {
 	return gotExpected, desc
 }
 
-// creates a temporary directory and copies files from directory dir
-// in fsys to the temporary directory. This is used to create writable
-// object copies from fixtures
-func copyFixture(fixture string, tmpFS ocflfs.WriteFS, tmpDir string) error {
-	ctx := context.Background()
-	fixFS := os.DirFS(fixture)
-	return fs.WalkDir(fixFS, ".", func(name string, info fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			return nil
-		}
-		f, err := fixFS.Open(name)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		_, err = tmpFS.Write(ctx, path.Join(tmpDir, name), f)
-		return err
-	})
+func TempDirFixtureCopy(t *testing.T, fixture string) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	if err := os.CopyFS(tmpDir, os.DirFS(fixture)); err != nil {
+		t.Error(err)
+	}
+	return tmpDir
 }

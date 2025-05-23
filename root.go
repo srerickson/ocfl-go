@@ -111,7 +111,7 @@ func (r *Root) NewObject(ctx context.Context, id string, opts ...ObjectOption) (
 	if err != nil {
 		return nil, err
 	}
-	opts = append(opts, objectExpectedID(id))
+	opts = append(opts, ObjectWithID(id))
 	return r.NewObjectDir(ctx, objPath, opts...)
 }
 

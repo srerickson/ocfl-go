@@ -95,7 +95,7 @@ func newObjectValidation(fsys fs.FS, dir string, opts ...ObjectValidationOption)
 	for _, opt := range opts {
 		opt(v)
 	}
-	v.obj = newObject(fsys, dir, v.objOptions...)
+	v.obj, _ = newObjectAndConfig(fsys, dir, v.objOptions...)
 	return v
 }
 
@@ -203,7 +203,7 @@ func (v *ObjectValidation) addExistingContent(name string) {
 // automatically added to the validation's Fatal errors.
 //
 // If isRoot is true, v.object's is set to inv
-func (v *ObjectValidation) addInventory(inv *Inventory, isRoot bool) error {
+func (v *ObjectValidation) addInventory(inv *StoredInventory, isRoot bool) error {
 	if v.files == nil {
 		v.files = map[string]*validationFileInfo{}
 	}

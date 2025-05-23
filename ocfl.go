@@ -35,9 +35,6 @@ var (
 type ocfl interface {
 	// Spec returns the implemented version of the OCFL specification
 	Spec() Spec
-	// Commit creates a new object version. The returned error must be a
-	// *CommitError.
-	Commit(ctx context.Context, obj *Object, commit *Commit) error
 	// ValidateInventory validates an existing Inventory value.
 	ValidateInventory(*Inventory) *Validation
 	// ValidateInventoryBytes fully validates bytes as a json-encoded inventory.
