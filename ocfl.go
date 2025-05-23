@@ -43,11 +43,11 @@ type ocfl interface {
 	// ValidateInventoryBytes fully validates bytes as a json-encoded inventory.
 	// It returns the Inventory if the validation result does not included fatal
 	// errors.
-	ValidateInventoryBytes([]byte) (*Inventory, *Validation)
+	ValidateInventoryBytes([]byte) (*StoredInventory, *Validation)
 	// Validate all contents of an object root: NAMASTE, inventory, sidecar, etc.
 	ValidateObjectRoot(ctx context.Context, v *ObjectValidation, state *ObjectState) error
 	// Validate all contents of an object version directory and add contents to the object validation
-	ValidateObjectVersion(ctx context.Context, v *ObjectValidation, vnum VNum, versionInv, prevInv *Inventory) error
+	ValidateObjectVersion(ctx context.Context, v *ObjectValidation, vnum VNum, versionInv, prevInv *StoredInventory) error
 	// Validate contents added to the object validation.
 	ValidateObjectContent(ctx context.Context, v *ObjectValidation) error
 }

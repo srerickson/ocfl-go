@@ -19,7 +19,7 @@ import (
 func TestValidateInventoryBytes(t *testing.T) {
 	type testCase struct {
 		inventory string
-		expect    func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation)
+		expect    func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation)
 	}
 	var testInventories = map[string]testCase{
 		// Good inventories
@@ -29,7 +29,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			"head": "v1",
 			"id": "http://example.org/minimal_no_content",
 			"manifest": {},
-			"type": "https://ocfl.io/1.0/spec/#inventory",
+			"type": "https://ocfl.io/1.1/spec/#inventory",
 			"versions": {
 			  "v1": {
 				"created": "2019-01-01T02:03:04Z",
@@ -39,12 +39,12 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.NilErr(t, v.Err())
 				be.Equal(t, "http://example.org/minimal_no_content", inv.ID)
 				be.Equal(t, "sha512", inv.DigestAlgorithm)
 				be.Equal(t, "v1", inv.Head.String())
-				be.Equal(t, ocfl.Spec1_0.InventoryType(), inv.Type)
+				be.Equal(t, ocfl.Spec1_1.InventoryType(), inv.Type)
 				version := inv.Versions[inv.Head]
 				be.Nonzero(t, version.Created)
 				be.Equal(t, "One version and no content", version.Message)
@@ -94,7 +94,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 				}
 			}
 		}`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.NilErr(t, v.Err())
 				sum := "a8a450d00c6ca7aa90e3e4858864fc195b6b2fe0a75c2d1e078e92eca232ce7be034a129ea9ea9cda2b0efaf11ba8f5ebdbebacb12f7992a4c37cad589e16a4d"
 				be.Equal(t, "custom", inv.ContentDirectory)
@@ -130,7 +130,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.NilErr(t, v.Err())
 			},
 		},
@@ -150,7 +150,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.NilErr(t, v.Err())
 				testutil.ErrorsIncludeOCFLCode(t, "W007", v.WarnErrors()...)
 			},
@@ -174,7 +174,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 				  }
 				}
 			  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.NilErr(t, v.Err())
 				testutil.ErrorsIncludeOCFLCode(t, "W007", v.WarnErrors()...)
 			},
@@ -195,7 +195,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E036", v.Errors()...)
 			},
@@ -216,7 +216,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E025", v.Errors()...)
 			},
@@ -236,7 +236,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E036", v.Errors()...)
 			},
@@ -257,7 +257,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E036", v.Errors()...)
 			},
@@ -277,7 +277,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E036", v.Errors()...)
 			},
@@ -298,7 +298,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E038", v.Errors()...)
 			},
@@ -320,7 +320,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E017", v.Errors()...)
 			},
@@ -340,7 +340,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E040", v.Errors()...)
 			},
@@ -361,7 +361,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E040", v.Errors()...)
 			},
@@ -388,7 +388,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E040", v.Errors()...)
 			},
@@ -408,7 +408,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E041", v.Errors()...)
 			},
@@ -430,7 +430,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E041", v.Errors()...)
 			},
@@ -443,7 +443,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			"type": "https://ocfl.io/1.0/spec/#inventory",
 			"manifest": {}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E043", v.Errors()...)
 			},
@@ -457,7 +457,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			"manifest": {},
 			"versions": {}
 		}`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E008", v.Errors()...)
 			},
@@ -475,10 +475,10 @@ func TestValidateInventoryBytes(t *testing.T) {
 					"message": "One version and no content",
 					"state": { },
 					"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
-				}	
+				}
 			}
 		}`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E010", v.Errors()...)
 			},
@@ -502,10 +502,10 @@ func TestValidateInventoryBytes(t *testing.T) {
 					"message": "One version and no content",
 					"state": { },
 					"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
-				}	
+				}
 			}
 		}`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E012", v.Errors()...)
 			},
@@ -553,7 +553,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E096", v.Errors()...)
 			},
@@ -617,7 +617,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		}`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E101", v.Errors()...)
 			},
@@ -637,13 +637,13 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		}`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E048", v.Errors()...)
 			},
 		},
 		`null_version_block`: {
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 			},
 			inventory: `{
@@ -672,7 +672,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E048", v.Errors()...)
 			},
@@ -693,7 +693,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E049", v.Errors()...)
 			},
@@ -714,7 +714,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		}`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E054", v.Errors()...)
 			},
@@ -735,7 +735,7 @@ func TestValidateInventoryBytes(t *testing.T) {
 			  }
 			}
 		  }`,
-			expect: func(t *testing.T, inv *ocfl.Inventory, v *ocfl.Validation) {
+			expect: func(t *testing.T, inv *ocfl.StoredInventory, v *ocfl.Validation) {
 				be.True(t, v.Err() != nil)
 				testutil.ErrorsIncludeOCFLCode(t, "E054", v.Errors()...)
 			},
