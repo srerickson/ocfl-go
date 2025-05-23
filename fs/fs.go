@@ -145,14 +145,34 @@ func Remove(ctx context.Context, fsys FS, name string) error {
 	return writeFS.Remove(ctx, name)
 }
 
-// RemoveAll checks if fsys implements WriteFS and calls its RemoveAll method. It
-// returns ErrOpUnsupported if fsys is not a WriteFS
+// RemoveAll checks if fsys implements WriteFS and calls its RemoveAll method.
+// It returns ErrOpUnsupported if fsys is not a WriteFS. As a special case, if
+// name == ".", RemoveAll reads the contents of the top-level directory and
+// calls Remove/RemoveAll for all entries.
 func RemoveAll(ctx context.Context, fsys FS, name string) error {
 	writeFS, ok := fsys.(WriteFS)
 	if !ok {
 		return &fs.PathError{Op: "remove_all", Path: name, Err: ErrOpUnsupported}
 	}
-	return writeFS.RemoveAll(ctx, name)
+	if name != "." {
+		return writeFS.RemoveAll(ctx, name)
+	}
+	for entry, err := range DirEntries(ctx, fsys, ".") {
+		if err != nil {
+			return err
+		}
+		var removeFn func(context.Context, FS, string) error
+		switch {
+		case entry.IsDir():
+			removeFn = RemoveAll
+		default:
+			removeFn = Remove
+		}
+		if err := removeFn(ctx, fsys, entry.Name()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Write checks if fsys implements WriteFS and calls its Write method. It
