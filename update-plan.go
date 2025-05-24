@@ -124,8 +124,8 @@ func (u *UpdatePlan) Apply(ctx context.Context) (*Object, error) {
 
 // CompletedSteps is an iterator over completed steps in reverse order (most
 // recently completed first).
-func (u UpdatePlan) CompletedSteps() iter.Seq[*UpdateStep] {
-	return func(yield func(*UpdateStep) bool) {
+func (u UpdatePlan) CompletedSteps() iter.Seq[*PlanStep] {
+	return func(yield func(*PlanStep) bool) {
 		for i := range slices.Backward(u.Steps) {
 			step := &u.Steps[i]
 			if !step.Complete {
@@ -161,8 +161,8 @@ func (u UpdatePlan) Marshal() ([]byte, error) {
 
 // IncompleteSteps is an iterator over incomplete steps in u. Incomplete steps
 // may have errors.
-func (u *UpdatePlan) IncompleteSteps() iter.Seq[*UpdateStep] {
-	return func(yield func(*UpdateStep) bool) {
+func (u *UpdatePlan) IncompleteSteps() iter.Seq[*PlanStep] {
+	return func(yield func(*PlanStep) bool) {
 		for i := range u.Steps {
 			step := &u.Steps[i]
 			if step.Complete {
@@ -214,15 +214,15 @@ func (u UpdatePlan) buildSteps() (PlanSteps, error) {
 			return nil, fmt.Errorf("content source doesn't provide %q", dig)
 		}
 	}
-	var plan []UpdateStep
+	var plan []PlanStep
 	// initial step (final undo step) to remove the entire object root
 	// when undoing a v1 update. This is needed to make sure we get rid
 	// of all empty directories.
-	plan = append(plan, UpdateStep{
+	plan = append(plan, PlanStep{
 		Name: "object root " + u.objDir,
-		run:  func(ctx context.Context) error { return nil },
+		run:  func(ctx context.Context) (int64, error) { return 0, nil },
 		revert: func(ctx context.Context) error {
-			// remove everything if we're undoing v1
+			// delete entire object root to revert first version.
 			if newHead.num == 1 {
 				return ocflfs.RemoveAll(ctx, u.objFS, u.objDir)
 			}
@@ -234,9 +234,9 @@ func (u UpdatePlan) buildSteps() (PlanSteps, error) {
 	// a step to remove entire version directory during rollback. This is needed
 	// to make sure we get rid of empty directories.
 	verDir := path.Join(u.objDir, newHead.String())
-	plan = append(plan, UpdateStep{
+	plan = append(plan, PlanStep{
 		Name: "version directory " + verDir,
-		run:  func(ctx context.Context) error { return nil },
+		run:  func(ctx context.Context) (int64, error) { return 0, nil },
 		revert: func(ctx context.Context) error {
 			// remove everything in the version directory
 			return ocflfs.RemoveAll(ctx, u.objFS, verDir)
@@ -256,7 +256,7 @@ func (u UpdatePlan) buildSteps() (PlanSteps, error) {
 
 // PlanSteps is a series of named steps for performating an object update and
 // rolling it back if necessary.
-type PlanSteps []UpdateStep
+type PlanSteps []PlanStep
 
 func (s PlanSteps) Eq(other PlanSteps) bool {
 	if len(s) != len(other) {
@@ -271,7 +271,7 @@ func (s PlanSteps) Eq(other PlanSteps) bool {
 }
 
 // UndoStep is a single step in an UpdatePlan.
-type UpdateStep struct {
+type PlanStep struct {
 	// Descrptive name for the steps actions
 	Name string `json:"name"`
 	// Err has any error message from running the step
@@ -285,23 +285,32 @@ type UpdateStep struct {
 	// Async steps.
 	Async bool `json:"async,omitempty"`
 
-	// run performs the step's actions
-	run func(ctx context.Context) error
-	// revert reverts the run step
+	// Fields for file copy steps
+
+	// Size is the number of bytes copied to the object during the step
+	Size          int64  `json:"size,omitempty"`
+	ContentDigest string `json:"content_digest,omitempty"`
+	ContentPath   string `json:"content_path,omitempty"`
+
+	// run performs the step's actions. it returns an (optional) size for content
+	// written to the object and an error.
+	run func(ctx context.Context) (int64, error)
+
 	revert func(ctx context.Context) error
 }
 
 // Run runs the step's function if the step is not marked as complete, recording
 // any error message to Err. If the step returns no error, it is marked as
 // complete and any previous Err message is cleared.
-func (step *UpdateStep) Run(ctx context.Context) error {
+func (step *PlanStep) Run(ctx context.Context) error {
 	if step.run == nil {
 		return nil
 	}
 	if step.Complete {
 		return nil
 	}
-	if err := step.run(ctx); err != nil {
+	size, err := step.run(ctx)
+	if err != nil {
 		msg := err.Error()
 		if msg == "" {
 			msg = "unspecified error"
@@ -309,6 +318,7 @@ func (step *UpdateStep) Run(ctx context.Context) error {
 		step.Err = msg
 		return err
 	}
+	step.Size = size
 	step.Complete = true
 	step.Err = ""
 	return nil
@@ -318,7 +328,7 @@ func (step *UpdateStep) Run(ctx context.Context) error {
 // undo function returns an error, the error message is saved as RevertErr. If
 // Revert does not result in an error the step is marked as incomplete and
 // UndoErr is cleared.
-func (step *UpdateStep) Revert(ctx context.Context) error {
+func (step *PlanStep) Revert(ctx context.Context) error {
 	if step.revert == nil {
 		return nil
 	}
@@ -340,30 +350,37 @@ func (step *UpdateStep) Revert(ctx context.Context) error {
 }
 
 // steps for setting/updating an ocfl object declaration
-func updateDeclarationSteps(fsys ocflfs.FS, dir string, newSpec, oldSpec Spec) []UpdateStep {
-	steps := []UpdateStep{}
-
+func updateDeclarationSteps(fsys ocflfs.FS, dir string, newSpec, oldSpec Spec) []PlanStep {
+	steps := []PlanStep{}
 	if newSpec == oldSpec {
 		return steps
 	}
 	newDecl := Namaste{Type: NamasteTypeObject, Version: newSpec}
 	newDeclName := path.Join(dir, newDecl.Name())
-	steps = append(steps, UpdateStep{
+	steps = append(steps, PlanStep{
 		Name: "write " + newDeclName,
-		run: func(ctx context.Context) error {
-			return WriteDeclaration(ctx, fsys, dir, newDecl)
+		run: func(ctx context.Context) (int64, error) {
+			return 0, WriteDeclaration(ctx, fsys, dir, newDecl)
 		},
 		revert: func(ctx context.Context) error {
-			return ocflfs.Remove(ctx, fsys, newDeclName)
+			err := ocflfs.Remove(ctx, fsys, newDeclName)
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
 		},
 	})
 	if !oldSpec.Empty() {
 		oldDecl := Namaste{Type: NamasteTypeObject, Version: oldSpec}
 		oldDeclName := path.Join(dir, oldDecl.Name())
-		steps = append(steps, UpdateStep{
+		steps = append(steps, PlanStep{
 			Name: "remove " + oldDeclName,
-			run: func(ctx context.Context) error {
-				return ocflfs.Remove(ctx, fsys, oldDeclName)
+			run: func(ctx context.Context) (int64, error) {
+				err := ocflfs.Remove(ctx, fsys, oldDeclName)
+				if errors.Is(err, fs.ErrNotExist) {
+					err = nil
+				}
+				return 0, err
 			},
 			revert: func(ctx context.Context) error {
 				return WriteDeclaration(ctx, fsys, dir, oldDecl)
@@ -374,22 +391,28 @@ func updateDeclarationSteps(fsys ocflfs.FS, dir string, newSpec, oldSpec Spec) [
 }
 
 // steps for copying files into the object's version directory
-func updateVersionContentsSteps(objFS ocflfs.FS, objDir string, newContent PathMap, src ContentSource) []UpdateStep {
-	var steps []UpdateStep
+func updateVersionContentsSteps(objFS ocflfs.FS, objDir string, newContent PathMap, src ContentSource) []PlanStep {
+	var steps []PlanStep
 	for dstName, dig := range newContent.SortedPaths() {
 		dstPath := path.Join(objDir, dstName)
-		steps = append(steps, UpdateStep{
-			Name:  "copy " + dstPath,
-			Async: true,
-			run: func(ctx context.Context) error {
+		steps = append(steps, PlanStep{
+			Name:          "copy " + dstPath,
+			ContentDigest: dig,
+			ContentPath:   dstName,
+			Async:         true,
+			run: func(ctx context.Context) (int64, error) {
 				srcFS, srcPath := src.GetContent(dig)
 				if srcFS == nil {
-					return fmt.Errorf("content source doesn't provide %q", dig)
+					return 0, fmt.Errorf("content source doesn't provide %q", dig)
 				}
 				return ocflfs.Copy(ctx, objFS, dstPath, srcFS, srcPath)
 			},
 			revert: func(ctx context.Context) error {
-				return ocflfs.Remove(ctx, objFS, dstPath)
+				err := ocflfs.Remove(ctx, objFS, dstPath)
+				if errors.Is(err, fs.ErrNotExist) {
+					return nil
+				}
+				return err
 			},
 		})
 	}
@@ -402,8 +425,8 @@ func updateInventoriesSteps(
 	newInvBytes []byte, oldInvBytes []byte,
 	newInvDigest string, oldInvDigest string,
 	newAlg string, oldAlg string,
-) []UpdateStep {
-	var steps []UpdateStep
+) []PlanStep {
+	var steps []PlanStep
 	rootInv := path.Join(objDir, inventoryBase)
 	rootInvSidecar := rootInv + "." + newAlg
 
@@ -415,41 +438,51 @@ func updateInventoriesSteps(
 		oldHead = VNum{num: newHead.num - 1, padding: newHead.padding}
 	}
 	// write version directory inventory.json
-	steps = append(steps, UpdateStep{
+	steps = append(steps, PlanStep{
 		Name: "write " + verDirInv,
-		run: func(ctx context.Context) error {
-			_, err := ocflfs.Write(ctx, objFS, verDirInv, bytes.NewReader(newInvBytes))
-			return err
+		run: func(ctx context.Context) (int64, error) {
+			return ocflfs.Write(ctx, objFS, verDirInv, bytes.NewReader(newInvBytes))
 		},
 		revert: func(ctx context.Context) error {
-			return ocflfs.Remove(ctx, objFS, verDirInv)
+			err := ocflfs.Remove(ctx, objFS, verDirInv)
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
 		},
 	})
 	// write version directory inventory sidecar
-	steps = append(steps, UpdateStep{
+	steps = append(steps, PlanStep{
 		Name: "write " + verDirInvSidecar,
-		run: func(ctx context.Context) error {
-			return writeInventorySidecar(ctx, objFS, verDir, newInvDigest, newAlg)
+		run: func(ctx context.Context) (int64, error) {
+			return 0, writeInventorySidecar(ctx, objFS, verDir, newInvDigest, newAlg)
 		},
 		revert: func(ctx context.Context) error {
-			return ocflfs.Remove(ctx, objFS, verDirInvSidecar)
+			err := ocflfs.Remove(ctx, objFS, verDirInvSidecar)
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
 		},
 	})
 	// write root inventory.json
-	steps = append(steps, UpdateStep{
+	steps = append(steps, PlanStep{
 		Name: "write " + rootInv,
-		run: func(ctx context.Context) error {
-			_, err := ocflfs.Write(ctx, objFS, rootInv, bytes.NewReader(newInvBytes))
-			return err
+		run: func(ctx context.Context) (int64, error) {
+			return ocflfs.Write(ctx, objFS, rootInv, bytes.NewReader(newInvBytes))
 		},
 		revert: func(ctx context.Context) error {
 			if newHead.num == 1 {
-				return ocflfs.Remove(ctx, objFS, rootInv)
+				err := ocflfs.Remove(ctx, objFS, rootInv)
+				if errors.Is(err, fs.ErrNotExist) {
+					return nil
+				}
+				return err
 			}
 			// restore previous version directory: first, try copying from previous
 			// version directory. If that doesn't work write oldInvBytes
 			oldVerInv := path.Join(objDir, oldHead.String(), inventoryBase)
-			err := ocflfs.Copy(ctx, objFS, rootInv, objFS, oldVerInv)
+			_, err := ocflfs.Copy(ctx, objFS, rootInv, objFS, oldVerInv)
 			if errors.Is(err, fs.ErrNotExist) && len(oldInvBytes) > 0 {
 				// last version inventory didn't exist
 				_, err = ocflfs.Write(ctx, objFS, rootInv, bytes.NewReader(oldInvBytes))
@@ -458,23 +491,31 @@ func updateInventoriesSteps(
 		},
 	})
 	// write root inventory sidecar
-	steps = append(steps, UpdateStep{
+	steps = append(steps, PlanStep{
 		Name: "set " + rootInvSidecar,
-		run: func(ctx context.Context) error {
+		run: func(ctx context.Context) (int64, error) {
 			err := writeInventorySidecar(ctx, objFS, objDir, newInvDigest, newAlg)
 			if err != nil {
-				return err
+				return 0, err
 			}
 			if oldAlg == "" || oldAlg == newAlg {
-				return nil
+				return 0, nil
 			}
 			// previous sidecar used a different algorithm needs to be removed
 			oldInvSidecar := rootInv + "." + oldAlg
-			return ocflfs.Remove(ctx, objFS, oldInvSidecar)
+			err = ocflfs.Remove(ctx, objFS, oldInvSidecar)
+			if errors.Is(err, fs.ErrNotExist) {
+				err = nil
+			}
+			return 0, err
 		},
 		revert: func(ctx context.Context) error {
 			if newHead.num == 1 {
-				return ocflfs.Remove(ctx, objFS, rootInvSidecar)
+				err := ocflfs.Remove(ctx, objFS, rootInvSidecar)
+				if errors.Is(err, fs.ErrNotExist) {
+					return nil
+				}
+				return err
 			}
 			// replace the new inventory sidecar with the old one. These
 			// would be separate files -- we don't have to worry about that
@@ -486,14 +527,18 @@ func updateInventoriesSteps(
 				return nil
 			}
 			// new sidecar uses a different algorithm and needs to be removed
-			return ocflfs.Remove(ctx, objFS, rootInvSidecar)
+			err := ocflfs.Remove(ctx, objFS, rootInvSidecar)
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
 		},
 	})
 	return steps
 }
 
 // run steps, forward or backward
-func runSteps(ctx context.Context, steps iter.Seq[*UpdateStep], gos int, logger *slog.Logger, backward bool) error {
+func runSteps(ctx context.Context, steps iter.Seq[*PlanStep], gos int, logger *slog.Logger, backward bool) error {
 	if gos < 1 {
 		gos = runtime.NumCPU()
 	}
