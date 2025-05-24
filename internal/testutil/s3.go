@@ -69,7 +69,7 @@ func TmpS3FS(t *testing.T, testdata fs.FS) *ocflS3.BucketFS {
 				t.Fatal("reading from testdata:", err)
 			}
 			name := file.FullPath()
-			if err := fs.Copy(ctx, s3fs, name, testdata, name); err != nil {
+			if _, err := fs.Copy(ctx, s3fs, name, testdata, name); err != nil {
 				t.Fatal("copying testdata to tmp S3 bucket: %w", err)
 			}
 		}

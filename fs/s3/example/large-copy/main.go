@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -63,16 +64,23 @@ func doTests(ctx context.Context, bucket string, size int64) error {
 	if err := createSrcFile(ctx, b, src, size); err != nil {
 		return err
 	}
+
 	for _, t := range copyTests {
 		b.DefaultCopyPartSize = int64(t.psize) * megabyte
 		b.CopyPartConcurrency = t.conc
 		start := time.Now()
 		dst := fmt.Sprintf("copy-conc=%d-psize=%d", b.CopyPartConcurrency, b.DefaultCopyPartSize)
 		// fmt.Fprintln(os.Stderr, dst)
-		if err := b.Copy(ctx, dst, src); err != nil {
+		if _, err := b.Copy(ctx, dst, src); err != nil {
 			return err
 		}
-
+		dstSize, err := getSize(ctx, b, dst)
+		if err != nil {
+			return err
+		}
+		if size != dstSize {
+			return errors.New("source and destination size don't match")
+		}
 		fmt.Printf("%d, %d, %d, %0.2f\n",
 			size/gigabyte,
 			b.CopyPartConcurrency,
@@ -111,4 +119,16 @@ func backend(ctx context.Context, bucket string) (*s3.BucketFS, error) {
 		S3:     s3v2.NewFromConfig(cfg),
 		Bucket: bucket,
 	}, nil
+}
+
+func getSize(ctx context.Context, fsys *s3.BucketFS, name string) (int64, error) {
+	f, err := fsys.OpenFile(ctx, name)
+	if err != nil {
+		return 0, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
 }

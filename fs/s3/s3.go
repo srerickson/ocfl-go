@@ -50,14 +50,13 @@ func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (f
 	headIn := &s3v2.HeadObjectInput{Bucket: &buck, Key: &name}
 	headOut, err := api.HeadObject(ctx, headIn)
 	if err != nil {
-		fsErr := &fs.PathError{Op: "open", Path: name}
-		var noKeyErr *types.NoSuchKey
-		var notFoundErr *types.NotFound
-		switch {
-		case errors.As(err, &noKeyErr) || errors.As(err, &notFoundErr):
+		fsErr := &fs.PathError{
+			Op:   "open",
+			Path: name,
+			Err:  err,
+		}
+		if errIsNotExist(err) {
 			fsErr.Err = fs.ErrNotExist
-		default:
-			fsErr.Err = err
 		}
 		return nil, fsErr
 	}
@@ -171,12 +170,26 @@ func write(ctx context.Context, api WriteAPI, buck string, key string, r io.Read
 	return countReader.size, nil
 }
 
-func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, psize int64, conc int) error {
+func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, psize int64, conc int) (int64, error) {
 	if !fs.ValidPath(src) || src == "." {
-		return pathErr("copy", src, fs.ErrInvalid)
+		return 0, pathErr("copy", src, fs.ErrInvalid)
 	}
 	if !fs.ValidPath(dst) || dst == "." {
-		return pathErr("copy", dst, fs.ErrInvalid)
+		return 0, pathErr("copy", dst, fs.ErrInvalid)
+	}
+	headResult, err := api.HeadObject(ctx, &s3v2.HeadObjectInput{
+		Bucket: &buck,
+		Key:    &src,
+	})
+	if err != nil {
+		fsErr := &fs.PathError{
+			Op:   "copy",
+			Path: src,
+			Err:  err,
+		}
+		if errIsNotExist(err) {
+			fsErr.Err = fs.ErrNotExist
+		}
 	}
 	escapedSrc := url.QueryEscape(buck + "/" + src)
 	params := &s3v2.CopyObjectInput{
@@ -184,17 +197,18 @@ func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, psize 
 		CopySource: &escapedSrc,
 		Key:        &dst,
 	}
-	_, err := api.CopyObject(ctx, params)
-	if err != nil {
+	if _, err := api.CopyObject(ctx, params); err != nil {
 		// if the source is too large, try multipart copy.
 		// this error doesn't seem to have a specific type
 		// associated with it.
 		if strings.Contains(err.Error(), copySrcTooLarge) {
-			return multipartCopy(ctx, api, buck, dst, src, psize, conc)
+			err = multipartCopy(ctx, api, buck, dst, src, psize, conc)
 		}
-		return pathErr("copy", src, err)
+		if err != nil {
+			return 0, pathErr("copy", src, err)
+		}
 	}
-	return nil
+	return *headResult.ContentLength, nil
 }
 
 func multipartCopy(ctx context.Context, api CopyAPI, buck string, dst, src string, psize int64, conc int) (err error) {
@@ -482,4 +496,16 @@ func byteRange(partNum int32, partSize, totalSize int64) string {
 		end = max
 	}
 	return fmt.Sprintf("bytes=%d-%d", start, end)
+}
+
+func errIsNotExist(err error) bool {
+	var notFoundErr *types.NotFound
+	if errors.As(err, &notFoundErr) {
+		return true
+	}
+	var noKeyErr *types.NoSuchKey
+	if errors.As(err, &noKeyErr) {
+		return true
+	}
+	return false
 }

@@ -67,7 +67,7 @@ func (f *BucketFS) Write(ctx context.Context, name string, r io.Reader) (int64, 
 	return write(ctx, f.S3, f.Bucket, name, r, size, f.DefaultUploadPartSize, f.UploadConcurrency)
 }
 
-func (f *BucketFS) Copy(ctx context.Context, dst, src string) error {
+func (f *BucketFS) Copy(ctx context.Context, dst, src string) (int64, error) {
 	f.debugLog(ctx, "s3:copy", "bucket", f.Bucket, "dst", dst, "src", src)
 	return copy(ctx, f.S3, f.Bucket, dst, src, f.DefaultCopyPartSize, f.CopyPartConcurrency)
 }
