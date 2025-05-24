@@ -60,16 +60,17 @@ type CopyFS interface {
 	WriteFS
 	// Copy creates or updates the file at dst with the contents of src. If dst
 	// exists, it should be overwritten
-	Copy(ctx context.Context, dst string, src string) error
+	Copy(ctx context.Context, dst string, src string) (int64, error)
 }
 
 // Copy copies src in srcFS to dst in dstFS. If srcFS and dstFS are the same refererence
 // and it implements CopyFS, then Copy uses the fs's Copy() method.
-func Copy(ctx context.Context, dstFS FS, dst string, srcFS FS, src string) (err error) {
+func Copy(ctx context.Context, dstFS FS, dst string, srcFS FS, src string) (size int64, err error) {
 	cpFS, ok := dstFS.(CopyFS)
 	// FIXME: better way to compare src and dst FS
 	if ok && dstFS == srcFS {
-		if err = cpFS.Copy(ctx, dst, src); err != nil {
+		size, err = cpFS.Copy(ctx, dst, src)
+		if err != nil {
 			err = fmt.Errorf("during copy: %w", err)
 		}
 		return
@@ -86,7 +87,8 @@ func Copy(ctx context.Context, dstFS FS, dst string, srcFS FS, src string) (err 
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	if _, err = Write(ctx, dstFS, dst, srcF); err != nil {
+	size, err = Write(ctx, dstFS, dst, srcF)
+	if err != nil {
 		err = fmt.Errorf("writing during copy: %w", err)
 	}
 	return

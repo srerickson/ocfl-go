@@ -373,7 +373,7 @@ func TestCopy(t *testing.T) {
 		copyPSize int64
 		src       string
 		dst       string
-		expect    func(*testing.T, *mock.S3API, error)
+		expect    func(*testing.T, *mock.S3API, int64, error)
 	}
 	cases := []testCase{
 		{
@@ -387,9 +387,10 @@ func TestCopy(t *testing.T) {
 			bucket: bucket,
 			src:    "src-file",
 			dst:    "dst-file",
-			expect: func(t *testing.T, state *mock.S3API, err error) {
+			expect: func(t *testing.T, state *mock.S3API, size int64, err error) {
 				be.NilErr(t, err)
 				be.Nonzero(t, state.UpdatedETags["dst-file"])
+				be.Nonzero(t, size)
 				be.Equal(t, 0, state.PartCount())
 			},
 		}, {
@@ -410,8 +411,9 @@ func TestCopy(t *testing.T) {
 			src:       "src-file",
 			dst:       "dst-file",
 			copyPSize: partSize,
-			expect: func(t *testing.T, state *mock.S3API, err error) {
+			expect: func(t *testing.T, state *mock.S3API, size int64, err error) {
 				be.NilErr(t, err)
+				be.Nonzero(t, size)
 				expETag := mock.ETag(srcBody, partSize)
 				be.Equal(t, expETag, state.UpdatedETags["dst-file"])
 			},
@@ -424,8 +426,8 @@ func TestCopy(t *testing.T) {
 				api = tcase.mock(t)
 			}
 			fsys := s3.BucketFS{S3: api, Bucket: tcase.bucket, CopyPartConcurrency: tcase.copyConc, DefaultCopyPartSize: tcase.copyPSize}
-			err := fsys.Copy(ctx, tcase.dst, tcase.src)
-			tcase.expect(t, api, err)
+			size, err := fsys.Copy(ctx, tcase.dst, tcase.src)
+			tcase.expect(t, api, size, err)
 		})
 	}
 }
