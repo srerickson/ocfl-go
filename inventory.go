@@ -139,9 +139,9 @@ type User struct {
 // StoredInventory is an unmarshalled inventory with the digest of its source data.
 type StoredInventory struct {
 	Inventory
-	// digest is the digest of inventory's source data using the inventory's
-	// digest algorithm
-	digest string
+
+	bytes  []byte // bytes is inventory json bytes
+	digest string // digest of bytes using inventory algorithm
 }
 
 func newStoredInventory(raw []byte) (*StoredInventory, error) {
@@ -151,7 +151,7 @@ func newStoredInventory(raw []byte) (*StoredInventory, error) {
 	if err := dec.Decode(&inv.Inventory); err != nil {
 		return nil, err
 	}
-	if err := inv.setDigest(raw); err != nil {
+	if err := inv.setRaw(raw); err != nil {
 		return nil, err
 	}
 	if err := inv.Validate().Err(); err != nil {
@@ -161,7 +161,7 @@ func newStoredInventory(raw []byte) (*StoredInventory, error) {
 }
 
 // sets inv's jsonDigest value by digesting the raw inventory bytes.
-func (inv *StoredInventory) setDigest(raw []byte) error {
+func (inv *StoredInventory) setRaw(raw []byte) error {
 	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
 	if err != nil {
 		return err
@@ -170,6 +170,7 @@ func (inv *StoredInventory) setDigest(raw []byte) error {
 		return fmt.Errorf("digesting inventory: %w", err)
 	}
 	inv.digest = digester.String()
+	inv.bytes = raw
 	return nil
 }
 

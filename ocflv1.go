@@ -401,7 +401,7 @@ func (imp ocflV1) ValidateInventoryBytes(raw []byte) (*StoredInventory, *Validat
 		}
 		inv.Fixity[algStr] = digests
 	}
-	if err := inv.setDigest(raw); err != nil {
+	if err := inv.setRaw(raw); err != nil {
 		v.AddFatal(err)
 	}
 	v.Add(inv.Validate())

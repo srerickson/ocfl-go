@@ -298,7 +298,7 @@ func TestObject_PartialUpdate(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		update, err := obj.NewUpdatePlan(
+		update, err := obj.NewUpdate(
 			stagedContent, "updated version",
 			ocfl.User{Name: "Me"},
 			ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1),
@@ -331,7 +331,7 @@ func TestObject_PartialUpdate(t *testing.T) {
 			be.NilErr(t, err)
 			resumeUpdate, err := ocfl.RecoverUpdatePlan(updateBytes, objFS, ".", stagedContent)
 			be.NilErr(t, err)
-			_, err = resumeUpdate.Apply(ctx)
+			err = resumeUpdate.Apply(ctx)
 			be.NilErr(t, err)
 			err = ocfl.ValidateObject(ctx, objFS, ".").Err()
 			be.NilErr(t, err)
@@ -374,7 +374,7 @@ func TestObject_PartialUpdate(t *testing.T) {
 			be.NilErr(t, err)
 			resumeUpdate, err := ocfl.RecoverUpdatePlan(updateBytes, objFS, ".", stagedContent)
 			be.NilErr(t, err)
-			_, err = resumeUpdate.Apply(ctx)
+			err = resumeUpdate.Apply(ctx)
 			be.NilErr(t, err)
 			err = ocfl.ValidateObject(ctx, objFS, ".").Err()
 			be.NilErr(t, err)

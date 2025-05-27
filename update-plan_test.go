@@ -22,7 +22,7 @@ func TestUpdatePlan_Marshal(t *testing.T) {
 	be.NilErr(t, err)
 	stage, err := ocfl.StageBytes(map[string][]byte{}, digest.SHA512)
 	be.NilErr(t, err)
-	update, err := obj.NewUpdatePlan(stage, "new version", ocfl.User{Name: "Me"})
+	update, err := obj.NewUpdate(stage, "new version", ocfl.User{Name: "Me"})
 	be.NilErr(t, err)
 	be.Nonzero(t, len(update.Steps))
 	updateBytes, err := update.Marshal()

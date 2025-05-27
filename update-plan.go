@@ -25,70 +25,63 @@ type UpdatePlan struct {
 	OldInventoryBytes []byte
 	Steps             PlanSteps
 
-	// object state returned by apply
-	newInv *StoredInventory
-	oldInv *StoredInventory
-	objFS  ocflfs.FS
-	objDir string
-	root   *Root
-
-	src ContentSource
+	newInv       *Inventory
+	newInvDigest string
 
 	// options
 	goLimit int
 	logger  *slog.Logger
 }
 
-// NewUpdatePlan builds a new *UpdatePlan for updating obj's inventory and
-// content.
-func NewUpdatePlan(obj *Object, newInv *Inventory, src ContentSource) (*UpdatePlan, error) {
+func NewUpdatePlan(objFS ocflfs.FS, objDir string, src ContentSource, newInv *Inventory, oldInv *StoredInventory) (*UpdatePlan, error) {
 	newInvBytes, invDigest, err := newInv.marshal()
 	if err != nil {
 		return nil, fmt.Errorf("building new inventory: %w", err)
 	}
-	u := &UpdatePlan{
-		OldInventoryBytes: obj.rootInventoryBytes,
-		NewInventoryBytes: newInvBytes,
-		oldInv:            obj.rootInventory,
-		newInv:            &StoredInventory{Inventory: *newInv, digest: invDigest},
-		objFS:             obj.fs,
-		objDir:            obj.path,
-		root:              obj.root,
-		src:               src,
+	var oldInvBytes []byte
+	if oldInv != nil {
+		oldInvBytes = oldInv.bytes
 	}
-	steps, err := u.buildSteps()
+	storedInv := &StoredInventory{Inventory: *newInv, digest: invDigest, bytes: newInvBytes}
+	steps, err := newPlanSteps(objFS, objDir, src, storedInv, oldInv)
 	if err != nil {
-		return nil, fmt.Errorf("planning update for %q: %w", obj.ID(), err)
+		return nil, fmt.Errorf("planning update for %q: %w", newInv.ID, err)
 	}
-	u.Steps = steps
+	u := &UpdatePlan{
+		NewInventoryBytes: newInvBytes,
+		OldInventoryBytes: oldInvBytes,
+		newInv:            newInv,
+		newInvDigest:      invDigest,
+		Steps:             steps,
+	}
 	return u, nil
 }
 
 // RecoverUpdatePlan reconstitutes an *UpdatePlan from a previous
 // UpdatePlan's byte representation.
 func RecoverUpdatePlan(enc []byte, objFS ocflfs.FS, objDir string, src ContentSource) (*UpdatePlan, error) {
-	u := &UpdatePlan{
-		objFS:  objFS,
-		objDir: objDir,
-		src:    src,
-	}
+	var u UpdatePlan
+	var newInv, oldInv *StoredInventory
+
 	err := gob.NewDecoder(bytes.NewReader(enc)).Decode(&u)
 	if err != nil {
 		return nil, err
 	}
-	u.newInv, err = newStoredInventory(u.NewInventoryBytes)
+	newInv, err = newStoredInventory(u.NewInventoryBytes)
 	if err != nil {
 		return nil, err
 	}
+	u.newInv = &newInv.Inventory
+	u.newInvDigest = newInv.digest
 	if len(u.OldInventoryBytes) > 0 {
-		u.oldInv, err = newStoredInventory(u.OldInventoryBytes)
+		oldInv, err = newStoredInventory(u.OldInventoryBytes)
 		if err != nil {
 			return nil, err
 		}
 	}
 	// the unmarshalled newSteps have Done and Err state, but their run functions
 	// nil: rebuild the newSteps to run and import the previous run state.
-	newSteps, err := u.buildSteps()
+	newSteps, err := newPlanSteps(objFS, objDir, src, newInv, oldInv)
 	if err != nil {
 		return nil, err
 	}
@@ -100,26 +93,14 @@ func RecoverUpdatePlan(enc []byte, objFS ocflfs.FS, objDir string, src ContentSo
 		newSteps[i].Err = u.Steps[i].Err
 	}
 	u.Steps = newSteps
-	return u, nil
+	return &u, nil
 }
 
 // Apply runs u's incomplete steps. It stops at the first error and returns the
 // error. Consecutive steps with Async == true are run concurrently. Use
 // SetGoLimit to set number of goroutines used for handling concurrent steps.
-// If all steps run to completion, apply returns a new Object reference with
-// updated state.
-func (u *UpdatePlan) Apply(ctx context.Context) (*Object, error) {
-	if err := runSteps(ctx, u.IncompleteSteps(), u.goLimit, u.logger, false); err != nil {
-		return nil, err
-	}
-	obj := &Object{
-		fs:                 u.objFS,
-		path:               u.objDir,
-		root:               u.root,
-		rootInventory:      u.newInv,
-		rootInventoryBytes: u.NewInventoryBytes,
-	}
-	return obj, nil
+func (u *UpdatePlan) Apply(ctx context.Context) error {
+	return runSteps(ctx, u.IncompleteSteps(), u.goLimit, u.logger, false)
 }
 
 // CompletedSteps is an iterator over completed steps in reverse order (most
@@ -187,20 +168,22 @@ func (u *UpdatePlan) Revert(ctx context.Context) error {
 	return runSteps(ctx, u.CompletedSteps(), u.goLimit, u.logger, true)
 }
 
-func (u UpdatePlan) buildSteps() (PlanSteps, error) {
-	newFiles := u.newInv.versionContent(u.newInv.Head)
-	newInvDigest := u.newInv.digest
-	newHead := u.newInv.Head
-	newSpec := u.newInv.Type.Spec
-	newAlg := u.newInv.DigestAlgorithm
+func newPlanSteps(objFS ocflfs.FS, objDir string, src ContentSource, newInv, oldInv *StoredInventory) (PlanSteps, error) {
+	newFiles := newInv.versionContent(newInv.Head)
+	newHead := newInv.Head
+	newVersionDir := path.Join(objDir, newHead.String())
+	newSpec := newInv.Type.Spec
+	newAlg := newInv.DigestAlgorithm
+	var oldInvBytes []byte
+	var oldInvDigest, oldAlg string
 	var oldHead VNum
 	var oldSpec Spec
-	var oldInvDigest, oldAlg string
-	if u.oldInv != nil {
-		oldInvDigest = u.oldInv.digest
-		oldHead = u.oldInv.Head
-		oldSpec = u.oldInv.Type.Spec
-		oldAlg = u.oldInv.DigestAlgorithm
+	if oldInv != nil {
+		oldInvBytes = oldInv.bytes
+		oldInvDigest = oldInv.digest
+		oldAlg = oldInv.DigestAlgorithm
+		oldHead = oldInv.Head
+		oldSpec = oldInv.Type.Spec
 	}
 	if newSpec.Cmp(oldSpec) < 0 {
 		err := fmt.Errorf("new version's OCFL spec (%q) cannot be lower than the previous version's (%q)", newSpec, oldSpec)
@@ -210,47 +193,53 @@ func (u UpdatePlan) buildSteps() (PlanSteps, error) {
 		return nil, errors.New("new inventory includes more than one new version")
 	}
 	for _, dig := range newFiles.SortedPaths() {
-		if fsys, _ := u.src.GetContent(dig); fsys == nil {
+		if fsys, _ := src.GetContent(dig); fsys == nil {
 			return nil, fmt.Errorf("content source doesn't provide %q", dig)
 		}
 	}
-	var plan []PlanStep
-	// initial step (final undo step) to remove the entire object root
-	// when undoing a v1 update. This is needed to make sure we get rid
-	// of all empty directories.
-	plan = append(plan, PlanStep{
-		Name: "object root " + u.objDir,
-		run:  func(ctx context.Context) (int64, error) { return 0, nil },
-		revert: func(ctx context.Context) error {
-			// delete entire object root to revert first version.
-			if newHead.num == 1 {
-				return ocflfs.RemoveAll(ctx, u.objFS, u.objDir)
-			}
-			return nil
+	plan := []PlanStep{
+		// initial step is noop with revert to remove the entire object root
+		// for v1 updates.
+		{
+			Name: "object root " + objDir,
+			run:  func(ctx context.Context) (int64, error) { return 0, nil },
+			revert: func(ctx context.Context) error {
+				// delete entire object root to revert first version.
+				if newHead.num == 1 {
+					return ocflfs.RemoveAll(ctx, objFS, objDir)
+				}
+				return nil
+			},
 		},
-	})
-	// steps for object declaration files
-	plan = append(plan, updateDeclarationSteps(u.objFS, u.objDir, newSpec, oldSpec)...)
-	// a step to remove entire version directory during rollback. This is needed
-	// to make sure we get rid of empty directories.
-	verDir := path.Join(u.objDir, newHead.String())
-	plan = append(plan, PlanStep{
-		Name: "version directory " + verDir,
-		run:  func(ctx context.Context) (int64, error) { return 0, nil },
-		revert: func(ctx context.Context) error {
-			// remove everything in the version directory
-			return ocflfs.RemoveAll(ctx, u.objFS, verDir)
+	}
+	plan = append(plan,
+		// steps for object declaration files
+		updateDeclarationSteps(objFS, objDir, newSpec, oldSpec)...,
+	)
+	plan = append(plan,
+		// a step to remove entire version directory during during revert.
+		PlanStep{
+			Name: "version directory " + newVersionDir,
+			run:  func(ctx context.Context) (int64, error) { return 0, nil },
+			revert: func(ctx context.Context) error {
+				// remove everything in the new version directory
+				return ocflfs.RemoveAll(ctx, objFS, newVersionDir)
+			},
 		},
-	})
-	// steps to copy contents into the version directory
-	plan = append(plan, updateVersionContentsSteps(u.objFS, u.objDir, newFiles, u.src)...)
-	// steps to update inventories and sidecars in version directory and root
-	plan = append(plan, updateInventoriesSteps(
-		u.objFS, u.objDir, newHead,
-		u.NewInventoryBytes, u.OldInventoryBytes,
-		newInvDigest, oldInvDigest,
-		newAlg, oldAlg,
-	)...)
+	)
+	plan = append(plan,
+		// steps to copy contents into the version directory
+		updateVersionContentsSteps(objFS, objDir, newFiles, src)...,
+	)
+	plan = append(plan,
+		// steps to update inventories and sidecars in version directory and roo,t
+		updateInventoriesSteps(
+			objFS, objDir, newHead,
+			newInv.bytes, oldInvBytes,
+			newInv.digest, oldInvDigest,
+			newAlg, oldAlg,
+		)...,
+	)
 	return plan, nil
 }
 
