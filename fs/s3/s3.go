@@ -36,6 +36,10 @@ const (
 	partSizeIncrement          = 1 * megabyte
 
 	copySrcTooLarge = "copy source is larger than the maximum allowable size"
+
+	// modes retured by Stat()
+	fileMode = 0644 | fs.ModeIrregular
+	dirMode  = 0755 | fs.ModeDir
 )
 
 var (
@@ -106,16 +110,16 @@ func dirEntries(ctx context.Context, api ReadDirAPI, buck string, dir string) it
 			for i, item := range list.CommonPrefixes {
 				entries[i] = &iofsInfo{
 					name: path.Base(*item.Prefix),
-					mode: fs.ModeDir,
+					mode: dirMode,
 				}
 			}
 			for i, item := range list.Contents {
 				entries[numDirs+i] = &iofsInfo{
 					name:    path.Base(*item.Key),
 					size:    *item.Size,
-					mode:    fs.ModeIrregular,
+					mode:    fileMode,
 					modTime: *item.LastModified,
-					// sys:     &item,
+					//sys:     &item,
 				}
 			}
 			slices.SortFunc(entries, func(a, b fs.DirEntry) int {
@@ -372,7 +376,7 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) iter.
 					Info: &iofsInfo{
 						name:    path.Base(*s3obj.Key),
 						size:    *s3obj.Size,
-						mode:    fs.ModeIrregular,
+						mode:    fileMode,
 						modTime: *s3obj.LastModified,
 					},
 				}
@@ -402,7 +406,7 @@ func (f *s3File) Stat() (fs.FileInfo, error) {
 	return &iofsInfo{
 		name:    path.Base(f.key),
 		size:    *f.info.ContentLength,
-		mode:    fs.ModeIrregular,
+		mode:    fileMode,
 		modTime: *f.info.LastModified,
 		sys:     f.info,
 	}, nil
@@ -504,8 +508,5 @@ func errIsNotExist(err error) bool {
 		return true
 	}
 	var noKeyErr *types.NoSuchKey
-	if errors.As(err, &noKeyErr) {
-		return true
-	}
-	return false
+	return errors.As(err, &noKeyErr)
 }

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"iter"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +20,7 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/fs/s3"
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
+	"github.com/srerickson/ocfl-go/internal/testutil"
 )
 
 const (
@@ -34,9 +37,71 @@ var (
 	_ ocflfs.CopyFS       = (*s3.BucketFS)(nil)
 	_ ocflfs.WriteFS      = (*s3.BucketFS)(nil)
 	_ ocflfs.FileWalker   = (*s3.BucketFS)(nil)
+
+	fixtures = filepath.Join("..", "..", "testdata", "content-fixture")
 )
 
 func TestOpenFile(t *testing.T) {
+	if !testutil.S3Enabled() {
+		t.Log("s3 test service is not running")
+		return
+	}
+	fixtureFS := ocflfs.DirFS(fixtures)
+	fsys := testutil.TmpS3FS(t, fixtureFS)
+	type test struct {
+		ctx    context.Context
+		name   string
+		expect func(*testing.T, fs.File, error)
+	}
+	tests := map[string]test{
+		"open file": {
+			name: "hello.csv",
+			expect: func(t *testing.T, f fs.File, err error) {
+				be.NilErr(t, err)
+				bytes, err := io.ReadAll(f)
+				be.NilErr(t, err)
+				be.Equal(t, `1,2,3,"strings"`, string(bytes))
+				info, err := f.Stat()
+				be.NilErr(t, err)
+				fixtureInfo, err := ocflfs.StatFile(context.Background(), fixtureFS, "hello.csv")
+				be.NilErr(t, err)
+				compareFileInf(t, info, fixtureInfo)
+				sys := info.Sys()
+				be.Nonzero(t, sys)
+				objMeta, isHeadObjectOutput := sys.(*s3v2.HeadObjectOutput)
+				be.True(t, isHeadObjectOutput)
+				be.Equal(t, *objMeta.ContentLength, info.Size())
+				be.Equal(t, *objMeta.LastModified, info.ModTime())
+			},
+		},
+		"open prefix": {
+			name: "folder1",
+			expect: func(t *testing.T, f fs.File, err error) {
+				be.Nonzero(t, err)
+				be.True(t, errors.Is(err, fs.ErrNotExist))
+			},
+		},
+		"open missing": {
+			name: "missing-file.txt",
+			expect: func(t *testing.T, f fs.File, err error) {
+				be.Nonzero(t, err)
+				be.True(t, errors.Is(err, fs.ErrNotExist))
+			},
+		},
+	}
+	for desc, test := range tests {
+		t.Run(desc, func(t *testing.T) {
+			ctx := test.ctx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			f, err := fsys.OpenFile(ctx, test.name)
+			test.expect(t, f, err)
+		})
+	}
+}
+
+func TestOpenFile_Mock(t *testing.T) {
 	type testCase struct {
 		desc   string
 		bucket string
@@ -67,7 +132,7 @@ func TestOpenFile(t *testing.T) {
 				be.NilErr(t, err)
 				be.Equal(t, int64(len(body)), info.Size())
 				be.Equal(t, obj.LastModified, info.ModTime())
-				be.Equal(t, fs.ModeIrregular, info.Mode())
+				be.Equal(t, fs.ModeIrregular|0644, info.Mode())
 				be.Equal(t, false, info.IsDir())
 				be.Nonzero(t, info.Sys())
 			},
@@ -111,6 +176,59 @@ func TestOpenFile(t *testing.T) {
 }
 
 func TestReadDir(t *testing.T) {
+	if !testutil.S3Enabled() {
+		t.Log("s3 test service is not running")
+		return
+	}
+	fixtureFS := ocflfs.DirFS(fixtures)
+	fsys := testutil.TmpS3FS(t, fixtureFS)
+	type test struct {
+		ctx    context.Context
+		name   string
+		expect func(*testing.T, iter.Seq2[fs.DirEntry, error])
+	}
+
+	tests := map[string]test{
+		"root": {
+			name: ".",
+			expect: func(t *testing.T, entries iter.Seq2[fs.DirEntry, error]) {
+				ctx := context.Background()
+				comparDirEntries(t, entries, ocflfs.DirEntries(ctx, fixtureFS, "."))
+			},
+		},
+		"folder1": {
+			name: "folder1",
+			expect: func(t *testing.T, entries iter.Seq2[fs.DirEntry, error]) {
+				ctx := context.Background()
+				comparDirEntries(t, entries, ocflfs.DirEntries(ctx, fixtureFS, "folder1"))
+			},
+		},
+		"missing": {
+			name: "missing-dir",
+			expect: func(t *testing.T, s iter.Seq2[fs.DirEntry, error]) {
+				count := 0
+				for entry, err := range s {
+					count++
+					be.Nonzero(t, err)
+					be.True(t, errors.Is(err, fs.ErrNotExist))
+					be.Zero(t, entry)
+				}
+				be.Equal(t, 1, count)
+			},
+		},
+	}
+	for desc, test := range tests {
+		t.Run(desc, func(t *testing.T) {
+			ctx := test.ctx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			test.expect(t, fsys.DirEntries(ctx, test.name))
+		})
+	}
+}
+
+func TestReadDir_Mock(t *testing.T) {
 	ctx := context.Background()
 	type testCase struct {
 		desc   string
@@ -202,7 +320,7 @@ func TestReadDir(t *testing.T) {
 	}
 }
 
-func TestWrite(t *testing.T) {
+func TestWrite_Mock(t *testing.T) {
 	ctx := context.Background()
 	bodySize := 201 * megabyte
 	body := mock.RandBytes(mockSeed, int64(bodySize))
@@ -274,7 +392,7 @@ func TestWrite(t *testing.T) {
 	}
 }
 
-func TestRemove(t *testing.T) {
+func TestRemove_Mock(t *testing.T) {
 	ctx := context.Background()
 	type testCase struct {
 		desc   string
@@ -317,7 +435,7 @@ func TestRemove(t *testing.T) {
 	}
 }
 
-func TestRemoveAll(t *testing.T) {
+func TestRemoveAll_Mock(t *testing.T) {
 	ctx := context.Background()
 	type testCase struct {
 		desc   string
@@ -361,7 +479,7 @@ func TestRemoveAll(t *testing.T) {
 
 }
 
-func TestCopy(t *testing.T) {
+func TestCopy_Mock(t *testing.T) {
 	ctx := context.Background()
 	srcSize := int64(51 * megabyte)
 	srcBody := mock.RandBytes(mockSeed, srcSize)
@@ -432,7 +550,7 @@ func TestCopy(t *testing.T) {
 	}
 }
 
-func TestWalkFiles(t *testing.T) {
+func TestWalkFiles_Mock(t *testing.T) {
 	ctx := context.Background()
 	type testCase struct {
 		desc   string
@@ -593,3 +711,41 @@ func isPathError(t *testing.T, err error) {
 // 	}
 // 	return prefix + hex.EncodeToString(byt)
 // }
+
+func compareFileInf(t *testing.T, info, fixture fs.FileInfo) {
+	t.Helper()
+	be.Equal(t, fixture.Name(), info.Name())
+	be.Equal(t, fixture.IsDir(), info.IsDir())
+	if !fixture.IsDir() {
+		be.Equal(t, fixture.Size(), info.Size())
+	}
+}
+
+func comparDirEntries(
+	t *testing.T,
+	entries iter.Seq2[fs.DirEntry, error],
+	fixtures iter.Seq2[fs.DirEntry, error],
+) {
+	t.Helper()
+	nextFixture2, stop := iter.Pull2(fixtures)
+	defer stop()
+	for entry, err := range entries {
+		fixtureEntry, fixtureErr, ok := nextFixture2()
+		be.True(t, ok)
+		be.Equal(t, fixtureErr, err)
+		if err != nil {
+			be.Zero(t, entry)
+			continue
+		}
+		be.Equal(t, fixtureEntry.Name(), entry.Name())
+		be.Equal(t, fixtureEntry.IsDir(), entry.IsDir())
+		fixtureInfo, err := fixtureEntry.Info()
+		be.NilErr(t, err)
+		entryInfo, err := entry.Info()
+		be.NilErr(t, err)
+		compareFileInf(t, fixtureInfo, entryInfo)
+	}
+	// no more fixture entries
+	_, _, more := nextFixture2()
+	be.False(t, more)
+}
