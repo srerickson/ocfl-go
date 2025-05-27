@@ -164,10 +164,7 @@ func (obj Object) Exists() bool {
 }
 
 // ExtensionNames returns the names of directories in the object's
-// extensions directory. The ObjectRoot's State is initialized if it is
-// nil. If the object root does not include an object declaration, an error
-// is returned. If object root does not include an extensions directory both
-// return values are nil.
+// extensions directory.
 func (obj Object) ExtensionNames(ctx context.Context) ([]string, error) {
 	entries, err := ocflfs.ReadDir(ctx, obj.FS(), path.Join(obj.path, extensionsDir))
 	if err != nil {
@@ -175,12 +172,9 @@ func (obj Object) ExtensionNames(ctx context.Context) ([]string, error) {
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if !e.IsDir() {
-			// if the extensions directory includes non-directory
-			// entries, should we return an error?
-			continue
+		if e.IsDir() {
+			names = append(names, e.Name())
 		}
-		names = append(names, e.Name())
 	}
 	return names, err
 }
