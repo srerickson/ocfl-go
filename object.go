@@ -26,8 +26,6 @@ type Object struct {
 	// object's root inventory. May be nil if the object doesn't (yet) exist.
 	//root inventory
 	rootInventory *StoredInventory
-	//rootInventoryBytes is raw root inventory data
-	rootInventoryBytes []byte
 	// object's storage root
 	root *Root
 	// expected object ID
@@ -101,10 +99,10 @@ func (obj *Object) NewInventoryBuilder() *InventoryBuilder {
 	return NewInventoryBuilder(base).ID(obj.ID())
 }
 
-// NewUpdatePlan builds a new object inventory using stage's state and returns
+// NewUpdate builds a new object inventory using stage's state and returns
 // an *UpdatePlan that can be used to apply the changes. It does not apply the
 // update plan.
-func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
+func (obj *Object) NewUpdate(stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
 	updateOpts := newObjectUpdateOptions(opts...)
 	newInv, err := obj.NewInventoryBuilder().
 		FixitySource(stage).
@@ -127,7 +125,7 @@ func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...Ob
 			return nil, errors.New("update has unchanged version state")
 		}
 	}
-	plan, err := NewUpdatePlan(obj, newInv, stage.ContentSource)
+	plan, err := NewUpdatePlan(obj.fs, obj.path, stage.ContentSource, newInv, currentInv)
 	if err != nil {
 		return nil, fmt.Errorf("in object update plan: %w", err)
 	}
@@ -136,18 +134,27 @@ func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...Ob
 	return plan, nil
 }
 
-// Update creates an update plan using obj.NewUpdatePlan and applies it.
-func (obj *Object) Update(ctx context.Context, stage *Stage, msg string, user User, opts ...ObjectUpdateOption) error {
-	plan, err := obj.NewUpdatePlan(stage, msg, user, opts...)
-	if err != nil {
+// ApplyUpdate applies an UpdatePlan and sets obj's internal state to reflect
+// the new object inventory.
+func (obj *Object) ApplyUpdate(ctx context.Context, update *UpdatePlan) error {
+	if err := update.Apply(ctx); err != nil {
 		return err
 	}
-	updatedObj, err := plan.Apply(ctx)
-	if err != nil {
-		return err
+	obj.rootInventory = &StoredInventory{
+		Inventory: *update.newInv,
+		bytes:     update.NewInventoryBytes,
+		digest:    update.newInvDigest,
 	}
-	*obj = *updatedObj
 	return nil
+}
+
+// Update creates and update for the staged content and applies it.
+func (obj *Object) Update(ctx context.Context, stage *Stage, msg string, user User, opts ...ObjectUpdateOption) error {
+	plan, err := obj.NewUpdate(stage, msg, user, opts...)
+	if err != nil {
+		return err
+	}
+	return obj.ApplyUpdate(ctx, plan)
 }
 
 // DigestAlgorithm returns sha512 unless sha256 is set in the root inventory.
@@ -356,7 +363,6 @@ func (obj *Object) SyncInventory(ctx context.Context) error {
 		return fmt.Errorf("in %q inventory: %w", obj.ID(), err)
 	}
 	obj.rootInventory = inv
-	obj.rootInventoryBytes = byts
 	return nil
 }
 
