@@ -21,95 +21,82 @@ import (
 // UpdatePlan represents steps for updating an OCFL object, creating a new
 // object version.
 type UpdatePlan struct {
-	NewInventoryBytes []byte
-	OldInventoryBytes []byte
-	Steps             PlanSteps
-
-	newInv       *Inventory
-	newInvDigest string
+	newInv *StoredInventory
+	oldInv *StoredInventory
+	steps  PlanSteps
 
 	// options
 	goLimit int
 	logger  *slog.Logger
 }
 
-func NewUpdatePlan(objFS ocflfs.FS, objDir string, src ContentSource, newInv *Inventory, oldInv *StoredInventory) (*UpdatePlan, error) {
+// NewUpdatePlan builds an *UpdatePlan that be used to update the object at
+// objDir in objFS, transitioning from oldInv to newInv, with new content
+// available in src.
+func NewUpdatePlan(objFS ocflfs.FS, objDir string, newInv *Inventory, oldInv *StoredInventory, src ContentSource) (*UpdatePlan, error) {
 	newInvBytes, invDigest, err := newInv.marshal()
 	if err != nil {
 		return nil, fmt.Errorf("building new inventory: %w", err)
 	}
-	var oldInvBytes []byte
-	if oldInv != nil {
-		oldInvBytes = oldInv.bytes
-	}
-	storedInv := &StoredInventory{Inventory: *newInv, digest: invDigest, bytes: newInvBytes}
-	steps, err := newPlanSteps(objFS, objDir, src, storedInv, oldInv)
-	if err != nil {
-		return nil, fmt.Errorf("planning update for %q: %w", newInv.ID, err)
-	}
 	u := &UpdatePlan{
-		NewInventoryBytes: newInvBytes,
-		OldInventoryBytes: oldInvBytes,
-		newInv:            newInv,
-		newInvDigest:      invDigest,
-		Steps:             steps,
+		newInv: &StoredInventory{Inventory: *newInv, digest: invDigest, bytes: newInvBytes},
+		oldInv: oldInv,
+	}
+	if err := u.BuildSteps(objFS, objDir, src); err != nil {
+		return nil, err
 	}
 	return u, nil
 }
 
-// RecoverUpdatePlan reconstitutes an *UpdatePlan from a previous
-// UpdatePlan's byte representation.
-func RecoverUpdatePlan(enc []byte, objFS ocflfs.FS, objDir string, src ContentSource) (*UpdatePlan, error) {
-	var u UpdatePlan
-	var newInv, oldInv *StoredInventory
-
-	err := gob.NewDecoder(bytes.NewReader(enc)).Decode(&u)
-	if err != nil {
+// Apply runs u's incomplete steps and returns the *StoredInventory upon
+// completion. It stops at the first error and returns the error. Consecutive
+// steps with Async == true are run concurrently. Use SetGoLimit to set number
+// of goroutines used to run concurrent steps.
+func (u *UpdatePlan) Apply(ctx context.Context) (*StoredInventory, error) {
+	if err := runSteps(ctx, u.IncompleteSteps(), u.goLimit, u.logger, false); err != nil {
 		return nil, err
 	}
-	newInv, err = newStoredInventory(u.NewInventoryBytes)
-	if err != nil {
-		return nil, err
-	}
-	u.newInv = &newInv.Inventory
-	u.newInvDigest = newInv.digest
-	if len(u.OldInventoryBytes) > 0 {
-		oldInv, err = newStoredInventory(u.OldInventoryBytes)
-		if err != nil {
-			return nil, err
-		}
-	}
-	// the unmarshalled newSteps have Done and Err state, but their run functions
-	// nil: rebuild the newSteps to run and import the previous run state.
-	newSteps, err := newPlanSteps(objFS, objDir, src, newInv, oldInv)
-	if err != nil {
-		return nil, err
-	}
-	if !newSteps.Eq(u.Steps) {
-		return nil, errors.New("previous update log doesn't reflect current update plan")
-	}
-	for i := range newSteps {
-		newSteps[i].Complete = u.Steps[i].Complete
-		newSteps[i].Err = u.Steps[i].Err
-	}
-	u.Steps = newSteps
-	return &u, nil
+	return u.newInv, nil
 }
 
-// Apply runs u's incomplete steps. It stops at the first error and returns the
-// error. Consecutive steps with Async == true are run concurrently. Use
-// SetGoLimit to set number of goroutines used for handling concurrent steps.
-func (u *UpdatePlan) Apply(ctx context.Context) error {
-	return runSteps(ctx, u.IncompleteSteps(), u.goLimit, u.logger, false)
+// BuildSteps is used to regenerate u's Step functions. This is only needed
+// if u was created by unmarshaling from a binary representation.
+func (u *UpdatePlan) BuildSteps(objFS ocflfs.FS, objDir string, src ContentSource) error {
+	// the unmarshalled newSteps have Done and Err state, but their run functions
+	// nil: rebuild the newSteps to run and import the previous run state.
+	newSteps, err := newPlanSteps(objFS, objDir, u.newInv, u.oldInv, src)
+	if err != nil {
+		return err
+	}
+	if u.steps == nil {
+		u.steps = newSteps
+		return nil
+	}
+	if !newSteps.Eq(u.steps) {
+		return errors.New("previous update log doesn't reflect current update plan")
+	}
+	for i := range newSteps {
+		u.steps[i].run = newSteps[i].run
+		u.steps[i].revert = newSteps[i].revert
+	}
+	return nil
+}
+
+// Completed return true if all u's steps are marked as completed
+func (u UpdatePlan) Completed() bool {
+	for range u.IncompleteSteps() {
+		return false
+	}
+	return true
 }
 
 // CompletedSteps is an iterator over completed steps in reverse order (most
 // recently completed first).
 func (u UpdatePlan) CompletedSteps() iter.Seq[*PlanStep] {
 	return func(yield func(*PlanStep) bool) {
-		for i := range slices.Backward(u.Steps) {
-			step := &u.Steps[i]
-			if !step.Complete {
+		for i := range slices.Backward(u.steps) {
+			step := &u.steps[i]
+			if !step.state.Completed {
 				continue
 			}
 			if !yield(step) {
@@ -122,31 +109,36 @@ func (u UpdatePlan) CompletedSteps() iter.Seq[*PlanStep] {
 // Err returns an error that wraps all errors found in the u's steps.
 func (u UpdatePlan) Err() error {
 	var errs []error
-	for _, step := range u.Steps {
-		if step.Err != "" {
-			errs = append(errs, errors.New(step.Err))
+	for _, step := range u.steps {
+		if step.state.Err != "" {
+			errs = append(errs, errors.New(step.state.Err))
 		}
 	}
 	return errors.Join(errs...)
 }
 
-// Marshal returns u's representation as a byte slice, which may be used with
-// RecoverUpdatePlan to restore the original value.
-func (u UpdatePlan) Marshal() ([]byte, error) {
-	buff := &bytes.Buffer{}
-	if err := gob.NewEncoder(buff).Encode(u); err != nil {
-		return nil, err
+// Eq returns true if u and other represent that same update plan, with
+// the same set of steps.
+func (u UpdatePlan) Eq(other *UpdatePlan) bool {
+	if !bytes.Equal(u.newInv.bytes, other.newInv.bytes) {
+		return false
 	}
-	return buff.Bytes(), nil
+	if (u.oldInv == nil) != (other.oldInv == nil) {
+		return false
+	}
+	if u.oldInv != nil && !bytes.Equal(u.oldInv.bytes, other.oldInv.bytes) {
+		return false
+	}
+	return u.steps.Eq(other.steps)
 }
 
 // IncompleteSteps is an iterator over incomplete steps in u. Incomplete steps
 // may have errors.
 func (u *UpdatePlan) IncompleteSteps() iter.Seq[*PlanStep] {
 	return func(yield func(*PlanStep) bool) {
-		for i := range u.Steps {
-			step := &u.Steps[i]
-			if step.Complete {
+		for i := range u.steps {
+			step := &u.steps[i]
+			if step.state.Completed {
 				continue
 			}
 			if !yield(step) {
@@ -156,6 +148,29 @@ func (u *UpdatePlan) IncompleteSteps() iter.Seq[*PlanStep] {
 	}
 }
 
+// MarshalBinary returns a binary representation of u
+func (u UpdatePlan) MarshalBinary() ([]byte, error) {
+	toEncode := updatePlanState{Steps: u.steps}
+	if u.newInv != nil {
+		toEncode.NewInventoryBytes = u.newInv.bytes
+	}
+	if u.oldInv != nil {
+		toEncode.OldInventoryBytes = u.oldInv.bytes
+	}
+	var buff bytes.Buffer
+	if err := gob.NewEncoder(&buff).Encode(toEncode); err != nil {
+		return nil, err
+	}
+	return buff.Bytes(), nil
+}
+
+// Revert calls the 'Revert' function on all Completed steps in u's update plan
+// unless all steps have been completed. If all steps have been completed Revert
+// has no effect and returns an error.
+func (u *UpdatePlan) Revert(ctx context.Context) error {
+	return runSteps(ctx, u.CompletedSteps(), u.goLimit, u.logger, true)
+}
+
 // SetGoLimti sets the number of goroutines used for processing Steps with Async
 // == true. The default value is runtime.NumCPU()
 func (u *UpdatePlan) SetGoLimit(gos int) { u.goLimit = gos }
@@ -163,12 +178,44 @@ func (u *UpdatePlan) SetGoLimit(gos int) { u.goLimit = gos }
 // SetLogger sets a logger that will be used when running stesp in u.
 func (u *UpdatePlan) SetLogger(logger *slog.Logger) { u.logger = logger }
 
-// Revert calls the 'Revert' function on all Completed steps in u's update plan
-func (u *UpdatePlan) Revert(ctx context.Context) error {
-	return runSteps(ctx, u.CompletedSteps(), u.goLimit, u.logger, true)
+// Steps iterates over all steps in the update plan
+func (u UpdatePlan) Steps() iter.Seq[*PlanStep] {
+	return func(yield func(*PlanStep) bool) {
+		for i := range u.steps {
+			step := &u.steps[i]
+			if !yield(step) {
+				break
+			}
+		}
+	}
 }
 
-func newPlanSteps(objFS ocflfs.FS, objDir string, src ContentSource, newInv, oldInv *StoredInventory) (PlanSteps, error) {
+// UnmarshalBinary decodes b as a binary representation of an UpdatePlan
+// and sets u to match.
+func (u *UpdatePlan) UnmarshalBinary(b []byte) error {
+	var decoded updatePlanState
+	var newInv, oldInv *StoredInventory
+	err := gob.NewDecoder(bytes.NewReader(b)).Decode(&decoded)
+	if err != nil {
+		return err
+	}
+	newInv, err = newStoredInventory(decoded.NewInventoryBytes)
+	if err != nil {
+		return err
+	}
+	if len(decoded.OldInventoryBytes) > 0 {
+		oldInv, err = newStoredInventory(decoded.OldInventoryBytes)
+		if err != nil {
+			return err
+		}
+	}
+	u.newInv = newInv
+	u.oldInv = oldInv
+	u.steps = decoded.Steps
+	return nil
+}
+
+func newPlanSteps(objFS ocflfs.FS, objDir string, newInv, oldInv *StoredInventory, src ContentSource) (PlanSteps, error) {
 	newFiles := newInv.versionContent(newInv.Head)
 	newHead := newInv.Head
 	newVersionDir := path.Join(objDir, newHead.String())
@@ -201,8 +248,8 @@ func newPlanSteps(objFS ocflfs.FS, objDir string, src ContentSource, newInv, old
 		// initial step is noop with revert to remove the entire object root
 		// for v1 updates.
 		{
-			Name: "object root " + objDir,
-			run:  func(ctx context.Context) (int64, error) { return 0, nil },
+			state: planStepState{Name: "object root " + objDir},
+			run:   func(ctx context.Context) (int64, error) { return 0, nil },
 			revert: func(ctx context.Context) error {
 				// delete entire object root to revert first version.
 				if newHead.num == 1 {
@@ -219,8 +266,8 @@ func newPlanSteps(objFS ocflfs.FS, objDir string, src ContentSource, newInv, old
 	plan = append(plan,
 		// a step to remove entire version directory during during revert.
 		PlanStep{
-			Name: "version directory " + newVersionDir,
-			run:  func(ctx context.Context) (int64, error) { return 0, nil },
+			state: planStepState{Name: "version directory " + newVersionDir},
+			run:   func(ctx context.Context) (int64, error) { return 0, nil },
 			revert: func(ctx context.Context) error {
 				// remove everything in the new version directory
 				return ocflfs.RemoveAll(ctx, objFS, newVersionDir)
@@ -240,6 +287,18 @@ func newPlanSteps(objFS ocflfs.FS, objDir string, src ContentSource, newInv, old
 			newAlg, oldAlg,
 		)...,
 	)
+	plan = append(plan,
+		// final step is used to prever the plan from being reverting
+		// if the plan completed
+		PlanStep{
+			state: planStepState{Name: "update complete"},
+			run:   func(ctx context.Context) (int64, error) { return 0, nil },
+			revert: func(_ context.Context) error {
+				return errors.New("the update is complete and cannot be reverted")
+			},
+		},
+	)
+
 	return plan, nil
 }
 
@@ -252,7 +311,7 @@ func (s PlanSteps) Eq(other PlanSteps) bool {
 		return false
 	}
 	for i := range s {
-		if s[i].Name != other[i].Name {
+		if s[i].state.Name != other[i].state.Name {
 			return false
 		}
 	}
@@ -261,41 +320,33 @@ func (s PlanSteps) Eq(other PlanSteps) bool {
 
 // UndoStep is a single step in an UpdatePlan.
 type PlanStep struct {
-	// Descrptive name for the steps actions
-	Name string `json:"name"`
-	// Err has any error message from running the step
-	Err string `json:"error,omitempty"`
-	// RevertErr has any error message from reverting the step
-	RevertErr string `json:"error_revert,omitempty"`
-	// Complete is set to true if the Step ran without any error.
-	// It is set to false if the step is reverted without any error.
-	Complete bool `json:"complete,omitempty"`
-	// Async indicates that the step can be run concurrently with adjacent
-	// Async steps.
-	Async bool `json:"async,omitempty"`
-
-	// Fields for file copy steps
-
-	// Size is the number of bytes copied to the object during the step
-	Size          int64  `json:"size,omitempty"`
-	ContentDigest string `json:"content_digest,omitempty"`
-	ContentPath   string `json:"content_path,omitempty"`
-
+	// plan state included in binary representation
+	state planStepState
 	// run performs the step's actions. it returns an (optional) size for content
 	// written to the object and an error.
 	run func(ctx context.Context) (int64, error)
-
+	// revert undoes the run step.
 	revert func(ctx context.Context) error
 }
 
+func (step PlanStep) MarshalBinary() ([]byte, error) {
+	var buff bytes.Buffer
+	if err := gob.NewEncoder(&buff).Encode(step.state); err != nil {
+		return nil, err
+	}
+	return buff.Bytes(), nil
+}
+
+func (step PlanStep) Name() string { return step.state.Name }
+
 // Run runs the step's function if the step is not marked as complete, recording
-// any error message to Err. If the step returns no error, it is marked as
-// complete and any previous Err message is cleared.
+// any error message to Err. If the step does not return an error, it is marked
+// as complete and any previous error message is cleared.
 func (step *PlanStep) Run(ctx context.Context) error {
 	if step.run == nil {
 		return nil
 	}
-	if step.Complete {
+	if step.state.Completed {
 		return nil
 	}
 	size, err := step.run(ctx)
@@ -304,24 +355,24 @@ func (step *PlanStep) Run(ctx context.Context) error {
 		if msg == "" {
 			msg = "unspecified error"
 		}
-		step.Err = msg
+		step.state.Err = msg
 		return err
 	}
-	step.Size = size
-	step.Complete = true
-	step.Err = ""
+	step.state.Size = size
+	step.state.Completed = true
+	step.state.Err = ""
 	return nil
 }
 
 // Revert calls step's undo function if the step is marked as complete. If the
 // undo function returns an error, the error message is saved as RevertErr. If
-// Revert does not result in an error the step is marked as incomplete and
+// Revert does not result in an error, the step is marked as incomplete and
 // UndoErr is cleared.
 func (step *PlanStep) Revert(ctx context.Context) error {
 	if step.revert == nil {
 		return nil
 	}
-	if !step.Complete {
+	if !step.state.Completed {
 		return nil
 	}
 	err := step.revert(ctx)
@@ -330,11 +381,26 @@ func (step *PlanStep) Revert(ctx context.Context) error {
 		if msg == "" {
 			msg = "unspecified error"
 		}
-		step.RevertErr = msg
+		step.state.RevertErr = msg
 		return err
 	}
-	step.Complete = false
-	step.RevertErr = ""
+	step.state.Completed = false
+	step.state.RevertErr = ""
+	return nil
+}
+
+// Size returns the number of bytes copied to the object as part of the steps
+// run action.
+func (step *PlanStep) Size() int64 {
+	return step.state.Size
+}
+
+func (step *PlanStep) UnmarshalBinary(b []byte) error {
+	var state planStepState
+	if err := gob.NewDecoder(bytes.NewReader(b)).Decode(&state); err != nil {
+		return err
+	}
+	step.state = state
 	return nil
 }
 
@@ -347,7 +413,7 @@ func updateDeclarationSteps(fsys ocflfs.FS, dir string, newSpec, oldSpec Spec) [
 	newDecl := Namaste{Type: NamasteTypeObject, Version: newSpec}
 	newDeclName := path.Join(dir, newDecl.Name())
 	steps = append(steps, PlanStep{
-		Name: "write " + newDeclName,
+		state: planStepState{Name: "write " + newDeclName},
 		run: func(ctx context.Context) (int64, error) {
 			return 0, WriteDeclaration(ctx, fsys, dir, newDecl)
 		},
@@ -363,7 +429,7 @@ func updateDeclarationSteps(fsys ocflfs.FS, dir string, newSpec, oldSpec Spec) [
 		oldDecl := Namaste{Type: NamasteTypeObject, Version: oldSpec}
 		oldDeclName := path.Join(dir, oldDecl.Name())
 		steps = append(steps, PlanStep{
-			Name: "remove " + oldDeclName,
+			state: planStepState{Name: "remove " + oldDeclName},
 			run: func(ctx context.Context) (int64, error) {
 				err := ocflfs.Remove(ctx, fsys, oldDeclName)
 				if errors.Is(err, fs.ErrNotExist) {
@@ -385,10 +451,12 @@ func updateVersionContentsSteps(objFS ocflfs.FS, objDir string, newContent PathM
 	for dstName, dig := range newContent.SortedPaths() {
 		dstPath := path.Join(objDir, dstName)
 		steps = append(steps, PlanStep{
-			Name:          "copy " + dstPath,
-			ContentDigest: dig,
-			ContentPath:   dstName,
-			Async:         true,
+			state: planStepState{
+				Name:          "copy " + dstPath,
+				ContentDigest: dig,
+				ContentPath:   dstName,
+				Async:         true,
+			},
 			run: func(ctx context.Context) (int64, error) {
 				srcFS, srcPath := src.GetContent(dig)
 				if srcFS == nil {
@@ -428,7 +496,7 @@ func updateInventoriesSteps(
 	}
 	// write version directory inventory.json
 	steps = append(steps, PlanStep{
-		Name: "write " + verDirInv,
+		state: planStepState{Name: "write " + verDirInv},
 		run: func(ctx context.Context) (int64, error) {
 			return ocflfs.Write(ctx, objFS, verDirInv, bytes.NewReader(newInvBytes))
 		},
@@ -442,7 +510,7 @@ func updateInventoriesSteps(
 	})
 	// write version directory inventory sidecar
 	steps = append(steps, PlanStep{
-		Name: "write " + verDirInvSidecar,
+		state: planStepState{Name: "write " + verDirInvSidecar},
 		run: func(ctx context.Context) (int64, error) {
 			return 0, writeInventorySidecar(ctx, objFS, verDir, newInvDigest, newAlg)
 		},
@@ -456,7 +524,7 @@ func updateInventoriesSteps(
 	})
 	// write root inventory.json
 	steps = append(steps, PlanStep{
-		Name: "write " + rootInv,
+		state: planStepState{Name: "write " + rootInv},
 		run: func(ctx context.Context) (int64, error) {
 			return ocflfs.Write(ctx, objFS, rootInv, bytes.NewReader(newInvBytes))
 		},
@@ -481,7 +549,7 @@ func updateInventoriesSteps(
 	})
 	// write root inventory sidecar
 	steps = append(steps, PlanStep{
-		Name: "set " + rootInvSidecar,
+		state: planStepState{Name: "set " + rootInvSidecar},
 		run: func(ctx context.Context) (int64, error) {
 			err := writeInventorySidecar(ctx, objFS, objDir, newInvDigest, newAlg)
 			if err != nil {
@@ -537,18 +605,18 @@ func runSteps(ctx context.Context, steps iter.Seq[*PlanStep], gos int, logger *s
 	group := &errgroup.Group{}
 	group.SetLimit(gos)
 	for step := range steps {
-		if step.Async {
+		if step.state.Async {
 			group.Go(func() error {
 				var err error
 				switch {
 				case backward:
-					logger.Info("reverting", "step", step.Name)
+					logger.Info("reverting", "step", step.state.Name)
 					err = step.Revert(ctx)
 					if err != nil {
 						logger.Error(err.Error())
 					}
 				default:
-					logger.Info(step.Name)
+					logger.Info(step.state.Name)
 					err = step.Run(ctx)
 					if err != nil {
 						logger.Error(err.Error())
@@ -564,13 +632,13 @@ func runSteps(ctx context.Context, steps iter.Seq[*PlanStep], gos int, logger *s
 		}
 		switch {
 		case backward:
-			logger.Info("reverting", "step", step.Name)
+			logger.Info("reverting", "step", step.state.Name)
 			if err := step.Revert(ctx); err != nil {
 				logger.Error(err.Error())
 				return err
 			}
 		default:
-			logger.Info(step.Name)
+			logger.Info(step.state.Name)
 			if err := step.Run(ctx); err != nil {
 				logger.Error(err.Error())
 				return err
@@ -578,4 +646,21 @@ func runSteps(ctx context.Context, steps iter.Seq[*PlanStep], gos int, logger *s
 		}
 	}
 	return group.Wait()
+}
+
+type updatePlanState struct {
+	NewInventoryBytes []byte
+	OldInventoryBytes []byte
+	Steps             []PlanStep
+}
+
+type planStepState struct {
+	Name          string
+	Err           string
+	RevertErr     string
+	Completed     bool
+	Async         bool
+	Size          int64
+	ContentDigest string
+	ContentPath   string
 }
