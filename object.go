@@ -125,7 +125,7 @@ func (obj *Object) NewUpdate(stage *Stage, msg string, user User, opts ...Object
 			return nil, errors.New("update has unchanged version state")
 		}
 	}
-	plan, err := NewUpdatePlan(obj.fs, obj.path, stage.ContentSource, newInv, currentInv)
+	plan, err := NewUpdatePlan(obj.fs, obj.path, newInv, currentInv, stage.ContentSource)
 	if err != nil {
 		return nil, fmt.Errorf("in object update plan: %w", err)
 	}
@@ -137,14 +137,11 @@ func (obj *Object) NewUpdate(stage *Stage, msg string, user User, opts ...Object
 // ApplyUpdate applies an UpdatePlan and sets obj's internal state to reflect
 // the new object inventory.
 func (obj *Object) ApplyUpdate(ctx context.Context, update *UpdatePlan) error {
-	if err := update.Apply(ctx); err != nil {
+	newInv, err := update.Apply(ctx)
+	if err != nil {
 		return err
 	}
-	obj.rootInventory = &StoredInventory{
-		Inventory: *update.newInv,
-		bytes:     update.NewInventoryBytes,
-		digest:    update.newInvDigest,
-	}
+	obj.rootInventory = newInv
 	return nil
 }
 
