@@ -18,6 +18,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// ErrRevertUpdate: can't revert an update because the update ran to completion
+var ErrRevertUpdate = errors.New("the update has completed and cannot be reverted")
+
 // UpdatePlan is a sequence of steps ([PlanStep]) for updating an OCFL object.
 // It allows updates to be interrupted, resumed, retried or reverted. To update
 // an object, each [PlanStep] in the UpdatePlan must run to completion. The
@@ -172,8 +175,11 @@ func (u UpdatePlan) MarshalBinary() ([]byte, error) {
 
 // Revert calls the 'Revert' function on all Completed steps in u's update plan
 // unless all steps have been completed. If all steps have been completed Revert
-// has no effect and returns an error.
+// has no effect and returns an ErrRevertUpdate.
 func (u *UpdatePlan) Revert(ctx context.Context) error {
+	if u.Completed() {
+		return ErrRevertUpdate
+	}
 	return runSteps(ctx, u.CompletedSteps(), u.goLimit, u.logger, true)
 }
 
@@ -292,17 +298,6 @@ func newPlanSteps(objFS ocflfs.FS, objDir string, newInv, oldInv *StoredInventor
 			newInv.digest, oldInvDigest,
 			newAlg, oldAlg,
 		)...,
-	)
-	plan = append(plan,
-		// final step is used to prever the plan from being reverting
-		// if the plan completed
-		PlanStep{
-			state: planStepState{Name: "update complete"},
-			run:   func(ctx context.Context) (int64, error) { return 0, nil },
-			revert: func(_ context.Context) error {
-				return errors.New("the update is complete and cannot be reverted")
-			},
-		},
 	)
 
 	return plan, nil
