@@ -59,7 +59,7 @@ func TestRoot(t *testing.T) {
 			"file.txt": []byte("readme readme readme"),
 		}, digest.SHA256)
 		be.NilErr(t, err)
-		err = obj.Update(ctx, stage, "first version", ocfl.User{Name: "Stinky & Dirty"})
+		_, err = obj.Update(ctx, stage, "first version", ocfl.User{Name: "Stinky & Dirty"})
 		be.NilErr(t, err)
 		// re-open and validate object
 		sameRoot, err := ocfl.NewRoot(ctx, fsys, dir)

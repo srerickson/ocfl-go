@@ -145,13 +145,16 @@ func (obj *Object) ApplyUpdate(ctx context.Context, update *UpdatePlan) error {
 	return nil
 }
 
-// Update creates and update for the staged content and applies it.
-func (obj *Object) Update(ctx context.Context, stage *Stage, msg string, user User, opts ...ObjectUpdateOption) error {
+// Update creates an new UpdatePlan for the staged content and applies it. It
+// returns a reference to the *UpdatePlan, if one was created, so the update can
+// be retried (with [Object.ApplyUpdate]) or reverted (with [UpdatePlan.Revert])
+// if necessary.
+func (obj *Object) Update(ctx context.Context, stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
 	plan, err := obj.NewUpdate(stage, msg, user, opts...)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return obj.ApplyUpdate(ctx, plan)
+	return plan, obj.ApplyUpdate(ctx, plan)
 }
 
 // DigestAlgorithm returns sha512 unless sha256 is set in the root inventory.

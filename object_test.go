@@ -39,7 +39,7 @@ func TestObject_Example(t *testing.T) {
 	}
 	stage, err := ocfl.StageBytes(v1Content, digest.SHA512, digest.MD5)
 	be.NilErr(t, err)
-	err = obj.Update(
+	_, err = obj.Update(
 		ctx,
 		stage,
 		"first version",
@@ -62,7 +62,7 @@ func TestObject_Example(t *testing.T) {
 	}
 	stage, err = ocfl.StageBytes(v2Content, digest.SHA512, digest.MD5)
 	be.NilErr(t, err)
-	err = obj.Update(
+	_, err = obj.Update(
 		ctx,
 		stage,
 		"second version",
@@ -101,7 +101,7 @@ func TestObject_Example(t *testing.T) {
 	be.Nonzero(t, sourceStage)
 	forkObj, err := ocfl.NewObject(ctx, tmpFS, forkID, ocfl.ObjectWithID(forkID))
 	be.NilErr(t, err)
-	err = forkObj.Update(
+	_, err = forkObj.Update(
 		ctx,
 		sourceStage,
 		sourceVersion.Message(),
@@ -197,7 +197,7 @@ func TestObject_Update(t *testing.T) {
 		be.NilErr(t, err)
 		be.False(t, obj.Exists())
 		be.Zero(t, obj.InventoryDigest())
-		err = obj.Update(
+		_, err = obj.Update(
 			ctx,
 			&ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA256},
 			"new object",
@@ -216,7 +216,7 @@ func TestObject_Update(t *testing.T) {
 		obj, err := ocfl.NewObject(ctx, fsys, ".", ocfl.ObjectWithID("new-object"))
 		be.NilErr(t, err)
 		be.False(t, obj.Exists())
-		err = obj.Update(
+		_, err = obj.Update(
 			ctx,
 			&ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA512},
 			"new object",
@@ -224,7 +224,7 @@ func TestObject_Update(t *testing.T) {
 			ocfl.UpdateWithUnchangedVersionState(),
 		)
 		be.NilErr(t, err)
-		err = obj.Update(
+		_, err = obj.Update(
 			ctx,
 			&ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA256},
 			"new object",
@@ -240,7 +240,7 @@ func TestObject_Update(t *testing.T) {
 		obj, err := ocfl.NewObject(ctx, fsys, ".", ocfl.ObjectWithID("new-object"))
 		be.NilErr(t, err)
 		be.False(t, obj.Exists())
-		err = obj.Update(
+		_, err = obj.Update(
 			ctx,
 			&ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA512},
 			"new object",
@@ -248,7 +248,7 @@ func TestObject_Update(t *testing.T) {
 			ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1),
 		)
 		be.NilErr(t, err)
-		err = obj.Update(
+		_, err = obj.Update(
 			ctx,
 			&ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.SHA512},
 			"new object",
@@ -269,7 +269,7 @@ func TestObject_Update(t *testing.T) {
 		}
 		stage, err := ocfl.StageBytes(content, digest.SHA512, digest.SIZE)
 		be.NilErr(t, err)
-		err = obj.Update(
+		_, err = obj.Update(
 			ctx,
 			stage, "new object",
 			ocfl.User{Name: "Anna Karenina"},
@@ -308,7 +308,7 @@ func TestObject_UpdateFixtures(t *testing.T) {
 				be.NilErr(t, newStage.Overlay(newContent))
 
 				// do update
-				err = obj.Update(ctx, newStage, "update", ocfl.User{Name: "Tristram Shandy"})
+				_, err = obj.Update(ctx, newStage, "update", ocfl.User{Name: "Tristram Shandy"})
 				be.NilErr(t, err)
 				be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 				// check content
