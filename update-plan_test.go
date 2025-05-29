@@ -121,6 +121,7 @@ func TestUpdatePlan_RecoverUpdatePlan(t *testing.T) {
 				//update is complete and can't be reverted
 				err = resumeUpdate.Revert(ctx)
 				be.Nonzero(t, err)
+				be.True(t, errors.Is(err, ocfl.ErrRevertUpdate))
 				// object is valid
 				err = ocfl.ValidateObject(ctx, objFS, ".").Err()
 				be.NilErr(t, err)
