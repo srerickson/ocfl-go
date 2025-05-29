@@ -99,10 +99,10 @@ func (obj *Object) NewInventoryBuilder() *InventoryBuilder {
 	return NewInventoryBuilder(base).ID(obj.ID())
 }
 
-// NewUpdate builds a new object inventory using stage's state and returns
-// an *UpdatePlan that can be used to apply the changes. It does not apply the
+// NewUpdatePlan builds a new object inventory using stage's state and returns
+// an *[UpdatePlan] that can be used to apply the changes. It does not apply the
 // update plan.
-func (obj *Object) NewUpdate(stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
+func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
 	updateOpts := newObjectUpdateOptions(opts...)
 	newInv, err := obj.NewInventoryBuilder().
 		FixitySource(stage).
@@ -134,9 +134,9 @@ func (obj *Object) NewUpdate(stage *Stage, msg string, user User, opts ...Object
 	return plan, nil
 }
 
-// ApplyUpdate applies an UpdatePlan and sets obj's internal state to reflect
-// the new object inventory.
-func (obj *Object) ApplyUpdate(ctx context.Context, update *UpdatePlan) error {
+// ApplyUpdatePlan applies an [UpdatePlan] and sets obj's state with the new
+// object inventory.
+func (obj *Object) ApplyUpdatePlan(ctx context.Context, update *UpdatePlan) error {
 	newInv, err := update.Apply(ctx)
 	if err != nil {
 		return err
@@ -147,14 +147,14 @@ func (obj *Object) ApplyUpdate(ctx context.Context, update *UpdatePlan) error {
 
 // Update creates an new UpdatePlan for the staged content and applies it. It
 // returns a reference to the *UpdatePlan, if one was created, so the update can
-// be retried (with [Object.ApplyUpdate]) or reverted (with [UpdatePlan.Revert])
+// be retried (with [Object.ApplyUpdatePlan]) or reverted (with [UpdatePlan.Revert])
 // if necessary.
 func (obj *Object) Update(ctx context.Context, stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
-	plan, err := obj.NewUpdate(stage, msg, user, opts...)
+	plan, err := obj.NewUpdatePlan(stage, msg, user, opts...)
 	if err != nil {
 		return nil, err
 	}
-	return plan, obj.ApplyUpdate(ctx, plan)
+	return plan, obj.ApplyUpdatePlan(ctx, plan)
 }
 
 // DigestAlgorithm returns sha512 unless sha256 is set in the root inventory.
@@ -200,7 +200,7 @@ func (obj Object) FS() ocflfs.FS {
 	return obj.fs
 }
 
-// GetFixity implements the FixitySource interface for Object, for use in Stage.
+// GetFixity implements the [FixitySource] interface for Object, for use in Stage.
 func (obj Object) GetFixity(dig string) digest.Set {
 	if obj.rootInventory == nil {
 		return nil
@@ -208,7 +208,7 @@ func (obj Object) GetFixity(dig string) digest.Set {
 	return obj.rootInventory.GetFixity(dig)
 }
 
-// GetContent implements ContentSource for Object, for use in Stage.
+// GetContent implements [ContentSource] for Object, for use in Stage.
 func (obj Object) GetContent(dig string) (ocflfs.FS, string) {
 	if obj.rootInventory == nil {
 		return nil, ""
@@ -570,7 +570,7 @@ func UpdateWithContentPathFunc(mutate PathMutation) ObjectUpdateOption {
 // UpdateWithLogger sets the logger using when applying the UpdatePlan
 func UpdateWithLogger(logger *slog.Logger) ObjectUpdateOption {
 	return func(o *objectUpdateOptions) {
-		o.logger = nil
+		o.logger = logger
 	}
 }
 

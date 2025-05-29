@@ -67,14 +67,14 @@ func runUpdate(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	update, err := obj.NewUpdate(stage, f.msg, f.user)
+	update, err := obj.NewUpdatePlan(stage, f.msg, f.user)
 	if err != nil {
 		return err
 	}
 	update.SetLogger(logger)
 	applyCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
-	err = obj.ApplyUpdate(applyCtx, update)
+	err = obj.ApplyUpdatePlan(applyCtx, update)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			logger.Info("received interupt: reverting changes...")

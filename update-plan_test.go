@@ -25,7 +25,7 @@ func TestUpdatePlan_Marshal(t *testing.T) {
 	be.NilErr(t, err)
 	stage, err := ocfl.StageBytes(map[string][]byte{}, digest.SHA512)
 	be.NilErr(t, err)
-	update, err := obj.NewUpdate(stage, "new version", ocfl.User{Name: "Me"})
+	update, err := obj.NewUpdatePlan(stage, "new version", ocfl.User{Name: "Me"})
 	be.NilErr(t, err)
 	be.Nonzero(t, len(slices.Collect(update.Steps())))
 	bytes, err := update.MarshalBinary()
@@ -52,7 +52,7 @@ func TestUpdatePlan_RecoverUpdatePlan(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		update, err := obj.NewUpdate(
+		update, err := obj.NewUpdatePlan(
 			stagedContent, "updated version",
 			ocfl.User{Name: "Me"},
 			ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1),
