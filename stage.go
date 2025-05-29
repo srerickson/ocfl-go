@@ -67,12 +67,16 @@ func StageFiles(ctx context.Context, files iter.Seq[*fs.FileRef], alg digest.Alg
 	if alg.ID() != digest.SHA512.ID() && alg.ID() != digest.SHA256.ID() {
 		return nil, fmt.Errorf("at least one algorithm (sha512 or sha256) must be provided")
 	}
-	digests, digestErr := fs.UntilErr(digest.DigestFiles(ctx, files, alg, fixity...))
+	validFiles, fileTypeErr := fs.UntilErr(fs.CheckFileTypes(ctx, files))
+	digests, digestErr := fs.UntilErr(digest.DigestFiles(ctx, validFiles, alg, fixity...))
 	stage, err := newStage(digests)
 	if err != nil {
 		return nil, err
 	}
 	if err := digestErr(); err != nil {
+		return nil, err
+	}
+	if err := fileTypeErr(); err != nil {
 		return nil, err
 	}
 	return stage, nil

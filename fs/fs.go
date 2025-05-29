@@ -221,12 +221,6 @@ func fileWalk(ctx context.Context, fsys FS, walkRoot string, subDir string, yiel
 			if !fileWalk(ctx, fsys, walkRoot, entryPath, yield) {
 				return false
 			}
-		case !ValidFileType(e.Type()):
-			return yield(nil, &fs.PathError{
-				Path: entryPath,
-				Err:  ErrFileType,
-				Op:   `readdir`,
-			})
 		default:
 			info, err := e.Info()
 			if err != nil {
