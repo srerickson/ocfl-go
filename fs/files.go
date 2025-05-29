@@ -115,8 +115,30 @@ func UntilErr[T any](seq iter.Seq2[T, error]) (iter.Seq[T], func() error) {
 	return outSeq, func() error { return firstErr }
 }
 
-// ValidFileType returns true if mode is ok for a file
-// in an OCFL object.
+// ValidFileType returns true if mode is ok for a file in an OCFL object.
 func ValidFileType(mode fs.FileMode) bool {
+	// note that the s3 FS implementation uses fs.ModeIrregular
 	return mode.IsDir() || mode.IsRegular() || mode.Type() == fs.ModeIrregular
+}
+
+// CheckFileTypes checks if items in files have valid mode types for an OCFL
+// object (see [ValidFileType]). If will call Stat() on any files with nil
+// FileInfo. The resulting iterator yields all files in the input and an error.
+// The error is an fs.PathError that wraps ErrFileType if the file has an
+// invalid type mode.
+func CheckFileTypes(ctx context.Context, files iter.Seq[*FileRef]) iter.Seq2[*FileRef, error] {
+	return func(yield func(*FileRef, error) bool) {
+		for f := range files {
+			var err error
+			if f.Info == nil {
+				err = f.Stat(ctx)
+			}
+			if err == nil && !ValidFileType(f.Info.Mode()) {
+				err = &fs.PathError{Op: "stat", Path: f.FullPath(), Err: ErrFileType}
+			}
+			if !yield(f, err) {
+				return
+			}
+		}
+	}
 }
