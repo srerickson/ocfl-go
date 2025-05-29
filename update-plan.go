@@ -18,8 +18,13 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// UpdatePlan represents steps for updating an OCFL object, creating a new
-// object version.
+// UpdatePlan is a sequence of steps ([PlanStep]) for updating an OCFL object.
+// It allows updates to be interrupted, resumed, retried or reverted. To update
+// an object, each [PlanStep] in the UpdatePlan must run to completion. The
+// result of each step (whether the step completed successfuly or resulted in an
+// error) is stored so that repeated updates resume where the previous run
+// stopped or failed. Each PlanStep includes compensating actions for reverting
+// partial updates that cannot be completed.
 type UpdatePlan struct {
 	newInv *StoredInventory
 	oldInv *StoredInventory
@@ -48,10 +53,11 @@ func NewUpdatePlan(objFS ocflfs.FS, objDir string, newInv *Inventory, oldInv *St
 	return u, nil
 }
 
-// Apply runs u's incomplete steps and returns the *StoredInventory upon
-// completion. It stops at the first error and returns the error. Consecutive
-// steps with Async == true are run concurrently. Use SetGoLimit to set number
-// of goroutines used to run concurrent steps.
+// Apply runs incomplete steps in the UpdatePlan and returns the object's new
+// *StoredInventory if the updated succeeded. If any step in the UpdatePlan
+// results in an error, execution stops and the error is returned. Some steps in
+// the plan may run concurrently. Use SetGoLimit to set number of goroutines
+// used to run concurrent steps.
 func (u *UpdatePlan) Apply(ctx context.Context) (*StoredInventory, error) {
 	if err := runSteps(ctx, u.IncompleteSteps(), u.goLimit, u.logger, false); err != nil {
 		return nil, err
@@ -337,6 +343,14 @@ func (step PlanStep) MarshalBinary() ([]byte, error) {
 	return buff.Bytes(), nil
 }
 
+// ErrMsg returns any error message from the step's last Run.
+func (step PlanStep) ErrMsg() string { return step.state.Err }
+
+// Completed returns true if the step ran without error or was successfully
+// reverted.
+func (step PlanStep) Completed() bool { return step.state.Completed }
+
+// Name returns the step's unique name
 func (step PlanStep) Name() string { return step.state.Name }
 
 // Run runs the step's function if the step is not marked as complete, recording
