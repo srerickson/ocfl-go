@@ -48,10 +48,13 @@ func TestObject_Example(t *testing.T) {
 	be.NilErr(t, err)        // update worked
 	be.True(t, obj.Exists()) // the object was created
 
-	// object has expected inventory values
+	// object has expected version information values
 	be.Equal(t, "new-object-01", obj.ID())
 	sourceVersion := obj.Version(1)
 	be.Nonzero(t, sourceVersion)
+	be.Nonzero(t, sourceVersion.Created())
+	be.Equal(t, "first version", sourceVersion.Message())
+	be.Equal(t, ocfl.User{Name: "Mx. Robot"}, *sourceVersion.User())
 	be.Nonzero(t, sourceVersion.State().PathMap()["README.txt"])
 
 	// update a new version and upgrade to OCFL v1.1

@@ -479,6 +479,9 @@ type ObjectVersion struct {
 	version *InventoryVersion
 }
 
+// Created returns the version's created timestamp
+func (o ObjectVersion) Created() time.Time { return o.version.Created }
+
 // Message returns the version's message
 func (o ObjectVersion) Message() string { return o.version.Message }
 
