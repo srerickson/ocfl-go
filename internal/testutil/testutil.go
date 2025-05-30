@@ -3,6 +3,8 @@ package testutil
 import (
 	"errors"
 	"os"
+	"path"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -28,11 +30,14 @@ func ErrorsIncludeOCFLCode(t *testing.T, ocflCode string, errs ...error) {
 
 // make a temporary local.FS for writing with contents
 // of srcdir copied into it
-func TmpLocalFS(t *testing.T, srcDir string) *local.FS {
+func TmpLocalFS(t *testing.T, srcDirs ...string) *local.FS {
 	t.Helper()
 	tmpDir := t.TempDir()
-	if err := os.CopyFS(tmpDir, os.DirFS(srcDir)); err != nil {
-		t.Fatal(err)
+	for _, srcDir := range srcDirs {
+		dst := filepath.Join(tmpDir, path.Base(srcDir))
+		if err := os.CopyFS(dst, os.DirFS(srcDir)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	fsys, err := local.NewFS(tmpDir)
 	if err != nil {

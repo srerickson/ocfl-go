@@ -88,7 +88,7 @@ func TestUpdatePlan_RecoverUpdatePlan(t *testing.T) {
 			var resumeUpdate ocfl.UpdatePlan
 			err = resumeUpdate.UnmarshalBinary(updateBytes)
 			be.NilErr(t, err)
-			err = resumeUpdate.BuildSteps(objFS, ".", stagedContent)
+			err = resumeUpdate.Prepare(objFS, ".", stagedContent)
 			be.NilErr(t, err)
 			_, err = resumeUpdate.Apply(ctx)
 			be.NilErr(t, err)
@@ -113,7 +113,7 @@ func TestUpdatePlan_RecoverUpdatePlan(t *testing.T) {
 			var resumeUpdate ocfl.UpdatePlan
 			err = resumeUpdate.UnmarshalBinary(updateBytes)
 			be.NilErr(t, err)
-			err = resumeUpdate.BuildSteps(objFS, ".", stagedContent)
+			err = resumeUpdate.Prepare(objFS, ".", stagedContent)
 			be.NilErr(t, err)
 			switch {
 			case resumeUpdate.Completed():
@@ -154,7 +154,7 @@ func TestUpdatePlan_RecoverUpdatePlan(t *testing.T) {
 			var resumeUpdate ocfl.UpdatePlan
 			err = resumeUpdate.UnmarshalBinary(updateBytes)
 			be.NilErr(t, err)
-			err = resumeUpdate.BuildSteps(objFS, ".", stagedContent)
+			err = resumeUpdate.Prepare(objFS, ".", stagedContent)
 			be.NilErr(t, err)
 			_, err = resumeUpdate.Apply(ctx)
 			be.NilErr(t, err)
@@ -181,7 +181,7 @@ func TestUpdatePlan_RecoverUpdatePlan(t *testing.T) {
 			var resumeUpdate ocfl.UpdatePlan
 			err = resumeUpdate.UnmarshalBinary(updateBytes)
 			be.NilErr(t, err)
-			err = resumeUpdate.BuildSteps(objFS, ".", stagedContent)
+			err = resumeUpdate.Prepare(objFS, ".", stagedContent)
 			be.NilErr(t, err)
 			be.NilErr(t, err)
 			switch {

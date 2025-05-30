@@ -81,6 +81,26 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 	}
 }
 
+// ApplyUpdatePlan applies an [UpdatePlan] and sets obj's state with the new
+// object inventory.
+func (obj *Object) ApplyUpdatePlan(ctx context.Context, update *UpdatePlan, src ContentSource) error {
+	if update.ObjectID() != obj.ID() {
+		return errors.New("update plan is for a different object")
+	}
+	if base := obj.rootInventory; base != nil && base.digest != update.BaseInventoryDigest() {
+		return errors.New("update plan's base inventory does not match the object's current inventory")
+	}
+	if err := update.Prepare(obj.fs, obj.path, src); err != nil {
+		return err
+	}
+	newInv, err := update.Apply(ctx)
+	if err != nil {
+		return err
+	}
+	obj.rootInventory = newInv
+	return nil
+}
+
 // ContentDirectory return "content" or the value set in the root inventory.
 func (obj Object) ContentDirectory() string {
 	if obj.rootInventory != nil && obj.rootInventory.ContentDirectory != "" {
@@ -106,12 +126,12 @@ func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...Ob
 	updateOpts := newObjectUpdateOptions(opts...)
 	newInv, err := obj.NewInventoryBuilder().
 		FixitySource(stage).
-		ContentPathFunc(updateOpts.ContentPathFunc).
-		Spec(updateOpts.Spec).
+		ContentPathFunc(updateOpts.contentPathFunc).
+		Spec(updateOpts.spec).
 		AddVersion(
 			stage.State,
 			stage.DigestAlgorithm,
-			updateOpts.Created,
+			updateOpts.created,
 			msg,
 			&user,
 		).Finalize()
@@ -119,30 +139,19 @@ func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...Ob
 		return nil, fmt.Errorf("building new inventory for update: %w", err)
 	}
 	currentInv := obj.rootInventory
-	if !updateOpts.AllowUnchanged && currentInv != nil {
+	if !updateOpts.allowUnchanged && currentInv != nil {
 		lastV := currentInv.Versions[currentInv.Head]
 		if lastV != nil && lastV.State.Eq(stage.State) {
 			return nil, errors.New("update has unchanged version state")
 		}
 	}
-	plan, err := NewUpdatePlan(obj.fs, obj.path, newInv, currentInv, stage.ContentSource)
+	plan, err := newUpdatePlan(obj.fs, obj.path, newInv, currentInv, stage.ContentSource)
 	if err != nil {
 		return nil, fmt.Errorf("in object update plan: %w", err)
 	}
-	plan.SetGoLimit(updateOpts.goLimit)
-	plan.SetLogger(updateOpts.logger)
+	plan.setGoLimit(updateOpts.goLimit)
+	plan.setLogger(updateOpts.logger)
 	return plan, nil
-}
-
-// ApplyUpdatePlan applies an [UpdatePlan] and sets obj's state with the new
-// object inventory.
-func (obj *Object) ApplyUpdatePlan(ctx context.Context, update *UpdatePlan) error {
-	newInv, err := update.Apply(ctx)
-	if err != nil {
-		return err
-	}
-	obj.rootInventory = newInv
-	return nil
 }
 
 // Update creates an new UpdatePlan for the staged content and applies it. It
@@ -154,7 +163,7 @@ func (obj *Object) Update(ctx context.Context, stage *Stage, msg string, user Us
 	if err != nil {
 		return nil, err
 	}
-	return plan, obj.ApplyUpdatePlan(ctx, plan)
+	return plan, obj.ApplyUpdatePlan(ctx, plan, stage.ContentSource)
 }
 
 // DigestAlgorithm returns sha512 unless sha256 is set in the root inventory.
@@ -502,14 +511,13 @@ func (o ObjectVersion) User() *User {
 func (o ObjectVersion) VNum() VNum { return o.vnum }
 
 type objectUpdateOptions struct {
-	Created         time.Time // time.Now is used, if not set
-	Spec            Spec      // OCFL specification version for the new object version
-	NewHEAD         int       // enforces new object version number
-	AllowUnchanged  bool
-	ContentPathFunc func(oldPaths []string) (newPaths []string)
-
-	logger  *slog.Logger
-	goLimit int
+	created         time.Time // time.Now is used, if not set
+	spec            Spec      // OCFL specification version for the new object version
+	newHead         int       // enforces new object version number
+	allowUnchanged  bool
+	contentPathFunc func(oldPaths []string) (newPaths []string)
+	logger          *slog.Logger
+	goLimit         int
 }
 
 func newObjectUpdateOptions(opts ...ObjectUpdateOption) *objectUpdateOptions {
@@ -519,8 +527,8 @@ func newObjectUpdateOptions(opts ...ObjectUpdateOption) *objectUpdateOptions {
 	for _, o := range opts {
 		o(combinedOpts)
 	}
-	if combinedOpts.Created.IsZero() {
-		combinedOpts.Created = time.Now()
+	if combinedOpts.created.IsZero() {
+		combinedOpts.created = time.Now()
 	}
 	return combinedOpts
 }
@@ -533,14 +541,14 @@ type ObjectUpdateOption func(*objectUpdateOptions)
 // created with the update.
 func UpdateWithVersionCreated(t time.Time) ObjectUpdateOption {
 	return func(o *objectUpdateOptions) {
-		o.Created = t
+		o.created = t
 	}
 }
 
 // UpdateWithOCFLSpec sets the OCFL specification for the new object version
 func UpdateWithOCFLSpec(s Spec) ObjectUpdateOption {
 	return func(o *objectUpdateOptions) {
-		o.Spec = s
+		o.spec = s
 	}
 }
 
@@ -549,7 +557,7 @@ func UpdateWithOCFLSpec(s Spec) ObjectUpdateOption {
 // new version increments the existing version number, whatever it may be.
 func UpdateWithNewHead(v int) ObjectUpdateOption {
 	return func(o *objectUpdateOptions) {
-		o.NewHEAD = v
+		o.newHead = v
 	}
 }
 
@@ -558,19 +566,20 @@ func UpdateWithNewHead(v int) ObjectUpdateOption {
 // in an error.
 func UpdateWithUnchangedVersionState() ObjectUpdateOption {
 	return func(o *objectUpdateOptions) {
-		o.AllowUnchanged = true
+		o.allowUnchanged = true
 	}
 }
 
 // UpdateWithContentPathFunc is used to set a function for enforcing
-// naming conventiosn for content paths.
+// naming conventiosn for content paths in the new inventory.
 func UpdateWithContentPathFunc(mutate PathMutation) ObjectUpdateOption {
 	return func(o *objectUpdateOptions) {
-		o.ContentPathFunc = mutate
+		o.contentPathFunc = mutate
 	}
 }
 
-// UpdateWithLogger sets the logger using when applying the UpdatePlan
+// UpdateWithLogger sets the logger used to log message from each
+// step of the UpdatePlan.
 func UpdateWithLogger(logger *slog.Logger) ObjectUpdateOption {
 	return func(o *objectUpdateOptions) {
 		o.logger = logger
@@ -578,7 +587,7 @@ func UpdateWithLogger(logger *slog.Logger) ObjectUpdateOption {
 }
 
 // UpdateWithGoLimit sets the number of goroutines used to run
-// concurrent steps in the UpdatePlan
+// concurrent steps when running the UpdatePlan.
 func UpdateWithGoLimit(gos int) ObjectUpdateOption {
 	return func(o *objectUpdateOptions) {
 		o.goLimit = gos
