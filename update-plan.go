@@ -38,10 +38,10 @@ type UpdatePlan struct {
 	logger  *slog.Logger
 }
 
-// NewUpdatePlan builds an *UpdatePlan that be used to update the object at
+// newUpdatePlan builds an *UpdatePlan that be used to update the object at
 // objDir in objFS, transitioning from oldInv to newInv, with new content
 // available in src.
-func NewUpdatePlan(objFS ocflfs.FS, objDir string, newInv *Inventory, oldInv *StoredInventory, src ContentSource) (*UpdatePlan, error) {
+func newUpdatePlan(objFS ocflfs.FS, objDir string, newInv *Inventory, oldInv *StoredInventory, src ContentSource) (*UpdatePlan, error) {
 	newInvBytes, invDigest, err := newInv.marshal()
 	if err != nil {
 		return nil, fmt.Errorf("building new inventory: %w", err)
@@ -50,7 +50,7 @@ func NewUpdatePlan(objFS ocflfs.FS, objDir string, newInv *Inventory, oldInv *St
 		newInv: &StoredInventory{Inventory: *newInv, digest: invDigest, bytes: newInvBytes},
 		oldInv: oldInv,
 	}
-	if err := u.BuildSteps(objFS, objDir, src); err != nil {
+	if err := u.Prepare(objFS, objDir, src); err != nil {
 		return nil, err
 	}
 	return u, nil
@@ -68,9 +68,18 @@ func (u *UpdatePlan) Apply(ctx context.Context) (*StoredInventory, error) {
 	return u.newInv, nil
 }
 
-// BuildSteps is used to regenerate u's Step functions. This is only needed
+// BaseInventoryDigest returns the digest of the object's existing inventory.json.
+// It returns an empty string if the UpdatePlan would create a new object.
+func (u *UpdatePlan) BaseInventoryDigest() string {
+	if u.oldInv == nil {
+		return ""
+	}
+	return u.oldInv.digest
+}
+
+// Prepare is used to regenerate u's Step functions. This is only needed
 // if u was created by unmarshaling from a binary representation.
-func (u *UpdatePlan) BuildSteps(objFS ocflfs.FS, objDir string, src ContentSource) error {
+func (u *UpdatePlan) Prepare(objFS ocflfs.FS, objDir string, src ContentSource) error {
 	// the unmarshalled newSteps have Done and Err state, but their run functions
 	// nil: rebuild the newSteps to run and import the previous run state.
 	newSteps, err := newPlanSteps(objFS, objDir, u.newInv, u.oldInv, src)
@@ -173,6 +182,12 @@ func (u UpdatePlan) MarshalBinary() ([]byte, error) {
 	return buff.Bytes(), nil
 }
 
+// ObjectID returns the ID of the OCFL Object that the UpdatePlan must be
+// applied to.
+func (u *UpdatePlan) ObjectID() string {
+	return u.newInv.ID
+}
+
 // Revert calls the 'Revert' function on all Completed steps in u's update plan
 // unless all steps have been completed. If all steps have been completed Revert
 // has no effect and returns an ErrRevertUpdate.
@@ -185,10 +200,10 @@ func (u *UpdatePlan) Revert(ctx context.Context) error {
 
 // SetGoLimti sets the number of goroutines used for processing Steps with Async
 // == true. The default value is runtime.NumCPU()
-func (u *UpdatePlan) SetGoLimit(gos int) { u.goLimit = gos }
+func (u *UpdatePlan) setGoLimit(gos int) { u.goLimit = gos }
 
-// SetLogger sets a logger that will be used when running stesp in u.
-func (u *UpdatePlan) SetLogger(logger *slog.Logger) { u.logger = logger }
+// setLogger sets a logger that will be used when running stesp in u.
+func (u *UpdatePlan) setLogger(logger *slog.Logger) { u.logger = logger }
 
 // Steps iterates over all steps in the update plan
 func (u UpdatePlan) Steps() iter.Seq[*PlanStep] {
@@ -238,6 +253,10 @@ func newPlanSteps(objFS ocflfs.FS, objDir string, newInv, oldInv *StoredInventor
 	var oldHead VNum
 	var oldSpec Spec
 	if oldInv != nil {
+		if oldInv.ID != newInv.ID {
+			err := fmt.Errorf("new inventory ID does not match previous inventory's: %q != %q", newInv.ID, oldInv.ID)
+			return nil, err
+		}
 		oldInvBytes = oldInv.bytes
 		oldInvDigest = oldInv.digest
 		oldAlg = oldInv.DigestAlgorithm
@@ -249,7 +268,7 @@ func newPlanSteps(objFS ocflfs.FS, objDir string, newInv, oldInv *StoredInventor
 		return nil, err
 	}
 	if newHead.num != oldHead.num+1 {
-		return nil, errors.New("new inventory includes more than one new version")
+		return nil, errors.New("new inventory 'head' is not incremented by 1")
 	}
 	for _, dig := range newFiles.SortedPaths() {
 		if fsys, _ := src.GetContent(dig); fsys == nil {
@@ -611,22 +630,30 @@ func runSteps(ctx context.Context, steps iter.Seq[*PlanStep], gos int, logger *s
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	group := &errgroup.Group{}
-	group.SetLimit(gos)
+	var group *errgroup.Group
+	var groupCtx context.Context
 	for step := range steps {
 		if step.state.Async {
+			if group == nil {
+				// The group used for consecutive async steps. If any of the
+				// consecutive async steps returns an error, the context for all
+				// of them is canceled.
+				group, groupCtx = errgroup.WithContext(ctx)
+				group = &errgroup.Group{}
+				group.SetLimit(gos)
+			}
 			group.Go(func() error {
 				var err error
 				switch {
 				case backward:
 					logger.Info("reverting", "step", step.state.Name)
-					err = step.Revert(ctx)
+					err = step.Revert(groupCtx)
 					if err != nil {
 						logger.Error(err.Error())
 					}
 				default:
 					logger.Info(step.state.Name)
-					err = step.Run(ctx)
+					err = step.Run(groupCtx)
 					if err != nil {
 						logger.Error(err.Error())
 					}
@@ -635,9 +662,14 @@ func runSteps(ctx context.Context, steps iter.Seq[*PlanStep], gos int, logger *s
 			})
 			continue
 		}
-		// wait for previous async steps to complete
-		if err := group.Wait(); err != nil {
-			return err
+		// Sync step
+		// wait for any previous async steps to complete
+		if group != nil {
+			if err := group.Wait(); err != nil {
+				return err
+			}
+			group = nil
+			groupCtx = nil
 		}
 		switch {
 		case backward:
@@ -654,7 +686,10 @@ func runSteps(ctx context.Context, steps iter.Seq[*PlanStep], gos int, logger *s
 			}
 		}
 	}
-	return group.Wait()
+	if group != nil {
+		return group.Wait()
+	}
+	return nil
 }
 
 type updatePlanState struct {

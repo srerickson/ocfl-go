@@ -19,6 +19,7 @@ import (
 	"github.com/srerickson/ocfl-go/digest"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/fs/local"
+	"github.com/srerickson/ocfl-go/internal/testutil"
 )
 
 func TestObject_Example(t *testing.T) {
@@ -189,6 +190,45 @@ func TestNewObject(t *testing.T) {
 		})
 		i++
 	}
+}
+
+func TestObject_ApplyUpdatePlan(t *testing.T) {
+	ctx := context.Background()
+	fixtures := []string{
+		filepath.Join(`testdata`, `object-fixtures`, `1.1`, `good-objects`, `minimal_one_version_one_file`),
+		filepath.Join(`testdata`, `object-fixtures`, `1.1`, `good-objects`, `minimal_no_content`),
+	}
+	stage, err := ocfl.StageBytes(map[string][]byte{
+		"new-data.csv": []byte("1,2,3"),
+	}, digest.SHA512)
+	be.NilErr(t, err)
+	t.Run("different object", func(t *testing.T) {
+		fsys := testutil.TmpLocalFS(t, fixtures...)
+		obj1, err := ocfl.NewObject(ctx, fsys, `minimal_no_content`)
+		be.NilErr(t, err)
+		obj2, err := ocfl.NewObject(ctx, fsys, `minimal_one_version_one_file`)
+		be.NilErr(t, err)
+		update, err := obj1.NewUpdatePlan(stage, "update", ocfl.User{Name: "Me"})
+		be.NilErr(t, err)
+		err = obj2.ApplyUpdatePlan(ctx, update, stage.ContentSource)
+		be.Nonzero(t, err)
+		be.In(t, "for a different object", err.Error())
+	})
+	t.Run("wrong base inventory", func(t *testing.T) {
+		fsys := testutil.TmpLocalFS(t, fixtures...)
+		obj, err := ocfl.NewObject(ctx, fsys, `minimal_no_content`)
+		be.NilErr(t, err)
+		update, err := obj.NewUpdatePlan(stage, "update", ocfl.User{Name: "Me"})
+		be.NilErr(t, err)
+		// ok
+		err = obj.ApplyUpdatePlan(ctx, update, stage.ContentSource)
+		be.NilErr(t, err)
+		// error
+		err = obj.ApplyUpdatePlan(ctx, update, stage.ContentSource)
+		be.Nonzero(t, err)
+		be.In(t, "base inventory does not match", err.Error())
+	})
+
 }
 
 func TestObject_Update(t *testing.T) {
