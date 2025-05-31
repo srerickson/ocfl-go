@@ -90,10 +90,7 @@ func (obj *Object) ApplyUpdatePlan(ctx context.Context, update *UpdatePlan, src 
 	if base := obj.rootInventory; base != nil && base.digest != update.BaseInventoryDigest() {
 		return errors.New("update plan's base inventory does not match the object's current inventory")
 	}
-	if err := update.Prepare(obj.fs, obj.path, src); err != nil {
-		return err
-	}
-	newInv, err := update.Apply(ctx)
+	newInv, err := update.Apply(ctx, obj.fs, obj.path, src)
 	if err != nil {
 		return err
 	}
@@ -125,7 +122,7 @@ func (obj *Object) NewInventoryBuilder() *InventoryBuilder {
 func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
 	updateOpts := newObjectUpdateOptions(opts...)
 	newInv, err := obj.NewInventoryBuilder().
-		FixitySource(stage).
+		FixitySource(stage.FixitySource).
 		ContentPathFunc(updateOpts.contentPathFunc).
 		Spec(updateOpts.spec).
 		AddVersion(
@@ -145,7 +142,7 @@ func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...Ob
 			return nil, errors.New("update has unchanged version state")
 		}
 	}
-	plan, err := newUpdatePlan(obj.fs, obj.path, newInv, currentInv, stage.ContentSource)
+	plan, err := newUpdatePlan(newInv, currentInv)
 	if err != nil {
 		return nil, fmt.Errorf("in object update plan: %w", err)
 	}
@@ -154,10 +151,10 @@ func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...Ob
 	return plan, nil
 }
 
-// Update creates an new UpdatePlan for the staged content and applies it. It
-// returns a reference to the *UpdatePlan, if one was created, so the update can
-// be retried (with [Object.ApplyUpdatePlan]) or reverted (with [UpdatePlan.Revert])
-// if necessary.
+// Update creates an UpdatePlan for the staged content and applies it,
+// resulting a new object version. It returns a reference to the *UpdatePlan, if
+// one was created, so the update can be retried (with [Object.ApplyUpdatePlan])
+// or reverted (with [UpdatePlan.Revert]) if necessary.
 func (obj *Object) Update(ctx context.Context, stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
 	plan, err := obj.NewUpdatePlan(stage, msg, user, opts...)
 	if err != nil {

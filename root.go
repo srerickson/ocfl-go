@@ -344,7 +344,7 @@ func (r *Root) setLayout(ctx context.Context, layout extension.Layout, desc stri
 }
 
 // readExtensionConfig reads the extension config file for ext in the storage root's
-// extensions directory. The value is unmarshalled into the value pointed to by
+// extensions directory. The value is unmarshaled into the value pointed to by
 // ext. If the extension config does not exist, nil is returned.
 func readExtensionConfig(ctx context.Context, fsys ocflfs.FS, root string, name string) (extension.Extension, error) {
 	confPath := path.Join(root, extensionsDir, name, extensionConfigFile)

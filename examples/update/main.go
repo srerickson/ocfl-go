@@ -77,7 +77,7 @@ func runUpdate(ctx context.Context, args []string) error {
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			logger.Info("received interupt: reverting changes...")
-			err = update.Revert(ctx)
+			err = update.Revert(ctx, obj.FS(), obj.Path(), stage)
 		}
 		return err
 	}
