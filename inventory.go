@@ -69,7 +69,7 @@ func (inv *Inventory) Validate() *Validation {
 	return imp.ValidateInventory(inv)
 }
 
-// marshal returns the json marshalled inventory with its digest
+// marshal returns the json marshaled inventory with its digest
 func (inv Inventory) marshal() ([]byte, string, error) {
 	buff, err := json.Marshal(inv)
 	if err != nil {
@@ -136,7 +136,7 @@ type User struct {
 	Address string `json:"address,omitempty"`
 }
 
-// StoredInventory is an unmarshalled inventory with the digest of its source data.
+// StoredInventory is an unmarshaled inventory with the digest of its source data.
 type StoredInventory struct {
 	Inventory
 

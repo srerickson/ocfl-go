@@ -29,9 +29,9 @@ var ErrRevertUpdate = errors.New("the update has completed and cannot be reverte
 // stopped or failed. Each PlanStep includes compensating actions for reverting
 // partial updates that cannot be completed.
 type UpdatePlan struct {
+	steps  PlanSteps
 	newInv *StoredInventory
 	oldInv *StoredInventory
-	steps  PlanSteps
 
 	// options
 	goLimit int
@@ -41,7 +41,7 @@ type UpdatePlan struct {
 // newUpdatePlan builds an *UpdatePlan that be used to update the object at
 // objDir in objFS, transitioning from oldInv to newInv, with new content
 // available in src.
-func newUpdatePlan(objFS ocflfs.FS, objDir string, newInv *Inventory, oldInv *StoredInventory, src ContentSource) (*UpdatePlan, error) {
+func newUpdatePlan(newInv *Inventory, oldInv *StoredInventory) (*UpdatePlan, error) {
 	newInvBytes, invDigest, err := newInv.marshal()
 	if err != nil {
 		return nil, fmt.Errorf("building new inventory: %w", err)
@@ -50,7 +50,7 @@ func newUpdatePlan(objFS ocflfs.FS, objDir string, newInv *Inventory, oldInv *St
 		newInv: &StoredInventory{Inventory: *newInv, digest: invDigest, bytes: newInvBytes},
 		oldInv: oldInv,
 	}
-	if err := u.Prepare(objFS, objDir, src); err != nil {
+	if err := u.prepareSteps(); err != nil {
 		return nil, err
 	}
 	return u, nil
@@ -61,8 +61,9 @@ func newUpdatePlan(objFS ocflfs.FS, objDir string, newInv *Inventory, oldInv *St
 // results in an error, execution stops and the error is returned. Some steps in
 // the plan may run concurrently. Use SetGoLimit to set number of goroutines
 // used to run concurrent steps.
-func (u *UpdatePlan) Apply(ctx context.Context) (*StoredInventory, error) {
-	if err := runSteps(ctx, u.IncompleteSteps(), u.goLimit, u.logger, false); err != nil {
+func (u *UpdatePlan) Apply(ctx context.Context, objFS ocflfs.FS, objDir string, src ContentSource) (*StoredInventory, error) {
+	err := runSteps(ctx, u.IncompleteSteps(), objFS, objDir, src, u.goLimit, u.logger, false)
+	if err != nil {
 		return nil, err
 	}
 	return u.newInv, nil
@@ -70,34 +71,11 @@ func (u *UpdatePlan) Apply(ctx context.Context) (*StoredInventory, error) {
 
 // BaseInventoryDigest returns the digest of the object's existing inventory.json.
 // It returns an empty string if the UpdatePlan would create a new object.
-func (u *UpdatePlan) BaseInventoryDigest() string {
+func (u UpdatePlan) BaseInventoryDigest() string {
 	if u.oldInv == nil {
 		return ""
 	}
 	return u.oldInv.digest
-}
-
-// Prepare is used to regenerate u's Step functions. This is only needed
-// if u was created by unmarshaling from a binary representation.
-func (u *UpdatePlan) Prepare(objFS ocflfs.FS, objDir string, src ContentSource) error {
-	// the unmarshalled newSteps have Done and Err state, but their run functions
-	// nil: rebuild the newSteps to run and import the previous run state.
-	newSteps, err := newPlanSteps(objFS, objDir, u.newInv, u.oldInv, src)
-	if err != nil {
-		return err
-	}
-	if u.steps == nil {
-		u.steps = newSteps
-		return nil
-	}
-	if !newSteps.Eq(u.steps) {
-		return errors.New("previous update log doesn't reflect current update plan")
-	}
-	for i := range newSteps {
-		u.steps[i].run = newSteps[i].run
-		u.steps[i].revert = newSteps[i].revert
-	}
-	return nil
 }
 
 // Completed return true if all u's steps are marked as completed
@@ -191,11 +169,11 @@ func (u *UpdatePlan) ObjectID() string {
 // Revert calls the 'Revert' function on all Completed steps in u's update plan
 // unless all steps have been completed. If all steps have been completed Revert
 // has no effect and returns an ErrRevertUpdate.
-func (u *UpdatePlan) Revert(ctx context.Context) error {
+func (u *UpdatePlan) Revert(ctx context.Context, objFS ocflfs.FS, objDir string, src ContentSource) error {
 	if u.Completed() {
 		return ErrRevertUpdate
 	}
-	return runSteps(ctx, u.CompletedSteps(), u.goLimit, u.logger, true)
+	return runSteps(ctx, u.CompletedSteps(), objFS, objDir, src, u.goLimit, u.logger, true)
 }
 
 // SetGoLimti sets the number of goroutines used for processing Steps with Async
@@ -239,13 +217,38 @@ func (u *UpdatePlan) UnmarshalBinary(b []byte) error {
 	u.newInv = newInv
 	u.oldInv = oldInv
 	u.steps = decoded.Steps
+	if err := u.prepareSteps(); err != nil {
+		return err
+	}
 	return nil
 }
 
-func newPlanSteps(objFS ocflfs.FS, objDir string, newInv, oldInv *StoredInventory, src ContentSource) (PlanSteps, error) {
+// prepareSteps is used to regenerate u's Step functions. This is only needed
+// if u was created by unmarshaling from a binary representation.
+func (u *UpdatePlan) prepareSteps() error {
+	// the unmarshaled newSteps have Done and Err state, but their run functions
+	// nil: rebuild the newSteps to run and import the previous run state.
+	newSteps, err := newPlanSteps(u.newInv, u.oldInv)
+	if err != nil {
+		return err
+	}
+	if u.steps == nil {
+		u.steps = newSteps
+		return nil
+	}
+	if !newSteps.Eq(u.steps) {
+		return errors.New("previous update log doesn't reflect current update plan")
+	}
+	for i := range newSteps {
+		u.steps[i].run = newSteps[i].run
+		u.steps[i].revert = newSteps[i].revert
+	}
+	return nil
+}
+
+func newPlanSteps(newInv, oldInv *StoredInventory) (PlanSteps, error) {
 	newFiles := newInv.versionContent(newInv.Head)
-	newHead := newInv.Head
-	newVersionDir := path.Join(objDir, newHead.String())
+	newHead := newInv.Head.String()
 	newSpec := newInv.Type.Spec
 	newAlg := newInv.DigestAlgorithm
 	var oldInvBytes []byte
@@ -267,23 +270,20 @@ func newPlanSteps(objFS ocflfs.FS, objDir string, newInv, oldInv *StoredInventor
 		err := fmt.Errorf("new version's OCFL spec (%q) cannot be lower than the previous version's (%q)", newSpec, oldSpec)
 		return nil, err
 	}
-	if newHead.num != oldHead.num+1 {
+	if newInv.Head.num != oldHead.num+1 {
 		return nil, errors.New("new inventory 'head' is not incremented by 1")
-	}
-	for _, dig := range newFiles.SortedPaths() {
-		if fsys, _ := src.GetContent(dig); fsys == nil {
-			return nil, fmt.Errorf("content source doesn't provide %q", dig)
-		}
 	}
 	plan := []PlanStep{
 		// initial step is noop with revert to remove the entire object root
 		// for v1 updates.
 		{
-			state: planStepState{Name: "object root " + objDir},
-			run:   func(ctx context.Context) (int64, error) { return 0, nil },
-			revert: func(ctx context.Context) error {
+			state: planStepState{Name: "object root "},
+			run: func(_ context.Context, _ ocflfs.FS, _ string, _ ContentSource) (int64, error) {
+				return 0, nil
+			},
+			revert: func(ctx context.Context, objFS ocflfs.FS, objDir string, _ ContentSource) error {
 				// delete entire object root to revert first version.
-				if newHead.num == 1 {
+				if newInv.Head.num == 1 {
 					return ocflfs.RemoveAll(ctx, objFS, objDir)
 				}
 				return nil
@@ -292,30 +292,32 @@ func newPlanSteps(objFS ocflfs.FS, objDir string, newInv, oldInv *StoredInventor
 	}
 	plan = append(plan,
 		// steps for object declaration files
-		updateDeclarationSteps(objFS, objDir, newSpec, oldSpec)...,
+		updateDeclarationSteps(newSpec, oldSpec)...,
 	)
 	plan = append(plan,
 		// a step to remove entire version directory during during revert.
 		PlanStep{
-			state: planStepState{Name: "version directory " + newVersionDir},
-			run:   func(ctx context.Context) (int64, error) { return 0, nil },
-			revert: func(ctx context.Context) error {
+			state: planStepState{Name: "version directory " + newHead},
+			run: func(_ context.Context, _ ocflfs.FS, _ string, _ ContentSource) (int64, error) {
+				return 0, nil
+			},
+			revert: func(ctx context.Context, objFS ocflfs.FS, objDir string, src ContentSource) error {
 				// remove everything in the new version directory
-				return ocflfs.RemoveAll(ctx, objFS, newVersionDir)
+				objVerDir := path.Join(objDir, newHead)
+				return ocflfs.RemoveAll(ctx, objFS, objVerDir)
 			},
 		},
 	)
 	plan = append(plan,
 		// steps to copy contents into the version directory
-		updateVersionContentsSteps(objFS, objDir, newFiles, src)...,
+		updateVersionContentsSteps(newFiles)...,
 	)
 	plan = append(plan,
 		// steps to update inventories and sidecars in version directory and roo,t
-		updateInventoriesSteps(
-			objFS, objDir, newHead,
+		updateInventorySteps(
 			newInv.bytes, oldInvBytes,
 			newInv.digest, oldInvDigest,
-			newAlg, oldAlg,
+			newInv.Head, newAlg, oldAlg,
 		)...,
 	)
 
@@ -326,12 +328,18 @@ func newPlanSteps(objFS ocflfs.FS, objDir string, newInv, oldInv *StoredInventor
 // rolling it back if necessary.
 type PlanSteps []PlanStep
 
-func (s PlanSteps) Eq(other PlanSteps) bool {
-	if len(s) != len(other) {
+func (s PlanSteps) Eq(s2 PlanSteps) bool {
+	if len(s) != len(s2) {
 		return false
 	}
 	for i := range s {
-		if s[i].state.Name != other[i].state.Name {
+		this := s[i]
+		that := s2[i]
+		// two steps are equal if the values set during prepare() are equal.
+		if this.state.Name != that.state.Name {
+			return false
+		}
+		if this.state.ContentDigest != that.state.ContentDigest {
 			return false
 		}
 	}
@@ -342,11 +350,13 @@ func (s PlanSteps) Eq(other PlanSteps) bool {
 type PlanStep struct {
 	// plan state included in binary representation
 	state planStepState
+	// run step concurrently with other async steps
+	async bool
 	// run performs the step's actions. it returns an (optional) size for content
 	// written to the object and an error.
-	run func(ctx context.Context) (int64, error)
+	run func(ctx context.Context, objFS ocflfs.FS, objDir string, src ContentSource) (int64, error)
 	// revert undoes the run step.
-	revert func(ctx context.Context) error
+	revert func(ctx context.Context, objFS ocflfs.FS, objDir string, src ContentSource) error
 }
 
 func (step PlanStep) MarshalBinary() ([]byte, error) {
@@ -364,20 +374,24 @@ func (step PlanStep) ErrMsg() string { return step.state.Err }
 // reverted.
 func (step PlanStep) Completed() bool { return step.state.Completed }
 
+// ContentDigest returns the digest of the content (if any) copied during
+// the step.
+func (step PlanStep) ContentDigest() string { return step.state.ContentDigest }
+
 // Name returns the step's unique name
 func (step PlanStep) Name() string { return step.state.Name }
 
 // Run runs the step's function if the step is not marked as complete, recording
 // any error message to Err. If the step does not return an error, it is marked
 // as complete and any previous error message is cleared.
-func (step *PlanStep) Run(ctx context.Context) error {
+func (step *PlanStep) Run(ctx context.Context, objFS ocflfs.FS, objDir string, src ContentSource) error {
 	if step.run == nil {
 		return nil
 	}
 	if step.state.Completed {
 		return nil
 	}
-	size, err := step.run(ctx)
+	size, err := step.run(ctx, objFS, objDir, src)
 	if err != nil {
 		msg := err.Error()
 		if msg == "" {
@@ -396,14 +410,14 @@ func (step *PlanStep) Run(ctx context.Context) error {
 // undo function returns an error, the error message is saved as RevertErr. If
 // Revert does not result in an error, the step is marked as incomplete and
 // UndoErr is cleared.
-func (step *PlanStep) Revert(ctx context.Context) error {
+func (step *PlanStep) Revert(ctx context.Context, objFS ocflfs.FS, objDir string, src ContentSource) error {
 	if step.revert == nil {
 		return nil
 	}
 	if !step.state.Completed {
 		return nil
 	}
-	err := step.revert(ctx)
+	err := step.revert(ctx, objFS, objDir, src)
 	if err != nil {
 		msg := err.Error()
 		if msg == "" {
@@ -418,7 +432,7 @@ func (step *PlanStep) Revert(ctx context.Context) error {
 }
 
 // Size returns the number of bytes copied to the object as part of the steps
-// run action.
+// run action. This is only set after the step has run
 func (step *PlanStep) Size() int64 {
 	return step.state.Size
 }
@@ -433,20 +447,20 @@ func (step *PlanStep) UnmarshalBinary(b []byte) error {
 }
 
 // steps for setting/updating an ocfl object declaration
-func updateDeclarationSteps(fsys ocflfs.FS, dir string, newSpec, oldSpec Spec) []PlanStep {
+func updateDeclarationSteps(newSpec, oldSpec Spec) []PlanStep {
 	steps := []PlanStep{}
 	if newSpec == oldSpec {
 		return steps
 	}
 	newDecl := Namaste{Type: NamasteTypeObject, Version: newSpec}
-	newDeclName := path.Join(dir, newDecl.Name())
 	steps = append(steps, PlanStep{
-		state: planStepState{Name: "write " + newDeclName},
-		run: func(ctx context.Context) (int64, error) {
-			return 0, WriteDeclaration(ctx, fsys, dir, newDecl)
+		state: planStepState{Name: "write " + newDecl.Name()},
+		run: func(ctx context.Context, objFS ocflfs.FS, objDir string, _ ContentSource) (int64, error) {
+			return 0, WriteDeclaration(ctx, objFS, objDir, newDecl)
 		},
-		revert: func(ctx context.Context) error {
-			err := ocflfs.Remove(ctx, fsys, newDeclName)
+		revert: func(ctx context.Context, objFS ocflfs.FS, objDir string, _ ContentSource) error {
+			objDecl := path.Join(objDir, newDecl.Name())
+			err := ocflfs.Remove(ctx, objFS, objDecl)
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil
 			}
@@ -455,18 +469,18 @@ func updateDeclarationSteps(fsys ocflfs.FS, dir string, newSpec, oldSpec Spec) [
 	})
 	if !oldSpec.Empty() {
 		oldDecl := Namaste{Type: NamasteTypeObject, Version: oldSpec}
-		oldDeclName := path.Join(dir, oldDecl.Name())
 		steps = append(steps, PlanStep{
-			state: planStepState{Name: "remove " + oldDeclName},
-			run: func(ctx context.Context) (int64, error) {
-				err := ocflfs.Remove(ctx, fsys, oldDeclName)
+			state: planStepState{Name: "remove " + oldDecl.Name()},
+			run: func(ctx context.Context, objFS ocflfs.FS, objDir string, _ ContentSource) (int64, error) {
+				oldObjDecl := path.Join(objDir, oldDecl.Name())
+				err := ocflfs.Remove(ctx, objFS, oldObjDecl)
 				if errors.Is(err, fs.ErrNotExist) {
 					err = nil
 				}
 				return 0, err
 			},
-			revert: func(ctx context.Context) error {
-				return WriteDeclaration(ctx, fsys, dir, oldDecl)
+			revert: func(ctx context.Context, objFS ocflfs.FS, objDir string, _ ContentSource) error {
+				return WriteDeclaration(ctx, objFS, objDir, oldDecl)
 			},
 		})
 	}
@@ -474,25 +488,25 @@ func updateDeclarationSteps(fsys ocflfs.FS, dir string, newSpec, oldSpec Spec) [
 }
 
 // steps for copying files into the object's version directory
-func updateVersionContentsSteps(objFS ocflfs.FS, objDir string, newContent PathMap, src ContentSource) []PlanStep {
+func updateVersionContentsSteps(newContent PathMap) []PlanStep {
 	var steps []PlanStep
 	for dstName, dig := range newContent.SortedPaths() {
-		dstPath := path.Join(objDir, dstName)
 		steps = append(steps, PlanStep{
 			state: planStepState{
-				Name:          "copy " + dstPath,
+				Name:          "copy " + dstName,
 				ContentDigest: dig,
-				ContentPath:   dstName,
-				Async:         true,
 			},
-			run: func(ctx context.Context) (int64, error) {
+			async: true,
+			run: func(ctx context.Context, objFS ocflfs.FS, objDir string, src ContentSource) (int64, error) {
+				dstPath := path.Join(objDir, dstName)
 				srcFS, srcPath := src.GetContent(dig)
 				if srcFS == nil {
 					return 0, fmt.Errorf("content source doesn't provide %q", dig)
 				}
 				return ocflfs.Copy(ctx, objFS, dstPath, srcFS, srcPath)
 			},
-			revert: func(ctx context.Context) error {
+			revert: func(ctx context.Context, objFS ocflfs.FS, objDir string, _ ContentSource) error {
+				dstPath := path.Join(objDir, dstName)
 				err := ocflfs.Remove(ctx, objFS, dstPath)
 				if errors.Is(err, fs.ErrNotExist) {
 					return nil
@@ -505,31 +519,26 @@ func updateVersionContentsSteps(objFS ocflfs.FS, objDir string, newContent PathM
 }
 
 // steps for updating object's version and root inventories.
-func updateInventoriesSteps(
-	objFS ocflfs.FS, objDir string, newHead VNum,
+func updateInventorySteps(
 	newInvBytes []byte, oldInvBytes []byte,
 	newInvDigest string, oldInvDigest string,
-	newAlg string, oldAlg string,
+	newHead VNum, newAlg string, oldAlg string,
 ) []PlanStep {
 	var steps []PlanStep
-	rootInv := path.Join(objDir, inventoryBase)
-	rootInvSidecar := rootInv + "." + newAlg
-
-	verDir := path.Join(objDir, newHead.String())
+	invSidecar := inventoryBase + "." + newAlg
+	verDir := newHead.String()
 	verDirInv := path.Join(verDir, inventoryBase)
 	verDirInvSidecar := verDirInv + "." + newAlg
-	var oldHead VNum
-	if newHead.num > 1 {
-		oldHead = VNum{num: newHead.num - 1, padding: newHead.padding}
-	}
 	// write version directory inventory.json
 	steps = append(steps, PlanStep{
 		state: planStepState{Name: "write " + verDirInv},
-		run: func(ctx context.Context) (int64, error) {
-			return ocflfs.Write(ctx, objFS, verDirInv, bytes.NewReader(newInvBytes))
+		run: func(ctx context.Context, objFS ocflfs.FS, objDir string, _ ContentSource) (int64, error) {
+			objVerDirInv := path.Join(objDir, verDirInv)
+			return ocflfs.Write(ctx, objFS, objVerDirInv, bytes.NewReader(newInvBytes))
 		},
-		revert: func(ctx context.Context) error {
-			err := ocflfs.Remove(ctx, objFS, verDirInv)
+		revert: func(ctx context.Context, objFS ocflfs.FS, objDir string, _ ContentSource) error {
+			objVerDirInv := path.Join(objDir, verDirInv)
+			err := ocflfs.Remove(ctx, objFS, objVerDirInv)
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil
 			}
@@ -539,11 +548,13 @@ func updateInventoriesSteps(
 	// write version directory inventory sidecar
 	steps = append(steps, PlanStep{
 		state: planStepState{Name: "write " + verDirInvSidecar},
-		run: func(ctx context.Context) (int64, error) {
-			return 0, writeInventorySidecar(ctx, objFS, verDir, newInvDigest, newAlg)
+		run: func(ctx context.Context, objFS ocflfs.FS, objDir string, _ ContentSource) (int64, error) {
+			objVerDir := path.Join(objDir, verDir)
+			return 0, writeInventorySidecar(ctx, objFS, objVerDir, newInvDigest, newAlg)
 		},
-		revert: func(ctx context.Context) error {
-			err := ocflfs.Remove(ctx, objFS, verDirInvSidecar)
+		revert: func(ctx context.Context, objFS ocflfs.FS, objDir string, _ ContentSource) error {
+			objVerDirInvSidecar := path.Join(objDir, verDirInvSidecar)
+			err := ocflfs.Remove(ctx, objFS, objVerDirInvSidecar)
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil
 			}
@@ -552,33 +563,28 @@ func updateInventoriesSteps(
 	})
 	// write root inventory.json
 	steps = append(steps, PlanStep{
-		state: planStepState{Name: "write " + rootInv},
-		run: func(ctx context.Context) (int64, error) {
-			return ocflfs.Write(ctx, objFS, rootInv, bytes.NewReader(newInvBytes))
+		state: planStepState{Name: "write " + inventoryBase},
+		run: func(ctx context.Context, objFS ocflfs.FS, objDir string, _ ContentSource) (int64, error) {
+			objInv := path.Join(objDir, inventoryBase)
+			return ocflfs.Write(ctx, objFS, objInv, bytes.NewReader(newInvBytes))
 		},
-		revert: func(ctx context.Context) error {
+		revert: func(ctx context.Context, objFS ocflfs.FS, objDir string, _ ContentSource) error {
+			objInv := path.Join(objDir, inventoryBase)
 			if newHead.num == 1 {
-				err := ocflfs.Remove(ctx, objFS, rootInv)
+				err := ocflfs.Remove(ctx, objFS, objInv)
 				if errors.Is(err, fs.ErrNotExist) {
 					return nil
 				}
 				return err
 			}
-			// restore previous version directory: first, try copying from previous
-			// version directory. If that doesn't work write oldInvBytes
-			oldVerInv := path.Join(objDir, oldHead.String(), inventoryBase)
-			_, err := ocflfs.Copy(ctx, objFS, rootInv, objFS, oldVerInv)
-			if errors.Is(err, fs.ErrNotExist) && len(oldInvBytes) > 0 {
-				// last version inventory didn't exist
-				_, err = ocflfs.Write(ctx, objFS, rootInv, bytes.NewReader(oldInvBytes))
-			}
+			_, err := ocflfs.Write(ctx, objFS, objInv, bytes.NewReader(oldInvBytes))
 			return err
 		},
 	})
 	// write root inventory sidecar
 	steps = append(steps, PlanStep{
-		state: planStepState{Name: "set " + rootInvSidecar},
-		run: func(ctx context.Context) (int64, error) {
+		state: planStepState{Name: "write " + invSidecar},
+		run: func(ctx context.Context, objFS ocflfs.FS, objDir string, _ ContentSource) (int64, error) {
 			err := writeInventorySidecar(ctx, objFS, objDir, newInvDigest, newAlg)
 			if err != nil {
 				return 0, err
@@ -587,24 +593,24 @@ func updateInventoriesSteps(
 				return 0, nil
 			}
 			// previous sidecar used a different algorithm needs to be removed
-			oldInvSidecar := rootInv + "." + oldAlg
+			oldInvSidecar := path.Join(objDir, inventoryBase) + "." + oldAlg
 			err = ocflfs.Remove(ctx, objFS, oldInvSidecar)
 			if errors.Is(err, fs.ErrNotExist) {
 				err = nil
 			}
 			return 0, err
 		},
-		revert: func(ctx context.Context) error {
+		revert: func(ctx context.Context, objFS ocflfs.FS, objDir string, _ ContentSource) error {
+			objInvSidecar := path.Join(objDir, invSidecar)
 			if newHead.num == 1 {
-				err := ocflfs.Remove(ctx, objFS, rootInvSidecar)
+				err := ocflfs.Remove(ctx, objFS, objInvSidecar)
 				if errors.Is(err, fs.ErrNotExist) {
 					return nil
 				}
 				return err
 			}
-			// replace the new inventory sidecar with the old one. These
-			// would be separate files -- we don't have to worry about that
-			// because algorithms changes aren't supported
+			// replace the new inventory sidecar with the old one (they may be
+			// separate files).
 			if err := writeInventorySidecar(ctx, objFS, objDir, oldInvDigest, oldAlg); err != nil {
 				return err
 			}
@@ -612,7 +618,7 @@ func updateInventoriesSteps(
 				return nil
 			}
 			// new sidecar uses a different algorithm and needs to be removed
-			err := ocflfs.Remove(ctx, objFS, rootInvSidecar)
+			err := ocflfs.Remove(ctx, objFS, objInvSidecar)
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil
 			}
@@ -623,7 +629,16 @@ func updateInventoriesSteps(
 }
 
 // run steps, forward or backward
-func runSteps(ctx context.Context, steps iter.Seq[*PlanStep], gos int, logger *slog.Logger, backward bool) error {
+func runSteps(
+	ctx context.Context,
+	steps iter.Seq[*PlanStep],
+	objFS ocflfs.FS,
+	objDir string,
+	src ContentSource,
+	gos int,
+	logger *slog.Logger,
+	backward bool,
+) error {
 	if gos < 1 {
 		gos = runtime.NumCPU()
 	}
@@ -633,7 +648,7 @@ func runSteps(ctx context.Context, steps iter.Seq[*PlanStep], gos int, logger *s
 	var group *errgroup.Group
 	var groupCtx context.Context
 	for step := range steps {
-		if step.state.Async {
+		if step.async {
 			if group == nil {
 				// The group used for consecutive async steps. If any of the
 				// consecutive async steps returns an error, the context for all
@@ -647,13 +662,13 @@ func runSteps(ctx context.Context, steps iter.Seq[*PlanStep], gos int, logger *s
 				switch {
 				case backward:
 					logger.Info("reverting", "step", step.state.Name)
-					err = step.Revert(groupCtx)
+					err = step.Revert(groupCtx, objFS, objDir, src)
 					if err != nil {
 						logger.Error(err.Error())
 					}
 				default:
 					logger.Info(step.state.Name)
-					err = step.Run(groupCtx)
+					err = step.Run(groupCtx, objFS, objDir, src)
 					if err != nil {
 						logger.Error(err.Error())
 					}
@@ -674,13 +689,13 @@ func runSteps(ctx context.Context, steps iter.Seq[*PlanStep], gos int, logger *s
 		switch {
 		case backward:
 			logger.Info("reverting", "step", step.state.Name)
-			if err := step.Revert(ctx); err != nil {
+			if err := step.Revert(ctx, objFS, objDir, src); err != nil {
 				logger.Error(err.Error())
 				return err
 			}
 		default:
 			logger.Info(step.state.Name)
-			if err := step.Run(ctx); err != nil {
+			if err := step.Run(ctx, objFS, objDir, src); err != nil {
 				logger.Error(err.Error())
 				return err
 			}
@@ -699,12 +714,13 @@ type updatePlanState struct {
 }
 
 type planStepState struct {
+	// set during prepare
 	Name          string
-	Err           string
-	RevertErr     string
-	Completed     bool
-	Async         bool
-	Size          int64
 	ContentDigest string
-	ContentPath   string
+
+	// set during run
+	Err       string
+	RevertErr string
+	Completed bool
+	Size      int64
 }

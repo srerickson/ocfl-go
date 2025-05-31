@@ -43,7 +43,7 @@ func TestUpdatePlan_RecoverUpdatePlan(t *testing.T) {
 	stagedContent, err := ocfl.StageDir(ctx, ocflfs.DirFS(content), ".", digest.SHA512)
 	be.NilErr(t, err)
 	errMaxSteps := errors.New("max steps reached")
-	// partialUpdate does a partial update and returns the marshalled update
+	// partialUpdate does a partial update and returns the marshaled update
 	// value. The update is canceled during the step set by cancelOnStep
 	partialUpdate := func(ctx context.Context, objFS *local.FS, cancelOnStep int) ([]byte, error) {
 		ctx, cancel := context.WithCancel(ctx)
@@ -68,7 +68,7 @@ func TestUpdatePlan_RecoverUpdatePlan(t *testing.T) {
 			if i >= cancelOnStep {
 				cancel()
 			}
-			if err := step.Run(ctx); err != nil {
+			if err := step.Run(ctx, objFS, ".", stagedContent); err != nil {
 				break
 			}
 			i++
@@ -88,9 +88,7 @@ func TestUpdatePlan_RecoverUpdatePlan(t *testing.T) {
 			var resumeUpdate ocfl.UpdatePlan
 			err = resumeUpdate.UnmarshalBinary(updateBytes)
 			be.NilErr(t, err)
-			err = resumeUpdate.Prepare(objFS, ".", stagedContent)
-			be.NilErr(t, err)
-			_, err = resumeUpdate.Apply(ctx)
+			_, err = resumeUpdate.Apply(ctx, objFS, ".", stagedContent)
 			be.NilErr(t, err)
 			err = ocfl.ValidateObject(ctx, objFS, ".").Err()
 			be.NilErr(t, err)
@@ -113,13 +111,11 @@ func TestUpdatePlan_RecoverUpdatePlan(t *testing.T) {
 			var resumeUpdate ocfl.UpdatePlan
 			err = resumeUpdate.UnmarshalBinary(updateBytes)
 			be.NilErr(t, err)
-			err = resumeUpdate.Prepare(objFS, ".", stagedContent)
-			be.NilErr(t, err)
 			switch {
 			case resumeUpdate.Completed():
 				be.NilErr(t, resumeUpdate.Err())
 				//update is complete and can't be reverted
-				err = resumeUpdate.Revert(ctx)
+				err = resumeUpdate.Revert(ctx, objFS, ".", stagedContent)
 				be.Nonzero(t, err)
 				be.True(t, errors.Is(err, ocfl.ErrRevertUpdate))
 				// object is valid
@@ -128,7 +124,7 @@ func TestUpdatePlan_RecoverUpdatePlan(t *testing.T) {
 			default:
 				// update is incomplete and has errors
 				be.Nonzero(t, resumeUpdate.Err())
-				err = resumeUpdate.Revert(ctx)
+				err = resumeUpdate.Revert(ctx, objFS, ".", stagedContent)
 				be.NilErr(t, err)
 				// object is empty
 				entries, err := ocflfs.ReadDir(ctx, objFS, ".")
@@ -154,9 +150,7 @@ func TestUpdatePlan_RecoverUpdatePlan(t *testing.T) {
 			var resumeUpdate ocfl.UpdatePlan
 			err = resumeUpdate.UnmarshalBinary(updateBytes)
 			be.NilErr(t, err)
-			err = resumeUpdate.Prepare(objFS, ".", stagedContent)
-			be.NilErr(t, err)
-			_, err = resumeUpdate.Apply(ctx)
+			_, err = resumeUpdate.Apply(ctx, objFS, ".", stagedContent)
 			be.NilErr(t, err)
 			err = ocfl.ValidateObject(ctx, objFS, ".").Err()
 			be.NilErr(t, err)
@@ -181,14 +175,11 @@ func TestUpdatePlan_RecoverUpdatePlan(t *testing.T) {
 			var resumeUpdate ocfl.UpdatePlan
 			err = resumeUpdate.UnmarshalBinary(updateBytes)
 			be.NilErr(t, err)
-			err = resumeUpdate.Prepare(objFS, ".", stagedContent)
-			be.NilErr(t, err)
-			be.NilErr(t, err)
 			switch {
 			case resumeUpdate.Completed():
 				be.NilErr(t, resumeUpdate.Err())
 				//update is complete and can't be reverted
-				err = resumeUpdate.Revert(ctx)
+				err = resumeUpdate.Revert(ctx, objFS, ".", stagedContent)
 				be.Nonzero(t, err)
 				obj, err := ocfl.NewObject(ctx, objFS, ".")
 				be.NilErr(t, err)
@@ -196,7 +187,7 @@ func TestUpdatePlan_RecoverUpdatePlan(t *testing.T) {
 			default:
 				// update is incomplete and has errors
 				be.Nonzero(t, resumeUpdate.Err())
-				err = resumeUpdate.Revert(ctx)
+				err = resumeUpdate.Revert(ctx, objFS, ".", stagedContent)
 				be.NilErr(t, err)
 				obj, err := ocfl.NewObject(ctx, objFS, ".")
 				be.NilErr(t, err)
