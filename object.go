@@ -17,7 +17,7 @@ import (
 	"github.com/srerickson/ocfl-go/logging"
 )
 
-// Object represents and OCFL Object, typically contained in a Root.
+// Object represents and OCFL Object, typically part of a [Root].
 type Object struct {
 	// object's storage backend. Must implement WriteFS to update.
 	fs ocflfs.FS
@@ -32,8 +32,8 @@ type Object struct {
 	requiredID string
 }
 
-// NewObject returns an *Object for managing the OCFL object at path in fsys.
-// The object doesn't need to exist when NewObject is called.
+// NewObject returns an *Object for managing the OCFL object at directory dir in
+// fsys. The object doesn't need to exist when NewObject is called.
 func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOption) (*Object, error) {
 	if !fs.ValidPath(dir) {
 		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
@@ -81,8 +81,9 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 	}
 }
 
-// ApplyUpdatePlan applies an [UpdatePlan] and sets obj's state with the new
-// object inventory.
+// ApplyUpdatePlan applies an [*UpdatePlan], resulting in a new object version.
+// The *UpdatePlan should be created with [Object.NewUpdatePlan]. The internal
+// state for obj is updated to reflect the new object inventory.
 func (obj *Object) ApplyUpdatePlan(ctx context.Context, update *UpdatePlan, src ContentSource) error {
 	if update.ObjectID() != obj.ID() {
 		return errors.New("update plan is for a different object")
@@ -106,9 +107,9 @@ func (obj Object) ContentDirectory() string {
 	return contentDir
 }
 
-// NewInventoryBuidler returns a new *InventoryBuilder that can be used to
-// generate obj's next root inventory.
-func (obj *Object) NewInventoryBuilder() *InventoryBuilder {
+// InventoryBuidler returns an *InventoryBuilder that can be used to generate
+// new inventory's for the object.
+func (obj *Object) InventoryBuilder() *InventoryBuilder {
 	var base *Inventory
 	if obj.rootInventory != nil {
 		base = &obj.rootInventory.Inventory
@@ -121,7 +122,7 @@ func (obj *Object) NewInventoryBuilder() *InventoryBuilder {
 // update plan.
 func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
 	updateOpts := newObjectUpdateOptions(opts...)
-	newInv, err := obj.NewInventoryBuilder().
+	newInv, err := obj.InventoryBuilder().
 		FixitySource(stage.FixitySource).
 		ContentPathFunc(updateOpts.contentPathFunc).
 		Spec(updateOpts.spec).
@@ -151,10 +152,12 @@ func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...Ob
 	return plan, nil
 }
 
-// Update creates an UpdatePlan for the staged content and applies it,
-// resulting a new object version. It returns a reference to the *UpdatePlan, if
-// one was created, so the update can be retried (with [Object.ApplyUpdatePlan])
-// or reverted (with [UpdatePlan.Revert]) if necessary.
+// Update creates a new object version with stage's state, the given version
+// message, and the user. To create the new object version, an *UpdatePlan is
+// created with [Object.NewUpdatePlan] and applied with
+// [Object.ApplyUpdatePlan]. The *UpdatePlan is returned even if an error occurs
+// while applying the plan. The *UpdatePlan can be be retried, by calling
+// [Object.ApplyUpdatePlan] again, or reverted, by calling [UpdatePlan.Revert].
 func (obj *Object) Update(ctx context.Context, stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
 	plan, err := obj.NewUpdatePlan(stage, msg, user, opts...)
 	if err != nil {
@@ -192,8 +195,9 @@ func (obj Object) ExtensionNames(ctx context.Context) ([]string, error) {
 	return names, err
 }
 
-// FixityAlgorithms returns a slice of the keys from the root inventory's
-// `fixity` block, or nil of the root inventory is not set.
+// FixityAlgorithms returns a slice of the keys from the `fixity` block of obj's
+// return inventory. If obj does not have a inventory (i.e., because one has not
+// been created yet), it returns nil.
 func (obj Object) FixityAlgorithms() []string {
 	if obj.rootInventory == nil {
 		return nil
@@ -206,7 +210,7 @@ func (obj Object) FS() ocflfs.FS {
 	return obj.fs
 }
 
-// GetFixity implements the [FixitySource] interface for Object, for use in Stage.
+// GetFixity implements the [FixitySource] interface for Object, for use in a [Stage].
 func (obj Object) GetFixity(dig string) digest.Set {
 	if obj.rootInventory == nil {
 		return nil
@@ -214,7 +218,7 @@ func (obj Object) GetFixity(dig string) digest.Set {
 	return obj.rootInventory.GetFixity(dig)
 }
 
-// GetContent implements [ContentSource] for Object, for use in Stage.
+// GetContent implements [ContentSource] for Object, for use in a [Stage].
 func (obj Object) GetContent(dig string) (ocflfs.FS, string) {
 	if obj.rootInventory == nil {
 		return nil, ""
@@ -246,9 +250,9 @@ func (obj Object) InventoryDigest() string {
 }
 
 // ID returns obj's inventory ID if the obj exists (its inventory is not nil).
-// If obj does not exist but was constructed with [Root.NewObject](), the ID
-// used with [Root.NewObject]() is returned. Otherwise, it returns an empty
-// string.
+// If obj does not exist but was constructed with [Root.NewObject] or with the
+// [ObjectWithID] option, the ID given as an argument is returned. Otherwise, it
+// returns an empty string.
 func (obj Object) ID() string {
 	if obj.rootInventory != nil {
 		return obj.rootInventory.ID
