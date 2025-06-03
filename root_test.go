@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"path/filepath"
 	"testing"
 
 	"github.com/carlmjohnson/be"
@@ -127,4 +128,35 @@ func TestRoot(t *testing.T) {
 			be.True(t, errors.Is(err, fs.ErrNotExist))
 		})
 	})
+}
+
+func TestRoot_ObjectDeclarations(t *testing.T) {
+	ctx := context.Background()
+	fsys := ocflfs.DirFS(filepath.Join(`testdata`, `store-fixtures`))
+	dir := `1.0/good-stores/simple-root`
+	root, err := ocfl.NewRoot(ctx, fsys, dir)
+	be.NilErr(t, err)
+
+	t.Run("simple-root", func(t *testing.T) {
+		count := 0
+		for ref, err := range root.ObjectDeclarations(ctx) {
+			be.NilErr(t, err)
+			be.Nonzero(t, ref.Info)
+			count++
+		}
+		be.Equal(t, 3, count)
+	})
+
+	t.Run("break iteration", func(t *testing.T) {
+		// check that iterator doesn't after break: this will panic
+		defer func() {
+			if err := recover(); err != nil {
+				t.Fatal(err)
+			}
+		}()
+		for range root.ObjectDeclarations(ctx) {
+			break
+		}
+	})
+
 }

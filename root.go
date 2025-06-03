@@ -152,7 +152,9 @@ func (r *Root) ObjectDeclarations(ctx context.Context) iter.Seq2[*ocflfs.FileRef
 			}
 			decl, err := ParseNamaste(path.Base(f.Path))
 			if err == nil && decl.IsObject() {
-				yield(f, nil)
+				if !yield(f, nil) {
+					return
+				}
 			}
 		}
 	}
