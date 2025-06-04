@@ -34,6 +34,9 @@ func TestUpdatePlan_Marshal(t *testing.T) {
 	err = sameUpdate.UnmarshalBinary(bytes)
 	be.NilErr(t, err)
 	be.True(t, update.Eq(&sameUpdate))
+	be.Equal(t, update.NextHead(), sameUpdate.NextHead())
+	be.Equal(t, update.NextInventoryDigest(), sameUpdate.NextInventoryDigest())
+	be.Equal(t, update.BaseInventoryDigest(), sameUpdate.BaseInventoryDigest())
 }
 
 func TestUpdatePlan_RecoverUpdatePlan(t *testing.T) {

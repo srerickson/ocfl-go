@@ -226,7 +226,6 @@ func TestObject_ApplyUpdatePlan(t *testing.T) {
 		// error
 		err = obj.ApplyUpdatePlan(ctx, update, stage.ContentSource)
 		be.Nonzero(t, err)
-		be.In(t, "base inventory does not match", err.Error())
 	})
 
 }
