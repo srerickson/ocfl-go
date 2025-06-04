@@ -116,7 +116,6 @@ func TestObject_Example(t *testing.T) {
 	be.True(t, sourceVersion.State().Eq(forkObj.Version(0).State()))
 }
 
-// OpenObject unit tests
 func TestNewObject(t *testing.T) {
 	ctx := context.Background()
 	fsys := ocflfs.DirFS(objectFixturesPath)
@@ -126,6 +125,8 @@ func TestNewObject(t *testing.T) {
 		opts   []ocfl.ObjectOption
 		expect func(*testing.T, *ocfl.Object, error)
 	}
+	v1Inventory, err := ocfl.ReadInventory(ctx, fsys, "1.0/good-objects/spec-ex-full/v1")
+	be.NilErr(t, err)
 	testCases := map[string]testCase{
 		"ok 1.0": {
 			fs:   fsys,
@@ -141,16 +142,24 @@ func TestNewObject(t *testing.T) {
 				be.NilErr(t, err)
 			},
 		},
-		"not existing": {
+		"not existin, no id": {
 			fs:   fsys,
 			path: "new-dir",
+			expect: func(t *testing.T, obj *ocfl.Object, err error) {
+				be.Nonzero(t, err) // ID is required
+			},
+		},
+		"not existing, with id": {
+			fs:   fsys,
+			path: "new-dir",
+			opts: []ocfl.ObjectOption{ocfl.ObjectWithID("new-object")},
 			expect: func(t *testing.T, obj *ocfl.Object, err error) {
 				be.NilErr(t, err)
 			},
 		},
 		"not existing, must exist": {
 			fs:   fsys,
-			path: "new-dir",
+			path: "missing-dir",
 			opts: []ocfl.ObjectOption{ocfl.ObjectMustExist()},
 			expect: func(t *testing.T, obj *ocfl.Object, err error) {
 				be.True(t, errors.Is(err, fs.ErrNotExist))
@@ -160,35 +169,70 @@ func TestNewObject(t *testing.T) {
 			fs:   fsys,
 			path: "1.1/bad-objects/E060_E064_root_inventory_digest_mismatch",
 			opts: []ocfl.ObjectOption{
-				ocfl.ObjectSkipSidecarValidation(),
+				ocfl.ObjectSkipRootSidecarValidation(),
 			},
 			expect: func(t *testing.T, _ *ocfl.Object, err error) {
 				be.NilErr(t, err)
 			},
 		},
-		"without skip inventory sidecar validation": {
+		"sidecar validation error": {
 			fs:   fsys,
 			path: "1.1/bad-objects/E060_E064_root_inventory_digest_mismatch",
 			expect: func(t *testing.T, _ *ocfl.Object, err error) {
+				// error from failed sidecar validation
 				var expectErr *digest.DigestError
 				be.True(t, errors.As(err, &expectErr))
 			},
 		},
-		"empty": {
+		"non-root inventory sidecar validation error": {
+			fs:   fsys,
+			path: "1.1/good-objects/spec-ex-full",
+			opts: []ocfl.ObjectOption{
+				ocfl.ObjectWithInventory(v1Inventory),
+			},
+			expect: func(t *testing.T, _ *ocfl.Object, err error) {
+				// the given inventory failes validation with root sidecar
+				be.Nonzero(t, err)
+			},
+		},
+		"with non-root inventory skip validation": {
+			fs:   fsys,
+			path: "1.1/good-objects/spec-ex-full",
+			opts: []ocfl.ObjectOption{
+				ocfl.ObjectWithInventory(v1Inventory),
+				ocfl.ObjectSkipRootSidecarValidation(),
+			},
+			expect: func(t *testing.T, obj *ocfl.Object, err error) {
+				be.NilErr(t, err)
+				// object was loaded with version inventory
+				be.Equal(t, ocfl.V(1), obj.Head())
+			},
+		},
+		"missing ID": {
 			fs:   fsys,
 			path: "1.1/bad-objects/E003_E063_empty",
 			expect: func(t *testing.T, _ *ocfl.Object, err error) {
 				be.Nonzero(t, err)
+				be.True(t, errors.Is(err, ocfl.ErrNoObjectID))
+			},
+		},
+		"non-comforming contents": {
+			fs:   fsys,
+			path: "1.1/bad-objects/E003_E063_empty",
+			opts: []ocfl.ObjectOption{
+				ocfl.ObjectWithID("new"),
+			},
+			expect: func(t *testing.T, _ *ocfl.Object, err error) {
+				be.Nonzero(t, err)
+				be.In(t, "non-conforming contents", err.Error())
 			},
 		},
 	}
-	i := 0
 	for name, tCase := range testCases {
-		t.Run(fmt.Sprintf("%d-%s", i, name), func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			obj, err := ocfl.NewObject(ctx, tCase.fs, tCase.path, tCase.opts...)
 			tCase.expect(t, obj, err)
 		})
-		i++
 	}
 }
 
@@ -232,6 +276,7 @@ func TestObject_ApplyUpdatePlan(t *testing.T) {
 
 func TestObject_Update(t *testing.T) {
 	ctx := context.Background()
+
 	t.Run("minimal", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
@@ -321,6 +366,20 @@ func TestObject_Update(t *testing.T) {
 		algReg := digest.NewAlgorithmRegistry(digest.SHA512, digest.SIZE)
 		v := ocfl.ValidateObject(ctx, fsys, ".", ocfl.ValidationAlgorithms(algReg))
 		be.NilErr(t, v.Err())
+	})
+	t.Run("read-only: without latest inventory", func(t *testing.T) {
+		fixture := filepath.Join(`testdata`, `object-fixtures`, `1.1`, `good-objects`, `spec-ex-full`)
+		fsys := testutil.TmpLocalFS(t, fixture)
+		v1Inventory, err := ocfl.ReadInventory(ctx, fsys, `spec-ex-full/v1`)
+		be.NilErr(t, err)
+		obj, err := ocfl.NewObject(ctx, fsys, "spec-ex-full",
+			ocfl.ObjectWithInventory(v1Inventory),
+			ocfl.ObjectSkipRootSidecarValidation())
+		be.NilErr(t, err)
+		stage := &ocfl.Stage{DigestAlgorithm: digest.SHA512}
+		_, err = obj.Update(ctx, stage, "update", ocfl.User{Name: "Anna Karenina"})
+		be.Nonzero(t, err)
+		be.True(t, errors.Is(err, ocfl.ErrObjectReadOnly))
 	})
 }
 

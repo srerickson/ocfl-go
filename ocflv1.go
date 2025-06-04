@@ -467,7 +467,7 @@ func (imp ocflV1) ValidateObjectVersion(ctx context.Context, vldr *ObjectValidat
 	vnumStr := vnum.String()
 	fullVerDir := path.Join(vldr.path(), vnumStr) // version directory path relative to FS
 	specStr := string(imp.v1Spec)
-	rootInv := vldr.obj.rootInventory // rootInv is assumed to be valid
+	rootInv := vldr.obj.inventory // rootInv is assumed to be valid
 	vDirEntries, err := ocflfs.ReadDir(ctx, fsys, fullVerDir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		// can't read version directory for some reason, but not because it
@@ -575,7 +575,7 @@ func (imp ocflV1) ValidateObjectContent(ctx context.Context, v *ObjectValidation
 }
 
 func (imp ocflV1) compareVersionInventory(obj *Object, dirNum VNum, verInv *StoredInventory, vldr *ObjectValidation) {
-	rootInv := obj.rootInventory
+	rootInv := obj.inventory
 	specStr := string(imp.v1Spec)
 	if verInv.Head == rootInv.Head && verInv.Digest() != rootInv.Digest() {
 		err := fmt.Errorf("%s/inventor.json is not the same as the root inventory: digests don't match", dirNum)
