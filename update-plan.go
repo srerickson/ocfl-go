@@ -160,6 +160,18 @@ func (u UpdatePlan) MarshalBinary() ([]byte, error) {
 	return buff.Bytes(), nil
 }
 
+// NextHead returns the number for the new object version to be created with the
+// update.
+func (u UpdatePlan) NextHead() VNum {
+	return u.newInv.Head
+}
+
+// NextInventoryDigest returns the digest of the inventory.json contents for the
+// object version to be created with the update.
+func (u UpdatePlan) NextInventoryDigest() string {
+	return u.newInv.digest
+}
+
 // ObjectID returns the ID of the OCFL Object that the UpdatePlan must be
 // applied to.
 func (u *UpdatePlan) ObjectID() string {
@@ -431,8 +443,8 @@ func (step *PlanStep) Revert(ctx context.Context, objFS ocflfs.FS, objDir string
 	return nil
 }
 
-// Size returns the number of bytes copied to the object as part of the steps
-// run action. This is only set after the step has run
+// Size returns the number of bytes copied to the object as part of step's run
+// action. This value is available after step has run.
 func (step *PlanStep) Size() int64 {
 	return step.state.Size
 }

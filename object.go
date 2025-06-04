@@ -88,8 +88,12 @@ func (obj *Object) ApplyUpdatePlan(ctx context.Context, update *UpdatePlan, src 
 	if update.ObjectID() != obj.ID() {
 		return errors.New("update plan is for a different object")
 	}
-	if base := obj.rootInventory; base != nil && base.digest != update.BaseInventoryDigest() {
-		return errors.New("update plan's base inventory does not match the object's current inventory")
+	var baseInvDigest string
+	if obj.rootInventory != nil {
+		baseInvDigest = obj.rootInventory.digest
+	}
+	if baseInvDigest != update.BaseInventoryDigest() {
+		return errors.New("update plan does not reflect object's current inventory state")
 	}
 	newInv, err := update.Apply(ctx, obj.fs, obj.path, src)
 	if err != nil {
