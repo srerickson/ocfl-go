@@ -140,15 +140,37 @@ type User struct {
 type StoredInventory struct {
 	Inventory
 
-	bytes  []byte // bytes is inventory json bytes
-	digest string // digest of bytes using inventory algorithm
+	bytes  []byte // bytes is inventory.json contents
+	digest string // digest of bytes using inventory's digest algorithm
+}
+
+// NewStoredInventory reads all bytes from r and parses the contents as as
+// Inventory. The returned *StoredInventory is valid and includes the a digest
+// of the bytes read from r.
+func NewStoredInventory(r io.Reader) (*StoredInventory, error) {
+	bytes, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("reading inventory contents: %w", err)
+	}
+	return newStoredInventory(bytes)
+}
+
+// ReadInventory reads the inventory.json file in dir and validates it. It returns
+// an error if the inventory can't be paresed or if it is invalid.
+func ReadInventory(ctx context.Context, fsys ocflfs.FS, dir string) (*StoredInventory, error) {
+	f, err := fsys.OpenFile(ctx, path.Join(dir, inventoryBase))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return NewStoredInventory(f)
 }
 
 func newStoredInventory(raw []byte) (*StoredInventory, error) {
 	var inv StoredInventory
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&inv.Inventory); err != nil {
+	if err := dec.Decode(&inv); err != nil {
 		return nil, err
 	}
 	if err := inv.setRaw(raw); err != nil {
@@ -160,22 +182,29 @@ func newStoredInventory(raw []byte) (*StoredInventory, error) {
 	return &inv, nil
 }
 
-// sets inv's jsonDigest value by digesting the raw inventory bytes.
-func (inv *StoredInventory) setRaw(raw []byte) error {
-	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
+// Digest returns the digest of inventory.json file used to create inv using the
+// digest algorithm specified in the inventory.
+func (inv StoredInventory) Digest() string { return inv.digest }
+
+// MarshalBinary implements [encoding.BinaryMarshaler] for StoredInventory. It
+// returns the full contents of the inventory.json file used to create inv.
+func (inv StoredInventory) MarshalBinary() ([]byte, error) {
+	return bytes.Clone(inv.bytes), nil
+}
+
+// UnmarshalBinary implements [encoding.BinaryUnmarshaler] for *StoredInventory.
+// The data argument must be the full contents of an inventory.json, otherwise
+// inv's Digest value may not match its sidecar. (BinaryUnmarshaler is used
+// instead of json.Unmarshaler because the latter may not preserve the exact
+// bytestream, for example leading or trailing whitespace.)
+func (inv *StoredInventory) UnmarshalBinary(data []byte) error {
+	newInv, err := newStoredInventory(data)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(digester, bytes.NewReader(raw)); err != nil {
-		return fmt.Errorf("digesting inventory: %w", err)
-	}
-	inv.digest = digester.String()
-	inv.bytes = raw
+	*inv = *newInv
 	return nil
 }
-
-// Digest returns the digest of the inventory's source data
-func (inv StoredInventory) Digest() string { return inv.digest }
 
 // ValidateSidecar reads the inventory sidecar with inv's digest
 // algorithm (e.g., inventory.json.sha512) in directory dir and return an error
@@ -198,15 +227,18 @@ func (inv StoredInventory) ValidateSidecar(ctx context.Context, fsys ocflfs.FS, 
 	return nil
 }
 
-// ReadInventory reads the 'inventory.json' file in dir and validates it. It returns
-// an error if the inventory can't be paresed or if it is invalid.
-func ReadInventory(ctx context.Context, fsys ocflfs.FS, dir string) (*StoredInventory, error) {
-	var byts []byte
-	byts, err := ocflfs.ReadAll(ctx, fsys, path.Join(dir, inventoryBase))
+// sets inv's jsonDigest value by digesting the raw inventory bytes.
+func (inv *StoredInventory) setRaw(raw []byte) error {
+	digester, err := digest.DefaultRegistry().NewDigester(inv.DigestAlgorithm)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return newStoredInventory(byts)
+	if _, err := io.Copy(digester, bytes.NewReader(raw)); err != nil {
+		return fmt.Errorf("digesting inventory: %w", err)
+	}
+	inv.digest = digester.String()
+	inv.bytes = raw
+	return nil
 }
 
 // ReadInventorySidecar reads the digest from an inventory sidecar file in

@@ -1,6 +1,7 @@
 package ocfl_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io/fs"
@@ -961,4 +962,33 @@ func TestReadInventorySidecar(t *testing.T) {
 		be.Nonzero(t, err)
 		be.True(t, errors.Is(err, ocfl.ErrInventorySidecarContents))
 	})
+}
+
+func TestStoredInventory_Marshal(t *testing.T) {
+	input := []byte(`
+		{
+			"digestAlgorithm": "sha512",
+			"head": "v1",
+			"id": "http://example.org/minimal_no_content",
+			"manifest": {},
+			"type": "https://ocfl.io/1.1/spec/#inventory",
+			"versions": {
+				"v1": {
+				"created": "2019-01-01T02:03:04Z",
+				"message": "One version and no content",
+				"state": { },
+				"user": { "address": "mailto:Person_A@example.org", "name": "Person A" }
+				}
+			}
+		}
+	`)
+	digester := digest.SHA512.Digester()
+	_, err := digester.Write(input)
+	be.NilErr(t, err)
+	var inv ocfl.StoredInventory
+	be.NilErr(t, inv.UnmarshalBinary(input))
+	be.Equal(t, digester.String(), inv.Digest())
+	out, err := inv.MarshalBinary()
+	be.NilErr(t, err)
+	be.True(t, bytes.Equal(input, out))
 }
