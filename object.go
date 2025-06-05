@@ -282,7 +282,7 @@ func (obj Object) Path() string {
 }
 
 // ReadOnly returns an error if obj does not support updates. Updates may be
-// prohibited if obj's storage backed does not support writes or if it was
+// prohibited if obj's storage backend does not support writes or if it was
 // initialized using an explicit inventory (using [ObjectWithInventory]) and
 // without root sidecar validation (using [ObjectSkipRootSidecarValidation]).
 func (obj Object) ReadOnly() error {
