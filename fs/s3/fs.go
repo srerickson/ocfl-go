@@ -46,6 +46,18 @@ func (f *BucketFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	return openFile(ctx, f.S3, f.Bucket, name)
 }
 
+// Eq implements the FS interface for s3.BucketFS
+func (f *BucketFS) Eq(other ocflfs.FS) bool {
+	if other == nil {
+		return false
+	}
+	otherS3, ok := other.(*BucketFS)
+	if !ok {
+		return false
+	}
+	return f.Bucket == otherS3.Bucket && f.S3 == otherS3.S3
+}
+
 func (f *BucketFS) DirEntries(ctx context.Context, dir string) iter.Seq2[fs.DirEntry, error] {
 	f.debugLog(ctx, "s3:readdir", "bucket", f.Bucket, "name", dir)
 	return dirEntries(ctx, f.S3, f.Bucket, dir)

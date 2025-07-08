@@ -24,6 +24,9 @@ type FS interface {
 	// OpenFile opens the named file for reading. It is like [io/fs.FS.Open],
 	// except it returns an error if name is a directory.
 	OpenFile(ctx context.Context, name string) (fs.File, error)
+	// Eq returns true if this FS is equivalent to other FS. This is used
+	// to determine if two FS instances refer to the same underlying storage.
+	Eq(other FS) bool
 }
 
 // DirEntriesFS is an FS that also includes the ability to read entries in a
@@ -63,12 +66,11 @@ type CopyFS interface {
 	Copy(ctx context.Context, dst string, src string) (int64, error)
 }
 
-// Copy copies src in srcFS to dst in dstFS. If srcFS and dstFS are the same refererence
+// Copy copies src in srcFS to dst in dstFS. If srcFS and dstFS are equivalent
 // and it implements CopyFS, then Copy uses the fs's Copy() method.
 func Copy(ctx context.Context, dstFS FS, dst string, srcFS FS, src string) (size int64, err error) {
 	cpFS, ok := dstFS.(CopyFS)
-	// FIXME: better way to compare src and dst FS
-	if ok && dstFS == srcFS {
+	if ok && dstFS.Eq(srcFS) {
 		size, err = cpFS.Copy(ctx, dst, src)
 		if err != nil {
 			err = fmt.Errorf("during copy: %w", err)

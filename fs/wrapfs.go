@@ -47,6 +47,19 @@ func (fsys *WrapFS) OpenFile(ctx context.Context, name string) (fs.File, error) 
 	return f, nil
 }
 
+// Eq implements the FS interface for WrapFS
+func (fsys *WrapFS) Eq(other FS) bool {
+	if other == nil {
+		return false
+	}
+	otherWrap, ok := other.(*WrapFS)
+	if !ok {
+		return false
+	}
+	// For wrapped filesystems, we compare the underlying fs.FS using interface equality
+	return fsys.FS == otherWrap.FS
+}
+
 // DirEntries implements DirEntriesFS for WrapFS.
 func (fsys *WrapFS) DirEntries(ctx context.Context, name string) iter.Seq2[fs.DirEntry, error] {
 	return func(yield func(fs.DirEntry, error) bool) {

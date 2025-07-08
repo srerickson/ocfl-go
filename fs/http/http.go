@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"path"
 	"time"
+
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
 // file more reported by fs.FileInfo.
@@ -41,6 +43,18 @@ func (f FS) BaseURL() string { return f.baseURL }
 
 // Client returns f's http client
 func (f FS) Client() *http.Client { return f.client }
+
+// Eq implements the FS interface for http.FS
+func (f FS) Eq(other ocflfs.FS) bool {
+	if other == nil {
+		return false
+	}
+	otherHTTP, ok := other.(*FS)
+	if !ok {
+		return false
+	}
+	return f.baseURL == otherHTTP.baseURL && f.client == otherHTTP.client
+}
 
 // OpenFile implements the ocfl/fs.FS interface for FS
 func (f FS) OpenFile(ctx context.Context, name string) (fs.File, error) {

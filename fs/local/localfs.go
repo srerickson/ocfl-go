@@ -41,6 +41,18 @@ func (fsys *FS) Root() string {
 	return fsys.path
 }
 
+// Eq implements the FS interface for local.FS
+func (fsys *FS) Eq(other ocflfs.FS) bool {
+	if other == nil {
+		return false
+	}
+	otherLocal, ok := other.(*FS)
+	if !ok {
+		return false
+	}
+	return fsys.path == otherLocal.path
+}
+
 func (fsys *FS) Write(ctx context.Context, name string, src io.Reader) (int64, error) {
 	fullPath, err := fsys.osPath(name)
 	if err != nil {
