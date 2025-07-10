@@ -721,6 +721,74 @@ func compareFileInf(t *testing.T, info, fixture fs.FileInfo) {
 	}
 }
 
+func TestBucketFS_Eq(t *testing.T) {
+	t.Run("Same bucket and S3 API", func(t *testing.T) {
+		api := mock.New(bucket)
+		fs1 := &s3.BucketFS{S3: api, Bucket: bucket}
+		fs2 := &s3.BucketFS{S3: api, Bucket: bucket}
+		
+		// They should be equal
+		if !fs1.Eq(fs2) {
+			t.Error("Expected fs1.Eq(fs2) to be true for same bucket and S3 API")
+		}
+		if !fs2.Eq(fs1) {
+			t.Error("Expected fs2.Eq(fs1) to be true for same bucket and S3 API")
+		}
+	})
+
+	t.Run("Different bucket names", func(t *testing.T) {
+		api := mock.New(bucket)
+		fs1 := &s3.BucketFS{S3: api, Bucket: bucket}
+		fs2 := &s3.BucketFS{S3: api, Bucket: "different-bucket"}
+		
+		// They should not be equal
+		if fs1.Eq(fs2) {
+			t.Error("Expected fs1.Eq(fs2) to be false for different bucket names")
+		}
+		if fs2.Eq(fs1) {
+			t.Error("Expected fs2.Eq(fs1) to be false for different bucket names")
+		}
+	})
+
+	t.Run("Different S3 API instances", func(t *testing.T) {
+		api1 := mock.New(bucket)
+		api2 := mock.New(bucket)
+		fs1 := &s3.BucketFS{S3: api1, Bucket: bucket}
+		fs2 := &s3.BucketFS{S3: api2, Bucket: bucket}
+		
+		// They should not be equal
+		if fs1.Eq(fs2) {
+			t.Error("Expected fs1.Eq(fs2) to be false for different S3 API instances")
+		}
+		if fs2.Eq(fs1) {
+			t.Error("Expected fs2.Eq(fs1) to be false for different S3 API instances")
+		}
+	})
+
+	t.Run("Nil comparison", func(t *testing.T) {
+		api := mock.New(bucket)
+		fs1 := &s3.BucketFS{S3: api, Bucket: bucket}
+		
+		// Should handle nil comparison
+		if fs1.Eq(nil) {
+			t.Error("Expected fs1.Eq(nil) to be false")
+		}
+	})
+
+	t.Run("Different FS type", func(t *testing.T) {
+		api := mock.New(bucket)
+		fs1 := &s3.BucketFS{S3: api, Bucket: bucket}
+		
+		// Create a different FS type to test with
+		wrapFS := ocflfs.NewWrapFS(nil)
+		
+		// Should not be equal
+		if fs1.Eq(wrapFS) {
+			t.Error("Expected fs1.Eq(wrapFS) to be false for different FS types")
+		}
+	})
+}
+
 func comparDirEntries(
 	t *testing.T,
 	entries iter.Seq2[fs.DirEntry, error],
