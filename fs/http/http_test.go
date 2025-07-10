@@ -63,6 +63,36 @@ func TestHttpFS(t *testing.T) {
 	srv.Close()
 }
 
+func TestFS_Eq(t *testing.T) {
+	t.Run("http.FS equality", func(t *testing.T) {
+		// Create two FS with the same baseURL and client
+		fs1 := ocflhttp.New("https://example.com", ocflhttp.WithClient(http.DefaultClient))
+		fs2 := ocflhttp.New("https://example.com", ocflhttp.WithClient(http.DefaultClient))
+		
+		// They should be equal
+		if !fs1.Eq(fs2) {
+			t.Error("Expected fs1.Eq(fs2) to be true for same baseURL and client")
+		}
+		
+		// Create FS with different baseURL
+		fs3 := ocflhttp.New("https://other.com", ocflhttp.WithClient(http.DefaultClient))
+		
+		// They should not be equal
+		if fs1.Eq(fs3) {
+			t.Error("Expected fs1.Eq(fs3) to be false for different baseURL")
+		}
+		
+		// Create FS with different client
+		customClient := &http.Client{}
+		fs4 := ocflhttp.New("https://example.com", ocflhttp.WithClient(customClient))
+		
+		// They should not be equal
+		if fs1.Eq(fs4) {
+			t.Error("Expected fs1.Eq(fs4) to be false for different client")
+		}
+	})
+}
+
 func TestEmbedFS(t *testing.T) {
 	// Test the http.FS works for embed.FS backends.
 	ctx := context.Background()

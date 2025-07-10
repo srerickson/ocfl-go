@@ -2,7 +2,6 @@ package fs_test
 
 import (
 	"context"
-	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -13,68 +12,6 @@ import (
 )
 
 func TestFS_Eq(t *testing.T) {
-	t.Run("local.FS equality", func(t *testing.T) {
-		// Create two FS with the same path
-		fs1, err := local.NewFS("/tmp")
-		if err != nil {
-			t.Fatal(err)
-		}
-		fs2, err := local.NewFS("/tmp")
-		if err != nil {
-			t.Fatal(err)
-		}
-		
-		// They should be equal
-		if !fs1.Eq(fs2) {
-			t.Error("Expected fs1.Eq(fs2) to be true for same paths")
-		}
-		if !fs2.Eq(fs1) {
-			t.Error("Expected fs2.Eq(fs1) to be true for same paths")
-		}
-		
-		// Create FS with different path
-		fs3, err := local.NewFS("/")
-		if err != nil {
-			t.Fatal(err)
-		}
-		
-		// They should not be equal
-		if fs1.Eq(fs3) {
-			t.Error("Expected fs1.Eq(fs3) to be false for different paths")
-		}
-		if fs3.Eq(fs1) {
-			t.Error("Expected fs3.Eq(fs1) to be false for different paths")
-		}
-	})
-
-	t.Run("http.FS equality", func(t *testing.T) {
-		// Create two FS with the same baseURL and client
-		fs1 := httpfs.New("https://example.com", httpfs.WithClient(http.DefaultClient))
-		fs2 := httpfs.New("https://example.com", httpfs.WithClient(http.DefaultClient))
-		
-		// They should be equal
-		if !fs1.Eq(fs2) {
-			t.Error("Expected fs1.Eq(fs2) to be true for same baseURL and client")
-		}
-		
-		// Create FS with different baseURL
-		fs3 := httpfs.New("https://other.com", httpfs.WithClient(http.DefaultClient))
-		
-		// They should not be equal
-		if fs1.Eq(fs3) {
-			t.Error("Expected fs1.Eq(fs3) to be false for different baseURL")
-		}
-		
-		// Create FS with different client
-		customClient := &http.Client{}
-		fs4 := httpfs.New("https://example.com", httpfs.WithClient(customClient))
-		
-		// They should not be equal
-		if fs1.Eq(fs4) {
-			t.Error("Expected fs1.Eq(fs4) to be false for different client")
-		}
-	})
-
 	t.Run("WrapFS equality", func(t *testing.T) {
 		// Create two WrapFS with the same underlying fs.FS
 		osFS := os.DirFS("/tmp")
