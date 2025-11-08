@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"io/fs"
 	"maps"
 	"slices"
 	"testing"
@@ -81,23 +82,91 @@ func TestDigester(t *testing.T) {
 	})
 }
 
-func TestDigestFilesBatch(t *testing.T) {
+func TestDigestAndValidateFilesBatch(t *testing.T) {
 	ctx := context.Background()
 	testData := fstest.MapFS{
 		"a/file.txt": &fstest.MapFile{Data: []byte("content")},
 		"mydata.csv": &fstest.MapFile{Data: []byte("content,1,2,3")},
 	}
 	fsys := ocflfs.NewWrapFS(testData)
-	count := 0
-	files := ocflfs.Files(fsys, slices.Collect(maps.Keys(testData))...)
-	for fa, err := range digest.DigestFilesBatch(ctx, files, 5, digest.SHA256, digest.SIZE) {
+	inputFiles := ocflfs.Files(fsys, slices.Collect(maps.Keys(testData))...)
+	var digestedFiles []*digest.FileRef
+
+	// breaking early doesn't panic
+	for range digest.DigestFilesBatch(ctx, inputFiles, 5, digest.SHA256, digest.SIZE) {
+		break
+	}
+
+	for fa, err := range digest.DigestFilesBatch(ctx, inputFiles, 5, digest.SHA256, digest.SIZE) {
 		be.NilErr(t, err)
 		be.Nonzero(t, fa.Path)
 		be.Nonzero(t, fa.Digests["sha256"])
 		be.Nonzero(t, fa.Fixity["size"])
-		count++
+		digestedFiles = append(digestedFiles, fa)
 	}
-	be.Equal(t, len(testData), count)
+	be.Equal(t, len(digestedFiles), len(testData))
+
+	// validation with default registry
+	reg := digest.DefaultRegistry()
+
+	// validates with default reg
+	for err := range digest.ValidateFilesBatch(ctx, slices.Values(digestedFiles), reg, 0) {
+		t.Error(err)
+	}
+
+	// validates OK with size algorithm
+	for err := range digest.ValidateFilesBatch(ctx, slices.Values(digestedFiles), reg.Append(digest.SIZE), 0) {
+		t.Error(err)
+	}
+
+	// validation fails for different file digests
+	invalidDigests := []*digest.FileRef{
+		{
+			FileRef: digestedFiles[0].FileRef,
+			Digests: digest.Set{"sha256": "abc"}, // wrong sha512
+			Fixity:  digestedFiles[0].Fixity,
+		},
+		{
+			FileRef: digestedFiles[1].FileRef,
+			Digests: digestedFiles[1].Digests,
+			Fixity:  digest.Set{"size": "2000"}, // wrong size
+		},
+		{
+			FileRef: ocflfs.FileRef{FS: fsys, BaseDir: ".", Path: "missing"}, // missing file
+		},
+	}
+	errCount := 0
+	for err := range digest.ValidateFilesBatch(ctx, slices.Values(invalidDigests), reg.Append(digest.SIZE), 0) {
+		var digestErr *digest.DigestError
+		var pathErr *fs.PathError
+		switch {
+		case errors.As(err, &digestErr) && digestErr.Path == "a/file.txt":
+		case errors.As(err, &digestErr) && digestErr.Path == "mydata.csv":
+		case errors.As(err, &pathErr) && pathErr.Path == "missing":
+			be.True(t, errors.Is(err, fs.ErrNotExist))
+		default:
+			t.Error("unexpected error", err)
+		}
+		errCount++
+	}
+	be.Equal(t, 3, errCount)
+
+	// change content and validation fails
+	testData["a/file.txt"] = &fstest.MapFile{Data: []byte("new content")}
+	errCount = 0
+	for err := range digest.ValidateFilesBatch(ctx, slices.Values(digestedFiles), reg, 0) {
+		var digestErr *digest.DigestError
+		be.True(t, errors.As(err, &digestErr))
+		be.Equal(t, "a/file.txt", digestErr.Path)
+		errCount++
+	}
+	be.Equal(t, 1, errCount)
+
+	// breaking early doesn't panic
+	for range digest.ValidateFilesBatch(ctx, slices.Values(digestedFiles), reg, 0) {
+		break
+	}
+
 }
 
 func testAlg(algID string, val []byte) (string, error) {

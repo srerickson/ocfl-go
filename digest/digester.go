@@ -27,7 +27,7 @@ type MultiDigester struct {
 	digesters map[string]Digester
 }
 
-// NewMultiDigester constructs a MultiDigester for one or more built-in digest
+// NewMultiDigester returns a new MultiDigester for one or more digest
 // algorithms.
 func NewMultiDigester(algs ...Algorithm) *MultiDigester {
 	writers := make([]io.Writer, 0, len(algs))
@@ -126,11 +126,11 @@ func (e DigestError) Error() string {
 	return fmt.Sprintf("unexpected %s for %q: %q, expected=%q", e.Alg, e.Path, e.Got, e.Expected)
 }
 
-// FileRef is a [fs.FileRef] plus digest values of the file contents.
+// FileRef is a [fs.FileRef] with digest valuess of the file contents.
 type FileRef struct {
 	fs.FileRef
 	Digests Set // Primary digests (sha512 or sha256)
-	Fixity  Set // Optional digests
+	Fixity  Set // Optional digests (from fixity)
 }
 
 // Validate reads the FileRef and validates all digests. If any digests faile to
