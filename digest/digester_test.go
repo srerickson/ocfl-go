@@ -93,9 +93,8 @@ func TestDigestFilesBatch(t *testing.T) {
 	for fa, err := range digest.DigestFilesBatch(ctx, files, 5, digest.SHA256, digest.SIZE) {
 		be.NilErr(t, err)
 		be.Nonzero(t, fa.Path)
-		be.Equal(t, "sha256", fa.Algorithm.ID())
 		be.Nonzero(t, fa.Digests["sha256"])
-		be.Nonzero(t, fa.Digests["size"])
+		be.Nonzero(t, fa.Fixity["size"])
 		count++
 	}
 	be.Equal(t, len(testData), count)

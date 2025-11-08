@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"maps"
 	"strings"
 
 	"github.com/srerickson/ocfl-go/fs"
@@ -95,20 +96,6 @@ func (s Set) Add(s2 Set) error {
 	return nil
 }
 
-// Split returns the digest value for algID and Set with remaining values in s.
-// This is mainly used to separate the primary digest from 'fixity' digests.
-func (s Set) Split(algID string) (digest string, fixity Set) {
-	digest = s[algID]
-	fixity = Set{}
-	for alg, val := range s {
-		if alg == algID {
-			continue
-		}
-		fixity[alg] = val
-	}
-	return
-}
-
 // ConflictsWith returns keys in s with values that do not match the
 // corresponding key in other. Values in each set are compared using
 // strings.EqualFold().
@@ -128,6 +115,7 @@ type DigestError struct {
 	Alg      string // Digest algorithm
 	Got      string // Calculated digest
 	Expected string // Expected digest
+	IsFixity bool   // The algorithm and fixity is associated with an optional fixity block
 }
 
 // Error() makes DigestError an error
@@ -141,8 +129,54 @@ func (e DigestError) Error() string {
 // FileRef is a [fs.FileRef] plus digest values of the file contents.
 type FileRef struct {
 	fs.FileRef
-	Algorithm Algorithm // primary digest algorithm (sha512 or sha256)
-	Digests   Set       // Digest values (must include the primary algorithm)
+	Digests Set // Primary digests (sha512 or sha256)
+	Fixity  Set // Optional digests
+}
+
+// Validate reads the FileRef and validates all digests. If any digests faile to
+// validate, the returned error is a *DigestError. If failing digest is not from
+// fr.Digests, the error's IsFixiy is true.
+func (fr *FileRef) Validate(ctx context.Context, reg AlgorithmRegistry) error {
+	digests, err := fr.allDigests()
+	if err != nil {
+		return err
+	}
+	f, err := fr.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := Validate(f, digests, reg); err != nil {
+		var digestErr *DigestError
+		if errors.As(err, &digestErr) {
+			digestErr.Path = fr.FullPath()
+			if _, isPrimaryAlg := fr.Digests[digestErr.Alg]; !isPrimaryAlg {
+				digestErr.IsFixity = true
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+// allDigests returns a Set with all digests in fr (primary digest + fixity). An
+// error is only returned if the fr's fixity also includes a value for
+// fr.Algorithm and it doesn't match fr.Digest.
+func (fr *FileRef) allDigests() (Set, error) {
+	for _, alg := range fr.Digests.ConflictsWith(fr.Fixity) {
+		err := DigestError{
+			Path:     fr.FullPath(),
+			Alg:      alg,
+			Got:      fr.Fixity[alg],
+			Expected: fr.Digests[alg],
+			IsFixity: true,
+		}
+		return nil, fmt.Errorf("fixity value conflicts with primary: %w", err)
+	}
+	set := make(Set, len(fr.Fixity)+len(fr.Digests))
+	maps.Copy(set, fr.Digests)
+	maps.Copy(set, fr.Fixity)
+	return set, nil
 }
 
 // DigestFiles is the same as [DigestFilesBatch] with numgos set to 1.
@@ -154,11 +188,9 @@ func DigestFiles(ctx context.Context, files iter.Seq[*fs.FileRef], alg Algorithm
 // resulting iterator yields digest results or an error if the file could not be
 // digestsed. If numgos is < 1, the value from [runtime.GOMAXPROCS](0) is used.
 func DigestFilesBatch(ctx context.Context, files iter.Seq[*fs.FileRef], numgos int, alg Algorithm, fixityAlgs ...Algorithm) iter.Seq2[*FileRef, error] {
-	algs := make([]Algorithm, 1+len(fixityAlgs))
+	algs := make([]Algorithm, 1, 1+len(fixityAlgs))
 	algs[0] = alg
-	for i := 0; i < len(fixityAlgs); i++ {
-		algs[i+1] = fixityAlgs[i]
-	}
+	algs = append(algs, fixityAlgs...)
 	digestFn := func(ref *fs.FileRef) (*FileRef, error) {
 		f, err := ref.Open(ctx)
 		if err != nil {
@@ -170,9 +202,19 @@ func DigestFilesBatch(ctx context.Context, files iter.Seq[*fs.FileRef], numgos i
 			return nil, fmt.Errorf("digesting %s: %w", ref.FullPath(), err)
 		}
 		fd := &FileRef{
-			FileRef:   *ref,
-			Algorithm: alg,
-			Digests:   digester.Sums(),
+			FileRef: *ref,
+			Digests: Set{},
+		}
+		for resultAlg, resultSum := range digester.Sums() {
+			switch resultAlg {
+			case alg.ID():
+				fd.Digests[resultAlg] = resultSum
+			default:
+				if fd.Fixity == nil {
+					fd.Fixity = Set{}
+				}
+				fd.Fixity[resultAlg] = resultSum
+			}
 		}
 		return fd, nil
 	}
@@ -190,9 +232,7 @@ func DigestFilesBatch(ctx context.Context, files iter.Seq[*fs.FileRef], numgos i
 // validations validation. If validation fails because a file's content has
 // changed, the yielded error is a *[DigestError].
 func ValidateFilesBatch(ctx context.Context, digests iter.Seq[*FileRef], reg AlgorithmRegistry, numgos int) iter.Seq[error] {
-	doDigest := func(pd *FileRef) (*FileRef, error) {
-		return pd, validateFile(ctx, pd, reg)
-	}
+	doDigest := func(f *FileRef) (*FileRef, error) { return f, f.Validate(ctx, reg) }
 	return func(yield func(error) bool) {
 		for result := range pipeline.Results(digests, doDigest, numgos) {
 			if result.Err != nil {
@@ -215,25 +255,6 @@ func Validate(r io.Reader, s Set, reg AlgorithmRegistry) error {
 	results := digester.Sums()
 	for _, alg := range results.ConflictsWith(s) {
 		return &DigestError{Alg: alg, Expected: s[alg], Got: results[alg]}
-	}
-	return nil
-}
-
-// validateFile confirms the digest values in pd using alogirthm definitions from
-// reg. If the digests values do not match, the resulting error is a
-// *[DigestError].
-func validateFile(ctx context.Context, fileSums *FileRef, reg AlgorithmRegistry) error {
-	f, err := fileSums.Open(ctx)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if err := Validate(f, fileSums.Digests, reg); err != nil {
-		var digestErr *DigestError
-		if errors.As(err, &digestErr) {
-			digestErr.Path = fileSums.FullPath()
-		}
-		return err
 	}
 	return nil
 }

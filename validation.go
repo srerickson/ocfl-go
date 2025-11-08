@@ -210,20 +210,24 @@ func (v *ObjectValidation) addInventory(inv *StoredInventory, isRoot bool) error
 	primaryAlg := inv.DigestAlgorithm
 	allErrors := &multierror.Error{}
 	for name, primaryDigest := range inv.Manifest.Paths() {
-		allDigests := inv.GetFixity(primaryDigest)
-		allDigests[primaryAlg] = primaryDigest
+		newManifest := digest.Set{primaryAlg: primaryDigest}
+		newFixity := inv.GetFixity(primaryDigest)
 		existing := v.files[name]
 		if existing == nil {
 			v.files[name] = &validationFileInfo{
-				expectedDigests: allDigests,
+				manifestDigests: newManifest,
+				fixityDigests:   newFixity,
 			}
 			continue
 		}
-		if existing.expectedDigests == nil {
-			existing.expectedDigests = allDigests
-			continue
+		if err := existing.manifestDigests.Add(newManifest); err != nil {
+			var digestError *digest.DigestError
+			if errors.As(err, &digestError) {
+				digestError.Path = name
+			}
+			allErrors = multierror.Append(allErrors, err)
 		}
-		if err := existing.expectedDigests.Add(allDigests); err != nil {
+		if err := existing.fixityDigests.Add(newFixity); err != nil {
 			var digestError *digest.DigestError
 			if errors.As(err, &digestError) {
 				digestError.Path = name
@@ -244,18 +248,18 @@ func (v *ObjectValidation) addInventory(inv *StoredInventory, isRoot bool) error
 // existingContent digests returns an iterator that yields the names and digests
 // of files that exist and were referenced in the inventory added to the
 // valiation.
-func (v *ObjectValidation) existingContentDigests(fsys fs.FS, objPath string, alg digest.Algorithm) iter.Seq[*digest.FileRef] {
+func (v *ObjectValidation) existingContentDigests(fsys fs.FS, objPath string) iter.Seq[*digest.FileRef] {
 	return func(yield func(*digest.FileRef) bool) {
 		for name, entry := range v.files {
-			if entry.fileExists && len(entry.expectedDigests) > 0 {
+			if entry.fileExists && len(entry.manifestDigests) > 0 {
 				fd := &digest.FileRef{
 					FileRef: fs.FileRef{
 						FS:      fsys,
 						BaseDir: objPath,
 						Path:    name,
 					},
-					Algorithm: alg,
-					Digests:   entry.expectedDigests,
+					Digests: entry.manifestDigests,
+					Fixity:  entry.fixityDigests,
 				}
 				if !yield(fd) {
 					return
@@ -274,7 +278,8 @@ func (v *ObjectValidation) path() string { return v.obj.path }
 func (v *ObjectValidation) missingContent() iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for name, entry := range v.files {
-			if !entry.fileExists && len(entry.expectedDigests) > 0 {
+			seenInManifest := len(entry.manifestDigests) > 0
+			if seenInManifest && !entry.fileExists {
 				if !yield(name) {
 					return
 				}
@@ -288,7 +293,8 @@ func (v *ObjectValidation) missingContent() iter.Seq[string] {
 func (v *ObjectValidation) unexpectedContent() iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for name, entry := range v.files {
-			if entry.fileExists && len(entry.expectedDigests) == 0 {
+			seenInManifest := len(entry.manifestDigests) > 0
+			if entry.fileExists && !seenInManifest {
 				if !yield(name) {
 					return
 				}
@@ -330,7 +336,8 @@ func ValidationAlgorithms(reg digest.AlgorithmRegistry) ObjectValidationOption {
 }
 
 type validationFileInfo struct {
-	expectedDigests digest.Set
+	manifestDigests digest.Set
+	fixityDigests   digest.Set
 	fileExists      bool
 }
 
