@@ -5,10 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -488,9 +489,7 @@ func TestValidateObject_Fixtures(t *testing.T) {
 					t.Run(dir.Name(), func(t *testing.T) {
 						result := ocfl.ValidateObject(ctx, fsys, dir.Name())
 						be.True(t, result.Err() != nil)
-						if ok, desc := fixtureExpectedErrs(dir.Name(), result.Errors()...); !ok {
-							t.Log(path.Join(spec, dir.Name())+":", desc)
-						}
+						expectFixtureErrors(t, dir.Name(), result.Errors()...)
 					})
 				}
 			})
@@ -512,13 +511,15 @@ func TestValidateObject_Fixtures(t *testing.T) {
 
 }
 
-// for a fixture name and set of errors, returns if the errors include expected
-// errors and string describing the difference between got and expected
-func fixtureExpectedErrs(name string, errs ...error) (bool, string) {
+// check that errs includes code expected from the fixture name
+func expectFixtureErrors(t *testing.T, fixtureName string, errs ...error) {
+	t.Helper()
+	// if these codes are expected by the fixture but missing from errs, the test won't fail.
+	dontFaileCodes := []string{"E001", "E003", "E011", "E013", "E023", "E063", "E103"}
 	codeRegexp := regexp.MustCompile(`^E\d{3}$`)
 	expCodes := map[string]bool{}
 	gotCodes := map[string]bool{}
-	for _, part := range strings.Split(name, "_") {
+	for _, part := range strings.Split(fixtureName, "_") {
 		if codeRegexp.MatchString(part) {
 			expCodes[part] = true
 		}
@@ -535,15 +536,9 @@ func fixtureExpectedErrs(name string, errs ...error) (bool, string) {
 			}
 		}
 	}
-	expKeys := make([]string, 0, len(expCodes))
-	for k := range expCodes {
-		expKeys = append(expKeys, k)
-	}
+	expKeys := slices.Collect(maps.Keys(expCodes))
+	gotKeys := slices.Collect(maps.Keys(gotCodes))
 	sort.Strings(expKeys)
-	gotKeys := make([]string, 0, len(gotCodes))
-	for k := range gotCodes {
-		gotKeys = append(gotKeys, k)
-	}
 	sort.Strings(gotKeys)
 	if len(gotKeys) == 0 {
 		gotKeys = append(gotKeys, "[none]")
@@ -554,7 +549,15 @@ func fixtureExpectedErrs(name string, errs ...error) (bool, string) {
 		exp := strings.Join(expKeys, ", ")
 		desc = fmt.Sprintf("didn't get expected error code: got %s, expected %s", got, exp)
 	}
-	return gotExpected, desc
+	if !gotExpected {
+		// if all the expected codes are in dontFailCodes, log but don't fail
+		if isSubset(expKeys, dontFaileCodes) {
+			t.Log(fixtureName+":", desc)
+			return
+		}
+		t.Error(fixtureName+":", desc)
+	}
+
 }
 
 func TempDirFixtureCopy(t *testing.T, fixture string) string {
@@ -564,4 +567,14 @@ func TempDirFixtureCopy(t *testing.T, fixture string) string {
 		t.Error(err)
 	}
 	return tmpDir
+}
+
+// return if a is subset of b
+func isSubset(a, b []string) bool {
+	for _, aVal := range a {
+		if !slices.Contains(b, aVal) {
+			return false
+		}
+	}
+	return true
 }
