@@ -15,26 +15,31 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
-func NewLogicalFS(
-	ctx context.Context,
-	fsys ocflfs.FS,
-	nameLookup map[string]string,
-	created time.Time,
-) *LogicalFS {
+// NewLogicalFS returns a new LogicalFS that uses refs to map logical file names
+// to names in fsys. The LogicalFS's directory structure is infered from the
+// file names (keys) in refs. The given context will be used for read operations
+// to the underlying ocfl.FS. Files modtime is set with created.
+func NewLogicalFS(ctx context.Context, fsys ocflfs.FS, refs map[string]string, created time.Time) *LogicalFS {
 	return &LogicalFS{
-		ctx:        ctx,
-		fs:         fsys,
-		nameLookup: nameLookup,
-		created:    created,
+		ctx:     ctx,
+		fs:      fsys,
+		refs:    refs,
+		created: created,
 	}
 }
 
+// LogicalFS implements io/fs.FS using logical mapping of files to an underlying
+// ocfl.FS.
 type LogicalFS struct {
-	ctx        context.Context
-	fs         ocflfs.FS
-	nameLookup map[string]string
-	created    time.Time
+	ctx context.Context
+	// underlying storage
+	fs ocflfs.FS
+	// map logical file names to real filenames
+	refs    map[string]string
+	created time.Time
 }
+
+var _ fs.FS = (*LogicalFS)(nil)
 
 func (fsys *LogicalFS) Open(name string) (fs.File, error) {
 	if !fs.ValidPath(name) {
@@ -51,7 +56,7 @@ func (fsys *LogicalFS) Open(name string) (fs.File, error) {
 }
 
 func (fsys *LogicalFS) openFile(name string) (fs.File, error) {
-	realName := fsys.nameLookup[name]
+	realName := fsys.refs[name]
 	if realName == "" {
 		// name doesn't exist in state.
 		// try opening as a directory
@@ -77,7 +82,7 @@ func (fsys *LogicalFS) openDir(dir string) (fs.ReadDirFile, error) {
 		prefix = ""
 	}
 	children := map[string]*logicalDirEntry{}
-	for p := range fsys.nameLookup {
+	for p := range fsys.refs {
 		if !strings.HasPrefix(p, prefix) {
 			continue
 		}
@@ -107,6 +112,7 @@ func (fsys *LogicalFS) openDir(dir string) (fs.ReadDirFile, error) {
 		name:    path.Base(dir),
 		entries: make([]fs.DirEntry, 0, len(children)),
 		mode:    fs.ModeDir | 0555,
+		created: fsys.created,
 	}
 	for _, entry := range children {
 		dirFile.entries = append(dirFile.entries, entry)
@@ -143,7 +149,7 @@ func (f *logicalFile) Mode() fs.FileMode  { return f.mode }
 func (f *logicalFile) ModTime() time.Time { return f.created }
 func (f *logicalFile) Name() string       { return f.name }
 func (f *logicalFile) Read(b []byte) (int, error) {
-	if f.IsDir() {
+	if f.File == nil {
 		return 0, &fs.PathError{Op: "read", Err: errors.New("is a directory")}
 	}
 	return f.File.Read(b)
