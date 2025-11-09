@@ -1,5 +1,5 @@
 .DS_Store
 .tool-versions
-
+coverage.out
 testdata/minio
 !testdata/minio/.gitkeep
