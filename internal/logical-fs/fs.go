@@ -64,7 +64,7 @@ func (fsys *LogicalFS) openFile(name string) (fs.File, error) {
 	}
 	logical := &logicalFile{
 		File:    f,
-		mode:    fs.ModeIrregular | 0555,
+		mode:    0444,
 		created: fsys.created,
 		name:    path.Base(name),
 	}
@@ -87,12 +87,12 @@ func (fsys *LogicalFS) openDir(dir string) (fs.ReadDirFile, error) {
 		}
 		entry := &logicalDirEntry{
 			name:    childName,
-			mode:    fs.ModeIrregular | 0444,
+			mode:    0444,
 			created: fsys.created,
 			open:    func() (fs.File, error) { return fsys.Open(path.Join(dir, childName)) },
 		}
 		if childIsDir {
-			entry.mode = fs.ModeIrregular | fs.ModeDir | 0555
+			entry.mode = fs.ModeDir | 0555
 		}
 		children[childName] = entry
 	}
@@ -106,7 +106,7 @@ func (fsys *LogicalFS) openDir(dir string) (fs.ReadDirFile, error) {
 	dirFile := &logicalFile{
 		name:    path.Base(dir),
 		entries: make([]fs.DirEntry, 0, len(children)),
-		mode:    fs.ModeIrregular | fs.ModeDir | 0555,
+		mode:    fs.ModeDir | 0555,
 	}
 	for _, entry := range children {
 		dirFile.entries = append(dirFile.entries, entry)
@@ -143,10 +143,10 @@ func (f *logicalFile) Mode() fs.FileMode  { return f.mode }
 func (f *logicalFile) ModTime() time.Time { return f.created }
 func (f *logicalFile) Name() string       { return f.name }
 func (f *logicalFile) Read(b []byte) (int, error) {
-	if f.File != nil {
-		return f.File.Read(b)
+	if f.IsDir() {
+		return 0, &fs.PathError{Op: "read", Err: errors.New("is a directory")}
 	}
-	return 0, nil
+	return f.File.Read(b)
 }
 
 func (f *logicalFile) ReadDir(n int) ([]fs.DirEntry, error) {
