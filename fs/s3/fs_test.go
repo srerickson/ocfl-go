@@ -26,8 +26,6 @@ import (
 const (
 	bucket   = "ocfl-go-test"
 	megabyte = 1024 * 1024
-	gigabyte = 1024 * megabyte
-	mockSeed = 1288108737
 	partSize = 6 * megabyte
 )
 
@@ -99,6 +97,37 @@ func TestOpenFile(t *testing.T) {
 			test.expect(t, f, err)
 		})
 	}
+}
+
+func TestWriteReadDeleteFile(t *testing.T) {
+	ctx := t.Context()
+	cli, err := testutil.S3Client(ctx)
+	be.NilErr(t, err)
+	bucket, err := testutil.TmpBucket(ctx, cli)
+	be.NilErr(t, err)
+	t.Cleanup(func() {
+		testutil.RemoveBucket(ctx, cli, bucket)
+	})
+	be.NilErr(t, err)
+	key := "dir/test-data"
+	fsys := &s3.BucketFS{
+		S3:     cli,
+		Bucket: bucket,
+	}
+	buff := mock.RandBytes(15 * megabyte)
+	n, err := fsys.Write(ctx, key, bytes.NewReader(buff))
+	be.NilErr(t, err)
+	be.Equal(t, len(buff), int(n))
+	for entry, err := range fsys.DirEntries(ctx, "dir") {
+		be.NilErr(t, err)
+		be.Equal(t, "test-data", entry.Name())
+	}
+	f, err := fsys.OpenFile(ctx, key)
+	be.NilErr(t, err)
+	outBytes, err := io.ReadAll(f)
+	be.NilErr(t, err)
+	be.True(t, bytes.Equal(outBytes, buff))
+	be.NilErr(t, fsys.Remove(ctx, key))
 }
 
 func TestOpenFile_Mock(t *testing.T) {
@@ -323,7 +352,7 @@ func TestReadDir_Mock(t *testing.T) {
 func TestWrite_Mock(t *testing.T) {
 	ctx := context.Background()
 	bodySize := 201 * megabyte
-	body := mock.RandBytes(mockSeed, int64(bodySize))
+	body := mock.RandBytes(int64(bodySize))
 	type testCase struct {
 		desc        string
 		bucket      string
@@ -482,7 +511,7 @@ func TestRemoveAll_Mock(t *testing.T) {
 func TestCopy_Mock(t *testing.T) {
 	ctx := context.Background()
 	srcSize := int64(51 * megabyte)
-	srcBody := mock.RandBytes(mockSeed, srcSize)
+	srcBody := mock.RandBytes(srcSize)
 	type testCase struct {
 		desc      string
 		mock      func(t *testing.T) *mock.S3API

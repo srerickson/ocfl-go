@@ -2,19 +2,17 @@ package mock
 
 import (
 	"fmt"
-	"io"
 	"path"
 
-	"golang.org/x/exp/rand"
+	"math/rand/v2"
 )
 
-func RandBytes(seed uint64, size int64) []byte {
-	genr := rand.New(rand.NewSource(seed))
-	buf, err := io.ReadAll(io.LimitReader(genr, size))
-	if err != nil {
-		panic(err)
+func RandBytes(size int64) []byte {
+	bytes := make([]byte, size)
+	for i := range size {
+		bytes[i] = byte(rand.Uint())
 	}
-	return buf
+	return bytes
 }
 
 func DirectoryList(numFiles, numDirs int, prefix string) []*Object {
@@ -46,9 +44,8 @@ func StorageRoot(seed uint64, prefix string, numObjects int) []*Object {
 		{Key: path.Join(prefix, "extensions/mylayout/config.json")},
 		{Key: path.Join(prefix, "ocfl_1.1.md")},
 	}
-	genr := rand.New(rand.NewSource(seed))
 	for i := 0; i < numObjects; i++ {
-		part := fmt.Sprintf("%s-%d", randPathPart(genr, 5, 8), i)
+		part := fmt.Sprintf("%s-%d", randPathPart(5, 8), i)
 		newObjects := []*Object{
 			{Key: path.Join(prefix, part, "0=ocfl_object_1.1")},
 			{Key: path.Join(prefix, part, "inventory.json")},
@@ -61,7 +58,7 @@ func StorageRoot(seed uint64, prefix string, numObjects int) []*Object {
 	return objects
 }
 
-func randPathPart(genr *rand.Rand, minSize, maxSize int) string {
+func randPathPart(minSize, maxSize int) string {
 	const chars = `abcdefghijklmnopqrstuvwzyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-_. `
 	const lenChars = len(chars)
 	size := minSize
@@ -69,13 +66,13 @@ func randPathPart(genr *rand.Rand, minSize, maxSize int) string {
 		size = 1
 	}
 	if maxSize > size {
-		size += genr.Intn(maxSize - size + 1)
+		size += rand.IntN(maxSize - size + 1)
 	}
 	out := ""
 	for i := 0; i < size; i++ {
 		var next byte
 		for {
-			next = chars[genr.Intn(lenChars)]
+			next = chars[rand.IntN(lenChars)]
 			if next == '.' && i > 0 && out[i-1] == '.' {
 				// dont allow '..'
 				continue // try again

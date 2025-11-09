@@ -37,8 +37,7 @@ func run(ctx context.Context, bucket, key string) error {
 		return err
 	}
 	const size = 51 * megabyte
-	const seed uint64 = 1929
-	buf := mock.RandBytes(seed, size)
+	buf := mock.RandBytes(size)
 	if _, err := fsys.Write(ctx, key, bytes.NewReader(buf)); err != nil {
 		return err
 	}

@@ -23,7 +23,6 @@ import (
 
 const (
 	megabyte int64 = 1024 * 1024
-	gigabyte int64 = 1024 * megabyte
 
 	minPartSize = s3mgr.MinUploadPartSize
 	maxParts    = s3mgr.MaxUploadParts
@@ -157,6 +156,9 @@ func write(ctx context.Context, api WriteAPI, buck string, key string, r io.Read
 		u.Concurrency = conc
 		u.PartSize = psize
 		u.MaxUploadParts = numParts
+		// TODO make this configurable
+		// see: https://github.com/aws/aws-sdk-go-v2/pull/3151
+		u.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 	})
 	countReader := &countReader{Reader: r}
 	params := &s3v2.PutObjectInput{
