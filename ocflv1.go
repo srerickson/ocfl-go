@@ -556,14 +556,17 @@ func (imp ocflV1) ValidateObjectContent(ctx context.Context, v *ObjectValidation
 		newVld.AddFatal(verr(err, code.E023(specStr)))
 	}
 	if !v.SkipDigests() {
-		alg := v.obj.DigestAlgorithm()
-		digests := v.existingContentDigests(v.fs(), v.path(), alg)
+		digests := v.existingContentDigests(v.fs(), v.path())
 		numgos := v.DigestConcurrency()
 		registry := v.ValidationAlgorithms()
 		for err := range digest.ValidateFilesBatch(ctx, digests, registry, numgos) {
 			var digestErr *digest.DigestError
+			isDigestErr := errors.As(err, &digestErr)
 			switch {
-			case errors.As(err, &digestErr):
+			case isDigestErr && !digestErr.IsFixity:
+				// digest associated with manifest
+				newVld.AddFatal(verr(digestErr, code.E092(specStr)))
+			case isDigestErr:
 				newVld.AddFatal(verr(digestErr, code.E093(specStr)))
 			default:
 				newVld.AddFatal(err)

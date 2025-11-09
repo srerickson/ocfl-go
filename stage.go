@@ -69,7 +69,7 @@ func StageFiles(ctx context.Context, files iter.Seq[*fs.FileRef], alg digest.Alg
 	}
 	validFiles, fileTypeErr := fs.UntilErr(fs.CheckFileTypes(ctx, files))
 	digests, digestErr := fs.UntilErr(digest.DigestFiles(ctx, validFiles, alg, fixity...))
-	stage, err := newStage(digests)
+	stage, err := newStage(digests, alg)
 	if err != nil {
 		return nil, err
 	}
@@ -83,9 +83,8 @@ func StageFiles(ctx context.Context, files iter.Seq[*fs.FileRef], alg digest.Alg
 }
 
 // build a stage from values in digests
-func newStage(digests iter.Seq[*digest.FileRef]) (*Stage, error) {
+func newStage(digests iter.Seq[*digest.FileRef], alg digest.Algorithm) (*Stage, error) {
 	manifest := map[string]dirManifestEntry{}
-	var primaryAlg digest.Algorithm
 	var baseDir string
 	var fsys fs.FS
 	for fileDigest := range digests {
@@ -95,11 +94,9 @@ func newStage(digests iter.Seq[*digest.FileRef]) (*Stage, error) {
 		if fsys != fileDigest.FS {
 			return nil, errors.New("inconsistent backend FS for staged files")
 		}
-		if primaryAlg == nil {
-			primaryAlg = fileDigest.Algorithm
-		}
-		if primaryAlg.ID() != fileDigest.Algorithm.ID() {
-			return nil, errors.New("inconsistent digest algorithms for staged files")
+		primaryDigest, hasDigest := fileDigest.Digests[alg.ID()]
+		if !hasDigest {
+			return nil, fmt.Errorf("missing expected %s for %s", alg.ID(), fileDigest.FullPath())
 		}
 		if baseDir == "" {
 			baseDir = fileDigest.BaseDir
@@ -107,15 +104,10 @@ func newStage(digests iter.Seq[*digest.FileRef]) (*Stage, error) {
 		if baseDir != fileDigest.BaseDir {
 			return nil, errors.New("inconsistent base directory for staged files")
 		}
-		primary, fixity := fileDigest.Digests.Split(primaryAlg.ID())
-		if primary == "" {
-			err := fmt.Errorf("missing %s value for %s", primaryAlg.ID(), fileDigest.FullPath())
-			return nil, err
-		}
-		entry := manifest[primary]
+		entry := manifest[primaryDigest]
 		entry.addPaths(fileDigest.Path)
-		entry.addFixity(fixity)
-		manifest[primary] = entry
+		entry.addFixity(fileDigest.Fixity)
+		manifest[primaryDigest] = entry
 	}
 	state := DigestMap{}
 	for dig, entry := range manifest {
@@ -128,7 +120,7 @@ func newStage(digests iter.Seq[*digest.FileRef]) (*Stage, error) {
 	}
 	return &Stage{
 		State:           state,
-		DigestAlgorithm: primaryAlg,
+		DigestAlgorithm: alg,
 		ContentSource:   dirMan,
 		FixitySource:    dirMan,
 	}, nil
