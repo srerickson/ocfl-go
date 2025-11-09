@@ -82,91 +82,129 @@ func TestDigester(t *testing.T) {
 	})
 }
 
-func TestDigestAndValidateFilesBatch(t *testing.T) {
-	ctx := context.Background()
+// setupTestFS creates a test filesystem with sample files
+func setupTestFS() (fstest.MapFS, ocflfs.FS, []string) {
 	testData := fstest.MapFS{
 		"a/file.txt": &fstest.MapFile{Data: []byte("content")},
 		"mydata.csv": &fstest.MapFile{Data: []byte("content,1,2,3")},
 	}
 	fsys := ocflfs.NewWrapFS(testData)
-	inputFiles := ocflfs.Files(fsys, slices.Collect(maps.Keys(testData))...)
-	var digestedFiles []*digest.FileRef
+	paths := slices.Collect(maps.Keys(testData))
+	return testData, fsys, paths
+}
 
-	// breaking early doesn't panic
-	for range digest.DigestFilesBatch(ctx, inputFiles, 5, digest.SHA256, digest.SIZE) {
-		break
-	}
+func TestDigestFilesBatch(t *testing.T) {
+	ctx := context.Background()
+	testData, fsys, paths := setupTestFS()
 
-	for fa, err := range digest.DigestFilesBatch(ctx, inputFiles, 5, digest.SHA256, digest.SIZE) {
-		be.NilErr(t, err)
-		be.Nonzero(t, fa.Path)
-		be.Nonzero(t, fa.Digests["sha256"])
-		be.Nonzero(t, fa.Fixity["size"])
-		digestedFiles = append(digestedFiles, fa)
-	}
-	be.Equal(t, len(digestedFiles), len(testData))
+	t.Run("breaking early doesn't panic", func(t *testing.T) {
+		inputFiles := ocflfs.Files(fsys, paths...)
+		for range digest.DigestFilesBatch(ctx, inputFiles, 5,
+			digest.SHA256, digest.SIZE) {
+			break
+		}
+	})
 
-	// validation with default registry
+	t.Run("digests files successfully", func(t *testing.T) {
+		inputFiles := ocflfs.Files(fsys, paths...)
+		var digestedFiles []*digest.FileRef
+		for fa, err := range digest.DigestFilesBatch(ctx, inputFiles, 5,
+			digest.SHA256, digest.SIZE) {
+			be.NilErr(t, err)
+			be.Nonzero(t, fa.Path)
+			be.Nonzero(t, fa.Digests["sha256"])
+			be.Nonzero(t, fa.Fixity["size"])
+			digestedFiles = append(digestedFiles, fa)
+		}
+		be.Equal(t, len(digestedFiles), len(testData))
+	})
+}
+
+func TestValidateFilesBatch(t *testing.T) {
+	ctx := context.Background()
+	testData, fsys, paths := setupTestFS()
+	digestedFiles := digestFiles(t, ctx, fsys, paths)
 	reg := digest.DefaultRegistry()
 
-	// validates with default reg
-	for err := range digest.ValidateFilesBatch(ctx, slices.Values(digestedFiles), reg, 0) {
-		t.Error(err)
-	}
-
-	// validates OK with size algorithm
-	for err := range digest.ValidateFilesBatch(ctx, slices.Values(digestedFiles), reg.Append(digest.SIZE), 0) {
-		t.Error(err)
-	}
-
-	// validation fails for different file digests
-	invalidDigests := []*digest.FileRef{
-		{
-			FileRef: digestedFiles[0].FileRef,
-			Digests: digest.Set{"sha256": "abc"}, // wrong sha512
-			Fixity:  digestedFiles[0].Fixity,
-		},
-		{
-			FileRef: digestedFiles[1].FileRef,
-			Digests: digestedFiles[1].Digests,
-			Fixity:  digest.Set{"size": "2000"}, // wrong size
-		},
-		{
-			FileRef: ocflfs.FileRef{FS: fsys, BaseDir: ".", Path: "missing"}, // missing file
-		},
-	}
-	errCount := 0
-	for err := range digest.ValidateFilesBatch(ctx, slices.Values(invalidDigests), reg.Append(digest.SIZE), 0) {
-		var digestErr *digest.DigestError
-		var pathErr *fs.PathError
-		switch {
-		case errors.As(err, &digestErr) && digestErr.Path == "a/file.txt":
-		case errors.As(err, &digestErr) && digestErr.Path == "mydata.csv":
-		case errors.As(err, &pathErr) && pathErr.Path == "missing":
-			be.True(t, errors.Is(err, fs.ErrNotExist))
-		default:
-			t.Error("unexpected error", err)
+	t.Run("validates with default registry", func(t *testing.T) {
+		for err := range digest.ValidateFilesBatch(ctx,
+			slices.Values(digestedFiles), reg, 0) {
+			t.Error(err)
 		}
-		errCount++
-	}
-	be.Equal(t, 3, errCount)
+	})
 
-	// change content and validation fails
-	testData["a/file.txt"] = &fstest.MapFile{Data: []byte("new content")}
-	errCount = 0
-	for err := range digest.ValidateFilesBatch(ctx, slices.Values(digestedFiles), reg, 0) {
-		var digestErr *digest.DigestError
-		be.True(t, errors.As(err, &digestErr))
-		be.Equal(t, "a/file.txt", digestErr.Path)
-		errCount++
-	}
-	be.Equal(t, 1, errCount)
+	t.Run("validates with size algorithm", func(t *testing.T) {
+		for err := range digest.ValidateFilesBatch(ctx,
+			slices.Values(digestedFiles), reg.Append(digest.SIZE), 0) {
+			t.Error(err)
+		}
+	})
 
-	// breaking early doesn't panic
-	for range digest.ValidateFilesBatch(ctx, slices.Values(digestedFiles), reg, 0) {
-		break
-	}
+	t.Run("validation fails for invalid digests and missing files",
+		func(t *testing.T) {
+			invalidDigests := []*digest.FileRef{
+				{
+					FileRef: digestedFiles[0].FileRef,
+					// wrong sha256
+					Digests: digest.Set{"sha256": "abc"},
+					Fixity:  digestedFiles[0].Fixity,
+				},
+				{
+					FileRef: digestedFiles[1].FileRef,
+					Digests: digestedFiles[1].Digests,
+					// wrong size
+					Fixity: digest.Set{"size": "2000"},
+				},
+				{
+					// missing file
+					FileRef: ocflfs.FileRef{
+						FS:      fsys,
+						BaseDir: ".",
+						Path:    "missing",
+					},
+				},
+			}
+			errCount := 0
+			for err := range digest.ValidateFilesBatch(ctx,
+				slices.Values(invalidDigests), reg.Append(digest.SIZE), 0) {
+				var digestErr *digest.DigestError
+				var pathErr *fs.PathError
+				switch {
+				case errors.As(err, &digestErr) &&
+					digestErr.Path == "a/file.txt":
+				case errors.As(err, &digestErr) &&
+					digestErr.Path == "mydata.csv":
+				case errors.As(err, &pathErr) && pathErr.Path == "missing":
+					be.True(t, errors.Is(err, fs.ErrNotExist))
+				default:
+					t.Error("unexpected error", err)
+				}
+				errCount++
+			}
+			be.Equal(t, 3, errCount)
+		})
 
+	t.Run("validation fails when content changes", func(t *testing.T) {
+		testData["a/file.txt"] = &fstest.MapFile{
+			Data: []byte("new content"),
+		}
+		errCount := 0
+		for err := range digest.ValidateFilesBatch(ctx,
+			slices.Values(digestedFiles), reg, 0) {
+			var digestErr *digest.DigestError
+			be.True(t, errors.As(err, &digestErr))
+			be.Equal(t, "a/file.txt", digestErr.Path)
+			errCount++
+		}
+		be.Equal(t, 1, errCount)
+	})
+
+	t.Run("breaking early doesn't panic", func(t *testing.T) {
+		for range digest.ValidateFilesBatch(ctx,
+			slices.Values(digestedFiles), reg, 0) {
+			break
+		}
+	})
 }
 
 func testAlg(algID string, val []byte) (string, error) {
@@ -195,4 +233,18 @@ func testAlg(algID string, val []byte) (string, error) {
 		return exp, fmt.Errorf("%s value: got=%q, expected=%q", algID, got, exp)
 	}
 	return exp, nil
+}
+
+// digestFiles digests a set of files and returns the results
+func digestFiles(t *testing.T, ctx context.Context, fsys ocflfs.FS,
+	paths []string) []*digest.FileRef {
+	t.Helper()
+	inputFiles := ocflfs.Files(fsys, paths...)
+	var digestedFiles []*digest.FileRef
+	for fa, err := range digest.DigestFilesBatch(ctx, inputFiles, 5,
+		digest.SHA256, digest.SIZE) {
+		be.NilErr(t, err)
+		digestedFiles = append(digestedFiles, fa)
+	}
+	return digestedFiles
 }
