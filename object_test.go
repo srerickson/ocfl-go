@@ -515,7 +515,7 @@ func TestValidateObject_Fixtures(t *testing.T) {
 func expectFixtureErrors(t *testing.T, fixtureName string, errs ...error) {
 	t.Helper()
 	// if these codes are expected by the fixture but missing from errs, the test won't fail.
-	dontFaileCodes := []string{"E001", "E003", "E011", "E013", "E023", "E063", "E103"}
+	dontFaileCodes := []string{"E001", "E003", "E011", "E013", "E063", "E103"}
 	codeRegexp := regexp.MustCompile(`^E\d{3}$`)
 	expCodes := map[string]bool{}
 	gotCodes := map[string]bool{}
