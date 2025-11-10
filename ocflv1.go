@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"path"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -484,6 +484,34 @@ func (imp ocflV1) ValidateObjectVersion(ctx context.Context, vldr *ObjectValidat
 		err := fmt.Errorf("missing %s/inventory.json", vnumStr)
 		vldr.AddWarn(verr(err, code.W010(specStr)))
 	}
+	cdName := vldr.obj.ContentDirectory()
+	for _, d := range vdirState.dirs {
+		// the only directory in the version directory SHOULD be the content directory
+		if d != cdName {
+			err := fmt.Errorf(`extra directory in %s: %s`, vnum, d)
+			vldr.AddWarn(verr(err, code.W002(specStr)))
+			continue
+		}
+		// add version content files to validation state
+		var added int
+		fullVerContDir := path.Join(fullVerDir, cdName)
+		for contentFile, err := range ocflfs.WalkFiles(ctx, fsys, fullVerContDir) {
+			if err != nil {
+				vldr.AddFatal(err)
+				return err
+			}
+			// convert from path relative to version content directory to path
+			// relative to the object
+			fullPath := path.Join(vnumStr, cdName, contentFile.Path)
+			vldr.addExistingContent(fullPath)
+			added++
+		}
+		if added == 0 {
+			// content directory exists but it's empty
+			err := fmt.Errorf("content directory (%s) is empty directory", fullVerContDir)
+			vldr.AddFatal(verr(err, code.E016(specStr)))
+		}
+	}
 	if verInv != nil {
 		verInvValidation := imp.ValidateInventory(&verInv.Inventory)
 		vldr.PrefixAdd(vnumStr+"/inventory.json", verInvValidation)
@@ -506,39 +534,23 @@ func (imp ocflV1) ValidateObjectVersion(ctx context.Context, vldr *ObjectValidat
 		}
 		if verInv.Digest() != rootInv.Digest() {
 			imp.compareVersionInventory(vldr.obj, vnum, verInv, vldr)
-			if verInv.Digest() != rootInv.Digest() {
-				if err := vldr.addInventory(verInv, false); err != nil {
-					err = fmt.Errorf("%s/inventory.json digests are inconsistent with other inventories: %w", vnum, err)
-					vldr.AddFatal(verr(err, code.E066(specStr)))
-				}
+			if err := vldr.addInventory(verInv, false); err != nil {
+				err = fmt.Errorf("%s/inventory.json digests are inconsistent with other inventories: %w", vnum, err)
+				vldr.AddFatal(verr(err, code.E066(specStr)))
 			}
 		}
-	}
-	cdName := vldr.obj.ContentDirectory()
-	for _, d := range vdirState.dirs {
-		// the only directory in the version directory SHOULD be the content directory
-		if d != cdName {
-			err := fmt.Errorf(`extra directory in %s: %s`, vnum, d)
-			vldr.AddWarn(verr(err, code.W002(specStr)))
-			continue
-		}
-		// add version content files to validation state
-		var added int
-		fullVerContDir := path.Join(fullVerDir, cdName)
-		for contentFile, err := range ocflfs.WalkFiles(ctx, fsys, fullVerContDir) {
-			if err != nil {
-				vldr.AddFatal(err)
-				return err
+		// every file previously added to the validation state as an existing
+		// file must be included in the version state.
+		manifestPaths := verInv.Manifest.PathMap()
+		for name, entry := range vldr.files {
+			if !entry.fileExists {
+				continue
 			}
-			// convert from path relative to version content directory to path
-			// relative to the object
-			vldr.addExistingContent(path.Join(vnumStr, cdName, contentFile.Path))
-			added++
-		}
-		if added == 0 {
-			// content directory exists but it's empty
-			err := fmt.Errorf("content directory (%s) is empty directory", fullVerContDir)
-			vldr.AddFatal(verr(err, code.E016(specStr)))
+			if _, exists := manifestPaths[name]; exists {
+				continue
+			}
+			err := fmt.Errorf("missing content in %s/inventory.json manifest: %s", vnum, name)
+			vldr.AddFatal((verr(err, code.E023(specStr))))
 		}
 	}
 	return nil
@@ -610,7 +622,7 @@ func (imp ocflV1) compareVersionInventory(obj *Object, dirNum VNum, verInv *Stor
 			state:    rootVersion.State,
 			manifest: rootInv.Manifest,
 		}
-		if !thisVerState.Eq(rootVerState) {
+		if !thisVerState.forwardMatch(rootVerState) {
 			err := fmt.Errorf("%s/inventory.json has different logical state in its %s version block than the root inventory.json", dirNum, v)
 			vldr.AddFatal(verr(err, code.E066(specStr)))
 		}
@@ -694,31 +706,32 @@ type logicalState struct {
 	state    DigestMap
 }
 
-func (a logicalState) Eq(b logicalState) bool {
+// b is a forward match for a if it has the same keys in state and all the
+// content paths for a key in a are also associated with the key in b.
+func (a logicalState) forwardMatch(b logicalState) bool {
 	if a.state == nil || b.state == nil || a.manifest == nil || b.manifest == nil {
 		return false
 	}
-	for name, dig := range a.state.Paths() {
-		otherDig := b.state.DigestFor(name)
-		if otherDig == "" {
+	if len(a.state) != len(b.state) {
+		return false
+	}
+	for aName, aDig := range a.state.Paths() {
+		bDig := b.state.DigestFor(aName)
+		if bDig == "" {
 			return false
 		}
-		contentPaths := a.manifest[dig]
-		otherPaths := b.manifest[otherDig]
-		if len(contentPaths) != len(otherPaths) {
-			return false
-		}
-		sort.Strings(contentPaths)
-		sort.Strings(otherPaths)
-		for i, p := range contentPaths {
-			if otherPaths[i] != p {
+		// aContent must be subset of bContent
+		aContent := a.manifest[aDig]
+		bContent := b.manifest[bDig]
+		for _, con := range aContent {
+			if !slices.Contains(bContent, con) {
 				return false
 			}
 		}
 	}
 	// make sure all logical paths in other state are also in state
-	for otherName := range b.state.Paths() {
-		if a.state.DigestFor(otherName) == "" {
+	for bName := range b.state.Paths() {
+		if a.state.DigestFor(bName) == "" {
 			return false
 		}
 	}
