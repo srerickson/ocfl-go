@@ -42,6 +42,7 @@ const (
 )
 
 var (
+	// these are variable because we need pass them as pointers
 	delim         = "/"
 	maxKeys int32 = 1000
 )
@@ -152,6 +153,7 @@ func write(ctx context.Context, api WriteAPI, buck string, key string, r io.Read
 	if size > 0 {
 		psize, numParts = adjustPartSize(size, psize, numParts)
 	}
+	_ = s3mgr.DefaultUploadConcurrency
 	uploader := s3mgr.NewUploader(api, func(u *s3mgr.Uploader) {
 		u.Concurrency = conc
 		u.PartSize = psize
@@ -196,11 +198,12 @@ func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, psize 
 		if errIsNotExist(err) {
 			fsErr.Err = fs.ErrNotExist
 		}
+		return 0, fsErr
 	}
 	escapedSrc := url.QueryEscape(buck + "/" + src)
 	params := &s3v2.CopyObjectInput{
 		Bucket:     &buck,
-		CopySource: &escapedSrc,
+		CopySource: &escapedSrc, // value must be URL-encoded
 		Key:        &dst,
 	}
 	if _, err := api.CopyObject(ctx, params); err != nil {
@@ -270,8 +273,7 @@ func multipartCopy(ctx context.Context, api CopyAPI, buck string, dst, src strin
 	grp, grpCtx := errgroup.WithContext(ctx)
 	grp.SetLimit(conc)
 	copySource := url.QueryEscape(buck + "/" + src)
-	for i := int32(0); i < partCount; i++ {
-		i := i
+	for i := range partCount {
 		grp.Go(func() error {
 			var err error
 			partNum := i + 1
