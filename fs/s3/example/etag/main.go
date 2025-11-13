@@ -8,6 +8,7 @@ import (
 	"log"
 
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/srerickson/ocfl-go/fs/s3"
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
@@ -65,9 +66,11 @@ func backend(ctx context.Context, bucket string) (*s3.BucketFS, error) {
 		return nil, err
 	}
 	return &s3.BucketFS{
-		S3:                    s3v2.NewFromConfig(cfg),
-		Bucket:                bucket,
-		DefaultUploadPartSize: psize,
-		UploadConcurrency:     conc,
+		S3:     s3v2.NewFromConfig(cfg),
+		Bucket: bucket,
+		UploaderOption: func(u *manager.Uploader) {
+			u.Concurrency = conc
+			u.PartSize = psize
+		},
 	}, nil
 }

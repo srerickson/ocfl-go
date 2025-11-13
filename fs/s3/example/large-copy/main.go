@@ -66,10 +66,13 @@ func doTests(ctx context.Context, bucket string, size int64) error {
 	}
 
 	for _, t := range copyTests {
-		b.DefaultCopyPartSize = int64(t.psize) * megabyte
-		b.CopyPartConcurrency = t.conc
+
+		b.MultiPartCopyOption = func(mc *s3.MultiCopier) {
+			mc.Concurrency = t.conc
+			mc.PartSize = int64(t.psize) * megabyte
+		}
 		start := time.Now()
-		dst := fmt.Sprintf("copy-conc=%d-psize=%d", b.CopyPartConcurrency, b.DefaultCopyPartSize)
+		dst := fmt.Sprintf("copy-conc=%d-psize=%d", t.conc, t.psize)
 		// fmt.Fprintln(os.Stderr, dst)
 		if _, err := b.Copy(ctx, dst, src); err != nil {
 			return err
@@ -83,8 +86,8 @@ func doTests(ctx context.Context, bucket string, size int64) error {
 		}
 		fmt.Printf("%d, %d, %d, %0.2f\n",
 			size/gigabyte,
-			b.CopyPartConcurrency,
-			b.DefaultCopyPartSize/megabyte,
+			t.conc,
+			t.psize,
 			time.Since(start).Seconds())
 		if err := b.Remove(ctx, dst); err != nil {
 			return err

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
@@ -410,10 +411,12 @@ func TestWrite_Mock(t *testing.T) {
 				api = tcase.mock(t)
 			}
 			fsys := s3.BucketFS{
-				S3:                    api,
-				Bucket:                tcase.bucket,
-				UploadConcurrency:     tcase.uploadConc,
-				DefaultUploadPartSize: tcase.uploadPSize,
+				S3:     api,
+				Bucket: tcase.bucket,
+				UploaderOption: func(u *manager.Uploader) {
+					u.Concurrency = tcase.uploadConc
+					u.PartSize = tcase.uploadPSize
+				},
 			}
 			val, err := fsys.Write(ctx, tcase.key, tcase.body)
 			tcase.expect(t, api, val, err)
@@ -572,7 +575,14 @@ func TestCopy_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := s3.BucketFS{S3: api, Bucket: tcase.bucket, CopyPartConcurrency: tcase.copyConc, DefaultCopyPartSize: tcase.copyPSize}
+			fsys := s3.BucketFS{
+				S3:     api,
+				Bucket: tcase.bucket,
+				MultiPartCopyOption: func(mc *s3.MultiCopier) {
+					mc.Concurrency = tcase.copyConc
+					mc.PartSize = tcase.copyPSize
+				},
+			}
 			size, err := fsys.Copy(ctx, tcase.dst, tcase.src)
 			tcase.expect(t, api, size, err)
 		})
@@ -665,81 +675,6 @@ func isPathError(t *testing.T, err error) {
 		t.Error("error is not fs.PathError")
 	}
 }
-
-// func newBackend(t *testing.T) *s3.FS {
-// 	ctx := context.Background()
-// 	// creds := credentials.NewStaticCredentialsProvider("", "", "")
-// 	customResolver := aws.EndpointResolverWithOptionsFunc(
-// 		func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-// 			return aws.Endpoint{
-// 				PartitionID:       "aws",
-// 				URL:               "http://localhost:9000",
-// 				SigningRegion:     defaultRegion,
-// 				HostnameImmutable: true,
-// 			}, nil
-// 		})
-// 	opts := []func(*config.LoadOptions) error{
-// 		config.WithDefaultRegion(defaultRegion),
-// 		// config.WithCredentialsProvider(creds),
-// 		config.WithEndpointResolverWithOptions(customResolver),
-// 	}
-// 	cfg, err := config.LoadDefaultConfig(ctx, opts...)
-// 	if err != nil {
-// 		t.Fatal(err)
-// 	}
-// 	testBucket := randName(testBucketPrefix)
-// 	s3client := s3v2.NewFromConfig(cfg)
-// 	_, err = s3client.CreateBucket(ctx, &s3v2.CreateBucketInput{
-// 		Bucket: aws.String(testBucket),
-// 	})
-// 	if err != nil {
-// 		t.Fatal(err)
-// 	}
-// 	t.Log("created test bucket", testBucket)
-// 	t.Cleanup(func() {
-// 		if err := destroyBucket(ctx, s3client, testBucket); err != nil {
-// 			t.Fatal(err)
-// 		}
-// 		t.Log("removed test bucket", testBucket)
-// 	})
-// 	return &s3.FS{
-// 		S3:     s3client,
-// 		Bucket: testBucket,
-// 	}
-// }
-
-// func destroyBucket(ctx context.Context, s3cl *s3v2.Client, bucket string) error {
-// 	b := aws.String(bucket)
-// 	listopts := &s3v2.ListObjectsV2Input{Bucket: b}
-// 	for {
-// 		list, err := s3cl.ListObjectsV2(ctx, listopts)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		for _, obj := range list.Contents {
-// 			if _, err := s3cl.DeleteObject(ctx, &s3v2.DeleteObjectInput{
-// 				Bucket: b,
-// 				Key:    obj.Key,
-// 			}); err != nil {
-// 				return err
-// 			}
-// 		}
-// 		if list.IsTruncated != nil && !*list.IsTruncated {
-// 			break
-// 		}
-// 		listopts.ContinuationToken = list.NextContinuationToken
-// 	}
-// 	_, err := s3cl.DeleteBucket(ctx, &s3v2.DeleteBucketInput{Bucket: b})
-// 	return err
-// }
-
-// func randName(prefix string) string {
-// 	byt, err := io.ReadAll(io.LimitReader(rand.Reader, 8))
-// 	if err != nil {
-// 		panic("randName: " + err.Error())
-// 	}
-// 	return prefix + hex.EncodeToString(byt)
-// }
 
 func compareFileInf(t *testing.T, info, fixture fs.FileInfo) {
 	t.Helper()
