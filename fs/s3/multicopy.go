@@ -5,14 +5,15 @@ import (
 	"errors"
 	"net/url"
 
-	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"golang.org/x/sync/errgroup"
 )
 
 const (
-	defaultCopyPartConcurrency = 12
-	defaultCopyPartSize        = 64 * megabyte
+	defaultCopyPartConcurrency = 6
+	defaultCopyPartSize        = 32 * megabyte
 )
 
 type MultiCopier struct {
@@ -29,7 +30,7 @@ type MultiCopier struct {
 	api MultiCopyAPI
 }
 
-func NewMultiCopier(api MultiCopyAPI, opts ...func(*MultiCopier)) MultiCopier {
+func NewMultiCopier(api MultiCopyAPI, opts ...func(*MultiCopier)) *MultiCopier {
 	copier := MultiCopier{
 		api: api,
 	}
@@ -38,30 +39,36 @@ func NewMultiCopier(api MultiCopyAPI, opts ...func(*MultiCopier)) MultiCopier {
 			o(&copier)
 		}
 	}
-	return copier
+	return &copier
 }
 
-func (c *MultiCopier) Copy(ctx context.Context, buck string, dst, src string) (size int64, err error) {
-	headParams := &s3v2.HeadObjectInput{Bucket: &buck, Key: &src}
-	srcObj, err := c.api.HeadObject(ctx, headParams)
-	if err != nil {
-		err = pathErr("copy", src, err)
-		return
+func (c *MultiCopier) Copy(ctx context.Context, buck string, dst, src string, srcHeads ...*s3.HeadObjectOutput) (srcSize int64, err error) {
+	var srcHead *s3.HeadObjectOutput
+	if len(srcHeads) > 0 {
+		srcHead = srcHeads[0]
 	}
-	if srcObj.ContentLength == nil {
+	if srcHead == nil {
+		headParams := &s3.HeadObjectInput{Bucket: &buck, Key: &src}
+		srcHead, err = c.api.HeadObject(ctx, headParams)
+		if err != nil {
+			err = pathErr("copy", src, err)
+			return
+		}
+	}
+	if srcHead.ContentLength == nil {
 		err = pathErr("copy", src, errors.New("missing content length"))
 		return
 	}
-	size = *srcObj.ContentLength
-	if c.PartSize < minPartSize {
+	srcSize = *srcHead.ContentLength
+	if c.PartSize < manager.MinUploadPartSize {
 		c.PartSize = defaultCopyPartSize
 	}
 	if c.Concurrency < 1 {
 		c.Concurrency = defaultCopyPartConcurrency
 	}
-	psize, partCount := adjustPartSize(size, c.PartSize, maxParts)
+	psize, partCount := adjustPartSize(srcSize, c.PartSize, manager.MaxUploadParts)
 	completedParts := make([]types.CompletedPart, partCount)
-	uploadParams := &s3v2.CreateMultipartUploadInput{Bucket: &buck, Key: &dst}
+	uploadParams := &s3.CreateMultipartUploadInput{Bucket: &buck, Key: &dst}
 	newUp, err := c.api.CreateMultipartUpload(ctx, uploadParams)
 	if err != nil {
 		err = pathErr("copy", dst, err)
@@ -71,7 +78,7 @@ func (c *MultiCopier) Copy(ctx context.Context, buck string, dst, src string) (s
 		// complete or abort the multipart upload
 		switch {
 		case err != nil:
-			params := &s3v2.AbortMultipartUploadInput{
+			params := &s3.AbortMultipartUploadInput{
 				Bucket:   &buck,
 				Key:      &dst,
 				UploadId: newUp.UploadId,
@@ -82,7 +89,7 @@ func (c *MultiCopier) Copy(ctx context.Context, buck string, dst, src string) (s
 			upload := &types.CompletedMultipartUpload{
 				Parts: completedParts,
 			}
-			params := &s3v2.CompleteMultipartUploadInput{
+			params := &s3.CompleteMultipartUploadInput{
 				Bucket:          &buck,
 				Key:             &dst,
 				UploadId:        newUp.UploadId,
@@ -98,8 +105,8 @@ func (c *MultiCopier) Copy(ctx context.Context, buck string, dst, src string) (s
 		grp.Go(func() error {
 			var err error
 			partNum := i + 1
-			srcRange := byteRange(partNum, psize, size)
-			params := &s3v2.UploadPartCopyInput{
+			srcRange := byteRange(partNum, psize, srcSize)
+			params := &s3.UploadPartCopyInput{
 				Bucket:          &buck,
 				CopySource:      &copySource,
 				Key:             &dst,

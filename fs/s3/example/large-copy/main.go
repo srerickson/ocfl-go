@@ -13,7 +13,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
-	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/fs/s3"
 )
 
@@ -56,28 +55,26 @@ func main() {
 
 func doTests(ctx context.Context, bucket string, size int64) error {
 	fmt.Println("source_size,part_concurrency,part_size,copy_time")
-	b, err := backend(ctx, bucket)
+	src, err := createSrcFile(ctx, bucket, size)
 	if err != nil {
 		return err
 	}
-	src := fmt.Sprintf("copy-source-%d", size/gigabyte)
-	if err := createSrcFile(ctx, b, src, size); err != nil {
-		return err
-	}
-
 	for _, t := range copyTests {
-
-		b.MultiPartCopyOption = func(mc *s3.MultiCopier) {
+		copyOpts := func(mc *s3.MultiCopier) {
 			mc.Concurrency = t.conc
 			mc.PartSize = int64(t.psize) * megabyte
+		}
+		fsys, err := backend(ctx, bucket, s3.WithMultiPartCopyOption(copyOpts))
+		if err != nil {
+			return err
 		}
 		start := time.Now()
 		dst := fmt.Sprintf("copy-conc=%d-psize=%d", t.conc, t.psize)
 		// fmt.Fprintln(os.Stderr, dst)
-		if _, err := b.Copy(ctx, dst, src); err != nil {
+		if _, err := fsys.Copy(ctx, dst, src); err != nil {
 			return err
 		}
-		dstSize, err := getSize(ctx, b, dst)
+		dstSize, err := getSize(ctx, fsys, dst)
 		if err != nil {
 			return err
 		}
@@ -89,39 +86,43 @@ func doTests(ctx context.Context, bucket string, size int64) error {
 			t.conc,
 			t.psize,
 			time.Since(start).Seconds())
-		if err := b.Remove(ctx, dst); err != nil {
+		if err := fsys.Remove(ctx, dst); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func createSrcFile(ctx context.Context, fsys ocflfs.WriteFS, key string, size int64) error {
+func createSrcFile(ctx context.Context, bucket string, size int64) (string, error) {
+	fsys, err := backend(ctx, bucket)
+	if err != nil {
+		return "", err
+	}
+	key := fmt.Sprintf("copy-source-%d", size/gigabyte)
 	if f, err := fsys.OpenFile(ctx, key); err == nil {
 		info, err := f.Stat()
 		if err != nil {
-			return err
+			return "", err
 		}
 		f.Close()
 		if info.Size() == size {
-			return nil
+			return key, nil
 		}
 	}
 	fmt.Fprintln(os.Stderr, "writing source file")
 	body := io.LimitReader(rand.Reader, size)
-	_, err := fsys.Write(ctx, key, body)
-	return err
+	if _, err := fsys.Write(ctx, key, body); err != nil {
+		return "", err
+	}
+	return key, nil
 }
 
-func backend(ctx context.Context, bucket string) (*s3.BucketFS, error) {
+func backend(ctx context.Context, bucket string, opts ...func(*s3.BucketFS)) (*s3.BucketFS, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &s3.BucketFS{
-		S3:     s3v2.NewFromConfig(cfg),
-		Bucket: bucket,
-	}, nil
+	return s3.NewBucketFS(s3v2.NewFromConfig(cfg), bucket, opts...), nil
 }
 
 func getSize(ctx context.Context, fsys *s3.BucketFS, name string) (int64, error) {

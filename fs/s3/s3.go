@@ -15,20 +15,19 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	s3mgr "github.com/aws/aws-sdk-go-v2/feature/s3/manager"
-	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
 const (
-	megabyte int64 = 1024 * 1024
+	megabyte          int64 = 1024 * 1024
+	partSizeIncrement       = 1 * megabyte
 
-	minPartSize = s3mgr.MinUploadPartSize
-	maxParts    = s3mgr.MaxUploadParts
-
-	partSizeIncrement = 1 * megabyte
-
+	// error message returned when copy fails because source is too large: used
+	// to trigger multipart upload. (This appears to be the only way to check
+	// this error).
 	copySrcTooLarge = "copy source is larger than the maximum allowable size"
 
 	// modes retured by Stat()
@@ -40,15 +39,13 @@ var (
 	// these are variable because we need pass them as pointers
 	delim         = "/"
 	maxKeys int32 = 1000
-
-	errCopySrcTooLarge = errors.New(copySrcTooLarge)
 )
 
 func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (fs.File, error) {
 	if !fs.ValidPath(name) || name == "." {
 		return nil, pathErr("open", name, fs.ErrInvalid)
 	}
-	headIn := &s3v2.HeadObjectInput{Bucket: &buck, Key: &name}
+	headIn := &s3.HeadObjectInput{Bucket: &buck, Key: &name}
 	headOut, err := api.HeadObject(ctx, headIn)
 	if err != nil {
 		fsErr := &fs.PathError{
@@ -77,7 +74,7 @@ func dirEntries(ctx context.Context, api ReadDirAPI, buck string, dir string) it
 			yield(nil, pathErr("readdir", dir, fs.ErrInvalid))
 			return
 		}
-		params := &s3v2.ListObjectsV2Input{
+		params := &s3.ListObjectsV2Input{
 			Bucket:    &buck,
 			Delimiter: &delim,
 			MaxKeys:   &maxKeys,
@@ -136,7 +133,7 @@ func dirEntries(ctx context.Context, api ReadDirAPI, buck string, dir string) it
 
 }
 
-func write(ctx context.Context, api WriteAPI, buck string, key string, r io.Reader, opts ...func(*s3mgr.Uploader)) (int64, error) {
+func write(ctx context.Context, uploader *manager.Uploader, buck string, key string, r io.Reader) (int64, error) {
 	if !fs.ValidPath(key) || key == "." {
 		return 0, pathErr("write", key, fs.ErrInvalid)
 	}
@@ -151,9 +148,8 @@ func write(ctx context.Context, api WriteAPI, buck string, key string, r io.Read
 	case *io.LimitedReader:
 		size = val.N
 	}
-	uploader := s3mgr.NewUploader(api, opts...)
 	countReader := &countReader{Reader: r}
-	params := &s3v2.PutObjectInput{
+	params := &s3.PutObjectInput{
 		Bucket: &buck,
 		Key:    &key,
 		Body:   countReader,
@@ -168,14 +164,14 @@ func write(ctx context.Context, api WriteAPI, buck string, key string, r io.Read
 	return countReader.size, nil
 }
 
-func copy(ctx context.Context, api CopyAPI, buck string, dst, src string) (int64, error) {
+func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, opts ...func(*MultiCopier)) (int64, error) {
 	if !fs.ValidPath(src) || src == "." {
 		return 0, pathErr("copy", src, fs.ErrInvalid)
 	}
 	if !fs.ValidPath(dst) || dst == "." {
 		return 0, pathErr("copy", dst, fs.ErrInvalid)
 	}
-	headResult, err := api.HeadObject(ctx, &s3v2.HeadObjectInput{
+	srcHead, err := api.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: &buck,
 		Key:    &src,
 	})
@@ -191,7 +187,7 @@ func copy(ctx context.Context, api CopyAPI, buck string, dst, src string) (int64
 		return 0, fsErr
 	}
 	escapedSrc := url.QueryEscape(buck + "/" + src)
-	params := &s3v2.CopyObjectInput{
+	params := &s3.CopyObjectInput{
 		Bucket:     &buck,
 		CopySource: &escapedSrc, // value must be URL-encoded
 		Key:        &dst,
@@ -201,12 +197,12 @@ func copy(ctx context.Context, api CopyAPI, buck string, dst, src string) (int64
 		// this error doesn't seem to have a specific type
 		// associated with it.
 		if strings.Contains(err.Error(), copySrcTooLarge) {
-			err = errCopySrcTooLarge
-			return 0, err
+			// source is too large for basic copy -- try multipart copy
+			return NewMultiCopier(api, opts...).Copy(ctx, buck, dst, src, srcHead)
 		}
 		return 0, pathErr("copy", src, err)
 	}
-	return *headResult.ContentLength, nil
+	return *srcHead.ContentLength, nil
 }
 
 func remove(ctx context.Context, api RemoveAPI, b string, name string) error {
@@ -216,7 +212,7 @@ func remove(ctx context.Context, api RemoveAPI, b string, name string) error {
 	if name == "." {
 		return pathErr("remove", name, fs.ErrNotExist)
 	}
-	_, err := api.DeleteObject(ctx, &s3v2.DeleteObjectInput{
+	_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: &b,
 		Key:    aws.String(name),
 	})
@@ -230,7 +226,7 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 	if !fs.ValidPath(name) {
 		return pathErr("removeall", name, fs.ErrInvalid)
 	}
-	params := &s3v2.ListObjectsV2Input{Bucket: &buck, MaxKeys: &maxKeys}
+	params := &s3.ListObjectsV2Input{Bucket: &buck, MaxKeys: &maxKeys}
 	if name != "." {
 		params.Prefix = aws.String(name + "/")
 	}
@@ -240,7 +236,7 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 			return pathErr("removeall", name, err)
 		}
 		for _, obj := range list.Contents {
-			_, err := api.DeleteObject(ctx, &s3v2.DeleteObjectInput{
+			_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{
 				Bucket: &buck,
 				Key:    obj.Key,
 			})
@@ -264,7 +260,7 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) iter.
 			yield(nil, pathErr(op, dir, fs.ErrInvalid))
 			return
 		}
-		params := &s3v2.ListObjectsV2Input{
+		params := &s3.ListObjectsV2Input{
 			Bucket:  &buck,
 			MaxKeys: &maxKeys,
 		}
@@ -311,7 +307,7 @@ type s3File struct {
 	bucket string
 	key    string
 	body   io.ReadCloser
-	info   *s3v2.HeadObjectOutput
+	info   *s3.HeadObjectOutput
 }
 
 func (f *s3File) Stat() (fs.FileInfo, error) {
@@ -326,7 +322,7 @@ func (f *s3File) Stat() (fs.FileInfo, error) {
 
 func (f *s3File) Read(p []byte) (int, error) {
 	if f.body == nil {
-		params := &s3v2.GetObjectInput{Bucket: &f.bucket, Key: &f.key}
+		params := &s3.GetObjectInput{Bucket: &f.bucket, Key: &f.key}
 		obj, err := f.api.GetObject(f.ctx, params)
 		if err != nil {
 			return 0, err
@@ -385,16 +381,18 @@ func pathErr(op string, path string, err error) error {
 	return &fs.PathError{Op: op, Path: path, Err: err}
 }
 
-func adjustPartSize(total, defaultPartSize int64, maxParts int32) (psize int64, pcount int32) {
-	psize = defaultPartSize
+// adjustPartSize returns an adjusted partsize and part count for transfering
+// totalSize in under maxParts parts using the initial partSize.
+func adjustPartSize(totalSize, initialPartSize int64, maxParts int32) (psize int64, pcount int32) {
+	psize = initialPartSize
 	for {
-		pcount = int32(total / psize)
+		pcount = int32(totalSize / psize)
 		if pcount < maxParts {
 			break
 		}
 		psize += partSizeIncrement
 	}
-	if total%psize > 0 {
+	if totalSize%psize > 0 {
 		pcount++
 	}
 	return

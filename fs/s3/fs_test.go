@@ -111,10 +111,7 @@ func TestWriteReadDeleteFile(t *testing.T) {
 	})
 	be.NilErr(t, err)
 	key := "dir/test-data"
-	fsys := &s3.BucketFS{
-		S3:     cli,
-		Bucket: bucket,
-	}
+	fsys := s3.NewBucketFS(cli, bucket)
 	buff := mock.RandBytes(15 * megabyte)
 	n, err := fsys.Write(ctx, key, bytes.NewReader(buff))
 	be.NilErr(t, err)
@@ -198,7 +195,7 @@ func TestOpenFile_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := s3.BucketFS{S3: api, Bucket: tcase.bucket}
+			fsys := s3.NewBucketFS(api, tcase.bucket)
 			f, err := fsys.OpenFile(ctx, tcase.key)
 			tcase.expect(t, f, err)
 		})
@@ -343,7 +340,7 @@ func TestReadDir_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := &s3.BucketFS{S3: api, Bucket: tcase.bucket}
+			fsys := s3.NewBucketFS(api, tcase.bucket)
 			entries, err := ocflfs.ReadDir(ctx, fsys, tcase.dir)
 			tcase.expect(t, entries, err)
 		})
@@ -410,14 +407,11 @@ func TestWrite_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := s3.BucketFS{
-				S3:     api,
-				Bucket: tcase.bucket,
-				UploaderOption: func(u *manager.Uploader) {
-					u.Concurrency = tcase.uploadConc
-					u.PartSize = tcase.uploadPSize
-				},
+			uploaderOpt := func(u *manager.Uploader) {
+				u.Concurrency = tcase.uploadConc
+				u.PartSize = tcase.uploadPSize
 			}
+			fsys := s3.NewBucketFS(api, tcase.bucket, s3.WithUploaderOptions(uploaderOpt))
 			val, err := fsys.Write(ctx, tcase.key, tcase.body)
 			tcase.expect(t, api, val, err)
 		})
@@ -460,7 +454,7 @@ func TestRemove_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := s3.BucketFS{S3: api, Bucket: tcase.bucket}
+			fsys := s3.NewBucketFS(api, tcase.bucket)
 			err := fsys.Remove(ctx, tcase.key)
 			tcase.expect(t, api, err)
 		})
@@ -503,7 +497,7 @@ func TestRemoveAll_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := s3.BucketFS{S3: api, Bucket: tcase.bucket}
+			fsys := s3.NewBucketFS(api, tcase.bucket)
 			err := fsys.RemoveAll(ctx, tcase.dir)
 			tcase.expect(t, api, err)
 		})
@@ -575,14 +569,12 @@ func TestCopy_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := s3.BucketFS{
-				S3:     api,
-				Bucket: tcase.bucket,
-				MultiPartCopyOption: func(mc *s3.MultiCopier) {
-					mc.Concurrency = tcase.copyConc
-					mc.PartSize = tcase.copyPSize
-				},
+			copyOpts := func(mc *s3.MultiCopier) {
+				mc.Concurrency = tcase.copyConc
+				mc.PartSize = tcase.copyPSize
 			}
+			fsys := s3.NewBucketFS(api, tcase.bucket,
+				s3.WithMultiPartCopyOption(copyOpts))
 			size, err := fsys.Copy(ctx, tcase.dst, tcase.src)
 			tcase.expect(t, api, size, err)
 		})
@@ -639,7 +631,7 @@ func TestWalkFiles_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := s3.BucketFS{Bucket: tcase.bucket, S3: api}
+			fsys := s3.NewBucketFS(api, tcase.bucket)
 			var walkFiles []*ocflfs.FileRef
 			var walkErr error
 			for f, err := range fsys.WalkFiles(ctx, tcase.dir) {

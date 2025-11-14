@@ -52,8 +52,5 @@ func backend(ctx context.Context, bucket string) (*s3.BucketFS, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &s3.BucketFS{
-		S3:     s3v2.NewFromConfig(cfg),
-		Bucket: bucket,
-	}, nil
+	return s3.NewBucketFS(s3v2.NewFromConfig(cfg), bucket), nil
 }
