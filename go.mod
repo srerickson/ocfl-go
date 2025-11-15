@@ -7,6 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.31.17
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.20.4
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.90.0
+	github.com/aws/smithy-go v1.23.2
 	github.com/carlmjohnson/be v0.23.2
 	github.com/hashicorp/go-multierror v1.1.1
 	golang.org/x/crypto v0.43.0
@@ -28,7 +29,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.1 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.39.1 // indirect
-	github.com/aws/smithy-go v1.23.2 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 )
