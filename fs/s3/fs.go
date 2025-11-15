@@ -15,8 +15,8 @@ import (
 // BucketFS implements ocfl.WriteFS, ocfl.CopyFS, and ocfl.ObjectRootIterator
 // for an S3 bucket.
 type BucketFS struct {
-	s3api                S3API  // s3api implementation (required).
-	bucket               string // S3 bucket (required).
+	client               S3API
+	bucket               string
 	logger               *slog.Logger
 	uploader             *manager.Uploader
 	uploaderOptions      []func(*manager.Uploader)
@@ -26,7 +26,7 @@ type BucketFS struct {
 // NewBucketFS returns a new *BucketFS for the given bucket
 func NewBucketFS(client S3API, bucket string, opts ...func(*BucketFS)) *BucketFS {
 	fsys := &BucketFS{
-		s3api:  client,
+		client: client,
 		bucket: bucket,
 	}
 	for _, o := range opts {
@@ -62,7 +62,7 @@ func WithMultiPartCopyOption(opts ...func(*MultiCopier)) func(*BucketFS) {
 
 // Client returns the S3 API client used to create f
 func (f *BucketFS) Client() S3API {
-	return f.s3api
+	return f.client
 }
 
 // Bucket returns the bucket used to create f.
@@ -72,37 +72,42 @@ func (f *BucketFS) Bucket() string {
 
 func (f *BucketFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	f.debugLog(ctx, "s3:openfile", "bucket", f.bucket, "name", name)
-	return openFile(ctx, f.s3api, f.bucket, name)
+	return openFile(ctx, f.client, f.bucket, name)
 }
 
 func (f *BucketFS) DirEntries(ctx context.Context, dir string) iter.Seq2[fs.DirEntry, error] {
 	f.debugLog(ctx, "s3:readdir", "bucket", f.bucket, "name", dir)
-	return dirEntries(ctx, f.s3api, f.bucket, dir)
+	return dirEntries(ctx, f.client, f.bucket, dir)
 }
 
 func (f *BucketFS) Write(ctx context.Context, name string, r io.Reader) (int64, error) {
+	return f.WriteWithOptions(ctx, name, r)
+}
+
+// WriteWithOptions writes with custom optionss.
+func (f *BucketFS) WriteWithOptions(ctx context.Context, name string, r io.Reader, opts ...func(*s3.PutObjectInput)) (int64, error) {
 	f.debugLog(ctx, "s3:write", "bucket", f.bucket, "name", name)
-	return write(ctx, f.uploader, f.bucket, name, r)
+	return write(ctx, f.uploader, f.bucket, name, r, opts...)
 }
 
 func (f *BucketFS) Copy(ctx context.Context, dst, src string) (int64, error) {
 	f.debugLog(ctx, "s3:copy", "bucket", f.bucket, "dst", dst, "src", src)
-	return copy(ctx, f.s3api, f.bucket, dst, src, f.multiPartCopyOptions...)
+	return copy(ctx, f.client, f.bucket, dst, src, f.multiPartCopyOptions...)
 }
 
 func (f *BucketFS) Remove(ctx context.Context, name string) error {
 	f.debugLog(ctx, "s3:remove", "bucket", f.bucket, "name", name)
-	return remove(ctx, f.s3api, f.bucket, name)
+	return remove(ctx, f.client, f.bucket, name)
 }
 
 func (f *BucketFS) RemoveAll(ctx context.Context, name string) error {
 	f.debugLog(ctx, "s3:remove_all", "bucket", f.bucket, "name", name)
-	return removeAll(ctx, f.s3api, f.bucket, name)
+	return removeAll(ctx, f.client, f.bucket, name)
 }
 
 func (f *BucketFS) WalkFiles(ctx context.Context, dir string) iter.Seq2[*ocflfs.FileRef, error] {
 	f.debugLog(ctx, "s3:walkfiles", "bucket", f.bucket, "prefix", dir)
-	files := walkFiles(ctx, f.s3api, f.bucket, dir)
+	files := walkFiles(ctx, f.client, f.bucket, dir)
 	// The values yielded by walkfiles don't include the FS, we need to
 	// add it here.
 	return func(yield func(*ocflfs.FileRef, error) bool) {

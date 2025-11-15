@@ -74,7 +74,6 @@ func TmpS3FS(t *testing.T, testdata fs.FS) *ocflS3.BucketFS {
 			}
 		}
 	}
-
 	return s3fs
 }
 

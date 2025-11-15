@@ -16,10 +16,12 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
+
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/fs/s3"
+
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
 	"github.com/srerickson/ocfl-go/internal/testutil"
 )
@@ -101,17 +103,13 @@ func TestOpenFile(t *testing.T) {
 }
 
 func TestWriteReadDeleteFile(t *testing.T) {
+	if !testutil.S3Enabled() {
+		t.Log("s3 test service is not running")
+		return
+	}
 	ctx := t.Context()
-	cli, err := testutil.S3Client(ctx)
-	be.NilErr(t, err)
-	bucket, err := testutil.TmpBucket(ctx, cli)
-	be.NilErr(t, err)
-	t.Cleanup(func() {
-		testutil.RemoveBucket(ctx, cli, bucket)
-	})
-	be.NilErr(t, err)
+	fsys := testutil.TmpS3FS(t, nil)
 	key := "dir/test-data"
-	fsys := s3.NewBucketFS(cli, bucket)
 	buff := mock.RandBytes(15 * megabyte)
 	n, err := fsys.Write(ctx, key, bytes.NewReader(buff))
 	be.NilErr(t, err)
@@ -126,6 +124,29 @@ func TestWriteReadDeleteFile(t *testing.T) {
 	be.NilErr(t, err)
 	be.True(t, bytes.Equal(outBytes, buff))
 	be.NilErr(t, fsys.Remove(ctx, key))
+}
+
+func TestWriteWithOptions(t *testing.T) {
+	if !testutil.S3Enabled() {
+		t.Log("s3 test service is not running")
+		return
+	}
+	ctx := t.Context()
+	fsys := testutil.TmpS3FS(t, nil)
+	// option to require key to not exist
+	opt := func(input *s3v2.PutObjectInput) {
+		match := "*"
+		input.IfNoneMatch = &match
+	}
+	key := "file"
+	body := strings.NewReader("content")
+	// first write creates the file
+	_, err := fsys.WriteWithOptions(ctx, key, body, opt)
+	be.NilErr(t, err)
+
+	// second write fails because key exists
+	_, err = fsys.WriteWithOptions(ctx, key, body, opt)
+	be.Nonzero(t, err)
 }
 
 func TestOpenFile_Mock(t *testing.T) {

@@ -133,32 +133,38 @@ func dirEntries(ctx context.Context, api ReadDirAPI, buck string, dir string) it
 
 }
 
-func write(ctx context.Context, uploader *manager.Uploader, buck string, key string, r io.Reader) (int64, error) {
+func write(ctx context.Context, uploader *manager.Uploader, buck string, key string, r io.Reader, opts ...func(*s3.PutObjectInput)) (int64, error) {
 	if !fs.ValidPath(key) || key == "." {
 		return 0, pathErr("write", key, fs.ErrInvalid)
 	}
-	var size int64 = -1
-	switch val := r.(type) {
-	case fs.File:
-		if info, err := val.Stat(); err == nil {
-			size = info.Size()
-		}
-	case *bytes.Reader:
-		size = val.Size()
-	case *io.LimitedReader:
-		size = val.N
-	}
 	countReader := &countReader{Reader: r}
-	params := &s3.PutObjectInput{
-		Bucket: &buck,
-		Key:    &key,
-		Body:   countReader,
+	var putInput s3.PutObjectInput
+	for _, o := range opts {
+		if o != nil {
+			o(&putInput)
+		}
 	}
-	if size > 0 {
-		params.ContentLength = &size
+	putInput.Bucket = &buck
+	putInput.Key = &key
+	putInput.Body = countReader
+	if putInput.ContentLength == nil {
+		// try to get content length from r
+		size := int64(-1)
+		switch val := r.(type) {
+		case fs.File:
+			if info, err := val.Stat(); err == nil {
+				size = info.Size()
+			}
+		case *bytes.Reader:
+			size = val.Size()
+		case *io.LimitedReader:
+			size = val.N
+		}
+		if size > -1 {
+			putInput.ContentLength = &size
+		}
 	}
-	_, err := uploader.Upload(ctx, params)
-	if err != nil {
+	if _, err := uploader.Upload(ctx, &putInput); err != nil {
 		return 0, &fs.PathError{Op: "write", Path: key, Err: err}
 	}
 	return countReader.size, nil
