@@ -16,6 +16,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
@@ -100,6 +101,25 @@ func TestOpenFile(t *testing.T) {
 			test.expect(t, f, err)
 		})
 	}
+
+	t.Run("err if modified", func(t *testing.T) {
+		// if a file is modified after opening it, read should fail
+		ctx := t.Context()
+		key := "file"
+		body1 := strings.NewReader("content1")
+		body2 := strings.NewReader("content2")
+		_, err := fsys.Write(ctx, key, body1) // create
+		be.NilErr(t, err)
+		f, err := fsys.OpenFile(ctx, key) // open
+		be.NilErr(t, err)
+		_, err = fsys.Write(ctx, key, body2) // modify
+		be.NilErr(t, err)
+		_, err = io.ReadAll(f) // read fails with "PreconditionFailed"
+		be.Nonzero(t, err)
+		var apiErr smithy.APIError
+		be.True(t, errors.As(err, &apiErr))
+		be.Equal(t, "PreconditionFailed", apiErr.ErrorCode())
+	})
 }
 
 func TestWriteReadDeleteFile(t *testing.T) {
@@ -147,6 +167,9 @@ func TestWriteWithOptions(t *testing.T) {
 	// second write fails because key exists
 	_, err = fsys.WriteWithOptions(ctx, key, body, opt)
 	be.Nonzero(t, err)
+	var apiErr smithy.APIError
+	be.True(t, errors.As(err, &apiErr))
+	be.Equal(t, "PreconditionFailed", apiErr.ErrorCode())
 }
 
 func TestOpenFile_Mock(t *testing.T) {

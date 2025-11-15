@@ -328,7 +328,13 @@ func (f *s3File) Stat() (fs.FileInfo, error) {
 
 func (f *s3File) Read(p []byte) (int, error) {
 	if f.body == nil {
-		params := &s3.GetObjectInput{Bucket: &f.bucket, Key: &f.key}
+		params := &s3.GetObjectInput{
+			Bucket: &f.bucket,
+			Key:    &f.key,
+			// ensure unchanged since open
+			IfMatch:           f.info.ETag,
+			IfUnmodifiedSince: f.info.LastModified,
+		}
 		obj, err := f.api.GetObject(f.ctx, params)
 		if err != nil {
 			return 0, err
