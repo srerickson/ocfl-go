@@ -61,7 +61,7 @@ func TmpS3FS(t *testing.T, testdata fs.FS) *ocflS3.BucketFS {
 			t.Fatal("cleaning up S3 bucket:", err)
 		}
 	})
-	s3fs := &ocflS3.BucketFS{S3: cli, Bucket: bucket}
+	s3fs := ocflS3.NewBucketFS(cli, bucket)
 	if testdata != nil {
 		files := fs.WalkFiles(ctx, testdata, ".")
 		for file, err := range files {
@@ -74,7 +74,6 @@ func TmpS3FS(t *testing.T, testdata fs.FS) *ocflS3.BucketFS {
 			}
 		}
 	}
-
 	return s3fs
 }
 

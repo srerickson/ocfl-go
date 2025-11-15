@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/charmbracelet/log"
 	"github.com/srerickson/ocfl-go"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
@@ -17,9 +16,7 @@ var objPath string
 func main() {
 	ctx := context.Background()
 	flag.Parse()
-	handl := log.New(os.Stderr)
-	handl.SetLevel(log.WarnLevel)
-	logger := slog.New(handl)
+	logger := slog.Default()
 	objPath = flag.Arg(0)
 	if objPath == "" {
 		logger.Error("missing required object root path argument")

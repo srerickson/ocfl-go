@@ -69,11 +69,7 @@ func parseStoreConn(ctx context.Context, name string) (ocflfs.FS, string, error)
 		if err != nil {
 			return nil, "", err
 		}
-		fsys := &s3.BucketFS{
-			S3:     awsS3.NewFromConfig(cfg),
-			Bucket: rl.Host,
-			Logger: logging.DefaultLogger(),
-		}
+		fsys := s3.NewBucketFS(awsS3.NewFromConfig(cfg), rl.Host, s3.WithLogger(logging.DefaultLogger()))
 		return fsys, strings.TrimPrefix(rl.Path, "/"), nil
 	default:
 		return ocflfs.DirFS(name), ".", nil

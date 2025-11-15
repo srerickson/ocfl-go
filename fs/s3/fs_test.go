@@ -14,11 +14,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
+
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/fs/s3"
+
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
 	"github.com/srerickson/ocfl-go/internal/testutil"
 )
@@ -26,8 +30,6 @@ import (
 const (
 	bucket   = "ocfl-go-test"
 	megabyte = 1024 * 1024
-	gigabyte = 1024 * megabyte
-	mockSeed = 1288108737
 	partSize = 6 * megabyte
 )
 
@@ -99,6 +101,75 @@ func TestOpenFile(t *testing.T) {
 			test.expect(t, f, err)
 		})
 	}
+
+	t.Run("err if modified", func(t *testing.T) {
+		// if a file is modified after opening it, read should fail
+		ctx := t.Context()
+		key := "file"
+		body1 := strings.NewReader("content1")
+		body2 := strings.NewReader("content2")
+		_, err := fsys.Write(ctx, key, body1) // create
+		be.NilErr(t, err)
+		f, err := fsys.OpenFile(ctx, key) // open
+		be.NilErr(t, err)
+		_, err = fsys.Write(ctx, key, body2) // modify
+		be.NilErr(t, err)
+		_, err = io.ReadAll(f) // read fails with "PreconditionFailed"
+		be.Nonzero(t, err)
+		var apiErr smithy.APIError
+		be.True(t, errors.As(err, &apiErr))
+		be.Equal(t, "PreconditionFailed", apiErr.ErrorCode())
+	})
+}
+
+func TestWriteReadDeleteFile(t *testing.T) {
+	if !testutil.S3Enabled() {
+		t.Log("s3 test service is not running")
+		return
+	}
+	ctx := t.Context()
+	fsys := testutil.TmpS3FS(t, nil)
+	key := "dir/test-data"
+	buff := mock.RandBytes(15 * megabyte)
+	n, err := fsys.Write(ctx, key, bytes.NewReader(buff))
+	be.NilErr(t, err)
+	be.Equal(t, len(buff), int(n))
+	for entry, err := range fsys.DirEntries(ctx, "dir") {
+		be.NilErr(t, err)
+		be.Equal(t, "test-data", entry.Name())
+	}
+	f, err := fsys.OpenFile(ctx, key)
+	be.NilErr(t, err)
+	outBytes, err := io.ReadAll(f)
+	be.NilErr(t, err)
+	be.True(t, bytes.Equal(outBytes, buff))
+	be.NilErr(t, fsys.Remove(ctx, key))
+}
+
+func TestWriteWithOptions(t *testing.T) {
+	if !testutil.S3Enabled() {
+		t.Log("s3 test service is not running")
+		return
+	}
+	ctx := t.Context()
+	fsys := testutil.TmpS3FS(t, nil)
+	// option to require key to not exist
+	opt := func(input *s3v2.PutObjectInput) {
+		match := "*"
+		input.IfNoneMatch = &match
+	}
+	key := "file"
+	body := strings.NewReader("content")
+	// first write creates the file
+	_, err := fsys.WriteWithOptions(ctx, key, body, opt)
+	be.NilErr(t, err)
+
+	// second write fails because key exists
+	_, err = fsys.WriteWithOptions(ctx, key, body, opt)
+	be.Nonzero(t, err)
+	var apiErr smithy.APIError
+	be.True(t, errors.As(err, &apiErr))
+	be.Equal(t, "PreconditionFailed", apiErr.ErrorCode())
 }
 
 func TestOpenFile_Mock(t *testing.T) {
@@ -168,7 +239,7 @@ func TestOpenFile_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := s3.BucketFS{S3: api, Bucket: tcase.bucket}
+			fsys := s3.NewBucketFS(api, tcase.bucket)
 			f, err := fsys.OpenFile(ctx, tcase.key)
 			tcase.expect(t, f, err)
 		})
@@ -313,7 +384,7 @@ func TestReadDir_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := &s3.BucketFS{S3: api, Bucket: tcase.bucket}
+			fsys := s3.NewBucketFS(api, tcase.bucket)
 			entries, err := ocflfs.ReadDir(ctx, fsys, tcase.dir)
 			tcase.expect(t, entries, err)
 		})
@@ -323,7 +394,7 @@ func TestReadDir_Mock(t *testing.T) {
 func TestWrite_Mock(t *testing.T) {
 	ctx := context.Background()
 	bodySize := 201 * megabyte
-	body := mock.RandBytes(mockSeed, int64(bodySize))
+	body := mock.RandBytes(int64(bodySize))
 	type testCase struct {
 		desc        string
 		bucket      string
@@ -380,12 +451,11 @@ func TestWrite_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := s3.BucketFS{
-				S3:                    api,
-				Bucket:                tcase.bucket,
-				UploadConcurrency:     tcase.uploadConc,
-				DefaultUploadPartSize: tcase.uploadPSize,
+			uploaderOpt := func(u *manager.Uploader) {
+				u.Concurrency = tcase.uploadConc
+				u.PartSize = tcase.uploadPSize
 			}
+			fsys := s3.NewBucketFS(api, tcase.bucket, s3.WithUploaderOptions(uploaderOpt))
 			val, err := fsys.Write(ctx, tcase.key, tcase.body)
 			tcase.expect(t, api, val, err)
 		})
@@ -428,7 +498,7 @@ func TestRemove_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := s3.BucketFS{S3: api, Bucket: tcase.bucket}
+			fsys := s3.NewBucketFS(api, tcase.bucket)
 			err := fsys.Remove(ctx, tcase.key)
 			tcase.expect(t, api, err)
 		})
@@ -471,7 +541,7 @@ func TestRemoveAll_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := s3.BucketFS{S3: api, Bucket: tcase.bucket}
+			fsys := s3.NewBucketFS(api, tcase.bucket)
 			err := fsys.RemoveAll(ctx, tcase.dir)
 			tcase.expect(t, api, err)
 		})
@@ -482,7 +552,7 @@ func TestRemoveAll_Mock(t *testing.T) {
 func TestCopy_Mock(t *testing.T) {
 	ctx := context.Background()
 	srcSize := int64(51 * megabyte)
-	srcBody := mock.RandBytes(mockSeed, srcSize)
+	srcBody := mock.RandBytes(srcSize)
 	type testCase struct {
 		desc      string
 		mock      func(t *testing.T) *mock.S3API
@@ -543,7 +613,12 @@ func TestCopy_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := s3.BucketFS{S3: api, Bucket: tcase.bucket, CopyPartConcurrency: tcase.copyConc, DefaultCopyPartSize: tcase.copyPSize}
+			copyOpts := func(mc *s3.MultiCopier) {
+				mc.Concurrency = tcase.copyConc
+				mc.PartSize = tcase.copyPSize
+			}
+			fsys := s3.NewBucketFS(api, tcase.bucket,
+				s3.WithMultiPartCopyOption(copyOpts))
 			size, err := fsys.Copy(ctx, tcase.dst, tcase.src)
 			tcase.expect(t, api, size, err)
 		})
@@ -600,7 +675,7 @@ func TestWalkFiles_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := s3.BucketFS{Bucket: tcase.bucket, S3: api}
+			fsys := s3.NewBucketFS(api, tcase.bucket)
 			var walkFiles []*ocflfs.FileRef
 			var walkErr error
 			for f, err := range fsys.WalkFiles(ctx, tcase.dir) {
@@ -636,81 +711,6 @@ func isPathError(t *testing.T, err error) {
 		t.Error("error is not fs.PathError")
 	}
 }
-
-// func newBackend(t *testing.T) *s3.FS {
-// 	ctx := context.Background()
-// 	// creds := credentials.NewStaticCredentialsProvider("", "", "")
-// 	customResolver := aws.EndpointResolverWithOptionsFunc(
-// 		func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-// 			return aws.Endpoint{
-// 				PartitionID:       "aws",
-// 				URL:               "http://localhost:9000",
-// 				SigningRegion:     defaultRegion,
-// 				HostnameImmutable: true,
-// 			}, nil
-// 		})
-// 	opts := []func(*config.LoadOptions) error{
-// 		config.WithDefaultRegion(defaultRegion),
-// 		// config.WithCredentialsProvider(creds),
-// 		config.WithEndpointResolverWithOptions(customResolver),
-// 	}
-// 	cfg, err := config.LoadDefaultConfig(ctx, opts...)
-// 	if err != nil {
-// 		t.Fatal(err)
-// 	}
-// 	testBucket := randName(testBucketPrefix)
-// 	s3client := s3v2.NewFromConfig(cfg)
-// 	_, err = s3client.CreateBucket(ctx, &s3v2.CreateBucketInput{
-// 		Bucket: aws.String(testBucket),
-// 	})
-// 	if err != nil {
-// 		t.Fatal(err)
-// 	}
-// 	t.Log("created test bucket", testBucket)
-// 	t.Cleanup(func() {
-// 		if err := destroyBucket(ctx, s3client, testBucket); err != nil {
-// 			t.Fatal(err)
-// 		}
-// 		t.Log("removed test bucket", testBucket)
-// 	})
-// 	return &s3.FS{
-// 		S3:     s3client,
-// 		Bucket: testBucket,
-// 	}
-// }
-
-// func destroyBucket(ctx context.Context, s3cl *s3v2.Client, bucket string) error {
-// 	b := aws.String(bucket)
-// 	listopts := &s3v2.ListObjectsV2Input{Bucket: b}
-// 	for {
-// 		list, err := s3cl.ListObjectsV2(ctx, listopts)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		for _, obj := range list.Contents {
-// 			if _, err := s3cl.DeleteObject(ctx, &s3v2.DeleteObjectInput{
-// 				Bucket: b,
-// 				Key:    obj.Key,
-// 			}); err != nil {
-// 				return err
-// 			}
-// 		}
-// 		if list.IsTruncated != nil && !*list.IsTruncated {
-// 			break
-// 		}
-// 		listopts.ContinuationToken = list.NextContinuationToken
-// 	}
-// 	_, err := s3cl.DeleteBucket(ctx, &s3v2.DeleteBucketInput{Bucket: b})
-// 	return err
-// }
-
-// func randName(prefix string) string {
-// 	byt, err := io.ReadAll(io.LimitReader(rand.Reader, 8))
-// 	if err != nil {
-// 		panic("randName: " + err.Error())
-// 	}
-// 	return prefix + hex.EncodeToString(byt)
-// }
 
 func compareFileInf(t *testing.T, info, fixture fs.FileInfo) {
 	t.Helper()

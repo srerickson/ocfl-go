@@ -8,6 +8,7 @@ import (
 	"log"
 
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/srerickson/ocfl-go/fs/s3"
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
@@ -37,13 +38,12 @@ func run(ctx context.Context, bucket, key string) error {
 		return err
 	}
 	const size = 51 * megabyte
-	const seed uint64 = 1929
-	buf := mock.RandBytes(seed, size)
+	buf := mock.RandBytes(size)
 	if _, err := fsys.Write(ctx, key, bytes.NewReader(buf)); err != nil {
 		return err
 	}
 	expect := mock.ETag(buf, psize)
-	obj, err := fsys.S3.GetObject(ctx, &s3v2.GetObjectInput{
+	obj, err := fsys.Client().GetObject(ctx, &s3v2.GetObjectInput{
 		Bucket: &bucket,
 		Key:    &key,
 	})
@@ -53,7 +53,7 @@ func run(ctx context.Context, bucket, key string) error {
 	if expect != *obj.ETag {
 		fmt.Printf("ETag doesn't match expected valued: %q != %q\n", *obj.ETag, expect)
 	}
-	_, err = fsys.S3.DeleteObject(ctx, &s3v2.DeleteObjectInput{
+	_, err = fsys.Client().DeleteObject(ctx, &s3v2.DeleteObjectInput{
 		Bucket: &bucket,
 		Key:    &key,
 	})
@@ -65,10 +65,10 @@ func backend(ctx context.Context, bucket string) (*s3.BucketFS, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &s3.BucketFS{
-		S3:                    s3v2.NewFromConfig(cfg),
-		Bucket:                bucket,
-		DefaultUploadPartSize: psize,
-		UploadConcurrency:     conc,
-	}, nil
+	uploadOpts := func(u *manager.Uploader) {
+		u.Concurrency = conc
+		u.PartSize = psize
+	}
+	return s3.NewBucketFS(s3v2.NewFromConfig(cfg), bucket,
+		s3.WithUploaderOptions(uploadOpts)), nil
 }
