@@ -125,7 +125,7 @@ func (obj Object) ContentDirectory() string {
 	return contentDir
 }
 
-// InventoryBuidler returns an *InventoryBuilder that can be used to generate
+// InventoryBuilder returns an *InventoryBuilder that can be used to generate
 // new inventory's for the object.
 func (obj *Object) InventoryBuilder() *InventoryBuilder {
 	var base *Inventory
@@ -200,7 +200,7 @@ func (obj Object) ExtensionNames(ctx context.Context) ([]string, error) {
 }
 
 // FixityAlgorithms returns a slice of the keys from the `fixity` block of obj's
-// return inventory. If obj does not have a inventory (i.e., because one has not
+// return inventory. If obj does not have an inventory (i.e., because one has not
 // been created yet), it returns nil.
 func (obj Object) FixityAlgorithms() []string {
 	if obj.inventory == nil {
@@ -617,7 +617,7 @@ func UpdateWithUnchangedVersionState() ObjectUpdateOption {
 }
 
 // UpdateWithContentPathFunc is used to set a function for enforcing
-// naming conventiosn for content paths in the new inventory.
+// naming conventions for content paths in the new inventory.
 func UpdateWithContentPathFunc(mutate PathMutation) ObjectUpdateOption {
 	return func(o *objectUpdateOptions) {
 		o.contentPathFunc = mutate

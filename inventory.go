@@ -57,7 +57,7 @@ func (inv Inventory) GetFixity(dig string) digest.Set {
 	return set
 }
 
-// Validate runs validates inv using its declarate OCFL spec.
+// Validate validates inv using its declarate OCFL spec.
 func (inv *Inventory) Validate() *Validation {
 	imp, err := getOCFL(inv.Type.Spec)
 	if err != nil {
@@ -156,7 +156,7 @@ func NewStoredInventory(r io.Reader) (*StoredInventory, error) {
 }
 
 // ReadInventory reads the inventory.json file in dir and validates it. It returns
-// an error if the inventory can't be paresed or if it is invalid.
+// an error if the inventory can't be parsed or if it is invalid.
 func ReadInventory(ctx context.Context, fsys ocflfs.FS, dir string) (*StoredInventory, error) {
 	f, err := fsys.OpenFile(ctx, path.Join(dir, inventoryBase))
 	if err != nil {
@@ -300,11 +300,11 @@ type InventoryBuilder struct {
 		state    DigestMap
 		alg      digest.Algorithm
 		created  time.Time
-		messsage string
+		message string
 		user     *User
 	}
 	contentPath PathMutation
-	fixtySource FixitySource
+	fixitySource FixitySource
 }
 
 // Create a new inventory builder. If prev is not nil, the builder's initial
@@ -330,13 +330,13 @@ func (b *InventoryBuilder) AddVersion(state DigestMap, alg digest.Algorithm, cre
 		state    DigestMap
 		alg      digest.Algorithm
 		created  time.Time
-		messsage string
+		message string
 		user     *User
 	}{
 		state:    state,
 		alg:      alg,
 		created:  created,
-		messsage: message,
+		message: message,
 		user:     user,
 	}
 	b.addedVersions = append(b.addedVersions, added)
@@ -376,7 +376,7 @@ func (b *InventoryBuilder) Finalize() (*Inventory, error) {
 }
 
 func (b *InventoryBuilder) FixitySource(source FixitySource) *InventoryBuilder {
-	b.fixtySource = source
+	b.fixitySource = source
 	return b
 }
 
@@ -473,7 +473,7 @@ func (b *InventoryBuilder) buildVersions(inv *Inventory) error {
 		newVersion := &InventoryVersion{
 			State:   newState,
 			Created: versionInput.created,
-			Message: versionInput.messsage,
+			Message: versionInput.message,
 			User:    versionInput.user,
 		}
 		if newVersion.Created.IsZero() {
