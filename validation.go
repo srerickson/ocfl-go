@@ -47,7 +47,7 @@ func (v *Validation) Err() error {
 	return v.fatal.ErrorOrNil()
 }
 
-// Errors returns a slice of all the fatal errors.q
+// Errors returns a slice of all the fatal errors.
 func (v *Validation) Errors() []error {
 	if v.fatal == nil {
 		return nil
@@ -108,7 +108,7 @@ func (v *ObjectValidation) Add(v2 *Validation) {
 	v.AddWarn(v2.WarnErrors()...)
 }
 
-// PrefixAdd adds and logs all fatal errors and warning from the valiation,
+// PrefixAdd adds and logs all fatal errors and warning from the validation,
 // prepending each error with the prefix.
 func (v *ObjectValidation) PrefixAdd(prefix string, v2 *Validation) {
 	if v2 == nil {
@@ -177,7 +177,7 @@ func (v *ObjectValidation) DigestConcurrency() int {
 	return runtime.NumCPU()
 }
 
-// ValidationAlgorithms returns the registry of digest algoriths
+// ValidationAlgorithms returns the registry of digest algorithms
 // the object validation is configured to use. The default value is
 // digest.DefaultRegistry
 func (v *ObjectValidation) ValidationAlgorithms() digest.AlgorithmRegistry {

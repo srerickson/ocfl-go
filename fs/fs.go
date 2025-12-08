@@ -95,7 +95,7 @@ func Copy(ctx context.Context, dstFS FS, dst string, srcFS FS, src string) (size
 }
 
 // DirEntries calls DirEntries if fsys implements DirEntriesFS. If fsys doesn't implement
-// ReadDirFS, it returns an iterator that yields an fs.PathError that wraps
+// DirEntriesFS, it returns an iterator that yields an fs.PathError that wraps
 // ErrFeatureUnsupported.
 func DirEntries(ctx context.Context, fsys FS, name string) iter.Seq2[fs.DirEntry, error] {
 	readDirFS, ok := fsys.(DirEntriesFS)
@@ -187,7 +187,7 @@ func Write(ctx context.Context, fsys FS, name string, r io.Reader) (int64, error
 	return writeFS.Write(ctx, name, r)
 }
 
-// StatFile returns file informatoin for the file name in fsys.
+// StatFile returns file information for the file name in fsys.
 func StatFile(ctx context.Context, fsys FS, name string) (fs.FileInfo, error) {
 	f, err := fsys.OpenFile(ctx, name)
 	if err != nil {

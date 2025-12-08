@@ -62,6 +62,6 @@ type Layout interface {
 	Extension
 	// Resolve resolves an object ID into a storage root path
 	Resolve(id string) (path string, err error)
-	// Valid returns an error if the layout configuation is invalid
+	// Valid returns an error if the layout configuration is invalid
 	Valid() error
 }
