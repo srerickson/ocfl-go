@@ -24,7 +24,7 @@ var ErrRevertUpdate = errors.New("the update has completed and cannot be reverte
 // UpdatePlan is a sequence of steps ([PlanStep]) for updating an OCFL object.
 // It allows updates to be interrupted, resumed, retried or reverted. To update
 // an object, each [PlanStep] in the UpdatePlan must run to completion. The
-// result of each step (whether the step completed successfuly or resulted in an
+// result of each step (whether the step completed successfully or resulted in an
 // error) is stored so that repeated updates resume where the previous run
 // stopped or failed. Each PlanStep includes compensating actions for reverting
 // partial updates that cannot be completed.
@@ -188,11 +188,11 @@ func (u *UpdatePlan) Revert(ctx context.Context, objFS ocflfs.FS, objDir string,
 	return runSteps(ctx, u.CompletedSteps(), objFS, objDir, src, u.goLimit, u.logger, true)
 }
 
-// SetGoLimti sets the number of goroutines used for processing Steps with Async
+// setGoLimit sets the number of goroutines used for processing Steps with Async
 // == true. The default value is runtime.NumCPU()
 func (u *UpdatePlan) setGoLimit(gos int) { u.goLimit = gos }
 
-// setLogger sets a logger that will be used when running stesp in u.
+// setLogger sets a logger that will be used when running steps in u.
 func (u *UpdatePlan) setLogger(logger *slog.Logger) { u.logger = logger }
 
 // Steps iterates over all steps in the update plan
@@ -307,7 +307,7 @@ func newPlanSteps(newInv, oldInv *StoredInventory) (PlanSteps, error) {
 		updateDeclarationSteps(newSpec, oldSpec)...,
 	)
 	plan = append(plan,
-		// a step to remove entire version directory during during revert.
+		// a step to remove entire version directory during revert.
 		PlanStep{
 			state: planStepState{Name: "version directory " + newHead},
 			run: func(_ context.Context, _ ocflfs.FS, _ string, _ ContentSource) (int64, error) {
@@ -325,7 +325,7 @@ func newPlanSteps(newInv, oldInv *StoredInventory) (PlanSteps, error) {
 		updateVersionContentsSteps(newFiles)...,
 	)
 	plan = append(plan,
-		// steps to update inventories and sidecars in version directory and roo,t
+		// steps to update inventories and sidecars in version directory and root
 		updateInventorySteps(
 			newInv.bytes, oldInvBytes,
 			newInv.digest, oldInvDigest,
@@ -336,7 +336,7 @@ func newPlanSteps(newInv, oldInv *StoredInventory) (PlanSteps, error) {
 	return plan, nil
 }
 
-// PlanSteps is a series of named steps for performating an object update and
+// PlanSteps is a series of named steps for performing an object update and
 // rolling it back if necessary.
 type PlanSteps []PlanStep
 

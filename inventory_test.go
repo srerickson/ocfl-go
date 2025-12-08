@@ -801,7 +801,7 @@ func TestInventoryBuilder(t *testing.T) {
 			now := time.Now().Truncate(time.Second)
 			user := &ocfl.User{Name: "abc", Address: "email"}
 			state := ocfl.DigestMap{"abc": []string{"file.txt"}}
-			source := fixtySource{
+			source := fixitySource{
 				"abc": digest.Set{"md5": "123"},
 			}
 			inv, err := ocfl.NewInventoryBuilder(nil).
@@ -869,7 +869,7 @@ func TestInventoryBuilder(t *testing.T) {
 		user := &ocfl.User{Name: "name", Address: "email"}
 		state := ocfl.DigestMap{"abc": []string{"file.txt"}}
 		padding := 3
-		fixty := fixtySource{"abc": digest.Set{"md5": "123"}}
+		fixty := fixitySource{"abc": digest.Set{"md5": "123"}}
 		baseInv, err := ocfl.NewInventoryBuilder(nil).
 			ID("test").
 			Spec(ocfl.Spec1_0).
@@ -885,7 +885,7 @@ func TestInventoryBuilder(t *testing.T) {
 			v2State := ocfl.DigestMap{
 				"def": []string{"file2.txt"},
 			}
-			fixty := fixtySource{
+			fixty := fixitySource{
 				"abc": digest.Set{"size": "1"},
 				"def": digest.Set{"size": "2"},
 			}
@@ -934,11 +934,11 @@ func TestInventoryBuilder(t *testing.T) {
 }
 
 // fixity source used for testing
-type fixtySource map[string]digest.Set
+type fixitySource map[string]digest.Set
 
-var _ ocfl.FixitySource = fixtySource(nil)
+var _ ocfl.FixitySource = fixitySource(nil)
 
-func (s fixtySource) GetFixity(dig string) digest.Set { return s[dig] }
+func (s fixitySource) GetFixity(dig string) digest.Set { return s[dig] }
 
 func TestReadInventorySidecar(t *testing.T) {
 	ctx := context.Background()
