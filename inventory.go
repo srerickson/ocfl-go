@@ -515,11 +515,11 @@ func (b *InventoryBuilder) buildVersions(inv *Inventory) error {
 // fillFixity adds fixity entries from source using for all digests found in the
 // inventory's manifest.
 func (b *InventoryBuilder) fillFixity(inv *Inventory) {
-	if b.fixtySource == nil {
+	if b.fixitySource == nil {
 		return
 	}
 	for digest, contentPaths := range inv.Manifest {
-		fixSet := b.fixtySource.GetFixity(digest)
+		fixSet := b.fixitySource.GetFixity(digest)
 		if len(fixSet) < 1 {
 			continue
 		}
