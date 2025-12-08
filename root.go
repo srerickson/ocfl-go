@@ -88,7 +88,7 @@ func (r *Root) FS() ocflfs.FS {
 	return r.fs
 }
 
-// Layout returns the storage root's layout, which may be nil.ß
+// Layout returns the storage root's layout, which may be nil.
 func (r *Root) Layout() extension.Layout {
 	return r.layout
 }
@@ -166,7 +166,7 @@ func (r *Root) Objects(ctx context.Context, opts ...ObjectOption) iter.Seq2[*Obj
 	return r.ObjectsBatch(ctx, 0, opts...)
 }
 
-// Objects returns an iterator that yields objects or an error for every object
+// ObjectsBatch returns an iterator that yields objects or an error for every object
 // declaration file in the root. Objects are read in numgos go routines and are
 // yielded in arbitrary order.
 func (r *Root) ObjectsBatch(ctx context.Context, numgos int, opts ...ObjectOption) iter.Seq2[*Object, error] {
@@ -301,7 +301,7 @@ func (r *Root) readLayoutConfig(ctx context.Context) error {
 	return nil
 }
 
-// setLayout marshals the value pointe to by layout and writes the result to
+// setLayout marshals the value pointed to by layout and writes the result to
 // the `ocfl_layout.json` files in the storage root.
 func (r *Root) setLayout(ctx context.Context, layout extension.Layout, desc string) error {
 	writeFS, isWriteFS := r.fs.(ocflfs.WriteFS)
