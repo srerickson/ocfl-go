@@ -284,7 +284,8 @@ func (r *Root) getLayout(ctx context.Context) error {
 // readLayoutConfig reads the `ocfl_layout.json` files in the storage root
 // and unmarshals into the value pointed to by layout
 func (r *Root) readLayoutConfig(ctx context.Context) error {
-	f, err := r.fs.OpenFile(ctx, path.Join(r.dir, layoutConfigFile))
+	layoutPath := path.Join(r.dir, layoutConfigFile)
+	f, err := r.fs.OpenFile(ctx, layoutPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			r.layoutConfig = nil
@@ -295,7 +296,7 @@ func (r *Root) readLayoutConfig(ctx context.Context) error {
 	defer f.Close()
 	layout := map[string]string{}
 	if err := json.NewDecoder(f).Decode(&layout); err != nil {
-		return fmt.Errorf("decoding %s: %w", layoutConfigFile, err)
+		return fmt.Errorf("parsing storage root's layout config (%s): %w", layoutPath, err)
 	}
 	r.layoutConfig = layout
 	return nil
@@ -355,7 +356,11 @@ func readExtensionConfig(ctx context.Context, fsys ocflfs.FS, root string, name 
 	if err != nil {
 		return nil, fmt.Errorf("reading config for extension %s: %w", name, err)
 	}
-	return extension.DefaultRegistry().Unmarshal(b)
+	ext, err := extension.DefaultRegistry().Unmarshal(b)
+	if err != nil {
+		return nil, fmt.Errorf("storage root's layout config (%s) is invalid: %w", confPath, err)
+	}
+	return ext, nil
 }
 
 // writeExtensionConfig writes the configuration files for the ext to the

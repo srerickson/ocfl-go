@@ -2,6 +2,7 @@ package extension
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -67,6 +68,9 @@ func (r Registry) Unmarshal(jsonBytes []byte) (Extension, error) {
 	var tmp tmpConfig
 	if err := json.Unmarshal(jsonBytes, &tmp); err != nil {
 		return nil, err
+	}
+	if tmp.Name == "" {
+		return nil, errors.New("missing required 'extensionName' field")
 	}
 	config, err := r.New(tmp.Name)
 	if err != nil {
