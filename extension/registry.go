@@ -2,6 +2,7 @@ package extension
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -68,6 +69,9 @@ func (r Registry) Unmarshal(jsonBytes []byte) (Extension, error) {
 	if err := json.Unmarshal(jsonBytes, &tmp); err != nil {
 		return nil, err
 	}
+	if tmp.Name == "" {
+		return nil, errors.New(`missing required field in extension config: "extensionName"`)
+	}
 	config, err := r.New(tmp.Name)
 	if err != nil {
 		return nil, err
@@ -96,8 +100,8 @@ func DefaultRegistry() Registry {
 	return NewRegistry(baseExtensions...)
 }
 
-// Get returns a new instance of the named extension with default values.
-// DEPRECATED.
+// Get returns a new instance of the named extension from the DefaultRegistry.
+// The returned extension has default values.
 func Get(name string) (Extension, error) {
 	return DefaultRegistry().New(name)
 }
