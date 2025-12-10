@@ -296,7 +296,7 @@ func (r *Root) readLayoutConfig(ctx context.Context) error {
 	defer f.Close()
 	layout := map[string]string{}
 	if err := json.NewDecoder(f).Decode(&layout); err != nil {
-		return fmt.Errorf("parsing storage root's layout config (%s): %w", layoutPath, err)
+		return fmt.Errorf("storage root layout config is invalid: in %s: %w", layoutPath, err)
 	}
 	r.layoutConfig = layout
 	return nil
@@ -358,7 +358,7 @@ func readExtensionConfig(ctx context.Context, fsys ocflfs.FS, root string, name 
 	}
 	ext, err := extension.DefaultRegistry().Unmarshal(b)
 	if err != nil {
-		return nil, fmt.Errorf("storage root's layout config (%s) is invalid: %w", confPath, err)
+		return nil, fmt.Errorf("storage root layout's extension config is invalid: in %s: %w", confPath, err)
 	}
 	return ext, nil
 }

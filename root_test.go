@@ -171,7 +171,7 @@ func TestRoot_ValidateObject(t *testing.T) {
 	})
 }
 
-func TestNewRoot_InvalidLayoutConfig(t *testing.T) {
+func TestNewRoot_InvalidConfig(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
@@ -179,6 +179,21 @@ func TestNewRoot_InvalidLayoutConfig(t *testing.T) {
 		fsMap          fstest.MapFS
 		expectedErrMsg string
 	}{
+		{
+			name: "unknown extension",
+			fsMap: fstest.MapFS{
+				"root/0=ocfl_1.0": &fstest.MapFile{
+					Data: []byte("ocfl_1.0\n"),
+				},
+				"root/ocfl_layout.json": &fstest.MapFile{
+					Data: []byte(`{"extension": "9999-unknown-extension"}`),
+				},
+				"root/extensions/9999-unknown-extension/config.json": &fstest.MapFile{
+					Data: []byte(`{"extensionName": "9999-unknown-extension"}`),
+				},
+			},
+			expectedErrMsg: `unrecognized extension name: "9999-unknown-extension"`,
+		},
 		{
 			name: "missing extensionName",
 			fsMap: fstest.MapFS{
@@ -192,34 +207,7 @@ func TestNewRoot_InvalidLayoutConfig(t *testing.T) {
 					Data: []byte(`{"digestAlgorithm": "sha256", "tupleSize": 2, "numberOfTuples": 3}`),
 				},
 			},
-			expectedErrMsg: "storage root's layout config (root/extensions/0004-hashed-n-tuple-storage-layout/config.json) is invalid: missing required 'extensionName' field",
-		},
-		{
-			name: "invalid JSON in layout config",
-			fsMap: fstest.MapFS{
-				"root/0=ocfl_1.0": &fstest.MapFile{
-					Data: []byte("ocfl_1.0\n"),
-				},
-				"root/ocfl_layout.json": &fstest.MapFile{
-					Data: []byte(`{invalid json}`),
-				},
-			},
-			expectedErrMsg: "parsing storage root's layout config (root/ocfl_layout.json)",
-		},
-		{
-			name: "invalid JSON in extension config",
-			fsMap: fstest.MapFS{
-				"root/0=ocfl_1.0": &fstest.MapFile{
-					Data: []byte("ocfl_1.0\n"),
-				},
-				"root/ocfl_layout.json": &fstest.MapFile{
-					Data: []byte(`{"extension": "0004-hashed-n-tuple-storage-layout", "description": "test layout"}`),
-				},
-				"root/extensions/0004-hashed-n-tuple-storage-layout/config.json": &fstest.MapFile{
-					Data: []byte(`{invalid json}`),
-				},
-			},
-			expectedErrMsg: "storage root's layout config (root/extensions/0004-hashed-n-tuple-storage-layout/config.json) is invalid",
+			expectedErrMsg: "missing required 'extensionName' field",
 		},
 		{
 			name: "empty extensionName",
@@ -237,19 +225,31 @@ func TestNewRoot_InvalidLayoutConfig(t *testing.T) {
 			expectedErrMsg: "missing required 'extensionName' field",
 		},
 		{
-			name: "unknown extension",
+			name: "invalid JSON in layout config",
 			fsMap: fstest.MapFS{
 				"root/0=ocfl_1.0": &fstest.MapFile{
 					Data: []byte("ocfl_1.0\n"),
 				},
 				"root/ocfl_layout.json": &fstest.MapFile{
-					Data: []byte(`{"extension": "9999-unknown-extension"}`),
-				},
-				"root/extensions/9999-unknown-extension/config.json": &fstest.MapFile{
-					Data: []byte(`{"extensionName": "9999-unknown-extension"}`),
+					Data: []byte(`{invalid json}`),
 				},
 			},
-			expectedErrMsg: "unrecognized extension name",
+			expectedErrMsg: "storage root layout config is invalid: in root/ocfl_layout.json:",
+		},
+		{
+			name: "invalid JSON in extension config",
+			fsMap: fstest.MapFS{
+				"root/0=ocfl_1.0": &fstest.MapFile{
+					Data: []byte("ocfl_1.0\n"),
+				},
+				"root/ocfl_layout.json": &fstest.MapFile{
+					Data: []byte(`{"extension": "0004-hashed-n-tuple-storage-layout", "description": "test layout"}`),
+				},
+				"root/extensions/0004-hashed-n-tuple-storage-layout/config.json": &fstest.MapFile{
+					Data: []byte(`{invalid json}`),
+				},
+			},
+			expectedErrMsg: "storage root layout's extension config is invalid",
 		},
 	}
 
@@ -259,7 +259,9 @@ func TestNewRoot_InvalidLayoutConfig(t *testing.T) {
 			_, err := ocfl.NewRoot(ctx, fsys, "root")
 			be.True(t, err != nil)
 			if !strings.Contains(err.Error(), tt.expectedErrMsg) {
-				t.Errorf("error message %q should contain %q", err.Error(), tt.expectedErrMsg)
+				t.Error("error message doesn not include expected text")
+				t.Logf("--expected: %q", tt.expectedErrMsg)
+				t.Logf("--got     : %q", err.Error())
 			}
 		})
 	}
