@@ -207,7 +207,7 @@ func TestNewRoot_InvalidConfig(t *testing.T) {
 					Data: []byte(`{"digestAlgorithm": "sha256", "tupleSize": 2, "numberOfTuples": 3}`),
 				},
 			},
-			expectedErrMsg: "missing required 'extensionName' field",
+			expectedErrMsg: `missing required field in extension config: "extensionName"`,
 		},
 		{
 			name: "empty extensionName",
@@ -222,7 +222,7 @@ func TestNewRoot_InvalidConfig(t *testing.T) {
 					Data: []byte(`{"extensionName": "", "digestAlgorithm": "sha256", "tupleSize": 2, "numberOfTuples": 3}`),
 				},
 			},
-			expectedErrMsg: "missing required 'extensionName' field",
+			expectedErrMsg: `missing required field in extension config: "extensionName"`,
 		},
 		{
 			name: "invalid JSON in layout config",
@@ -249,7 +249,34 @@ func TestNewRoot_InvalidConfig(t *testing.T) {
 					Data: []byte(`{invalid json}`),
 				},
 			},
-			expectedErrMsg: "storage root layout's extension config is invalid",
+			expectedErrMsg: "extension config has errors: in root/extensions/0004-hashed-n-tuple-storage-layout/config.json",
+		},
+		{
+			name: "invalid extension config",
+			fsMap: fstest.MapFS{
+				"root/0=ocfl_1.0": &fstest.MapFile{
+					Data: []byte("ocfl_1.0\n"),
+				},
+				"root/ocfl_layout.json": &fstest.MapFile{
+					Data: []byte(`{"extension": "0006-flat-omit-prefix-storage-layout", "description": "test layout"}`),
+				},
+			},
+			// the default config is used if there is no extension config file,
+			// however the default config for
+			// 0006-flat-omit-prefix-storage-layout is invalid.
+			expectedErrMsg: "required field not set in extension config",
+		},
+		{
+			name: "extension is not a layout",
+			fsMap: fstest.MapFS{
+				"root/0=ocfl_1.0": &fstest.MapFile{
+					Data: []byte("ocfl_1.0\n"),
+				},
+				"root/ocfl_layout.json": &fstest.MapFile{
+					Data: []byte(`{"extension": "0009-digest-algorithms", "description": "test layout"}`),
+				},
+			},
+			expectedErrMsg: "extension is not a layout as expected",
 		},
 	}
 

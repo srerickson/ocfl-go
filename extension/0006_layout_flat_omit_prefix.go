@@ -1,7 +1,6 @@
 package extension
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"strings"
@@ -28,14 +27,14 @@ func Ext0006() Extension {
 
 func (l LayoutFlatOmitPrefix) Valid() error {
 	if l.Delimiter == "" {
-		return errors.New("required field not set: " + delimiter)
+		return fmt.Errorf("required field not set in extension config: %q", delimiter)
 	}
 	return nil
 }
 
 func (l LayoutFlatOmitPrefix) Resolve(id string) (string, error) {
-	if l.Delimiter == "" {
-		return "", errors.New("missing required layout configuration: " + delimiter)
+	if err := l.Valid(); err != nil {
+		return "", err
 	}
 	dir := id
 	lowerID := strings.ToLower(id)
