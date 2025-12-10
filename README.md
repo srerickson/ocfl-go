@@ -9,12 +9,14 @@ operations on OCFL storage roots and objects. It supports the local file system
 or s3 storage backends. Several complete [example programs](examples) are
 included.
 
-See [ocfl-tools](https://github.com/srerickson/ocfl-tools) for command line
-tools based on this module.
-
 > [!WARNING]  
 > The API is under heavy development and will have constant breaking changes.
 
+This module is used in the following projects:
+
+- [ocfl-tools](https://github.com/srerickson/ocfl-tools) (command line tools)
+- [ocfl-services](https://github.com/srerickson/ocfl-services) (web services)
+
 ## Development
 
-Requires Go >= v1.23.
+Requires Go >= v1.24.
