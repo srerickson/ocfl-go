@@ -12,7 +12,7 @@ const (
 
 var (
 	ErrMarshal         = errors.New("extension config doesn't include '" + extensionName + "' string")
-	ErrNotLayout       = errors.New("not a layout extension")
+	ErrNotLayout       = errors.New("extension is not a layout as expected")
 	ErrUnknown         = errors.New("unrecognized extension name")
 	ErrInvalidLayoutID = errors.New("invalid object id for layout")
 

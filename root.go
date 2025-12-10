@@ -264,7 +264,7 @@ func (r *Root) getLayout(ctx context.Context) error {
 	ext, err := readExtensionConfig(ctx, r.fs, r.dir, name)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			return err
+			return fmt.Errorf("setting layout extension %q: %w", name, err)
 		}
 		// Allow for missing extension config: If the config doesn't exist, use
 		// the extensions default values.
@@ -275,7 +275,10 @@ func (r *Root) getLayout(ctx context.Context) error {
 	}
 	layout, ok := ext.(extension.Layout)
 	if !ok {
-		return fmt.Errorf("extension: %q: %w", name, extension.ErrNotLayout)
+		return fmt.Errorf("setting layout extension %q: %w", name, extension.ErrNotLayout)
+	}
+	if err := layout.Valid(); err != nil {
+		return fmt.Errorf("setting layout extension %q: %w", name, err)
 	}
 	r.layout = layout
 	return nil
@@ -284,7 +287,8 @@ func (r *Root) getLayout(ctx context.Context) error {
 // readLayoutConfig reads the `ocfl_layout.json` files in the storage root
 // and unmarshals into the value pointed to by layout
 func (r *Root) readLayoutConfig(ctx context.Context) error {
-	f, err := r.fs.OpenFile(ctx, path.Join(r.dir, layoutConfigFile))
+	layoutPath := path.Join(r.dir, layoutConfigFile)
+	f, err := r.fs.OpenFile(ctx, layoutPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			r.layoutConfig = nil
@@ -295,7 +299,7 @@ func (r *Root) readLayoutConfig(ctx context.Context) error {
 	defer f.Close()
 	layout := map[string]string{}
 	if err := json.NewDecoder(f).Decode(&layout); err != nil {
-		return fmt.Errorf("decoding %s: %w", layoutConfigFile, err)
+		return fmt.Errorf("storage root layout config is invalid: in %s: %w", layoutPath, err)
 	}
 	r.layoutConfig = layout
 	return nil
@@ -348,14 +352,18 @@ func readExtensionConfig(ctx context.Context, fsys ocflfs.FS, root string, name 
 	confPath := path.Join(root, extensionsDir, name, extensionConfigFile)
 	f, err := fsys.OpenFile(ctx, confPath)
 	if err != nil {
-		return nil, fmt.Errorf("can't open config for extension %s: %w", name, err)
+		return nil, fmt.Errorf("opening extension config: %s: %w", name, err)
 	}
 	defer f.Close()
 	b, err := io.ReadAll(f)
 	if err != nil {
-		return nil, fmt.Errorf("reading config for extension %s: %w", name, err)
+		return nil, fmt.Errorf("reading extension config: %s: %w", name, err)
 	}
-	return extension.DefaultRegistry().Unmarshal(b)
+	ext, err := extension.DefaultRegistry().Unmarshal(b)
+	if err != nil {
+		return nil, fmt.Errorf("extension config has errors: in %s: %w", confPath, err)
+	}
+	return ext, nil
 }
 
 // writeExtensionConfig writes the configuration files for the ext to the

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io/fs"
 	"path/filepath"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
@@ -167,4 +169,127 @@ func TestRoot_ValidateObject(t *testing.T) {
 		be.True(t, err != nil)
 		be.True(t, errors.Is(err, fs.ErrNotExist))
 	})
+}
+
+func TestNewRoot_InvalidConfig(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name           string
+		fsMap          fstest.MapFS
+		expectedErrMsg string
+	}{
+		{
+			name: "unknown extension",
+			fsMap: fstest.MapFS{
+				"root/0=ocfl_1.0": &fstest.MapFile{
+					Data: []byte("ocfl_1.0\n"),
+				},
+				"root/ocfl_layout.json": &fstest.MapFile{
+					Data: []byte(`{"extension": "9999-unknown-extension"}`),
+				},
+				"root/extensions/9999-unknown-extension/config.json": &fstest.MapFile{
+					Data: []byte(`{"extensionName": "9999-unknown-extension"}`),
+				},
+			},
+			expectedErrMsg: `unrecognized extension name: "9999-unknown-extension"`,
+		},
+		{
+			name: "missing extensionName",
+			fsMap: fstest.MapFS{
+				"root/0=ocfl_1.0": &fstest.MapFile{
+					Data: []byte("ocfl_1.0\n"),
+				},
+				"root/ocfl_layout.json": &fstest.MapFile{
+					Data: []byte(`{"extension": "0004-hashed-n-tuple-storage-layout", "description": "test layout"}`),
+				},
+				"root/extensions/0004-hashed-n-tuple-storage-layout/config.json": &fstest.MapFile{
+					Data: []byte(`{"digestAlgorithm": "sha256", "tupleSize": 2, "numberOfTuples": 3}`),
+				},
+			},
+			expectedErrMsg: `missing required field in extension config: "extensionName"`,
+		},
+		{
+			name: "empty extensionName",
+			fsMap: fstest.MapFS{
+				"root/0=ocfl_1.0": &fstest.MapFile{
+					Data: []byte("ocfl_1.0\n"),
+				},
+				"root/ocfl_layout.json": &fstest.MapFile{
+					Data: []byte(`{"extension": "0004-hashed-n-tuple-storage-layout"}`),
+				},
+				"root/extensions/0004-hashed-n-tuple-storage-layout/config.json": &fstest.MapFile{
+					Data: []byte(`{"extensionName": "", "digestAlgorithm": "sha256", "tupleSize": 2, "numberOfTuples": 3}`),
+				},
+			},
+			expectedErrMsg: `missing required field in extension config: "extensionName"`,
+		},
+		{
+			name: "invalid JSON in layout config",
+			fsMap: fstest.MapFS{
+				"root/0=ocfl_1.0": &fstest.MapFile{
+					Data: []byte("ocfl_1.0\n"),
+				},
+				"root/ocfl_layout.json": &fstest.MapFile{
+					Data: []byte(`{invalid json}`),
+				},
+			},
+			expectedErrMsg: "storage root layout config is invalid: in root/ocfl_layout.json:",
+		},
+		{
+			name: "invalid JSON in extension config",
+			fsMap: fstest.MapFS{
+				"root/0=ocfl_1.0": &fstest.MapFile{
+					Data: []byte("ocfl_1.0\n"),
+				},
+				"root/ocfl_layout.json": &fstest.MapFile{
+					Data: []byte(`{"extension": "0004-hashed-n-tuple-storage-layout", "description": "test layout"}`),
+				},
+				"root/extensions/0004-hashed-n-tuple-storage-layout/config.json": &fstest.MapFile{
+					Data: []byte(`{invalid json}`),
+				},
+			},
+			expectedErrMsg: "extension config has errors: in root/extensions/0004-hashed-n-tuple-storage-layout/config.json",
+		},
+		{
+			name: "invalid extension config",
+			fsMap: fstest.MapFS{
+				"root/0=ocfl_1.0": &fstest.MapFile{
+					Data: []byte("ocfl_1.0\n"),
+				},
+				"root/ocfl_layout.json": &fstest.MapFile{
+					Data: []byte(`{"extension": "0006-flat-omit-prefix-storage-layout", "description": "test layout"}`),
+				},
+			},
+			// the default config is used if there is no extension config file,
+			// however the default config for
+			// 0006-flat-omit-prefix-storage-layout is invalid.
+			expectedErrMsg: "required field not set in extension config",
+		},
+		{
+			name: "extension is not a layout",
+			fsMap: fstest.MapFS{
+				"root/0=ocfl_1.0": &fstest.MapFile{
+					Data: []byte("ocfl_1.0\n"),
+				},
+				"root/ocfl_layout.json": &fstest.MapFile{
+					Data: []byte(`{"extension": "0009-digest-algorithms", "description": "test layout"}`),
+				},
+			},
+			expectedErrMsg: "extension is not a layout as expected",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fsys := ocflfs.NewWrapFS(tt.fsMap)
+			_, err := ocfl.NewRoot(ctx, fsys, "root")
+			be.True(t, err != nil)
+			if !strings.Contains(err.Error(), tt.expectedErrMsg) {
+				t.Error("error message doesn not include expected text")
+				t.Logf("--expected: %q", tt.expectedErrMsg)
+				t.Logf("--got     : %q", err.Error())
+			}
+		})
+	}
 }
