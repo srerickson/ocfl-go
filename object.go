@@ -420,15 +420,20 @@ func ValidateObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...Obj
 		return v
 	}
 	state := ParseObjectDir(entries)
-	impl, err := getOCFL(state.Spec)
+	spec := state.Spec
+	if spec == "" {
+		// No Namaste file found, use default OCFL version for validation
+		// The missing Namaste will be reported as E003 by ValidateObjectRoot
+		spec = Spec1_1
+	}
+	impl, err := getOCFL(spec)
 	if err != nil {
 		// unknown OCFL version
 		v.AddFatal(err)
 		return v
 	}
-	if err := impl.ValidateObjectRoot(ctx, v, state); err != nil {
-		return v
-	}
+	_ = impl.ValidateObjectRoot(ctx, v, state)
+	// Continue with version validation even if root validation had errors
 	// validate versions using previous specs
 	versionOCFL := lowestOCFL()
 	var prevInv *StoredInventory
