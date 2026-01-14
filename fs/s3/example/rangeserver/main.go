@@ -193,10 +193,7 @@ func parseRangeHeader(header string, size int64) (start, end int64, err error) {
 		if err != nil || suffix <= 0 {
 			return 0, 0, errors.New("invalid suffix range")
 		}
-		start = size - suffix
-		if start < 0 {
-			start = 0
-		}
+		start = max(size-suffix, 0)
 		return start, size - 1, nil
 	}
 
