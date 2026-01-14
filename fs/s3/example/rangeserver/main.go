@@ -126,6 +126,7 @@ func (h *s3Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader == "" {
 		// No range requested - serve full content
+		log.Printf("%s %s: 200 OK (full content, %d bytes)", r.Method, key, size)
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {
@@ -137,6 +138,7 @@ func (h *s3Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Parse the range request
 	start, end, err := parseRangeHeader(rangeHeader, size)
 	if err != nil {
+		log.Printf("%s %s: 416 Range Not Satisfiable (request: %s, size: %d)", r.Method, key, rangeHeader, size)
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", size))
 		http.Error(w, "invalid range", http.StatusRequestedRangeNotSatisfiable)
 		return
@@ -152,8 +154,10 @@ func (h *s3Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Set headers for partial content
 	contentLength := end - start + 1
+	contentRange := fmt.Sprintf("bytes %d-%d/%d", start, end, size)
+	log.Printf("%s %s: 206 Partial Content (request: %s, response: %s)", r.Method, key, rangeHeader, contentRange)
 	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
-	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
+	w.Header().Set("Content-Range", contentRange)
 	w.WriteHeader(http.StatusPartialContent)
 
 	if r.Method != http.MethodHead {
