@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -97,7 +98,7 @@ func (h *s3Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Open the file from S3
 	f, err := h.fsys.OpenFile(ctx, key)
 	if err != nil {
-		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "not exist") {
+		if errors.Is(err, fs.ErrNotExist) {
 			http.Error(w, "not found", http.StatusNotFound)
 		} else {
 			log.Printf("error opening %s: %v", key, err)
