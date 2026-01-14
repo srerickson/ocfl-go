@@ -297,13 +297,13 @@ type InventoryBuilder struct {
 	head          VNum
 	spec          Spec
 	addedVersions []struct {
-		state    DigestMap
-		alg      digest.Algorithm
-		created  time.Time
+		state   DigestMap
+		alg     digest.Algorithm
+		created time.Time
 		message string
-		user     *User
+		user    *User
 	}
-	contentPath PathMutation
+	contentPath  PathMutation
 	fixitySource FixitySource
 }
 
@@ -327,17 +327,17 @@ func NewInventoryBuilder(prev *Inventory) *InventoryBuilder {
 // given stage, creation timestamp, message, and user information.
 func (b *InventoryBuilder) AddVersion(state DigestMap, alg digest.Algorithm, created time.Time, message string, user *User) *InventoryBuilder {
 	added := struct {
-		state    DigestMap
-		alg      digest.Algorithm
-		created  time.Time
+		state   DigestMap
+		alg     digest.Algorithm
+		created time.Time
 		message string
-		user     *User
+		user    *User
 	}{
-		state:    state,
-		alg:      alg,
-		created:  created,
+		state:   state,
+		alg:     alg,
+		created: created,
 		message: message,
-		user:     user,
+		user:    user,
 	}
 	b.addedVersions = append(b.addedVersions, added)
 	return b
