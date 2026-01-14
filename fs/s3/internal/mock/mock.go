@@ -77,9 +77,20 @@ func (m *S3API) GetObject(ctx context.Context, in *s3v2.GetObjectInput, opts ...
 	if err != nil {
 		return nil, err
 	}
+	body := obj.Body
+	contentLength := int64(len(obj.Body))
+	// Handle Range header for partial reads
+	if in.Range != nil && *in.Range != "" {
+		start, end, err := parseGetObjectRange(*in.Range, contentLength)
+		if err != nil {
+			return nil, err
+		}
+		body = obj.Body[start : end+1]
+		contentLength = end - start + 1
+	}
 	return &s3v2.GetObjectOutput{
-		Body:          io.NopCloser(bytes.NewBuffer(obj.Body)),
-		ContentLength: aws.Int64(int64(len(obj.Body))),
+		Body:          io.NopCloser(bytes.NewBuffer(body)),
+		ContentLength: aws.Int64(contentLength),
 		LastModified:  aws.Time(obj.LastModified),
 	}, nil
 }
@@ -526,6 +537,60 @@ func parseByteRange(brange string) (start int64, end int64, err error) {
 	if start < 0 || start > end {
 		err = fmt.Errorf("invalid bytes range: %s", brange)
 		return
+	}
+	return
+}
+
+// parseGetObjectRange parses Range headers for GetObject which can be:
+// - "bytes=start-end" (both specified)
+// - "bytes=start-" (from start to end of file)
+// - "bytes=-suffix" (last N bytes) - not commonly used
+func parseGetObjectRange(brange string, totalSize int64) (start int64, end int64, err error) {
+	if !strings.HasPrefix(brange, "bytes=") {
+		err = fmt.Errorf("invalid bytes range: %s", brange)
+		return
+	}
+	brange = strings.TrimPrefix(brange, "bytes=")
+	a, b, _ := strings.Cut(brange, "-")
+
+	// Handle "bytes=-suffix" (last N bytes)
+	if a == "" {
+		suffix, parseErr := strconv.ParseInt(b, 10, 64)
+		if parseErr != nil {
+			err = fmt.Errorf("invalid bytes range: %w", parseErr)
+			return
+		}
+		start = totalSize - suffix
+		if start < 0 {
+			start = 0
+		}
+		end = totalSize - 1
+		return
+	}
+
+	start, err = strconv.ParseInt(a, 10, 64)
+	if err != nil {
+		err = fmt.Errorf("invalid bytes range: %w", err)
+		return
+	}
+
+	// Handle "bytes=start-" (from start to end)
+	if b == "" {
+		end = totalSize - 1
+	} else {
+		end, err = strconv.ParseInt(b, 10, 64)
+		if err != nil {
+			err = fmt.Errorf("invalid bytes range: %w", err)
+			return
+		}
+	}
+
+	if start < 0 || start > end || start >= totalSize {
+		err = fmt.Errorf("invalid bytes range: bytes=%s-%s", a, b)
+		return
+	}
+	if end >= totalSize {
+		end = totalSize - 1
 	}
 	return
 }

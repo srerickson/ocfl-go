@@ -1,6 +1,7 @@
 package s3_test
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"errors"
@@ -748,4 +749,226 @@ func comparDirEntries(
 	// no more fixture entries
 	_, _, more := nextFixture2()
 	be.False(t, more)
+}
+
+func TestSeek_Mock(t *testing.T) {
+	ctx := context.Background()
+	content := []byte("Hello, World! This is test content for seeking.")
+	obj := &mock.Object{
+		Key:          "seekable-file.txt",
+		Body:         content,
+		LastModified: time.Now(),
+	}
+
+	type testCase struct {
+		desc   string
+		offset int64
+		whence int
+		expect func(*testing.T, fs.File, int64, error)
+	}
+
+	cases := []testCase{
+		{
+			desc:   "SeekStart to beginning",
+			offset: 0,
+			whence: io.SeekStart,
+			expect: func(t *testing.T, f fs.File, pos int64, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, int64(0), pos)
+				buf := make([]byte, 5)
+				n, err := f.Read(buf)
+				be.NilErr(t, err)
+				be.Equal(t, 5, n)
+				be.Equal(t, "Hello", string(buf))
+			},
+		},
+		{
+			desc:   "SeekStart to middle",
+			offset: 7,
+			whence: io.SeekStart,
+			expect: func(t *testing.T, f fs.File, pos int64, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, int64(7), pos)
+				buf := make([]byte, 5)
+				n, err := f.Read(buf)
+				be.NilErr(t, err)
+				be.Equal(t, 5, n)
+				be.Equal(t, "World", string(buf))
+			},
+		},
+		{
+			desc:   "SeekEnd negative offset",
+			offset: -8,
+			whence: io.SeekEnd,
+			expect: func(t *testing.T, f fs.File, pos int64, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, int64(len(content)-8), pos)
+				buf := make([]byte, 8)
+				n, err := f.Read(buf)
+				be.NilErr(t, err)
+				be.Equal(t, 8, n)
+				be.Equal(t, "seeking.", string(buf))
+			},
+		},
+		{
+			desc:   "SeekStart negative offset error",
+			offset: -1,
+			whence: io.SeekStart,
+			expect: func(t *testing.T, f fs.File, pos int64, err error) {
+				be.Nonzero(t, err)
+			},
+		},
+		{
+			desc:   "SeekStart past EOF",
+			offset: int64(len(content) + 10),
+			whence: io.SeekStart,
+			expect: func(t *testing.T, f fs.File, pos int64, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, int64(len(content)+10), pos)
+				// Read should return EOF
+				buf := make([]byte, 5)
+				_, readErr := f.Read(buf)
+				be.True(t, errors.Is(readErr, io.EOF))
+			},
+		},
+	}
+
+	for i, tcase := range cases {
+		t.Run(strconv.Itoa(i)+"-"+tcase.desc, func(t *testing.T) {
+			api := mock.New(bucket, obj)
+			fsys := s3.NewBucketFS(api, bucket)
+			f, err := fsys.OpenFile(ctx, obj.Key)
+			be.NilErr(t, err)
+			defer f.Close()
+
+			seeker, ok := f.(io.Seeker)
+			be.True(t, ok)
+
+			pos, err := seeker.Seek(tcase.offset, tcase.whence)
+			tcase.expect(t, f, pos, err)
+		})
+	}
+}
+
+func TestSeekCurrent_Mock(t *testing.T) {
+	ctx := context.Background()
+	content := []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	obj := &mock.Object{
+		Key:          "alphabet.txt",
+		Body:         content,
+		LastModified: time.Now(),
+	}
+
+	api := mock.New(bucket, obj)
+	fsys := s3.NewBucketFS(api, bucket)
+	f, err := fsys.OpenFile(ctx, obj.Key)
+	be.NilErr(t, err)
+	defer f.Close()
+
+	seeker := f.(io.Seeker)
+
+	// Read first 5 bytes
+	buf := make([]byte, 5)
+	n, err := f.Read(buf)
+	be.NilErr(t, err)
+	be.Equal(t, 5, n)
+	be.Equal(t, "ABCDE", string(buf))
+
+	// Seek forward 5 from current (should be at position 10)
+	pos, err := seeker.Seek(5, io.SeekCurrent)
+	be.NilErr(t, err)
+	be.Equal(t, int64(10), pos)
+
+	// Read next 5 bytes
+	n, err = f.Read(buf)
+	be.NilErr(t, err)
+	be.Equal(t, 5, n)
+	be.Equal(t, "KLMNO", string(buf))
+
+	// Seek backward from current
+	pos, err = seeker.Seek(-10, io.SeekCurrent)
+	be.NilErr(t, err)
+	be.Equal(t, int64(5), pos)
+
+	// Read next 5 bytes
+	n, err = f.Read(buf)
+	be.NilErr(t, err)
+	be.Equal(t, 5, n)
+	be.Equal(t, "FGHIJ", string(buf))
+}
+
+func TestSeekWithZip(t *testing.T) {
+	if !testutil.S3Enabled() {
+		t.Skip("s3 test service is not running")
+	}
+	ctx := context.Background()
+
+	// Create a zip file in memory
+	var zipBuf bytes.Buffer
+	zw := zip.NewWriter(&zipBuf)
+
+	files := map[string]string{
+		"hello.txt":      "Hello, World!",
+		"dir/nested.txt": "Nested content",
+		"numbers.txt":    "1234567890",
+	}
+	for name, content := range files {
+		fw, err := zw.Create(name)
+		be.NilErr(t, err)
+		_, err = fw.Write([]byte(content))
+		be.NilErr(t, err)
+	}
+	be.NilErr(t, zw.Close())
+
+	// Upload zip to real S3
+	fsys := testutil.TmpS3FS(t, nil)
+	_, err := fsys.Write(ctx, "archive.zip", &zipBuf)
+	be.NilErr(t, err)
+
+	// Open the zip file from S3
+	f, err := fsys.OpenFile(ctx, "archive.zip")
+	be.NilErr(t, err)
+	defer f.Close()
+
+	// Get file info for size
+	info, err := f.Stat()
+	be.NilErr(t, err)
+
+	// Create a ReaderAt from our ReadSeeker
+	seeker := f.(io.ReadSeeker)
+	readerAt := &seekerReaderAt{rs: seeker}
+
+	// Open as zip archive - this requires seeking!
+	zr, err := zip.NewReader(readerAt, info.Size())
+	be.NilErr(t, err)
+
+	// Verify we can read all files
+	be.Equal(t, len(files), len(zr.File))
+
+	for _, zf := range zr.File {
+		expectedContent, exists := files[zf.Name]
+		be.True(t, exists)
+
+		rc, err := zf.Open()
+		be.NilErr(t, err)
+
+		content, err := io.ReadAll(rc)
+		be.NilErr(t, err)
+		rc.Close()
+
+		be.Equal(t, expectedContent, string(content))
+	}
+}
+
+// seekerReaderAt adapts an io.ReadSeeker to io.ReaderAt
+type seekerReaderAt struct {
+	rs io.ReadSeeker
+}
+
+func (s *seekerReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
+	_, err = s.rs.Seek(off, io.SeekStart)
+	if err != nil {
+		return 0, err
+	}
+	return s.rs.Read(p)
 }

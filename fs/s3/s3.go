@@ -41,6 +41,9 @@ var (
 	maxKeys int32 = 1000
 )
 
+// Compile-time check that s3File implements io.Seeker
+var _ io.Seeker = (*s3File)(nil)
+
 func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (fs.File, error) {
 	if !fs.ValidPath(name) || name == "." {
 		return nil, pathErr("open", name, fs.ErrInvalid)
@@ -306,7 +309,7 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) iter.
 	}
 }
 
-// s3File implements fs.File
+// s3File implements fs.File and io.Seeker
 type s3File struct {
 	ctx    context.Context
 	api    OpenFileAPI
@@ -314,6 +317,7 @@ type s3File struct {
 	key    string
 	body   io.ReadCloser
 	info   *s3.HeadObjectOutput
+	offset int64 // current position in the file
 }
 
 func (f *s3File) Stat() (fs.FileInfo, error) {
@@ -327,6 +331,10 @@ func (f *s3File) Stat() (fs.FileInfo, error) {
 }
 
 func (f *s3File) Read(p []byte) (int, error) {
+	size := *f.info.ContentLength
+	if f.offset >= size {
+		return 0, io.EOF
+	}
 	if f.body == nil {
 		params := &s3.GetObjectInput{
 			Bucket: &f.bucket,
@@ -335,13 +343,19 @@ func (f *s3File) Read(p []byte) (int, error) {
 			IfMatch:           f.info.ETag,
 			IfUnmodifiedSince: f.info.LastModified,
 		}
+		if f.offset > 0 {
+			rangeStr := fmt.Sprintf("bytes=%d-", f.offset)
+			params.Range = &rangeStr
+		}
 		obj, err := f.api.GetObject(f.ctx, params)
 		if err != nil {
 			return 0, err
 		}
 		f.body = obj.Body
 	}
-	return f.body.Read(p)
+	n, err := f.body.Read(p)
+	f.offset += int64(n)
+	return n, err
 }
 
 func (f *s3File) Close() error {
@@ -353,6 +367,34 @@ func (f *s3File) Close() error {
 
 func (f *s3File) Name() string {
 	return path.Base(f.key)
+}
+
+// Seek implements io.Seeker. It repositions the file offset for the next Read.
+// Seeking invalidates any existing body reader, causing the next Read to
+// issue a new GetObject request with the appropriate Range header.
+func (f *s3File) Seek(offset int64, whence int) (int64, error) {
+	size := *f.info.ContentLength
+	var newOffset int64
+	switch whence {
+	case io.SeekStart:
+		newOffset = offset
+	case io.SeekCurrent:
+		newOffset = f.offset + offset
+	case io.SeekEnd:
+		newOffset = size + offset
+	default:
+		return 0, errors.New("s3: invalid whence")
+	}
+	if newOffset < 0 {
+		return 0, errors.New("s3: negative position")
+	}
+	// Close existing body if position changed
+	if f.body != nil && newOffset != f.offset {
+		f.body.Close()
+		f.body = nil
+	}
+	f.offset = newOffset
+	return f.offset, nil
 }
 
 // iofsInfo implements fs.FileInfo and fs.DirEntry
