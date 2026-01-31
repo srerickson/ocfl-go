@@ -124,7 +124,28 @@ func (imp ocflV1) ValidateInventory(inv *Inventory) *Validation {
 		} else if errors.Is(err, ErrVNumMissing) {
 			err = verr(err, code.E010(specStr))
 		} else if errors.Is(err, ErrVNumPadding) {
-			err = verr(err, code.E012(specStr))
+			// Check if the padding issue is due to versions not starting with "v0"
+			// This would violate E011 in addition to E012/E013
+			hasZeroPadded := false
+			hasNonZeroPrefixed := false
+			for _, vn := range versionNums {
+				if vn.Padding() > 0 {
+					hasZeroPadded = true
+				} else if vn.Num() >= 10 && hasZeroPadded {
+					// This version should have been zero-padded but isn't (doesn't start with v0)
+					hasNonZeroPrefixed = true
+				}
+			}
+			if hasZeroPadded && hasNonZeroPrefixed {
+				// Add E011 for versions that don't start with v0
+				v.AddFatal(verr(fmt.Errorf("zero-padded version directories must start with v0: %w", err), code.E011(specStr)))
+			}
+			// Use E013 for OCFL 1.1, E012 for OCFL 1.0
+			paddingCode := code.E012(specStr)
+			if imp.v1Spec == Spec1_1 {
+				paddingCode = code.E013(specStr)
+			}
+			err = verr(err, paddingCode)
 		}
 		v.AddFatal(err)
 	}
@@ -421,7 +442,7 @@ func (imp ocflV1) ValidateObjectRoot(ctx context.Context, vldr *ObjectValidation
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
 			err = fmt.Errorf("%s: %w", name, ErrObjectNamasteNotExist)
-			vldr.AddFatal(verr(err, code.E001(specStr)))
+			vldr.AddFatal(verr(err, code.E003(specStr)))
 		default:
 			vldr.AddFatal(verr(err, code.E007(specStr)))
 		}
@@ -467,7 +488,7 @@ func (imp ocflV1) ValidateObjectVersion(ctx context.Context, vldr *ObjectValidat
 	vnumStr := vnum.String()
 	fullVerDir := path.Join(vldr.path(), vnumStr) // version directory path relative to FS
 	specStr := string(imp.v1Spec)
-	rootInv := vldr.obj.inventory // rootInv is assumed to be valid
+	rootInv := vldr.obj.inventory // rootInv may be nil if root inventory validation failed
 	vDirEntries, err := ocflfs.ReadDir(ctx, fsys, fullVerDir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		// can't read version directory for some reason, but not because it
@@ -526,13 +547,15 @@ func (imp ocflV1) ValidateObjectVersion(ctx context.Context, vldr *ObjectValidat
 		}
 		if prevInv != nil && verInv.Type.Cmp(prevInv.Type.Spec) < 0 {
 			err := fmt.Errorf("%s/inventory.json uses an older OCFL specification than than the previous version", vnum)
-			vldr.AddFatal(verr(err, code.E103(specStr)))
+			// E103 only exists in OCFL 1.1+, so use 1.1 for the code lookup
+			vldr.AddFatal(verr(err, code.E103(string(Spec1_1))))
 		}
 		if verInv.Head != vnum {
 			err := fmt.Errorf("%s/inventory.json: 'head' does not matchs its directory", vnum)
 			vldr.AddFatal(verr(err, code.E040(specStr)))
 		}
-		if verInv.Digest() != rootInv.Digest() {
+		// Only compare with root inventory if it exists
+		if rootInv != nil && verInv.Digest() != rootInv.Digest() {
 			imp.compareVersionInventory(vldr.obj, vnum, verInv, vldr)
 			if err := vldr.addInventory(verInv, false); err != nil {
 				err = fmt.Errorf("%s/inventory.json digests are inconsistent with other inventories: %w", vnum, err)
@@ -744,6 +767,10 @@ func validateRootState(spec Spec, state *ObjectState) *Validation {
 	for _, name := range state.Invalid {
 		err := fmt.Errorf(`%w: %s`, ErrObjRootStructure, name)
 		v.AddFatal(verr(err, code.E001(specStr)))
+	}
+	if !state.HasNamaste() {
+		err := fmt.Errorf(`version declaration: %w`, fs.ErrNotExist)
+		v.AddFatal(verr(err, code.E003(specStr)))
 	}
 	if !state.HasInventory() {
 		err := fmt.Errorf(`root inventory.json: %w`, fs.ErrNotExist)
