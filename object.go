@@ -420,7 +420,13 @@ func ValidateObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...Obj
 		return v
 	}
 	state := ParseObjectDir(entries)
-	impl, err := getOCFL(state.Spec)
+	spec := state.Spec
+	if spec == "" {
+		// No Namaste file found, use default OCFL version for validation
+		// The missing Namaste will be reported as E003 by ValidateObjectRoot
+		spec = Spec1_1
+	}
+	impl, err := getOCFL(spec)
 	if err != nil {
 		// unknown OCFL version
 		v.AddFatal(err)
