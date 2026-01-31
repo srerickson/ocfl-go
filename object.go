@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"maps"
 	"path"
 	"slices"
@@ -14,7 +13,6 @@ import (
 	"github.com/srerickson/ocfl-go/digest"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/internal/logical-fs"
-	"github.com/srerickson/ocfl-go/logging"
 )
 
 var ErrObjectReadOnly = errors.New("object is read-only")
@@ -91,28 +89,38 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 	}
 }
 
-// ApplyUpdatePlan applies an [*UpdatePlan], resulting in a new object version.
-// The *UpdatePlan should be created with [Object.NewUpdatePlan]. The internal
-// state for obj is updated to reflect the new object inventory.
-func (obj *Object) ApplyUpdatePlan(ctx context.Context, update *UpdatePlan, src ContentSource) error {
-	if err := obj.ReadOnly(); err != nil {
-		return fmt.Errorf("%q cannot be updated: %w", obj.ID(), err)
+// ApplyPlan executes all activities in the plan and updates the object
+func (obj *Object) ApplyPlan(ctx context.Context, plan *UpdatePlan, src ContentSource) error {
+	if plan.ObjectID != obj.ID() {
+		return fmt.Errorf("plan is for object %q but applying to %q", plan.ObjectID, obj.ID())
 	}
-	if update.ObjectID() != obj.ID() {
-		return errors.New("update plan is for a different object")
+	currentVersion := obj.Head()
+	if currentVersion != plan.BaseVersion {
+		return fmt.Errorf("plan base version %s does not match object's current version %s", plan.BaseVersion, currentVersion)
 	}
-	var baseInvDigest string
-	if obj.inventory != nil {
-		baseInvDigest = obj.inventory.digest
+	for _, activity := range plan.Activities {
+		if activity.Status == ActivityStatusCompleted || activity.Status == ActivityStatusSkipped {
+			continue // Already done
+		}
+		result, err := activity.Execute(ctx, obj.fs, obj.path, src)
+		if err != nil {
+			return fmt.Errorf("activity %q failed: %w", activity.ID, err)
+		}
+		if !result.Success {
+			return fmt.Errorf("activity %q failed: %s", activity.ID, result.ErrorMessage)
+		}
 	}
-	if baseInvDigest != update.BaseInventoryDigest() {
-		return errors.New("update plan does not reflect object's current inventory state")
-	}
-	newInv, err := update.Apply(ctx, obj.fs, obj.path, src)
+
+	// Update object's inventory
+	invBytes, invDigest, err := plan.newInventory.marshal()
 	if err != nil {
-		return err
+		return fmt.Errorf("marshaling inventory: %w", err)
 	}
-	obj.inventory = newInv
+	obj.inventory = &StoredInventory{
+		Inventory: *plan.newInventory,
+		digest:    invDigest,
+		bytes:     invBytes,
+	}
 	obj.inventoryIsRoot = true
 	return nil
 }
@@ -125,6 +133,24 @@ func (obj Object) ContentDirectory() string {
 	return contentDir
 }
 
+// CreatePlan creates an update plan with an explicit timestamp without executing it.
+// This is the primary method for creating plans deterministically.
+//
+// The timestamp parameter is required for deterministic execution in workflow engines
+// where time.Now() cannot be used (for replay safety). In framework contexts:
+// - Temporal workflows: use workflow.Now(ctx)
+// - Durable Task Framework: use ctx.CurrentTimeUtc()
+// - Regular Go code: use time.Now()
+//
+// Use ApplyPlan() to execute the plan and update the object.
+func (obj *Object) CreatePlan(stage *Stage, timestamp time.Time, message string, user *User) (*UpdatePlan, error) {
+	return obj.NewUpdatePlanBuilder(stage).
+		WithTimestamp(timestamp).
+		WithMessage(message).
+		WithUser(user).
+		Build()
+}
+
 // InventoryBuilder returns an *InventoryBuilder that can be used to generate
 // new inventory's for the object.
 func (obj *Object) InventoryBuilder() *InventoryBuilder {
@@ -133,41 +159,6 @@ func (obj *Object) InventoryBuilder() *InventoryBuilder {
 		base = &obj.inventory.Inventory
 	}
 	return NewInventoryBuilder(base).ID(obj.ID())
-}
-
-// NewUpdatePlan builds a new object inventory using stage's state and returns
-// an *[UpdatePlan] that can be used to apply the changes. It does not apply the
-// update plan.
-func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
-	updateOpts := newObjectUpdateOptions(opts...)
-	newInv, err := obj.InventoryBuilder().
-		FixitySource(stage.FixitySource).
-		ContentPathFunc(updateOpts.contentPathFunc).
-		Spec(updateOpts.spec).
-		AddVersion(
-			stage.State,
-			stage.DigestAlgorithm,
-			updateOpts.created,
-			msg,
-			&user,
-		).Finalize()
-	if err != nil {
-		return nil, fmt.Errorf("building new inventory for update: %w", err)
-	}
-	currentInv := obj.inventory
-	if !updateOpts.allowUnchanged && currentInv != nil {
-		lastV := currentInv.Versions[currentInv.Head]
-		if lastV != nil && lastV.State.Eq(stage.State) {
-			return nil, errors.New("update has unchanged version state")
-		}
-	}
-	plan, err := newUpdatePlan(newInv, currentInv)
-	if err != nil {
-		return nil, fmt.Errorf("in object update plan: %w", err)
-	}
-	plan.setGoLimit(updateOpts.goLimit)
-	plan.setLogger(updateOpts.logger)
-	return plan, nil
 }
 
 // DigestAlgorithm returns sha512 unless sha256 is set in the root inventory.
@@ -311,18 +302,38 @@ func (o Object) Spec() Spec {
 	return o.inventory.Type.Spec
 }
 
-// Update creates a new object version with stage's state, the given version
-// message, and the user. To create the new object version, an *UpdatePlan is
-// created with [Object.NewUpdatePlan] and applied with
-// [Object.ApplyUpdatePlan]. The *UpdatePlan is returned even if an error occurs
-// while applying the plan. The *UpdatePlan can be be retried, by calling
-// [Object.ApplyUpdatePlan] again, or reverted, by calling [UpdatePlan.Revert].
-func (obj *Object) Update(ctx context.Context, stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
-	plan, err := obj.NewUpdatePlan(stage, msg, user, opts...)
-	if err != nil {
-		return nil, err
+// Update creates a new version of the object using the provided stage.
+// This is the main entry point for object updates.
+//
+// The update process:
+// 1. Creates an update plan with activities
+// 2. Executes all activities
+// 3. Updates the object's inventory
+//
+// For durable execution frameworks, use NewUpdatePlanBuilder() instead
+// to get explicit control over the plan creation and execution.
+func (obj *Object) Update(ctx context.Context, stage *Stage, message string, user *User) error {
+	// Check if object is read-only
+	if err := obj.ReadOnly(); err != nil {
+		return err
 	}
-	return plan, obj.ApplyUpdatePlan(ctx, plan, stage.ContentSource)
+
+	// Create plan
+	plan, err := obj.NewUpdatePlanBuilder(stage).
+		WithTimestamp(time.Now()).
+		WithMessage(message).
+		WithUser(user).
+		Build()
+	if err != nil {
+		return fmt.Errorf("creating update plan: %w", err)
+	}
+
+	// Apply plan
+	if err := obj.ApplyPlan(ctx, plan, stage.ContentSource); err != nil {
+		return fmt.Errorf("applying update plan: %w", err)
+	}
+
+	return nil
 }
 
 // Version returns an *ObjectVersion that can be used to access details for the
@@ -561,87 +572,3 @@ func (o ObjectVersion) User() *User {
 
 // VNum returns o's version number
 func (o ObjectVersion) VNum() VNum { return o.vnum }
-
-type objectUpdateOptions struct {
-	created         time.Time // time.Now is used, if not set
-	spec            Spec      // OCFL specification version for the new object version
-	newHead         int       // enforces new object version number
-	allowUnchanged  bool
-	contentPathFunc func(oldPaths []string) (newPaths []string)
-	logger          *slog.Logger
-	goLimit         int
-}
-
-func newObjectUpdateOptions(opts ...ObjectUpdateOption) *objectUpdateOptions {
-	combinedOpts := &objectUpdateOptions{
-		logger: logging.DisabledLogger(),
-	}
-	for _, o := range opts {
-		o(combinedOpts)
-	}
-	if combinedOpts.created.IsZero() {
-		combinedOpts.created = time.Now()
-	}
-	return combinedOpts
-}
-
-// ObjectUpdateOptions are optional function arguments used to configure
-// new an Object's UpdatePlan.
-type ObjectUpdateOption func(*objectUpdateOptions)
-
-// UpdateWithVersionCreated sets the 'created' timestamp for the object version
-// created with the update.
-func UpdateWithVersionCreated(t time.Time) ObjectUpdateOption {
-	return func(o *objectUpdateOptions) {
-		o.created = t
-	}
-}
-
-// UpdateWithOCFLSpec sets the OCFL specification for the new object version
-func UpdateWithOCFLSpec(s Spec) ObjectUpdateOption {
-	return func(o *objectUpdateOptions) {
-		o.spec = s
-	}
-}
-
-// UpdateWithNewHead is used to enforce the expected version number (without
-// padding) for the version created with the update. Without this, the
-// new version increments the existing version number, whatever it may be.
-func UpdateWithNewHead(v int) ObjectUpdateOption {
-	return func(o *objectUpdateOptions) {
-		o.newHead = v
-	}
-}
-
-// UpdateWithUnchangedVersionState is used to allow updates that don't change
-// the version state. Without this, updates with the same state will result
-// in an error.
-func UpdateWithUnchangedVersionState() ObjectUpdateOption {
-	return func(o *objectUpdateOptions) {
-		o.allowUnchanged = true
-	}
-}
-
-// UpdateWithContentPathFunc is used to set a function for enforcing
-// naming conventions for content paths in the new inventory.
-func UpdateWithContentPathFunc(mutate PathMutation) ObjectUpdateOption {
-	return func(o *objectUpdateOptions) {
-		o.contentPathFunc = mutate
-	}
-}
-
-// UpdateWithLogger sets the logger used to log message from each
-// step of the UpdatePlan.
-func UpdateWithLogger(logger *slog.Logger) ObjectUpdateOption {
-	return func(o *objectUpdateOptions) {
-		o.logger = logger
-	}
-}
-
-// UpdateWithGoLimit sets the number of goroutines used to run
-// concurrent steps when running the UpdatePlan.
-func UpdateWithGoLimit(gos int) ObjectUpdateOption {
-	return func(o *objectUpdateOptions) {
-		o.goLimit = gos
-	}
-}

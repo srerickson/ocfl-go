@@ -417,6 +417,15 @@ func (b *InventoryBuilder) initialInventory() (*Inventory, error) {
 	if b.prev == nil {
 		return inv, nil
 	}
+
+	// Validate spec changes
+	prevSpec := b.prev.Type.Spec
+	if !prevSpec.Empty() && !b.spec.Empty() && prevSpec != b.spec {
+		// Check if this is a downgrade (not allowed)
+		if prevSpec == Spec1_1 && b.spec == Spec1_0 {
+			return nil, fmt.Errorf("cannot downgrade OCFL spec from %s to %s", prevSpec, b.spec)
+		}
+	}
 	// copy manifest
 	inv.DigestAlgorithm = b.prev.DigestAlgorithm
 	var err error

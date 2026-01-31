@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"os/signal"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -67,20 +66,18 @@ func runUpdate(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	update, err := obj.NewUpdatePlan(stage, f.msg, f.user, ocfl.UpdateWithLogger(logger))
+
+	// Use the simplified Update API
+	// Note: The new durable execution design removes revert functionality
+	// in favor of framework-native compensation and rollback mechanisms
+	err = obj.Update(ctx, stage, f.msg, &f.user)
 	if err != nil {
 		return err
 	}
-	applyCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
-	defer stop()
-	err = obj.ApplyUpdatePlan(applyCtx, update, stage.ContentSource)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			logger.Info("received interupt: reverting changes...")
-			err = update.Revert(ctx, obj.FS(), obj.Path(), stage)
-		}
-		return err
-	}
+
+	logger.Info("update completed successfully",
+		"object_id", obj.ID(),
+		"version", obj.Head().String())
 	return nil
 }
 
