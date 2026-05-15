@@ -1,0 +1,9 @@
+version: "2"
+sql:
+  - engine: "sqlite"
+    queries: "internal/stagedb/query"
+    schema: "internal/stagedb/schema"
+    gen:
+      go:
+        package: "generated"
+        out: "internal/stagedb/generated"
