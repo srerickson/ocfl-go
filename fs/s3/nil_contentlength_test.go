@@ -40,12 +40,12 @@ func missingContentLengthErr(t *testing.T, op, path string, err error) {
 	be.Equal(t, "missing content length", perr.Err.Error())
 }
 
-// TestCopy_NilContentLengthError is the regression test for the copy()
-// panic: copy() dereferenced *srcHead.ContentLength with no nil check when
-// picking the copy strategy (single CopyObject vs multipart), so a HEAD
-// response without Content-Length panicked with a nil pointer dereference.
-// The fix mirrors the guard in MultiCopier.Copy and returns a "missing
-// content length" error before any CopyObject or multipart machinery runs.
+// TestCopy_NilContentLengthError pins the nil guard on the copy strategy
+// decision. copy() picks single CopyObject vs multipart from
+// srcHead.ContentLength, which a HEAD response is not obliged to set;
+// dereferencing it unguarded panics. Mirroring the guard in MultiCopier.Copy,
+// copy() must return a "missing content length" error before any CopyObject
+// or multipart machinery runs.
 func TestCopy_NilContentLengthError(t *testing.T) {
 	ctx := context.Background()
 	api := &nilLengthAPI{S3API: mock.New(bucket)}

@@ -99,10 +99,10 @@ func (f *rootRemoverFS) RemoveRoot(ctx context.Context) error {
 // TestRemoveAll_Dot_PartialFailure pins the partial-failure semantics of
 // fs.RemoveAll("."): when one entry fails to remove, the walk must continue
 // with the remaining entries and return every per-entry failure joined with
-// errors.Join. The old implementation returned on the first error, deleting
-// only the first entry and hiding that the root was only partially removed —
-// it fails this test because removeCalls stops at the first failing entry and
-// errors.Is(err, errC) is false.
+// errors.Join. Returning on the first error would delete only the entries up
+// to it and hide that the root was left partially removed, so the assertions
+// check both halves: removeCalls covers every entry, and every per-entry
+// error is reachable with errors.Is.
 func TestRemoveAll_Dot_PartialFailure(t *testing.T) {
 	errA := errors.New("remove a.txt failed")
 	errC := errors.New("remove c.txt failed")
@@ -217,8 +217,7 @@ func TestRemoveAll_Dot_RecursionPrefixedPaths(t *testing.T) {
 		// S3-style flattened listing does), which may carry redundant
 		// elements. The walk must normalize them with path.Join: a dir
 		// entry named "./sub" must reach the backend as "sub", never as
-		// the bare "./sub". The old implementation passed entry.Name()
-		// verbatim, so this test fails before the fix.
+		// the bare "./sub" that entry.Name() reports.
 		fsys := &removeWalkFS{
 			entries: map[string][]*removeWalkEntry{
 				".": {{name: "./sub", isDir: true}, {name: "top.txt"}},

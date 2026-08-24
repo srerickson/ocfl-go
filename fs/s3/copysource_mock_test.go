@@ -13,11 +13,11 @@ import (
 )
 
 // trickyKeys are OCFL-legal object keys (io/fs.ValidPath accepts all of
-// them) whose URLs used to be mangled by url.QueryEscape (space -> '+',
-// '/' -> %2F). Expected values are the exact x-amz-copy-source strings S3
-// must receive: "bucket/key" with '/' literal and each segment
-// percent-encoded exactly once (%20 for space, %2B for '+', %25 for '%',
-// UTF-8 %XX for non-ASCII).
+// them) that a query-string encoder such as url.QueryEscape would mangle,
+// turning a space into '+' and every '/' into %2F. Expected values are the
+// exact x-amz-copy-source strings S3 must receive: "bucket/key" with '/'
+// literal and each segment percent-encoded exactly once (%20 for space, %2B
+// for '+', %25 for '%', UTF-8 %XX for non-ASCII).
 var trickyKeys = []struct {
 	key  string
 	want string

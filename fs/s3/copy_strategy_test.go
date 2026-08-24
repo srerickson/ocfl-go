@@ -89,13 +89,13 @@ func TestCopy_ExactlyMaxCopySizeUsesCopyObject(t *testing.T) {
 	be.False(t, api.MPUCreated)
 }
 
-// TestCopy_CopyObjectErrorPropagates is a regression test for the removal of
-// the error-text fallback: a CopyObject failure on a small source must be
-// returned unchanged. The old implementation string-matched the AWS-specific
-// message and silently switched to multipart, which is wrong for
-// S3-compatible stores that phrase the error differently. To prove the
-// fallback is really gone, the mock returns the exact AWS error text the old
-// code was matching.
+// TestCopy_CopyObjectErrorPropagates pins that a CopyObject failure on a
+// small source is returned unchanged, with no retry as a multipart copy. The
+// strategy choice is made from the source's declared size alone; matching on
+// the error text instead would be wrong for S3-compatible stores that phrase
+// the same condition differently. The mock returns the exact AWS "copy source
+// is larger than the maximum allowable size" text, so a reintroduced string
+// match would be caught here rather than in production against MinIO.
 func TestCopy_CopyObjectErrorPropagates(t *testing.T) {
 	ctx := context.Background()
 	wantErr := errors.New("copy source is larger than the maximum allowable size")

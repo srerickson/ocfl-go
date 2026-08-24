@@ -47,12 +47,10 @@ func smithy404Err() error {
 	}
 }
 
-// TestOpenFileErrNotExist_Smithy404 is the regression test for the bug where
-// HeadObject on a missing key returns a *smithyhttp.ResponseError with status
-// 404 (instead of types.NotFound) and OpenFile fails to map the error to
-// fs.ErrNotExist. It fails on the current code and passes once errIsNotExist()
-// also recognizes *smithyhttp.ResponseError with StatusCode
-// http.StatusNotFound.
+// TestOpenFileErrNotExist_Smithy404 covers one of the several shapes a
+// missing key comes back as: HeadObject can return a *smithyhttp.ResponseError
+// with status 404 rather than a typed types.NotFound. errIsNotExist must
+// recognize it, so OpenFile still maps it to fs.ErrNotExist.
 func TestOpenFileErrNotExist_Smithy404(t *testing.T) {
 	ctx := context.Background()
 	orig := smithy404Err()

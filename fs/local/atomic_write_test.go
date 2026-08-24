@@ -15,8 +15,8 @@ package local
 //     both success and failure.
 //
 // The file is self-contained (no helpers shared with localfs_test.go) and
-// uses only the public FS API, so it compiles against the old implementation
-// unchanged and fails there for behavioral reasons.
+// uses only the public FS API, so every failure here is a behavioral one:
+// nothing it asserts depends on the internal shape of the write path.
 import (
 	"bytes"
 	"context"
@@ -81,9 +81,9 @@ func (r *gateReader) Read(p []byte) (int, error) {
 }
 
 // pacedReader yields its data in small chunks with a fixed pause between
-// reads, so a Write fed from it takes tens of milliseconds. That keeps the
-// old implementation's truncate-then-copy window open long enough for
-// concurrent readers to reliably observe partial states.
+// reads, so a Write fed from it takes tens of milliseconds. A write that
+// copies in place holds a partial-content window open for that whole span,
+// which is what gives concurrent readers a reliable chance to observe it.
 type pacedReader struct {
 	data  []byte
 	pos   int
@@ -158,8 +158,8 @@ func TestFS_WriteAtomic(t *testing.T) {
 
 		// The canceled write must report the cancellation, must not create a
 		// file at the final path (new target), and must remove its temp file.
-		// The old implementation ignores the cancellation mid-copy, completes
-		// the write and returns nil, so this fails there.
+		// A write that checks ctx only up front would run to completion and
+		// return nil here.
 		be.True(t, errors.Is(werr, context.Canceled))
 		if _, statErr := os.Stat(filepath.Join(tmpDir, "test.bin")); !os.IsNotExist(statErr) {
 			t.Fatalf("file appeared at final path despite cancellation: %v", statErr)
@@ -194,8 +194,8 @@ func TestFS_WriteAtomic(t *testing.T) {
 		wg.Wait()
 
 		// Cancellation of an overwrite must leave the previous complete file
-		// in place. The old implementation truncates the target up front, so
-		// it fails here with either a partial file or a committed new write.
+		// in place — the strictly harder case, since a write that truncates
+		// the target up front has already destroyed it by this point.
 		be.True(t, errors.Is(werr, context.Canceled))
 		data, err := os.ReadFile(filepath.Join(tmpDir, "test.bin"))
 		be.NilErr(t, err)
@@ -337,8 +337,8 @@ func TestFS_WriteAtomic(t *testing.T) {
 		// The write is blocked mid-copy with bytes already in the temp file.
 		// The temp file must exist, live in the same directory as the target
 		// (so the final rename is atomic on the same filesystem), and be the
-		// only temp file. The old implementation, which copies straight to the
-		// final path, never creates one, so this fails there.
+		// only temp file. A write that copies straight to the final path
+		// never creates one, and fails the first assertion.
 		temps := atomicTempFiles(t, tmpDir)
 		be.Equal(t, 1, len(temps))
 		be.Equal(t, tmpDir, filepath.Dir(temps[0]))

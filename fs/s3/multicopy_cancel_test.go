@@ -69,13 +69,12 @@ func serialCopier(api s3.MultiCopyAPI) *s3.MultiCopier {
 	})
 }
 
-// TestMultiCopy_AbortSurvivesCancellation is a regression test for the
-// deferred AbortMultipartUpload in multicopy.go: when the caller cancels the
-// context mid-copy, the part loop fails and the deferred cleanup must still
-// abort the multipart upload using a context derived from
-// context.WithoutCancel. With the old code (deferred call on the caller's
-// ctx) the abort fails on the canceled context and the MPU with its uploaded
-// parts is orphaned.
+// TestMultiCopy_AbortSurvivesCancellation pins the cleanup path in
+// multicopy.go: when the caller cancels the context mid-copy the part loop
+// fails, and the deferred AbortMultipartUpload must still reach S3. It
+// therefore runs on a context derived with context.WithoutCancel — issuing
+// the abort on the caller's canceled ctx would fail immediately and orphan
+// the multipart upload along with every part already uploaded.
 func TestMultiCopy_AbortSurvivesCancellation(t *testing.T) {
 	const src = "big-src"
 	body := mock.RandBytes(13 * megabyte) // 3 parts at partSize

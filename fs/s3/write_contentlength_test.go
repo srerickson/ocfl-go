@@ -398,13 +398,14 @@ func TestWriteContentLengthInvalidKey(t *testing.T) {
 	}
 }
 
-// TestWriteContentLengthPartiallyConsumedFile is the regression test for the
-// fs.File branch precedence bug: a *os.File (which is both fs.File and
-// io.Seeker) that has been partially consumed must report the REMAINING
-// length, and the declared ContentLength must equal the delivered body length
-// so net/http accepts the request. Before the fix the fs.File case won and
-// reported the total file size while the body delivered only the tail,
-// making net/http reject the upload.
+// TestWriteContentLengthPartiallyConsumedFile pins branch precedence in
+// content-length detection. A *os.File is both an fs.File and an io.Seeker,
+// and the two answer differently once it has been partially consumed: Stat
+// reports the total size, the seek offset reports the remaining bytes. The
+// remaining length is the one that must win, because the declared
+// ContentLength has to equal the delivered body length or net/http rejects
+// the upload. Taking the fs.File branch first declares the total and delivers
+// only the tail.
 func TestWriteContentLengthPartiallyConsumedFile(t *testing.T) {
 	const (
 		bucket  = "test-bucket"

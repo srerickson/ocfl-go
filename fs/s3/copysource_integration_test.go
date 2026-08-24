@@ -18,17 +18,18 @@ package s3_test
 // in the environment. Buckets are created per test and removed by
 // t.Cleanup via testutil.RemoveBucket.
 //
-// Background: both CopySource construction sites (CopyObject in s3.go and
-// UploadPartCopy in multicopy.go) previously built the header value with
-// url.QueryEscape(bucket+"/"+src), which encodes spaces as '+' and every '/'
-// as '%2F'. That wire format fails on S3-compatible stores: verified against
-// MinIO, CopyObject with the QueryEscape value returns 404 for keys with
-// spaces, unicode, or nested slashes. The fix (copySourcePath in
-// copysource.go) percent-encodes each segment minio-go style: literal '/'
-// separators, space -> %20, '+' -> %2B. These tests fail against the old
-// encoding and must stay green against the new one, including the '+' case,
-// which would silently break if a future change left '+' literal (a naive
-// per-segment url.PathEscape fix does exactly that).
+// Why an integration test and not just a unit test: the encoding is only
+// wrong on the wire, and only some stores reject it. Both CopySource
+// construction sites (CopyObject in s3.go and UploadPartCopy in multicopy.go)
+// go through copySourcePath in copysource.go, which percent-encodes each
+// segment minio-go style: literal '/' separators, space -> %20, '+' -> %2B.
+//
+// Two encodings that look reasonable are not. A whole-string url.QueryEscape
+// encodes spaces as '+' and every '/' as %2F; verified against MinIO, that
+// returns 404 for keys with spaces, unicode, or nested slashes. A per-segment
+// url.PathEscape fixes those but leaves a literal '+' in the key, which the
+// store reads back as a space — so the '+' case below is load-bearing, and it
+// is the one that fails silently rather than loudly.
 
 import (
 	"bytes"

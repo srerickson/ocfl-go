@@ -23,9 +23,10 @@ func TestWriteFSRemoveContract_Local(t *testing.T) {
 	testutil.TestWriteFSRemoveContract(t, fsys, testutil.WriteFSRemoveContract{RemoveDotIsNotExist: false})
 }
 
-// TestRemove_MissingFile_ErrNotExist pins the Option B missing-file contract
-// on the local backend: removing a file that does not exist returns an error
-// satisfying errors.Is(err, fs.ErrNotExist) (underlying os.Remove error).
+// TestRemove_MissingFile_ErrNotExist pins the WriteFS.Remove missing-file
+// contract on the local backend: removing a file that does not exist returns
+// an error satisfying errors.Is(err, fs.ErrNotExist) (the underlying
+// os.Remove error).
 func TestRemove_MissingFile_ErrNotExist(t *testing.T) {
 	fsys := testutil.TmpLocalFS(t)
 	err := fsys.Remove(context.Background(), "no-such-file.txt")

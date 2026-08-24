@@ -599,11 +599,10 @@ func TestFS_RemoveAll(t *testing.T) {
 		// symlink at an intermediate component: with name "link/subdir"
 		// and root/link -> external, the parent "link" resolves to the
 		// external directory and RemoveAll silently deletes ext/subdir
-		// (err == nil) while leaving root/link in place. The fixed
-		// implementation walks every component with openat-based
-		// operations that validate symlink targets stay within the root
-		// (os.Root), so the escape is refused with an error and the
-		// external target survives. A symlink at the FINAL component
+		// (err == nil) while leaving root/link in place. RemoveAll must
+		// instead walk every component with openat-based operations that
+		// validate symlink targets stay within the root (os.Root), so the
+		// escape is refused with an error and the external target survives. A symlink at the FINAL component
 		// remains safe (pinned by "removes symlink without following it
 		// outside the root" above): it is unlinked as a link, never
 		// descended into.
@@ -650,8 +649,8 @@ func TestFS_RemoveAll(t *testing.T) {
 	})
 
 	t.Run("follows intermediate symlink staying inside the root", func(t *testing.T) {
-		// The fix must not over-reject: an intermediate symlink whose
-		// relative target resolves INSIDE the storage root is followed
+		// The symlink guard must not over-reject: an intermediate symlink
+		// whose relative target resolves INSIDE the storage root is followed
 		// (os.Root semantics), so a storage root that legitimately uses
 		// relative in-root symlinks keeps working. Only escapes — an
 		// absolute target, or a relative target resolving outside the

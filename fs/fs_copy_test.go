@@ -129,14 +129,14 @@ func TestCopy_SameBackend(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("optimized path for distinct values on the same backend", func(t *testing.T) {
-		// Regression for the bug behind SameBackend: the old
-		// dstFS == srcFS comparison compared two distinct *BucketFS
-		// values unequal and silently fell back to a slow read+write.
-		// Two distinct FS values that confirm the same backend must take
-		// dstFS.Copy() (observed via dstFS's sentinel error).
+		// The decision must come from SameBackend, not from comparing the
+		// two interface values: distinct FS values routinely describe the
+		// same backend (two *BucketFS on one client and bucket), and an
+		// identity comparison would silently downgrade every such copy to a
+		// slow read+write. Observed via dstFS's sentinel error.
 		dstFS := &spyFS{fsys: fstest.MapFS{}, same: true}
 		srcFS := &spyFS{fsys: fstest.MapFS{"src-file": &fstest.MapFile{Data: []byte(content)}}, same: true}
-		be.Unequal(t, srcFS, dstFS) // the old == comparison would have missed this case
+		be.Unequal(t, srcFS, dstFS) // distinct values: an == check would miss this case
 		sentinel := errors.New("observed optimized Copy path")
 		dstFS.copyErr = sentinel
 		_, err := ocflfs.Copy(ctx, dstFS, "dst-file", srcFS, "src-file")
@@ -146,10 +146,10 @@ func TestCopy_SameBackend(t *testing.T) {
 	})
 
 	t.Run("fallback for the same value when SameBackend is false", func(t *testing.T) {
-		// Regression: the old dstFS == srcFS comparison would have taken
-		// the optimized path here because both arguments are the SAME
-		// value. With SameBackend false the copy must fall back to a
-		// manual read+write.
+		// The mirror image: both arguments are the SAME value, which an
+		// identity comparison would read as proof of a shared backend.
+		// SameBackend is what decides, and it says false, so the copy must
+		// fall back to a manual read+write.
 		fsys := &spyFS{fsys: fstest.MapFS{"src-file": &fstest.MapFile{Data: []byte(content)}}, same: false}
 		size, err := ocflfs.Copy(ctx, fsys, "dst-file", fsys, "src-file")
 		be.NilErr(t, err)

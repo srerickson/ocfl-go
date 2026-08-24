@@ -12,22 +12,19 @@ import (
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
 )
 
-// TestMultiCopy_ConcurrentReuse is a regression test for the data race in
-// MultiCopier.Copy when one receiver is shared across concurrent calls.
-// Copy used to write default PartSize/Concurrency values back into the
-// receiver on every invocation, so concurrent callers raced on the
-// receiver's fields. Copy now reads both knobs into locals at the top of
-// the method and leaves the receiver untouched, so reuse across goroutines
-// must be race-free and must not mutate the receiver.
+// TestMultiCopy_ConcurrentReuse pins that one MultiCopier receiver may be
+// shared across concurrent Copy calls. Copy resolves PartSize and Concurrency
+// into locals and never writes them back to the receiver; defaulting a zero
+// knob by assigning to the receiver would both race and silently rewrite a
+// caller's configuration.
 //
 // Two rounds cover both knob regimes:
-//   - zeroKnobs leaves PartSize and Concurrency at their zero values — the
-//     exact branch where the old code overwrote the receiver with the
-//     defaults (32 MiB / 6). The post-condition asserts they are still
-//     zero, which the old code would have failed.
+//   - zeroKnobs leaves PartSize and Concurrency at their zero values, the
+//     branch that has to apply defaults (32 MiB / 6). The post-condition is
+//     that the receiver's fields are still zero afterwards.
 //   - explicitKnobs configures non-default values and asserts they survive
-//     the concurrent copies untouched, proving Copy never writes the
-//     receiver even when a caller has set real values.
+//     the concurrent copies untouched, so the no-write rule holds for a
+//     caller who has set real values too.
 //
 // Every goroutine copies the same source to its own destination through the
 // shared receiver; all copies must succeed and report the full source size,

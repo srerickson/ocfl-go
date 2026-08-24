@@ -585,8 +585,9 @@ func TestCopy_Mock(t *testing.T) {
 			mock: func(t *testing.T) *mock.S3API {
 				// Virtual source object: HEAD reports ContentLength > the
 				// 5 GiB maxCopySize threshold without materializing a body.
-				// copy() must route straight to MultiCopier and never invoke
-				// CopyObject (the old error-string fallback is gone).
+				// copy() must route straight to MultiCopier on the declared
+				// size alone and never invoke CopyObject: the threshold is a
+				// size check, not a fallback driven by a failed CopyObject.
 				return mock.New(bucket, &mock.Object{
 					Key:           "src-file",
 					ContentLength: maxCopyObjectSize + 1,

@@ -44,14 +44,13 @@ func (r *removeRecorder) DeleteObject(ctx context.Context, in *s3v2.DeleteObject
 	return r.S3API.DeleteObject(ctx, in, opts...)
 }
 
-// TestRemove_MissingKey_ErrNotExist is the regression test for the bug where
-// remove() deleted a missing key without checking existence first. S3's
-// DeleteObject is idempotent — it succeeds (204) even for keys that do not
-// exist — so Remove silently returned nil. The WriteFS.Remove contract
-// (Option B, fs/fs.go) instead requires an error satisfying
-// errors.Is(err, fs.ErrNotExist). The fix makes remove() HEAD-check existence
-// before deleting: a missing key must surface as fs.ErrNotExist, and the
-// idempotent DeleteObject must never be called for it.
+// TestRemove_MissingKey_ErrNotExist pins the WriteFS.Remove contract
+// (fs/fs.go) on S3: removing a key that does not exist must return an error
+// satisfying errors.Is(err, fs.ErrNotExist). S3 does not give that for free —
+// DeleteObject is idempotent and succeeds (204) for a missing key — so
+// remove() HEAD-checks existence first. The assertions cover both halves: the
+// error surfaces as fs.ErrNotExist, and the idempotent DeleteObject is never
+// called for a key that isn't there.
 func TestRemove_MissingKey_ErrNotExist(t *testing.T) {
 	ctx := context.Background()
 	rec := &removeRecorder{S3API: mock.New(bucket, &mock.Object{Key: "keep-me", Body: []byte("x")})}
@@ -158,9 +157,9 @@ func TestWriteFSRemoveContract_S3(t *testing.T) {
 }
 
 // TestRemove_Integration runs against real S3 or an S3-compatible store (e.g.
-// MinIO) when $OCFL_TEST_S3 is set. It pins the Option B missing-key contract
-// against a store whose DeleteObject silently succeeds (204) for missing
-// keys, plus the "." guard and a clean removal of a present key.
+// MinIO) when $OCFL_TEST_S3 is set. It pins the missing-key fs.ErrNotExist
+// contract against a real store whose DeleteObject silently succeeds (204)
+// for missing keys, plus the "." guard and a clean removal of a present key.
 func TestRemove_Integration(t *testing.T) {
 	if !testutil.S3Enabled() {
 		t.Skip("s3 test service is not running: set $OCFL_TEST_S3 to enable")
