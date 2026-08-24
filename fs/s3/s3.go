@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -491,12 +492,33 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) iter.
 
 // s3File implements fs.File and io.Seeker.
 //
-// s3File is safe for concurrent use: the mu mutex guards the mutable body
-// and offset fields across Read, Seek, and Close. Without it, concurrent
-// calls could corrupt the offset and issue overlapping GetObject requests.
+// s3File is safe for concurrent use. Two mutexes divide the mutable state:
+//
+//   - mu guards the body pointer and the generation counter. Seek and Close
+//     take mu to close and discard the body and to move the file offset, and
+//     every Read takes mu only to snapshot the current body, offset and
+//     generation before touching the network.
+//   - readMu serializes the network reads themselves: concurrent Reads must
+//     not interleave on the same response body, so a Read holds readMu for
+//     the whole body (re)creation and body.Read span. Seek and Close never
+//     take readMu, which is what lets them return promptly while a Read is
+//     blocked streaming a large object.
+//
+// The offset is an atomic.Int64 because it is written from two lock domains:
+// Seek stores it under mu, while a completing Read adds its byte count
+// without holding mu. The generation counter lets a Read that raced a Seek
+// detect that its snapshot is stale: Seek bumps gen whenever it invalidates
+// the body, and a Read whose snapshot generation no longer matches discards
+// its byte count instead of applying it to the new position. A Read that
+// races a Seek may therefore return data from the pre-seek position (or an
+// error, if the Seek closed the body mid-read); the next Read observes the
+// post-seek state.
 type s3File struct {
-	// mu guards body and offset, which are mutated by Read and Seek.
+	// mu guards body and gen. offset is atomic and readMu is independent.
 	mu sync.Mutex
+
+	// readMu serializes body (re)creation and body.Read calls.
+	readMu sync.Mutex
 
 	ctx    context.Context
 	api    OpenFileAPI
@@ -504,7 +526,8 @@ type s3File struct {
 	key    string
 	body   io.ReadCloser
 	info   *s3.HeadObjectOutput
-	offset int64 // current position in the file
+	offset atomic.Int64 // current position in the file
+	gen    int64        // bumped by Seek when the body is invalidated
 	logger *slog.Logger
 }
 
@@ -519,33 +542,69 @@ func (f *s3File) Stat() (fs.FileInfo, error) {
 }
 
 func (f *s3File) Read(p []byte) (int, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	size := *f.info.ContentLength
-	if f.offset >= size {
-		return 0, io.EOF
+	// Serialize the network access: at most one body may exist at a time and
+	// body.Read calls must not interleave on the same response body. Seek
+	// and Close do not take readMu, so they stay prompt while this Read is
+	// blocked on the network.
+	f.readMu.Lock()
+	defer f.readMu.Unlock()
+
+	for {
+		// Snapshot the current body, offset and generation under mu. All
+		// network I/O below happens without mu, so a concurrent Seek
+		// returns as soon as it can acquire mu.
+		f.mu.Lock()
+		gen := f.gen
+		off := f.offset.Load()
+		size := *f.info.ContentLength
+		body := f.body
+		f.mu.Unlock()
+
+		if off >= size {
+			return 0, io.EOF
+		}
+		if body == nil {
+			params := &s3.GetObjectInput{
+				Bucket: &f.bucket,
+				Key:    &f.key,
+				// ensure unchanged since open
+				IfMatch:           f.info.ETag,
+				IfUnmodifiedSince: f.info.LastModified,
+			}
+			if off > 0 {
+				rangeStr := fmt.Sprintf("bytes=%d-", off)
+				params.Range = &rangeStr
+			}
+			obj, err := f.api.GetObject(f.ctx, params)
+			if err != nil {
+				return 0, err
+			}
+			// A Seek that landed while the object was being fetched has
+			// invalidated this body's position: discard it and start over
+			// from the new offset.
+			f.mu.Lock()
+			if f.gen != gen {
+				f.mu.Unlock()
+				obj.Body.Close()
+				continue
+			}
+			f.body = obj.Body
+			f.mu.Unlock()
+			body = obj.Body
+		}
+		n, err := body.Read(p)
+		// Apply the byte count only if the generation still matches the
+		// snapshot: if a Seek invalidated the body mid-read, this data came
+		// from the pre-seek position and must not move the new offset.
+		if n > 0 {
+			f.mu.Lock()
+			if f.gen == gen {
+				f.offset.Add(int64(n))
+			}
+			f.mu.Unlock()
+		}
+		return n, err
 	}
-	if f.body == nil {
-		params := &s3.GetObjectInput{
-			Bucket: &f.bucket,
-			Key:    &f.key,
-			// ensure unchanged since open
-			IfMatch:           f.info.ETag,
-			IfUnmodifiedSince: f.info.LastModified,
-		}
-		if f.offset > 0 {
-			rangeStr := fmt.Sprintf("bytes=%d-", f.offset)
-			params.Range = &rangeStr
-		}
-		obj, err := f.api.GetObject(f.ctx, params)
-		if err != nil {
-			return 0, err
-		}
-		f.body = obj.Body
-	}
-	n, err := f.body.Read(p)
-	f.offset += int64(n)
-	return n, err
 }
 
 func (f *s3File) Close() error {
@@ -562,10 +621,14 @@ func (f *s3File) Name() string {
 }
 
 // Seek implements io.Seeker. It repositions the file offset for the next Read.
-// The body reader is closed and reset (and the offset updated) atomically
-// under f.mu, so a concurrent Read never observes a stale body positioned at
-// a different offset; the next Read issues a new GetObject request with the
-// appropriate Range header.
+// The body reader is closed and reset and the offset updated under f.mu, and
+// the generation counter is bumped so in-flight Reads (which snapshot the
+// body and offset without holding mu across their network read) can detect
+// that their body is stale and drop their byte count instead of applying it
+// to the new position. A Read that races a Seek may return data from the
+// pre-seek position. Seek itself never blocks on a Read in progress: an
+// in-flight Read holds only readMu, which Seek does not take, so Seek
+// returns promptly even while a large object is being streamed.
 func (f *s3File) Seek(offset int64, whence int) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -575,7 +638,7 @@ func (f *s3File) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekStart:
 		newOffset = offset
 	case io.SeekCurrent:
-		newOffset = f.offset + offset
+		newOffset = f.offset.Load() + offset
 	case io.SeekEnd:
 		newOffset = size + offset
 	default:
@@ -584,17 +647,26 @@ func (f *s3File) Seek(offset int64, whence int) (int64, error) {
 	if newOffset < 0 {
 		return 0, errors.New("s3: negative position")
 	}
-	// Close existing body if position changed. The old body is discarded
-	// either way, so a close error does not fail the Seek, but it may mean
-	// a connection leaked, so log it to make it visible.
-	if f.body != nil && newOffset != f.offset {
-		if err := f.body.Close(); err != nil && f.logger != nil {
-			f.logger.DebugContext(f.ctx, "s3:seek:close", "bucket", f.bucket, "key", f.key, "error", err)
+	// Position changed: close and discard any live body and bump the
+	// generation counter so in-flight work that snapshotted the old
+	// position discards its results — both a Read blocked in body.Read and
+	// a Read whose GetObject is still in flight (no body has been installed
+	// yet) are stale once the offset moves. The counter is bumped only when
+	// the position actually changes: a no-op seek must not make in-flight
+	// Reads drop their byte counts. A close error does not fail the Seek,
+	// but it may mean a connection leaked, so log it to make it visible.
+	cur := f.offset.Load()
+	if newOffset != cur {
+		if f.body != nil {
+			if err := f.body.Close(); err != nil && f.logger != nil {
+				f.logger.DebugContext(f.ctx, "s3:seek:close", "bucket", f.bucket, "key", f.key, "error", err)
+			}
+			f.body = nil
 		}
-		f.body = nil
+		f.gen++
+		f.offset.Store(newOffset)
 	}
-	f.offset = newOffset
-	return f.offset, nil
+	return newOffset, nil
 }
 
 // iofsInfo implements fs.FileInfo and fs.DirEntry

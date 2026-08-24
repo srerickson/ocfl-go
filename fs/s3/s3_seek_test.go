@@ -32,15 +32,16 @@ func seekTestLogger(buf *bytes.Buffer) *slog.Logger {
 // already in place and the offset past the start, so a Seek to position 0
 // triggers the body-close path.
 func newTestS3File(body io.ReadCloser, logger *slog.Logger) *s3File {
-	return &s3File{
+	f := &s3File{
 		ctx:    context.Background(),
 		bucket: "test-bucket",
 		key:    "test-key",
 		body:   body,
-		offset: 5,
 		info:   &s3v2.HeadObjectOutput{ContentLength: aws.Int64(64)},
 		logger: logger,
 	}
+	f.offset.Store(5)
+	return f
 }
 
 func TestSeekLogsBodyCloseError(t *testing.T) {
