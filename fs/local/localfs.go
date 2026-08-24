@@ -25,6 +25,7 @@ type FS struct {
 
 var _ ocflfs.WriteFS = (*FS)(nil)
 var _ ocflfs.DirEntriesFS = (*FS)(nil)
+var _ ocflfs.SameBackend = (*FS)(nil)
 
 func NewFS(path string) (*FS, error) {
 	abs, err := filepath.Abs(path)
@@ -39,6 +40,27 @@ func NewFS(path string) (*FS, error) {
 
 func (fsys *FS) Root() string {
 	return fsys.path
+}
+
+// SameBackend implements [ocflfs.SameBackend]: it returns true only if other is
+// also a *FS and its root path resolves to the same directory as fsys's root.
+// Both root paths are absolutized with filepath.Abs (which also cleans them)
+// before comparing, so trailing slashes, ".", "..", and relative paths don't
+// cause false negatives. If the paths cannot be resolved, it returns false.
+func (fsys *FS) SameBackend(other ocflfs.FS) bool {
+	otherLocal, ok := other.(*FS)
+	if !ok {
+		return false
+	}
+	thisRoot, err := filepath.Abs(fsys.path)
+	if err != nil {
+		return false
+	}
+	otherRoot, err := filepath.Abs(otherLocal.path)
+	if err != nil {
+		return false
+	}
+	return thisRoot == otherRoot
 }
 
 func (fsys *FS) Write(ctx context.Context, name string, src io.Reader) (int64, error) {

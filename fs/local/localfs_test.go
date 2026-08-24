@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/carlmjohnson/be"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
 func TestNewFS(t *testing.T) {
@@ -372,6 +373,49 @@ func TestFS_osPath(t *testing.T) {
 			be.True(t, err != nil)
 			be.Equal(t, fs.ErrInvalid, err)
 		}
+	})
+}
+
+func TestFS_SameBackend(t *testing.T) {
+	t.Run("same root path returns true", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		fsys1, err := NewFS(tmpDir)
+		be.NilErr(t, err)
+		// Trailing-slash and "."-suffixed variants of the same root.
+		fsys2, err := NewFS(tmpDir + string(filepath.Separator))
+		be.NilErr(t, err)
+		fsys3, err := NewFS(filepath.Join(tmpDir, "."))
+		be.NilErr(t, err)
+		be.True(t, fsys1.SameBackend(fsys2))
+		be.True(t, fsys1.SameBackend(fsys3))
+		// Symmetric: the receiver can be either value.
+		be.True(t, fsys2.SameBackend(fsys1))
+		be.True(t, fsys3.SameBackend(fsys1))
+	})
+
+	t.Run("cleans trailing separators on raw paths", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		fsys1 := &FS{path: tmpDir}
+		fsys2 := &FS{path: tmpDir + string(filepath.Separator)}
+		fsys3 := &FS{path: tmpDir + string(filepath.Separator) + "."}
+		be.True(t, fsys1.SameBackend(fsys2))
+		be.True(t, fsys1.SameBackend(fsys3))
+	})
+
+	t.Run("different root paths return false", func(t *testing.T) {
+		fsys1, err := NewFS(t.TempDir())
+		be.NilErr(t, err)
+		fsys2, err := NewFS(t.TempDir())
+		be.NilErr(t, err)
+		be.False(t, fsys1.SameBackend(fsys2))
+		be.False(t, fsys2.SameBackend(fsys1))
+	})
+
+	t.Run("non-local FS returns false", func(t *testing.T) {
+		fsys, err := NewFS(t.TempDir())
+		be.NilErr(t, err)
+		other := ocflfs.NewWrapFS(os.DirFS(t.TempDir()))
+		be.False(t, fsys.SameBackend(other))
 	})
 }
 
