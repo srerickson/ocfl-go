@@ -3,6 +3,7 @@ package s3
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
@@ -12,6 +13,7 @@ import (
 )
 
 const (
+	partSizeIncrement          = 1 * megabyte
 	defaultCopyPartConcurrency = 6
 	defaultCopyPartSize        = 32 * megabyte
 	// mpCleanupTimeout bounds how long the deferred multipart cleanup
@@ -149,4 +151,35 @@ func (c *MultiCopier) Copy(ctx context.Context, buck string, dst, src string, sr
 	}
 	err = grp.Wait()
 	return
+}
+
+// adjustPartSize returns an adjusted partsize and part count for transfering
+// totalSize in under maxParts parts using the initial partSize.
+func adjustPartSize(totalSize, initialPartSize int64, maxParts int32) (psize int64, pcount int32) {
+	psize = initialPartSize
+	for {
+		pcount = int32(totalSize / psize)
+		if pcount < maxParts {
+			break
+		}
+		psize += partSizeIncrement
+	}
+	if totalSize%psize > 0 {
+		pcount++
+	}
+	return
+}
+
+func byteRange(partNum int32, partSize, totalSize int64) string {
+	// aws: The range of bytes to copy from the source object. The range value must
+	// use the form bytes=first-last, where the first and last are the zero-based byte
+	// offsets to copy. For example, bytes=0-9 indicates that you want to copy the
+	// first 10 bytes of the source. You can copy a range only if the source object is
+	// greater than 5 MB.
+	start := (int64(partNum) - 1) * partSize
+	end := int64(partNum)*partSize - 1
+	if max := totalSize - 1; end > max {
+		end = max
+	}
+	return fmt.Sprintf("bytes=%d-%d", start, end)
 }
