@@ -123,9 +123,11 @@ func TestWriteContentLengthSniffing(t *testing.T) {
 		wantBody []byte
 	}{
 		{
-			// A plain *os.File is not an fs.File (its Stat returns
-			// os.FileInfo, not fs.FileInfo), so this exercises the
-			// generic io.Seeker path.
+			// *os.File implements both fs.File and io.Seeker (os.FileInfo
+			// is an alias for fs.FileInfo since Go 1.16, so its Stat
+			// signature satisfies fs.File). It must take the io.Seeker
+			// path so ContentLength is sniffed from the remaining length;
+			// at offset 0 that equals the total file size.
 			name: "*os.File",
 			reader: func(t *testing.T) (io.Reader, func(), int64) {
 				t.Helper()
@@ -141,6 +143,31 @@ func TestWriteContentLengthSniffing(t *testing.T) {
 			},
 			wantCL:   aws.Int64(int64(len(content))),
 			wantBody: content,
+		},
+		{
+			// Regression: a partially-consumed *os.File is both fs.File
+			// and io.Seeker. The seeker's REMAINING length must win over
+			// fs.File.Stat's total size; otherwise ContentLength
+			// over-reports and net/http rejects the request.
+			name: "*os.File partially consumed",
+			reader: func(t *testing.T) (io.Reader, func(), int64) {
+				t.Helper()
+				path := filepath.Join(t.TempDir(), "payload.bin")
+				if err := os.WriteFile(path, content, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				f, err := os.Open(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// advance past the first 10 bytes, leaving content[10:]
+				if _, err := io.ReadFull(f, make([]byte, 10)); err != nil {
+					t.Fatalf("ReadFull: %v", err)
+				}
+				return f, func() { f.Close() }, int64(len(content) - 10)
+			},
+			wantCL:   aws.Int64(int64(len(content) - 10)),
+			wantBody: content[10:],
 		},
 		{
 			// *strings.Reader implements io.Seeker but is not fs.File,
@@ -339,5 +366,60 @@ func TestWriteContentLengthInvalidKey(t *testing.T) {
 	}
 	if rec.last() != nil {
 		t.Error("PutObject called with an invalid key")
+	}
+}
+
+// TestWriteContentLengthPartiallyConsumedFile is the regression test for the
+// fs.File branch precedence bug: a *os.File (which is both fs.File and
+// io.Seeker) that has been partially consumed must report the REMAINING
+// length, and the declared ContentLength must equal the delivered body length
+// so net/http accepts the request. Before the fix the fs.File case won and
+// reported the total file size while the body delivered only the tail,
+// making net/http reject the upload.
+func TestWriteContentLengthPartiallyConsumedFile(t *testing.T) {
+	const (
+		bucket  = "test-bucket"
+		key     = "partial-file-key"
+		consume = 10
+	)
+	content := []byte("the quick brown fox jumps over the lazy dog")
+	path := filepath.Join(t.TempDir(), "payload.bin")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	// Partially consume the file: the upload must deliver only the tail.
+	if _, err := io.ReadFull(f, make([]byte, consume)); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := &recordingUploader{}
+	up := newTestUploader(t, rec)
+	if _, err := write(context.Background(), up, bucket, key, f); err != nil {
+		t.Fatalf("write returned error: %v", err)
+	}
+	call := rec.last()
+	if call == nil {
+		t.Fatal("no PutObject call recorded")
+	}
+	wantBody := content[consume:]
+	if !bytes.Equal(call.body, wantBody) {
+		t.Errorf("uploaded body = %q, want %q", call.body, wantBody)
+	}
+	if call.contentLength == nil {
+		t.Fatal("ContentLength = nil, want non-nil")
+	}
+	if *call.contentLength != int64(len(wantBody)) {
+		t.Errorf("ContentLength = %d, want remaining bytes %d", *call.contentLength, len(wantBody))
+	}
+	// net/http rejects requests whose declared ContentLength differs from
+	// the delivered body length, so the two must always agree for the
+	// request to be accepted.
+	if *call.contentLength != int64(len(call.body)) {
+		t.Errorf("ContentLength %d != delivered body length %d (request would be rejected)", *call.contentLength, len(call.body))
 	}
 }

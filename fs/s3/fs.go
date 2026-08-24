@@ -91,10 +91,13 @@ func (f *BucketFS) Write(ctx context.Context, name string, r io.Reader) (int64, 
 //
 // If opts do not set ContentLength, write() attempts to determine it
 // automatically from r. Auto-detection succeeds for common reader types that
-// know their own size, including fs.File, *bytes.Reader, *io.LimitedReader,
-// *os.File, *strings.Reader, and other io.Seeker implementations. When
-// auto-detection fails (for example, when r is a reader without a known size)
-// or is undesirable, set ContentLength explicitly via an option:
+// know their own size: *bytes.Reader, *io.LimitedReader, *strings.Reader, and
+// other io.Seeker implementations, plus non-seekable fs.File values via
+// Stat. For readers that are both fs.File and io.Seeker (*os.File, or an S3
+// file handle returned by Open), the REMAINING length is reported, so a
+// partially-consumed file uploads only the bytes left, not its total size.
+// When auto-detection fails (for example, when r is a reader without a known
+// size) or is undesirable, set ContentLength explicitly via an option:
 //
 //	length := int64(len(data))
 //	err := fsys.WriteWithOptions(ctx, name, r, func(in *s3.PutObjectInput) {
