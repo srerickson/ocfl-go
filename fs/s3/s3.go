@@ -270,6 +270,12 @@ func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, opts .
 		}
 		return 0, fsErr
 	}
+	if srcHead.ContentLength == nil {
+		// S3-compatible stores/proxies may omit Content-Length on HEAD;
+		// the object size is required to pick a copy strategy and to
+		// report the copied size. Mirror the guard in MultiCopier.Copy.
+		return 0, pathErr("copy", src, errors.New("missing content length"))
+	}
 	escapedSrc := copySourcePath(buck, src)
 	params := &s3.CopyObjectInput{
 		Bucket:     &buck,
