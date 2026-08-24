@@ -262,9 +262,19 @@ func WalkFiles(ctx context.Context, fsys FS, dir string) iter.Seq2[*FileRef, err
 func fileWalk(ctx context.Context, fsys FS, walkRoot string, subDir string, yield func(*FileRef, error) bool) bool {
 	for e, err := range DirEntries(ctx, fsys, path.Join(walkRoot, subDir)) {
 		if err != nil {
+			// The DirEntriesFS contract permits yielding (nil, err) pairs
+			// (e.g. fs.DirEntries does this when fsys isn't a DirEntriesFS).
+			// Propagate the error and move on; never touch e when it may be nil.
 			if !yield(nil, err) {
 				return false
 			}
+			continue
+		}
+		if e == nil {
+			// Defensive: an iterator that yields a nil entry without an
+			// error violates the DirEntriesFS contract, but must not
+			// cause a panic.
+			continue
 		}
 		entryPath := path.Join(subDir, e.Name())
 		switch {
@@ -278,6 +288,7 @@ func fileWalk(ctx context.Context, fsys FS, walkRoot string, subDir string, yiel
 				if !yield(nil, err) {
 					return false
 				}
+				continue
 			}
 			ref := &FileRef{
 				FS:      fsys,
