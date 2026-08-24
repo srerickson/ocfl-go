@@ -54,7 +54,7 @@ func TestWalkFiles_NilKeySkipped(t *testing.T) {
 		S3API: mock.New(bucket),
 		listFn: func(_ context.Context, _ *s3v2.ListObjectsV2Input, _ ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
 			return &s3v2.ListObjectsV2Output{Contents: []types.Object{
-				{Key: nil, Size: aws.Int64(10), LastModified: aws.Time(now)},                // partial: nil Key
+				{Key: nil, Size: aws.Int64(10), LastModified: aws.Time(now)},               // partial: nil Key
 				{Key: aws.String("obj/"), Size: aws.Int64(0), LastModified: aws.Time(now)}, // dir placeholder
 				{Key: aws.String("obj/file.txt"), Size: aws.Int64(42), LastModified: aws.Time(now)},
 			}}, nil

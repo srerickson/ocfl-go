@@ -39,8 +39,8 @@ func newTestS3File(body io.ReadCloser, logger *slog.Logger) *s3File {
 		body:   body,
 		info:   &s3v2.HeadObjectOutput{ContentLength: aws.Int64(64)},
 		logger: logger,
+		offset: 5,
 	}
-	f.offset.Store(5)
 	return f
 }
 

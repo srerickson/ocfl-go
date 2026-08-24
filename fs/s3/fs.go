@@ -70,6 +70,14 @@ func (f *BucketFS) Bucket() string {
 	return f.bucket
 }
 
+// OpenFile opens the object at name for reading. The returned fs.File also
+// implements io.Seeker, so callers can reposition within the object; a seek
+// to a new position closes the current response body and the next Read
+// issues a fresh ranged GetObject.
+//
+// The returned file is not safe for concurrent use. Callers that read the
+// same object from multiple goroutines should open one file per goroutine
+// rather than sharing a handle.
 func (f *BucketFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	f.debugLog(ctx, "s3:openfile", "bucket", f.bucket, "name", name)
 	return openFile(ctx, f.client, f.bucket, name, f.logger)
