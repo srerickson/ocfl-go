@@ -114,19 +114,29 @@ func (fsys *FS) Write(ctx context.Context, name string, src io.Reader) (int64, e
 			Err:  err,
 		}
 	}
-	// Preserve the target's permissions when it already exists: the temp
-	// file is chmod'd to the exact mode (chmod is not umask-masked). For a
-	// new file, the temp file is left at tempPerm &^ umask, matching plain
-	// os.Create semantics. The target is examined with Lstat, which does
-	// not follow symlinks: a symlinked target contributes its own mode
-	// (typically 0777 on POSIX), never the referent's — the rename below
-	// replaces the link entry itself, so preserving the referent's mode
-	// would silently stamp the referent's permissions onto a brand-new
-	// regular file. Lstat errors are tolerated: a missing target simply
-	// means a new file created with the default temp mode.
-	var preserveMode fs.FileMode
-	if info, err := os.Lstat(fullPath); err == nil {
-		preserveMode = info.Mode().Perm()
+	// Preserve the target's permissions when it already exists as a regular
+	// file: the temp file is chmod'd to the exact mode (chmod is not
+	// umask-masked). For a new file, the temp file is left at
+	// tempPerm &^ umask, matching plain os.Create semantics.
+	//
+	// The target is examined with Lstat, which does not follow symlinks, and
+	// a symlink target is deliberately treated like a new file. The rename
+	// below replaces the link entry itself with a regular file, so neither
+	// mode on hand is the right one to keep: the referent's mode belongs to
+	// a file that is not being written, and the link's own mode is 0777 on
+	// POSIX, which would publish a world-writable regular file. Falling back
+	// to the default temp mode is the only safe choice.
+	//
+	// havePerm, rather than a preserveMode != 0 sentinel, distinguishes "no
+	// mode to preserve" from a target whose mode legitimately is 0000.
+	// Lstat errors are tolerated: a missing target simply means a new file
+	// created with the default temp mode.
+	var (
+		preserveMode fs.FileMode
+		havePerm     bool
+	)
+	if info, err := os.Lstat(fullPath); err == nil && info.Mode()&fs.ModeSymlink == 0 {
+		preserveMode, havePerm = info.Mode().Perm(), true
 	}
 	// Write to a unique temp file in the same directory as the target: the
 	// final move is then on the same filesystem on every platform — a
@@ -151,7 +161,7 @@ func (fsys *FS) Write(ctx context.Context, name string, src io.Reader) (int64, e
 			_ = os.Remove(tmpPath) // no-op if already renamed away
 		}
 	}()
-	if preserveMode != 0 {
+	if havePerm {
 		if err := tmp.Chmod(preserveMode); err != nil {
 			return 0, &fs.PathError{
 				Op:   "write",
