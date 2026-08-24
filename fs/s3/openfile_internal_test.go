@@ -56,7 +56,7 @@ func newTestS3File(body io.ReadCloser, logger *slog.Logger) *s3File {
 	return f
 }
 
-func TestSeekLogsBodyCloseError(t *testing.T) {
+func TestS3File_Seek_LogsBodyCloseError(t *testing.T) {
 	var buf bytes.Buffer
 	f := newTestS3File(closeErrBody{Reader: strings.NewReader("0123456789")}, seekTestLogger(&buf))
 
@@ -79,7 +79,7 @@ func TestSeekLogsBodyCloseError(t *testing.T) {
 	}
 }
 
-func TestSeekBodyCloseErrorWithoutLogger(t *testing.T) {
+func TestS3File_Seek_BodyCloseErrorWithoutLogger(t *testing.T) {
 	// Without a configured logger, a failing body close must not panic and
 	// Seek must still succeed.
 	f := newTestS3File(closeErrBody{Reader: strings.NewReader("0123456789")}, nil)
@@ -96,7 +96,7 @@ func TestSeekBodyCloseErrorWithoutLogger(t *testing.T) {
 	}
 }
 
-func TestSeekSamePositionDoesNotCloseBody(t *testing.T) {
+func TestS3File_Seek_SamePositionDoesNotCloseBody(t *testing.T) {
 	// Seeking to the current position must not invalidate the body, exactly
 	// as before the close-error logging change.
 	var buf bytes.Buffer
@@ -129,10 +129,10 @@ func (closeErrAPI) GetObject(context.Context, *s3v2.GetObjectInput, ...func(*s3v
 	return &s3v2.GetObjectOutput{Body: closeErrBody{Reader: strings.NewReader("0123456789abcdef")}}, nil
 }
 
-// TestSeekCloseErrorViaOpenFile exercises the full path: the logger configured
+// TestS3File_Seek_CloseErrorViaOpenFile exercises the full path: the logger configured
 // on the BucketFS must reach the s3File via openFile and be used by Seek when
 // closing the old body fails.
-func TestSeekCloseErrorViaOpenFile(t *testing.T) {
+func TestS3File_Seek_CloseErrorViaOpenFile(t *testing.T) {
 	var buf bytes.Buffer
 	logger := seekTestLogger(&buf)
 
@@ -282,14 +282,14 @@ func newHTTP2S3Server(t *testing.T, data []byte) (*s3HTTPServer, *connCountingLi
 	return srv, ln, client
 }
 
-// TestS3File_SeekAfterPartialReadReusesHTTP2Connection opens an object
+// TestS3File_Seek_ReusesHTTP2ConnectionAfterPartialRead opens an object
 // through a real SDK client against an httptest HTTP/2 server, reads a small
 // chunk, seeks (which closes the half-drained response body), and reads again
 // — repeatedly. Closing a half-drained h2 body must not prevent connection
 // reuse: every request in the sequence shares a single HTTP/2 connection,
 // i.e. no connection churn per seek. Every request must also actually be h2,
 // or the test would silently be exercising HTTP/1.1 semantics.
-func TestS3File_SeekAfterPartialReadReusesHTTP2Connection(t *testing.T) {
+func TestS3File_Seek_ReusesHTTP2ConnectionAfterPartialRead(t *testing.T) {
 	const size = 8 << 20
 	data := testObjectData(size)
 	srv, ln, s3cli := newHTTP2S3Server(t, data)

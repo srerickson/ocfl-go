@@ -22,7 +22,7 @@ import (
 	"github.com/srerickson/ocfl-go/internal/testutil"
 )
 
-func TestWalkFiles_Mock(t *testing.T) {
+func TestWalkFiles(t *testing.T) {
 	ctx := context.Background()
 	type testCase struct {
 		desc   string

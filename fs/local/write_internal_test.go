@@ -111,7 +111,7 @@ func patterned(n int, seed byte) []byte {
 	return b
 }
 
-func TestFS_WriteAtomic(t *testing.T) {
+func TestFS_Write_Atomic(t *testing.T) {
 	t.Run("large payload is written completely and exactly", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		fsys, err := NewFS(tmpDir)
@@ -383,12 +383,12 @@ func TestFS_WriteAtomic(t *testing.T) {
 	})
 }
 
-// TestFS_WriteOverwriteRegularFile covers overwriting an existing regular
+// TestFS_Write_OverwriteRegularFile covers overwriting an existing regular
 // file through the full FS.Write path: the temp file is moved over the
 // existing target, the content is replaced, and no temp files leak. On
 // Windows this is the regression case for the rename helper — before it,
 // the final os.Rename failed and the write returned an error.
-func TestFS_WriteOverwriteRegularFile(t *testing.T) {
+func TestFS_Write_OverwriteRegularFile(t *testing.T) {
 	root := t.TempDir()
 	fsys, err := NewFS(root)
 	be.NilErr(t, err)
@@ -406,7 +406,7 @@ func TestFS_WriteOverwriteRegularFile(t *testing.T) {
 	be.Equal(t, 0, len(atomicTempFiles(t, root)))
 }
 
-// TestFS_WriteModePreservation pins that an overwrite keeps the existing
+// TestFS_Write_ModePreservation pins that an overwrite keeps the existing
 // target's permissions: Write must copy the old mode onto the temp file
 // (chmod before the move) instead of leaving the default temp mode
 // behind. The assertion is stability of the mode across the write, which
@@ -416,7 +416,7 @@ func TestFS_WriteOverwriteRegularFile(t *testing.T) {
 // (files are 0666 or 0444 read-only), so the equality assertion is the
 // meaningful cross-platform statement, and exact mode bits are left to
 // the POSIX-only symlink tests.
-func TestFS_WriteModePreservation(t *testing.T) {
+func TestFS_Write_ModePreservation(t *testing.T) {
 	root := t.TempDir()
 	fsys, err := NewFS(root)
 	be.NilErr(t, err)
@@ -453,7 +453,7 @@ func basePortion(temp string) string {
 	return temp[dotLen : len(temp)-suffixLen]
 }
 
-func TestTempFileNameUTF8(t *testing.T) {
+func TestTempFileName_UTF8(t *testing.T) {
 	t.Run("short name is unchanged", func(t *testing.T) {
 		temp := tempFileName("plain.bin")
 		be.True(t, strings.HasPrefix(temp, ".plain.bin.tmp-"))

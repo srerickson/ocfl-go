@@ -417,11 +417,11 @@ func TestWriteFSRemoveContract_Local(t *testing.T) {
 	testutil.TestWriteFSRemoveContract(t, fsys, testutil.WriteFSRemoveContract{RemoveDotIsNotExist: false})
 }
 
-// TestRemove_MissingFile_ErrNotExist pins the WriteFS.Remove missing-file
+// TestFS_Remove_MissingFile_ErrNotExist pins the WriteFS.Remove missing-file
 // contract on the local backend: removing a file that does not exist returns
 // an error satisfying errors.Is(err, fs.ErrNotExist) (the underlying
 // os.Remove error).
-func TestRemove_MissingFile_ErrNotExist(t *testing.T) {
+func TestFS_Remove_MissingFile_ErrNotExist(t *testing.T) {
 	fsys := testutil.TmpLocalFS(t)
 	err := fsys.Remove(context.Background(), "no-such-file.txt")
 	be.True(t, err != nil)
@@ -432,11 +432,11 @@ func TestRemove_MissingFile_ErrNotExist(t *testing.T) {
 	be.True(t, errors.Is(err, fs.ErrNotExist))
 }
 
-// TestRemove_Dot_PathError pins the documented local "." behavior: a
+// TestFS_Remove_Dot_PathError pins the documented local "." behavior: a
 // descriptive *fs.PathError (deliberately NOT fs.ErrNotExist — "." is the one
 // name the WriteFS.Remove contract lets be backend-specific), and the root
 // directory still exists afterwards.
-func TestRemove_Dot_PathError(t *testing.T) {
+func TestFS_Remove_Dot_PathError(t *testing.T) {
 	dir := t.TempDir()
 	fsys, err := local.NewFS(dir)
 	be.NilErr(t, err)
@@ -457,7 +457,7 @@ func TestRemove_Dot_PathError(t *testing.T) {
 // contract against the local backend, which refuses "." (its storage root
 // must survive) and removes a file addressed directly, matching os.RemoveAll.
 // The package-level ocflfs.RemoveAll(".") fallback that covers for the
-// refusal is pinned by TestBackendRemoveAllDotRefuses below.
+// refusal is pinned by TestFS_RemoveAll_Dot_Refuses below.
 func TestWriteFSRemoveAllContract_Local(t *testing.T) {
 	fsys := testutil.TmpLocalFS(t)
 	testutil.TestWriteFSRemoveAllContract(t, fsys, testutil.WriteFSRemoveAllContract{
@@ -466,7 +466,7 @@ func TestWriteFSRemoveAllContract_Local(t *testing.T) {
 	})
 }
 
-// TestRemoveAllDotUsesFallbackWalk pins the local backend's half of the
+// TestRemoveAll_Dot_UsesFallbackWalk pins the local backend's half of the
 // ocflfs.RemoveAll(".") contract.
 //
 // The local storage root must survive, so *local.FS deliberately does not
@@ -475,7 +475,7 @@ func TestWriteFSRemoveAllContract_Local(t *testing.T) {
 // itself in place. The backend's own RemoveAll(".") still refuses outright,
 // which is what makes the opt-in-by-type dispatch necessary — an error there
 // cannot be distinguished from a mid-operation failure.
-func TestRemoveAllDotUsesFallbackWalk(t *testing.T) {
+func TestRemoveAll_Dot_UsesFallbackWalk(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	fsys, err := local.NewFS(root)
@@ -505,9 +505,9 @@ func TestRemoveAllDotUsesFallbackWalk(t *testing.T) {
 	be.NilErr(t, ocflfs.RemoveAll(ctx, fsys, "."))
 }
 
-// TestBackendRemoveAllDotRefuses pins that the backend method itself still
+// TestFS_RemoveAll_Dot_Refuses pins that the backend method itself still
 // refuses "." outright, without touching the storage root.
-func TestBackendRemoveAllDotRefuses(t *testing.T) {
+func TestFS_RemoveAll_Dot_Refuses(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	fsys, err := local.NewFS(root)

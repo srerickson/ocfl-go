@@ -25,7 +25,7 @@ import (
 	"github.com/srerickson/ocfl-go/internal/testutil"
 )
 
-func TestWriteReadDeleteFile(t *testing.T) {
+func TestWrite_RoundTrip_Integration(t *testing.T) {
 	if !testutil.S3Enabled() {
 		t.Log("s3 test service is not running")
 		return
@@ -49,7 +49,7 @@ func TestWriteReadDeleteFile(t *testing.T) {
 	be.NilErr(t, fsys.Remove(ctx, key))
 }
 
-func TestWriteWithOptions(t *testing.T) {
+func TestWriteWithOptions_Integration(t *testing.T) {
 	if !testutil.S3Enabled() {
 		t.Log("s3 test service is not running")
 		return
@@ -75,7 +75,7 @@ func TestWriteWithOptions(t *testing.T) {
 	be.Equal(t, "PreconditionFailed", apiErr.ErrorCode())
 }
 
-func TestWrite_Mock(t *testing.T) {
+func TestWrite(t *testing.T) {
 	ctx := context.Background()
 	bodySize := 201 * megabyte
 	body := mock.RandBytes(int64(bodySize))
@@ -177,7 +177,7 @@ func (r *restoreFailReader) Seek(offset int64, whence int) (int64, error) {
 	return r.r.Seek(offset, whence)
 }
 
-// TestWriteContentLengthIntegration_PartiallyConsumedFile exercises the full
+// TestWrite_ContentLengthPartiallyConsumedFile_Integration exercises the full
 // s3 upload path (public BucketFS.Write -> ContentLength sniff -> real HTTP
 // PutObject against the test store) with a partially-consumed *os.File,
 // which implements both fs.File and io.Seeker. The seeker REMAINING length
@@ -186,7 +186,7 @@ func (r *restoreFailReader) Seek(offset int64, whence int) (int64, error) {
 // length exceeds the bytes actually delivered, so a nil error from Write
 // proves the request was accepted. The object must then store exactly the
 // remaining bytes.
-func TestWriteContentLengthIntegration_PartiallyConsumedFile(t *testing.T) {
+func TestWrite_ContentLengthPartiallyConsumedFile_Integration(t *testing.T) {
 	if !testutil.S3Enabled() {
 		t.Skip("s3 test service is not running: set $OCFL_TEST_S3 to enable")
 	}
@@ -236,12 +236,12 @@ func TestWriteContentLengthIntegration_PartiallyConsumedFile(t *testing.T) {
 	be.Equal(t, wantN, info.Size())
 }
 
-// TestWriteContentLengthIntegration_RestoreFailure exercises the error path
+// TestWrite_ContentLengthRestoreFailure_Integration exercises the error path
 // for a seeker whose restore seek fails after the length probe seeks it to
 // the end. write() must surface the failure as a *fs.PathError mentioning
 // the restore — not silently upload an empty body from EOF — and no object
 // may be created in the store.
-func TestWriteContentLengthIntegration_RestoreFailure(t *testing.T) {
+func TestWrite_ContentLengthRestoreFailure_Integration(t *testing.T) {
 	if !testutil.S3Enabled() {
 		t.Skip("s3 test service is not running: set $OCFL_TEST_S3 to enable")
 	}

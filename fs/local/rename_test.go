@@ -13,13 +13,13 @@ import (
 	"github.com/carlmjohnson/be"
 )
 
-// TestRenameReplaceOverwriteRegularFile pins the core replacement
+// TestRenameReplace_OverwriteRegularFile pins the core replacement
 // contract shared by both renameReplace implementations: an existing
 // regular file at dst is replaced by src (content and all), and src no
 // longer exists afterwards. This is the operation that fails on Windows
 // with a plain os.Rename (ERROR_ACCESS_DENIED / ERROR_ALREADY_EXISTS on
 // some Go and filesystem combinations) and motivated the Windows helper.
-func TestRenameReplaceOverwriteRegularFile(t *testing.T) {
+func TestRenameReplace_OverwriteRegularFile(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.txt")
 	dst := filepath.Join(dir, "dst.txt")

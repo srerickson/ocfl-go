@@ -11,12 +11,12 @@ import (
 	"github.com/carlmjohnson/be"
 )
 
-// TestRenameReplaceWindowsOverwriteFile covers replacement of an existing
+// TestRenameReplaceWindows_OverwriteFile covers replacement of an existing
 // destination file: the helper must replace dst with src (both the
 // MoveFileEx path and, when MoveFileEx fails, the Remove+Rename fallback
 // land here), and src must no longer exist afterwards. On the old
 // os.Rename-based behavior this test fails with ERROR_ACCESS_DENIED.
-func TestRenameReplaceWindowsOverwriteFile(t *testing.T) {
+func TestRenameReplaceWindows_OverwriteFile(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.txt")
 	dst := filepath.Join(dir, "dst.txt")
@@ -33,12 +33,12 @@ func TestRenameReplaceWindowsOverwriteFile(t *testing.T) {
 	}
 }
 
-// TestRenameReplaceWindowsNonEmptyDirDestination covers failure when the
+// TestRenameReplaceWindows_NonEmptyDirDestination covers failure when the
 // destination is a non-empty directory: MoveFileEx cannot replace a
 // directory with a file, the Remove fallback cannot remove a non-empty
 // directory, so both strategies fail, src must be untouched, and the
 // returned error must identify the MoveFileEx failure.
-func TestRenameReplaceWindowsNonEmptyDirDestination(t *testing.T) {
+func TestRenameReplaceWindows_NonEmptyDirDestination(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.txt")
 	dst := filepath.Join(dir, "dst")

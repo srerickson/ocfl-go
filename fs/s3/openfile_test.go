@@ -25,7 +25,7 @@ import (
 	"github.com/srerickson/ocfl-go/internal/testutil"
 )
 
-func TestOpenFile(t *testing.T) {
+func TestOpenFile_Integration(t *testing.T) {
 	if !testutil.S3Enabled() {
 		t.Log("s3 test service is not running")
 		return
@@ -104,7 +104,7 @@ func TestOpenFile(t *testing.T) {
 	})
 }
 
-func TestOpenFile_Mock(t *testing.T) {
+func TestOpenFile(t *testing.T) {
 	type testCase struct {
 		desc   string
 		bucket string
@@ -178,7 +178,7 @@ func TestOpenFile_Mock(t *testing.T) {
 	}
 }
 
-func TestSeek_Mock(t *testing.T) {
+func TestS3File_Seek(t *testing.T) {
 	ctx := context.Background()
 	content := []byte("Hello, World! This is test content for seeking.")
 	obj := &mock.Object{
@@ -277,7 +277,7 @@ func TestSeek_Mock(t *testing.T) {
 	}
 }
 
-func TestSeekCurrent_Mock(t *testing.T) {
+func TestS3File_SeekCurrent(t *testing.T) {
 	ctx := context.Background()
 	content := []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 	obj := &mock.Object{
@@ -324,7 +324,7 @@ func TestSeekCurrent_Mock(t *testing.T) {
 	be.Equal(t, "FGHIJ", string(buf))
 }
 
-func TestSeekWithZip(t *testing.T) {
+func TestS3File_Seek_Zip_Integration(t *testing.T) {
 	if !testutil.S3Enabled() {
 		t.Skip("s3 test service is not running")
 	}
@@ -400,11 +400,11 @@ func (s *seekerReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 	return s.rs.Read(p)
 }
 
-// TestOpenFileErrNotExist_Smithy404 covers one of the several shapes a
+// TestOpenFile_Smithy404_ErrNotExist covers one of the several shapes a
 // missing key comes back as: HeadObject can return a *smithyhttp.ResponseError
 // with status 404 rather than a typed types.NotFound. errIsNotExist must
 // recognize it, so OpenFile still maps it to fs.ErrNotExist.
-func TestOpenFileErrNotExist_Smithy404(t *testing.T) {
+func TestOpenFile_Smithy404_ErrNotExist(t *testing.T) {
 	ctx := context.Background()
 	orig := smithy404Err()
 	api := &headErrAPI{S3API: mock.New(bucket), headErr: orig}
@@ -413,12 +413,12 @@ func TestOpenFileErrNotExist_Smithy404(t *testing.T) {
 	notExistWraps(t, "open", err, orig)
 }
 
-// TestOpenFileMissingKey_Integration runs against real S3 or an S3-compatible
+// TestOpenFile_MissingKey_Integration runs against real S3 or an S3-compatible
 // store (e.g. MinIO) when $OCFL_TEST_S3 is set and verifies that opening a
 // missing key maps to fs.ErrNotExist regardless of the error shape the store
 // returns (a smithy http response error on real S3, types.NoSuchKey on some
 // S3-compatible stores, etc.).
-func TestOpenFileMissingKey_Integration(t *testing.T) {
+func TestOpenFile_MissingKey_Integration(t *testing.T) {
 	if !testutil.S3Enabled() {
 		t.Skip("s3 test service is not running: set $OCFL_TEST_S3 to enable")
 	}

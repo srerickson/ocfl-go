@@ -166,7 +166,7 @@ func TestRemove_Integration(t *testing.T) {
 	isNotExistError(t, "open-after-remove", err)
 }
 
-func TestRemove_Mock(t *testing.T) {
+func TestRemove(t *testing.T) {
 	ctx := context.Background()
 	type testCase struct {
 		desc   string

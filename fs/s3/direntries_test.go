@@ -195,7 +195,7 @@ func TestDirEntries_RootNonEmptyBucket(t *testing.T) {
 	be.True(t, entries[1].IsDir())
 }
 
-func TestReadDir(t *testing.T) {
+func TestDirEntries_ReadDir_Integration(t *testing.T) {
 	if !testutil.S3Enabled() {
 		t.Log("s3 test service is not running")
 		return
@@ -248,7 +248,7 @@ func TestReadDir(t *testing.T) {
 	}
 }
 
-func TestReadDir_Mock(t *testing.T) {
+func TestDirEntries_ReadDir(t *testing.T) {
 	ctx := context.Background()
 	type testCase struct {
 		desc   string

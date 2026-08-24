@@ -93,7 +93,7 @@ func TestRemoveAll_BatchNoKeys(t *testing.T) {
 	be.Equal(t, 0, rec.CallCount("DeleteObject"))
 }
 
-func TestRemoveAll_Mock(t *testing.T) {
+func TestRemoveAll(t *testing.T) {
 	ctx := context.Background()
 	type testCase struct {
 		desc   string

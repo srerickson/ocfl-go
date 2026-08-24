@@ -121,7 +121,7 @@ func newTestUploader(t *testing.T, rec *recordingUploader) *manager.Uploader {
 	return manager.NewUploader(rec)
 }
 
-func TestWriteContentLengthSniffing(t *testing.T) {
+func TestWrite_ContentLengthSniffing(t *testing.T) {
 	const (
 		bucket = "test-bucket"
 		key    = "content-length-key"
@@ -195,7 +195,7 @@ func TestWriteContentLengthSniffing(t *testing.T) {
 		{
 			// Regression (4310a03): a partially-consumed *strings.Reader
 			// (e.g. one reused after a first Write, as in the integration
-			// test TestWriteWithOptions) must report the REMAINING length,
+			// test TestWriteWithOptions_Integration) must report the REMAINING length,
 			// not the total size. A ContentLength larger than the body
 			// breaks the HTTP request before it reaches S3.
 			name: "*strings.Reader partially consumed",
@@ -297,12 +297,12 @@ func TestWriteContentLengthSniffing(t *testing.T) {
 	}
 }
 
-// TestWriteContentLengthRestoresPosition verifies that sniffing seeks to the
+// TestWrite_ContentLengthRestoresPosition verifies that sniffing seeks to the
 // end and restores the original position, that the uploaded content is read
 // from the restored position rather than from the end of the reader, and that
 // ContentLength reports the REMAINING bytes (end - current offset): the
 // reader sits mid-stream at offset 4 of a 10-byte string.
-func TestWriteContentLengthRestoresPosition(t *testing.T) {
+func TestWrite_ContentLengthRestoresPosition(t *testing.T) {
 	rec := &recordingUploader{}
 	up := newTestUploader(t, rec)
 	spy := newSeekSpy(strings.NewReader("0123456789"))
@@ -346,10 +346,10 @@ func TestWriteContentLengthRestoresPosition(t *testing.T) {
 	}
 }
 
-// TestWriteContentLengthSeekFailure verifies that a seekable reader whose
+// TestWrite_ContentLengthSeekFailure verifies that a seekable reader whose
 // seeks fail falls back to nil ContentLength instead of erroring or reporting
 // a wrong length.
-func TestWriteContentLengthSeekFailure(t *testing.T) {
+func TestWrite_ContentLengthSeekFailure(t *testing.T) {
 	rec := &recordingUploader{}
 	up := newTestUploader(t, rec)
 	spy := &seekSpy{r: strings.NewReader("0123456789"), failAt: 0, failOnceAt: -1}
@@ -369,9 +369,9 @@ func TestWriteContentLengthSeekFailure(t *testing.T) {
 	}
 }
 
-// TestWriteContentLengthExplicitOption verifies that a caller-provided
+// TestWrite_ContentLengthExplicitOption verifies that a caller-provided
 // ContentLength option wins over auto-detection (existing behavior).
-func TestWriteContentLengthExplicitOption(t *testing.T) {
+func TestWrite_ContentLengthExplicitOption(t *testing.T) {
 	rec := &recordingUploader{}
 	up := newTestUploader(t, rec)
 	explicit := aws.Int64(1234)
@@ -390,10 +390,10 @@ func TestWriteContentLengthExplicitOption(t *testing.T) {
 	}
 }
 
-// TestWriteContentLengthInvalidKey is a sanity check that write still
+// TestWrite_ContentLengthInvalidKey is a sanity check that write still
 // validates the key before sniffing (so the sniffing code sits after the
 // existing validation).
-func TestWriteContentLengthInvalidKey(t *testing.T) {
+func TestWrite_ContentLengthInvalidKey(t *testing.T) {
 	rec := &recordingUploader{}
 	up := newTestUploader(t, rec)
 	if _, err := write(context.Background(), up, "bucket", "../escape", strings.NewReader("x")); err == nil {
@@ -404,7 +404,7 @@ func TestWriteContentLengthInvalidKey(t *testing.T) {
 	}
 }
 
-// TestWriteContentLengthPartiallyConsumedFile pins branch precedence in
+// TestWrite_ContentLengthPartiallyConsumedFile pins branch precedence in
 // content-length detection. A *os.File is both an fs.File and an io.Seeker,
 // and the two answer differently once it has been partially consumed: Stat
 // reports the total size, the seek offset reports the remaining bytes. The
@@ -412,7 +412,7 @@ func TestWriteContentLengthInvalidKey(t *testing.T) {
 // ContentLength has to equal the delivered body length or net/http rejects
 // the upload. Taking the fs.File branch first declares the total and delivers
 // only the tail.
-func TestWriteContentLengthPartiallyConsumedFile(t *testing.T) {
+func TestWrite_ContentLengthPartiallyConsumedFile(t *testing.T) {
 	const (
 		bucket  = "test-bucket"
 		key     = "partial-file-key"
@@ -460,13 +460,13 @@ func TestWriteContentLengthPartiallyConsumedFile(t *testing.T) {
 	}
 }
 
-// TestWriteContentLengthSharedReader verifies the sniff leaves a shared
+// TestWrite_ContentLengthSharedReader verifies the sniff leaves a shared
 // reader's position coherent: the caller consumes part of the reader, then
 // hands the SAME reader to write(). The upload must deliver exactly the
 // remaining bytes — the sniff must not leave the reader at EOF (the
 // pre-fix silent-EOF failure) or misdeclare the length. The caller's
 // accounting must add up (4 consumed + 6 uploaded = 10 total).
-func TestWriteContentLengthSharedReader(t *testing.T) {
+func TestWrite_ContentLengthSharedReader(t *testing.T) {
 	rec := &recordingUploader{}
 	up := newTestUploader(t, rec)
 	r := strings.NewReader("0123456789")
@@ -496,11 +496,11 @@ func TestWriteContentLengthSharedReader(t *testing.T) {
 	}
 }
 
-// TestWriteContentLengthRestoreFailure pins the acceptance criterion that a
+// TestWrite_ContentLengthRestoreFailure pins the acceptance criterion that a
 // failed restore seek is a hard error: the reader is left at an unknown
 // position (typically EOF), so continuing would silently upload an empty
 // body. write() must return the error and never issue PutObject.
-func TestWriteContentLengthRestoreFailure(t *testing.T) {
+func TestWrite_ContentLengthRestoreFailure(t *testing.T) {
 	rec := &recordingUploader{}
 	up := newTestUploader(t, rec)
 	spy := newSeekSpy(strings.NewReader("0123456789"))
@@ -535,12 +535,12 @@ func TestWriteContentLengthRestoreFailure(t *testing.T) {
 	}
 }
 
-// TestWriteContentLengthEndSeekFailure verifies the restore attempt after a
+// TestWrite_ContentLengthEndSeekFailure verifies the restore attempt after a
 // failed seek-to-end probe: (a) if the original position can be restored,
 // write() continues with nil ContentLength and uploads the REMAINING bytes
 // from the restored position; (b) if the restore also fails, write() errors
 // instead of uploading from an unknown position.
-func TestWriteContentLengthEndSeekFailure(t *testing.T) {
+func TestWrite_ContentLengthEndSeekFailure(t *testing.T) {
 	t.Run("restore succeeds", func(t *testing.T) {
 		rec := &recordingUploader{}
 		up := newTestUploader(t, rec)
@@ -586,11 +586,11 @@ func TestWriteContentLengthEndSeekFailure(t *testing.T) {
 	})
 }
 
-// TestWriteContentLengthSeekerPastEnd verifies that a seekable reader
+// TestWrite_ContentLengthSeekerPastEnd verifies that a seekable reader
 // positioned beyond its end reports no length (nil ContentLength) and the
 // upload body reads as empty — the sniff must not error or declare a
 // negative/zero length that would break the request on the wire.
-func TestWriteContentLengthSeekerPastEnd(t *testing.T) {
+func TestWrite_ContentLengthSeekerPastEnd(t *testing.T) {
 	rec := &recordingUploader{}
 	up := newTestUploader(t, rec)
 	spy := newSeekSpy(strings.NewReader("0123456789"))
@@ -639,14 +639,14 @@ func (u *conditionalPutUploader) AbortMultipartUpload(context.Context, *s3v2.Abo
 	return nil, errors.New("test client: unexpected AbortMultipartUpload")
 }
 
-// TestWriteConditionalPutErrorMapping pins the error mapping for a conditional
+// TestWrite_ConditionalPutErrorMapping pins the error mapping for a conditional
 // PUT rejected by the store (If-None-Match: "*" on an existing key -> 412
 // PreconditionFailed) without needing a live store. It is the unit-level
-// counterpart of the integration test TestWriteWithOptions (fs_test.go): the
+// counterpart of the integration test TestWriteWithOptions_Integration (fs_test.go): the
 // error returned by write() must remain a *fs.PathError for the fs API
 // contract, and it must satisfy errors.As into smithy.APIError with the
 // service's error code, regardless of how many SDK layers wrap it.
-func TestWriteConditionalPutErrorMapping(t *testing.T) {
+func TestWrite_ConditionalPutErrorMapping(t *testing.T) {
 	apiErr := &smithy.GenericAPIError{
 		Code:    "PreconditionFailed",
 		Message: "At least one of the pre-conditions you specified did not hold",
@@ -717,8 +717,8 @@ func TestWriteConditionalPutErrorMapping(t *testing.T) {
 	}
 }
 
-// TestWriteExhaustedReaderContentLength pins the regression behind
-// TestWriteWithOptions (fs_test.go): writing with an exhausted seekable reader
+// TestWrite_ExhaustedReaderContentLength pins the regression behind
+// TestWriteWithOptions_Integration (fs_test.go): writing with an exhausted seekable reader
 // (for example, the same strings.Reader or bytes.Reader reused for a second
 // conditional write) must not declare the stream's original ContentLength --
 // the request would break on the wire ("net/http: ContentLength=7 with Body
@@ -728,7 +728,7 @@ func TestWriteConditionalPutErrorMapping(t *testing.T) {
 // well-formed. The bytes.Reader variant is the regression for the dedicated
 // `case *bytes.Reader` that used Size() (the total slice length) even for a
 // fully-consumed reader.
-func TestWriteExhaustedReaderContentLength(t *testing.T) {
+func TestWrite_ExhaustedReaderContentLength(t *testing.T) {
 	const content = "content"
 	tests := []struct {
 		name   string

@@ -37,10 +37,10 @@ var trickyKeys = []struct {
 	{key: "naïve-日本語/emoji-😀.txt", want: "ocfl-go-test/na%C3%AFve-%E6%97%A5%E6%9C%AC%E8%AA%9E/emoji-%F0%9F%98%80.txt"},
 }
 
-// TestCopySource_WireValue_Mock captures the exact CopySource value the S3
+// TestCopySourcePath_WireValue captures the exact CopySource value the S3
 // API receives for a single-part copy and asserts it is the per-segment
 // encoded form (no '+' for spaces, literal '/' separators, single encoding).
-func TestCopySource_WireValue_Mock(t *testing.T) {
+func TestCopySourcePath_WireValue(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range trickyKeys {
 		t.Run(tc.key, func(t *testing.T) {
@@ -59,14 +59,14 @@ func TestCopySource_WireValue_Mock(t *testing.T) {
 	}
 }
 
-// TestCopySource_RoundTrip_Mock copies objects whose keys contain spaces,
+// TestCopySourcePath_RoundTrip copies objects whose keys contain spaces,
 // unicode, '+', '%' and nested slashes through the mock's default single-
 // part CopyObject. The mock decodes the copy source with url.PathUnescape
 // (mirroring S3, which does not treat '+' as space) and looks the decoded
 // key up verbatim, so a successful copy with the right payload proves the
 // wire value round-trips to the exact raw key — no double-encoding, no
 // corruption.
-func TestCopySource_RoundTrip_Mock(t *testing.T) {
+func TestCopySourcePath_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range trickyKeys {
 		t.Run(tc.key, func(t *testing.T) {
@@ -83,7 +83,7 @@ func TestCopySource_RoundTrip_Mock(t *testing.T) {
 	}
 }
 
-// TestCopySource_RoundTrip_Multipart_Mock exercises the multipart copy path
+// TestCopySourcePath_RoundTrip_Multipart exercises the multipart copy path
 // (UploadPartCopy, multicopy.go) with a key containing spaces and nested
 // slashes. The per-part copy source must resolve to the same object: if the
 // encoding were wrong ('+' for space or %2F for slash), the mock's decode
@@ -92,7 +92,7 @@ func TestCopySource_RoundTrip_Mock(t *testing.T) {
 // The multipart copier is driven directly (rather than via BucketFS.Copy,
 // whose multipart trigger is ContentLength-based) so the test does not need
 // a >5GiB payload.
-func TestCopySource_RoundTrip_Multipart_Mock(t *testing.T) {
+func TestCopySourcePath_RoundTrip_Multipart(t *testing.T) {
 	ctx := context.Background()
 	const src = "dir/sub dir/file with space.txt"
 	body := mock.RandBytes(13 * megabyte) // 3 parts at partSize
@@ -110,11 +110,11 @@ func TestCopySource_RoundTrip_Multipart_Mock(t *testing.T) {
 	be.Equal(t, mock.ETag(body, partSize), api.UpdatedETags["dst-file"])
 }
 
-// TestCopySourceSpecialKeys_Integration creates a source object with a key
+// TestCopySourcePath_SpecialKeys_Integration creates a source object with a key
 // containing spaces, unicode, a nested slash (and other special characters),
 // copies it to a destination via CopySource (BucketFS.Copy -> CopyObject),
 // and fails if the copy fails or the copied content does not match.
-func TestCopySourceSpecialKeys_Integration(t *testing.T) {
+func TestCopySourcePath_SpecialKeys_Integration(t *testing.T) {
 	if !testutil.S3Enabled() {
 		t.Skip("s3 test service is not running: set $OCFL_TEST_S3 to enable")
 	}
@@ -171,7 +171,7 @@ func TestCopySourceSpecialKeys_Integration(t *testing.T) {
 	}
 }
 
-// TestCopySourceSpecialKeys_Multipart_Integration exercises the second
+// TestCopySourcePath_SpecialKeys_Multipart_Integration exercises the second
 // CopySource construction site, UploadPartCopy in multicopy.go, with the same
 // class of special keys. BucketFS.Copy only falls back to the multipart path
 // when CopyObject reports the source is too large for a single copy (>5 GiB),
@@ -179,7 +179,7 @@ func TestCopySourceSpecialKeys_Integration(t *testing.T) {
 // driven directly. Both sites build CopySource with the same encoding
 // expression, so this verifies that expression on the UploadPartCopy wire
 // path.
-func TestCopySourceSpecialKeys_Multipart_Integration(t *testing.T) {
+func TestCopySourcePath_SpecialKeys_Multipart_Integration(t *testing.T) {
 	if !testutil.S3Enabled() {
 		t.Skip("s3 test service is not running: set $OCFL_TEST_S3 to enable")
 	}

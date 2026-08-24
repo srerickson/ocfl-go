@@ -117,7 +117,7 @@ func TestCopy_CopyObjectErrorPropagates(t *testing.T) {
 	be.False(t, api.MPUCreated)
 }
 
-func TestCopy_Mock(t *testing.T) {
+func TestCopy(t *testing.T) {
 	ctx := context.Background()
 	type testCase struct {
 		desc      string
@@ -193,9 +193,9 @@ func TestCopy_Mock(t *testing.T) {
 	}
 }
 
-// TestCopyErrNotExist_Smithy404 verifies the same mapping on the fs.Copy path,
+// TestCopy_Smithy404_ErrNotExist verifies the same mapping on the fs.Copy path,
 // which also calls HeadObject and errIsNotExist() for its source check.
-func TestCopyErrNotExist_Smithy404(t *testing.T) {
+func TestCopy_Smithy404_ErrNotExist(t *testing.T) {
 	ctx := context.Background()
 	orig := smithy404Err()
 	api := &headErrAPI{S3API: mock.New(bucket), headErr: orig}
@@ -225,11 +225,11 @@ func TestCopy_NilContentLengthError(t *testing.T) {
 	be.Equal(t, 0, api.S3API.PartCount())
 }
 
-// TestNilContentLength_PresentLengthControl pins the stub design: the same
+// TestCopy_ContentLengthPresent pins the stub design: the same
 // API shape with a non-nil ContentLength (as real S3 always returns) copies
 // and opens normally, so the nil-length stub alone is what changes the
 // behavior — not the stub itself.
-func TestNilContentLength_PresentLengthControl(t *testing.T) {
+func TestCopy_ContentLengthPresent(t *testing.T) {
 	ctx := context.Background()
 	body := []byte("hello world")
 	api := mock.New(bucket, &mock.Object{Key: "src-key.txt", Body: body})

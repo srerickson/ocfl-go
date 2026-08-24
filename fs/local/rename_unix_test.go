@@ -23,7 +23,7 @@ import (
 	"github.com/carlmjohnson/be"
 )
 
-// TestRenameReplaceOverwriteSymlinkTarget replaces an existing symlink at
+// TestRenameReplace_OverwriteSymlinkTarget replaces an existing symlink at
 // dst with a regular src file: the link entry is swapped out for the
 // regular file (the referent is not followed, not modified, and not
 // deleted), src no longer exists, and the regular file's content lands at
@@ -32,7 +32,7 @@ import (
 // correct, documented replacement semantics (the write target entry is
 // replaced), but the mode preservation must come from the link's own
 // mode, which is pinned by TestFS_Write_ModePreservationUsesLstat.
-func TestRenameReplaceOverwriteSymlinkTarget(t *testing.T) {
+func TestRenameReplace_OverwriteSymlinkTarget(t *testing.T) {
 	dir := t.TempDir()
 	referent := filepath.Join(dir, "referent")
 	be.NilErr(t, os.WriteFile(referent, []byte("referent data"), 0o600))
@@ -69,14 +69,14 @@ func TestRenameReplaceOverwriteSymlinkTarget(t *testing.T) {
 	be.Equal(t, "referent data", string(refData))
 }
 
-// TestRenameReplaceSymlinkSource renames a symlink source over an
+// TestRenameReplace_SymlinkSource renames a symlink source over an
 // existing regular file: the link entry itself is moved, so the
 // destination becomes a symlink to the same referent (with the link's own
 // mode), the source path is gone, and the referent is untouched. This is
 // the POSIX rename behavior that the Lstat mode-preservation scenario in
 // write_unix_test.go relies on, pinned through the renameReplace
 // primitive rather than a raw os.Rename call.
-func TestRenameReplaceSymlinkSource(t *testing.T) {
+func TestRenameReplace_SymlinkSource(t *testing.T) {
 	dir := t.TempDir()
 	referent := filepath.Join(dir, "referent")
 	be.NilErr(t, os.WriteFile(referent, []byte("referent data"), 0o600))

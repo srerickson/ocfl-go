@@ -104,11 +104,11 @@ func TestCopySourcePath(t *testing.T) {
 	}
 }
 
-// TestCopySourcePathEncodingInvariants guards the two failure modes of the
+// TestCopySourcePath_EncodingInvariants guards the two failure modes of the
 // previous url.QueryEscape implementation: '+' for spaces (rejected by S3)
 // and '%2F' for '/' separators (400 InvalidArgument on S3-compatible
 // stores). Neither may ever appear in a copy-source value.
-func TestCopySourcePathEncodingInvariants(t *testing.T) {
+func TestCopySourcePath_EncodingInvariants(t *testing.T) {
 	keys := []string{
 		"my file.txt",
 		"dir/sub dir/file with space.txt",
