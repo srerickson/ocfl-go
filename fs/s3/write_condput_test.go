@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -120,31 +121,56 @@ func TestWriteConditionalPutErrorMapping(t *testing.T) {
 
 // TestWriteExhaustedReaderContentLength pins the regression behind
 // TestWriteWithOptions (fs_test.go): writing with an exhausted seekable reader
-// (for example, the same strings.Reader reused for a second conditional write)
-// must not declare the stream's original ContentLength -- the request would
-// break on the wire ("net/http: ContentLength=7 with Body length 0") and never
-// reach the store, so a rejected conditional PUT could not surface its 412
-// PreconditionFailed API error. The remaining length is 0, so ContentLength
-// must be 0 and the body empty, keeping the request well-formed.
+// (for example, the same strings.Reader or bytes.Reader reused for a second
+// conditional write) must not declare the stream's original ContentLength --
+// the request would break on the wire ("net/http: ContentLength=7 with Body
+// length 0") and never reach the store, so a rejected conditional PUT could
+// not surface its 412 PreconditionFailed API error. The remaining length is 0,
+// so ContentLength must be 0 and the body empty, keeping the request
+// well-formed. The bytes.Reader variant is the regression for the dedicated
+// `case *bytes.Reader` that used Size() (the total slice length) even for a
+// fully-consumed reader.
 func TestWriteExhaustedReaderContentLength(t *testing.T) {
-	rec := &recordingUploader{}
-	up := newTestUploader(t, rec)
-	r := strings.NewReader("content")
-	// Fully consume the reader, as a first write would.
-	if _, err := io.Copy(io.Discard, r); err != nil {
-		t.Fatal(err)
+	const content = "content"
+	tests := []struct {
+		name   string
+		reader func() io.Reader
+	}{
+		{
+			name: "strings.Reader",
+			reader: func() io.Reader {
+				return strings.NewReader(content)
+			},
+		},
+		{
+			name: "bytes.Reader",
+			reader: func() io.Reader {
+				return bytes.NewReader([]byte(content))
+			},
+		},
 	}
-	if _, err := write(context.Background(), up, "bucket", "key", r); err != nil {
-		t.Fatalf("write returned error: %v", err)
-	}
-	call := rec.last()
-	if call == nil {
-		t.Fatal("no PutObject call recorded")
-	}
-	if call.contentLength == nil || *call.contentLength != 0 {
-		t.Errorf("ContentLength = %v, want 0 (remaining bytes of an exhausted reader)", call.contentLength)
-	}
-	if len(call.body) != 0 {
-		t.Errorf("uploaded body = %q, want empty", call.body)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := &recordingUploader{}
+			up := newTestUploader(t, rec)
+			r := tt.reader()
+			// Fully consume the reader, as a first write would.
+			if _, err := io.Copy(io.Discard, r); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := write(context.Background(), up, "bucket", "key", r); err != nil {
+				t.Fatalf("write returned error: %v", err)
+			}
+			call := rec.last()
+			if call == nil {
+				t.Fatal("no PutObject call recorded")
+			}
+			if call.contentLength == nil || *call.contentLength != 0 {
+				t.Errorf("ContentLength = %v, want 0 (remaining bytes of an exhausted reader)", call.contentLength)
+			}
+			if len(call.body) != 0 {
+				t.Errorf("uploaded body = %q, want empty", call.body)
+			}
+		})
 	}
 }

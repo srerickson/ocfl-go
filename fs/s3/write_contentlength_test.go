@@ -208,7 +208,10 @@ func TestWriteContentLengthSniffing(t *testing.T) {
 			wantBody: content[10:],
 		},
 		{
-			// Regression: *bytes.Reader must keep its existing case.
+			// *bytes.Reader implements io.Seeker, so a fresh reader
+			// routes through the seeker sniff and reports the full
+			// length (remaining == total at offset 0) — unchanged
+			// behavior now that it no longer has its own case.
 			name: "*bytes.Reader",
 			reader: func(t *testing.T) (io.Reader, func(), int64) {
 				t.Helper()
@@ -216,6 +219,26 @@ func TestWriteContentLengthSniffing(t *testing.T) {
 			},
 			wantCL:   aws.Int64(int64(len(content))),
 			wantBody: content,
+		},
+		{
+			// Regression: a partially-consumed *bytes.Reader must
+			// report the REMAINING length, not the total size of the
+			// underlying slice. The old dedicated `case *bytes.Reader`
+			// used Size() (total), which over-declared ContentLength
+			// while the body delivered only the tail — net/http rejects
+			// such requests on the wire.
+			name: "*bytes.Reader partially consumed",
+			reader: func(t *testing.T) (io.Reader, func(), int64) {
+				t.Helper()
+				r := bytes.NewReader(content)
+				// advance past the first 10 bytes, leaving content[10:]
+				if _, err := io.ReadFull(r, make([]byte, 10)); err != nil {
+					t.Fatalf("ReadFull: %v", err)
+				}
+				return r, func() {}, int64(len(content) - 10)
+			},
+			wantCL:   aws.Int64(int64(len(content) - 10)),
+			wantBody: content[10:],
 		},
 		{
 			// Regression: *io.LimitedReader must keep its existing case.

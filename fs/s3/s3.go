@@ -1,7 +1,6 @@
 package s3
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -258,18 +257,19 @@ func write(ctx context.Context, uploader *manager.Uploader, buck string, key str
 		// try to get content length from r
 		size := int64(-1)
 		switch val := r.(type) {
-		case *bytes.Reader:
-			size = val.Size()
 		case *io.LimitedReader:
 			size = val.N
 		case io.Seeker:
-			// Generic seekable reader (e.g. *os.File, *strings.Reader, or
-			// an fs.File that is also an io.Seeker such as the file handle
-			// returned by Open): determine the REMAINING length (end -
-			// current offset). A partially-consumed reader (e.g. a
-			// strings.Reader after a first write, or a file read up to
-			// some offset) must report only the bytes left, not the total
-			// size.
+			// Generic seekable reader (e.g. *os.File, *strings.Reader,
+			// *bytes.Reader, or an fs.File that is also an io.Seeker such as
+			// the file handle returned by Open): determine the REMAINING
+			// length (end - current offset). A partially-consumed reader
+			// (e.g. a strings.Reader after a first write, a *bytes.Reader
+			// after a read, or a file read up to some offset) must report
+			// only the bytes left, not the total size. *bytes.Reader used to
+			// be special-cased with val.Size(), which reports the total size
+			// of the underlying slice even for a partially-consumed reader,
+			// so it is handled here like any other seeker.
 			//
 			// Sniffing a generic seeker requires temporarily seeking to
 			// the end, so the reader must not be shared with other
