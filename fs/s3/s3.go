@@ -9,7 +9,7 @@ import (
 	"io/fs"
 	"iter"
 	"log/slog"
-	"net/url"
+	"net/http"
 	"path"
 	"slices"
 	"strings"
@@ -20,6 +20,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
@@ -268,7 +270,7 @@ func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, opts .
 		}
 		return 0, fsErr
 	}
-	escapedSrc := url.QueryEscape(buck + "/" + src)
+	escapedSrc := copySourcePath(buck, src)
 	params := &s3.CopyObjectInput{
 		Bucket:     &buck,
 		CopySource: &escapedSrc, // value must be URL-encoded
@@ -372,6 +374,15 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) iter.
 				return
 			}
 			for _, s3obj := range listPage.Contents {
+				// skip S3 directory placeholder objects: zero-byte keys ending
+				// with "/" created by the S3 console or some clients to
+				// represent directories. They are not files and would
+				// otherwise appear as phantom empty files in OCFL inventories.
+				// This also skips the directory prefix's own placeholder
+				// (e.g. "dir/" when listing under prefix "dir/").
+				if strings.HasSuffix(*s3obj.Key, "/") {
+					continue
+				}
 				refPath := *s3obj.Key
 				if dir != "." {
 					refPath = strings.TrimPrefix(refPath, dir+"/")
@@ -575,11 +586,47 @@ func byteRange(partNum int32, partSize, totalSize int64) string {
 	return fmt.Sprintf("bytes=%d-%d", start, end)
 }
 
+// errIsNotExist reports whether err represents a missing object ("not found")
+// error from S3 or an S3-compatible store. Callers use it to map HeadObject
+// (and similar) failures to fs.ErrNotExist.
+//
+// The error shapes the AWS SDK v2 can produce for a missing object depend on
+// the service and on whether the error response had a body:
+//
+//   - Operations whose errors deserialize from a body (e.g. GetObject) return
+//     the typed shapes types.NotFound and types.NoSuchKey.
+//   - HeadObject against real S3 returns *smithyhttp.ResponseError with HTTP
+//     status 404 wrapping the failed error deserialization, because HEAD
+//     responses carry no body from which to deserialize an error shape.
+//   - Some S3-compatible stores (e.g. MinIO) return a HEAD 404 with an XML
+//     body whose code (commonly "NoSuchKey") is not one of the shapes
+//     HeadObject's deserializer recognizes (it only maps "NotFound"); in that
+//     case the SDK falls back to *smithy.GenericAPIError carrying the code.
 func errIsNotExist(err error) bool {
 	var notFoundErr *types.NotFound
 	if errors.As(err, &notFoundErr) {
 		return true
 	}
 	var noKeyErr *types.NoSuchKey
-	return errors.As(err, &noKeyErr)
+	if errors.As(err, &noKeyErr) {
+		return true
+	}
+	// HeadObject on a missing object: real S3 returns an HTTP 404 with no
+	// body, which surfaces as a generic smithy http response error.
+	var respErr *smithyhttp.ResponseError
+	if errors.As(err, &respErr) && respErr.Response != nil &&
+		respErr.Response.StatusCode == http.StatusNotFound {
+		return true
+	}
+	// S3-compatible stores that include an error body on HEAD 404 (e.g. MinIO
+	// with code "NoSuchKey", which HeadObject's deserializer does not map to a
+	// typed shape) surface as a generic API error carrying the code.
+	var genericErr *smithy.GenericAPIError
+	if errors.As(err, &genericErr) {
+		switch genericErr.Code {
+		case "NotFound", "NoSuchKey":
+			return true
+		}
+	}
+	return false
 }
