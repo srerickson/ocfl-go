@@ -86,8 +86,9 @@ type WriteFS interface {
 	// may empty the top-level directory without removing the directory
 	// itself (the S3 backend deletes every object in the bucket), or
 	// refuse with an error (the local backend, whose storage root must
-	// survive). The package-level RemoveAll falls back to removing the
-	// top-level entries one by one when the backend refuses.
+	// survive). Callers wanting uniform behavior should use the
+	// package-level [RemoveAll], which dispatches on [RootRemover] and
+	// falls back to removing the top-level entries one by one.
 	RemoveAll(ctx context.Context, name string) error
 }
 

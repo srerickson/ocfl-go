@@ -34,8 +34,8 @@ type WriteFSRemoveContract struct {
 //
 // The test covers:
 //   - removing a missing file returns an error satisfying
-//     errors.Is(err, fs.ErrNotExist) (the Option B missing-file contract),
-//     reported as a *fs.PathError with Op "remove";
+//     errors.Is(err, fs.ErrNotExist), reported as a *fs.PathError with
+//     Op "remove";
 //   - removing "." returns a non-nil *fs.PathError naming ".", never touches
 //     the storage root (a file written before the call must still be present
 //     and readable afterwards), and satisfies errors.Is(err, fs.ErrNotExist)

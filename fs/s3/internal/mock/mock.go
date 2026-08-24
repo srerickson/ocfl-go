@@ -42,10 +42,15 @@ func New(bucket string, objects ...*Object) *S3API {
 
 type S3API struct {
 	UpdatedETags map[string]string
-	Deleted      map[string]bool
-	MPUCreated   bool
-	MPUAborted   bool
-	MPUComplete  bool
+	// Deleted records every key a DeleteObject or DeleteObjects request
+	// targeted. It is a call log, not the bucket's state: a deleted key is
+	// also removed from the bucket, so prefer asserting through HeadObject,
+	// GetObject or ListObjectsV2 unless the test is specifically about which
+	// requests were issued.
+	Deleted     map[string]bool
+	MPUCreated  bool
+	MPUAborted  bool
+	MPUComplete bool
 
 	CopyObjectFunc func(context.Context, *s3v2.CopyObjectInput, ...func(*s3v2.Options)) (*s3v2.CopyObjectOutput, error)
 	// CopyObjectCalls counts every CopyObject invocation. Tests use it to
@@ -425,7 +430,7 @@ func (m *S3API) DeleteObject(ctx context.Context, in *s3v2.DeleteObjectInput, op
 		return nil, &types.NoSuchKey{}
 	}
 	out := &s3v2.DeleteObjectOutput{}
-	m.Deleted[*in.Key] = true
+	m.deleteKey(*in.Key)
 	return out, nil
 }
 
@@ -442,9 +447,23 @@ func (m *S3API) DeleteObjects(ctx context.Context, in *s3v2.DeleteObjectsInput, 
 			continue
 		}
 		out.Deleted = append(out.Deleted, types.DeletedObject{Key: obj.Key})
-		m.Deleted[*obj.Key] = true
+		m.deleteKey(*obj.Key)
 	}
 	return out, nil
+}
+
+// deleteKey removes the object from the bucket and records the deletion.
+//
+// Removing it from m.objects is what makes a deletion observable the way a
+// real store's is: the key stops appearing in ListObjectsV2 and stops
+// answering HeadObject and GetObject. The Deleted map is call bookkeeping
+// kept alongside it — useful for asserting that a specific key was targeted,
+// and for distinguishing "never deleted" from "deleted and then rewritten" —
+// but a test that only consults Deleted is checking which requests were sent,
+// not what the bucket now contains.
+func (m *S3API) deleteKey(key string) {
+	delete(m.objects, key)
+	m.Deleted[key] = true
 }
 
 func (m *S3API) PartCount() int {
