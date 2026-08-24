@@ -1,5 +1,9 @@
 package s3
 
+// Internal tests for errors.go: errIsNotExist's classification of the error
+// shapes the AWS SDK returns for a missing object. The exported behavior it
+// produces is asserted from the operations' own test files.
+
 import (
 	"fmt"
 	"net/http"

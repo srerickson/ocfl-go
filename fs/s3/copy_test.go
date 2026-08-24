@@ -1,16 +1,19 @@
 package s3_test
 
+// Tests for copy.go: BucketFS.Copy, in particular its choice between a
+// single CopyObject and a multipart copy. The multipart copier itself is
+// tested in multicopy_test.go.
+
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/carlmjohnson/be"
-
 	"github.com/srerickson/ocfl-go/fs/s3"
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
-	"strconv"
 )
 
 // maxCopyObjectSize mirrors the unexported maxCopySize constant in
@@ -188,4 +191,58 @@ func TestCopy_Mock(t *testing.T) {
 			tcase.expect(t, api, size, err)
 		})
 	}
+}
+
+// TestCopyErrNotExist_Smithy404 verifies the same mapping on the fs.Copy path,
+// which also calls HeadObject and errIsNotExist() for its source check.
+func TestCopyErrNotExist_Smithy404(t *testing.T) {
+	ctx := context.Background()
+	orig := smithy404Err()
+	api := &headErrAPI{S3API: mock.New(bucket), headErr: orig}
+	fsys := s3.NewBucketFS(api, bucket)
+	_, err := fsys.Copy(ctx, "dst-file.txt", "missing-src.txt")
+	notExistWraps(t, "copy", err, orig)
+}
+
+// TestCopy_NilContentLengthError pins the nil guard on the copy strategy
+// decision. copy() picks single CopyObject vs multipart from
+// srcHead.ContentLength, which a HEAD response is not obliged to set;
+// dereferencing it unguarded panics. Mirroring the guard in MultiCopier.Copy,
+// copy() must return a "missing content length" error before any CopyObject
+// or multipart machinery runs.
+func TestCopy_NilContentLengthError(t *testing.T) {
+	ctx := context.Background()
+	api := &nilLengthAPI{S3API: mock.New(bucket)}
+	fsys := s3.NewBucketFS(api, bucket)
+
+	_, err := fsys.Copy(ctx, "dst-key.txt", "src-key.txt")
+	missingContentLengthErr(t, "copy", "src-key.txt", err)
+
+	// The guard must fire before the strategy decision: neither the
+	// single-CopyObject path nor the multipart path may be attempted.
+	be.Equal(t, 0, api.S3API.CopyObjectCalls)
+	be.False(t, api.S3API.MPUCreated)
+	be.Equal(t, 0, api.S3API.PartCount())
+}
+
+// TestNilContentLength_PresentLengthControl pins the stub design: the same
+// API shape with a non-nil ContentLength (as real S3 always returns) copies
+// and opens normally, so the nil-length stub alone is what changes the
+// behavior — not the stub itself.
+func TestNilContentLength_PresentLengthControl(t *testing.T) {
+	ctx := context.Background()
+	body := []byte("hello world")
+	api := mock.New(bucket, &mock.Object{Key: "src-key.txt", Body: body})
+	fsys := s3.NewBucketFS(api, bucket)
+
+	size, err := fsys.Copy(ctx, "dst-key.txt", "src-key.txt")
+	be.NilErr(t, err)
+	be.Equal(t, int64(len(body)), size)
+
+	f, err := fsys.OpenFile(ctx, "src-key.txt")
+	be.NilErr(t, err)
+	defer f.Close()
+	fi, err := f.Stat()
+	be.NilErr(t, err)
+	be.Equal(t, int64(len(body)), fi.Size())
 }

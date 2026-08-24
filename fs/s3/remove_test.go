@@ -1,10 +1,14 @@
 package s3_test
 
+// Tests for remove.go: BucketFS.Remove, including the shared cross-backend
+// Remove contract.
+
 import (
 	"context"
 	"errors"
 	"io/fs"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -15,7 +19,6 @@ import (
 	"github.com/srerickson/ocfl-go/fs/s3"
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
 	"github.com/srerickson/ocfl-go/internal/testutil"
-	"strconv"
 )
 
 // TestRemove_MissingKey_ErrNotExist pins the WriteFS.Remove contract

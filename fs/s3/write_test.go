@@ -1,18 +1,159 @@
 package s3_test
 
+// Tests for write.go: BucketFS.Write and WriteWithOptions through the public
+// API, including the shared cross-backend Write contract. Cases that call the
+// unexported write() directly live in write_internal_test.go.
+
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 	"github.com/carlmjohnson/be"
+	"github.com/srerickson/ocfl-go/fs/s3"
+	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
 	"github.com/srerickson/ocfl-go/internal/testutil"
 )
+
+func TestWriteReadDeleteFile(t *testing.T) {
+	if !testutil.S3Enabled() {
+		t.Log("s3 test service is not running")
+		return
+	}
+	ctx := t.Context()
+	fsys := testutil.TmpS3FS(t, nil)
+	key := "dir/test-data"
+	buff := mock.RandBytes(15 * megabyte)
+	n, err := fsys.Write(ctx, key, bytes.NewReader(buff))
+	be.NilErr(t, err)
+	be.Equal(t, len(buff), int(n))
+	for entry, err := range fsys.DirEntries(ctx, "dir") {
+		be.NilErr(t, err)
+		be.Equal(t, "test-data", entry.Name())
+	}
+	f, err := fsys.OpenFile(ctx, key)
+	be.NilErr(t, err)
+	outBytes, err := io.ReadAll(f)
+	be.NilErr(t, err)
+	be.True(t, bytes.Equal(outBytes, buff))
+	be.NilErr(t, fsys.Remove(ctx, key))
+}
+
+func TestWriteWithOptions(t *testing.T) {
+	if !testutil.S3Enabled() {
+		t.Log("s3 test service is not running")
+		return
+	}
+	ctx := t.Context()
+	fsys := testutil.TmpS3FS(t, nil)
+	// option to require key to not exist
+	opt := func(input *s3v2.PutObjectInput) {
+		match := "*"
+		input.IfNoneMatch = &match
+	}
+	key := "file"
+	body := strings.NewReader("content")
+	// first write creates the file
+	_, err := fsys.WriteWithOptions(ctx, key, body, opt)
+	be.NilErr(t, err)
+
+	// second write fails because key exists
+	_, err = fsys.WriteWithOptions(ctx, key, body, opt)
+	be.Nonzero(t, err)
+	var apiErr smithy.APIError
+	be.True(t, errors.As(err, &apiErr))
+	be.Equal(t, "PreconditionFailed", apiErr.ErrorCode())
+}
+
+func TestWrite_Mock(t *testing.T) {
+	ctx := context.Background()
+	bodySize := 201 * megabyte
+	body := mock.RandBytes(int64(bodySize))
+	type testCase struct {
+		desc        string
+		bucket      string
+		key         string
+		body        io.Reader
+		uploadConc  int
+		uploadPSize int64
+		mock        func(*testing.T) *mock.S3API
+		expect      func(*testing.T, *mock.S3API, int64, error)
+	}
+	cases := []testCase{
+		{
+			desc: "invalid path",
+			key:  "../file.txt",
+			expect: func(t *testing.T, _ *mock.S3API, size int64, err error) {
+				isInvalidPathError(t, err)
+			},
+		}, {
+			desc:   "small write",
+			bucket: bucket,
+			key:    "tmp",
+			body:   strings.NewReader("some content"),
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket)
+			},
+			expect: func(t *testing.T, state *mock.S3API, size int64, err error) {
+				be.NilErr(t, err)
+				be.Nonzero(t, state.UpdatedETags["tmp"])
+
+			},
+		}, {
+			desc:        "multipart",
+			bucket:      bucket,
+			key:         "tmp",
+			uploadPSize: partSize,
+			body:        bytes.NewReader(body),
+			mock: func(t *testing.T) *mock.S3API {
+				api := mock.New(bucket)
+				return api
+			},
+			expect: func(t *testing.T, state *mock.S3API, size int64, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, int64(bodySize), size)
+				expectETag := mock.ETag(body, partSize)
+				be.Equal(t, expectETag, state.UpdatedETags["tmp"])
+				be.Equal(t, bodySize/partSize+1, state.PartCount())
+				be.Equal(t, true, state.MPUComplete)
+			},
+		},
+	}
+	for i, tcase := range cases {
+		t.Run(strconv.Itoa(i)+"-"+tcase.desc, func(t *testing.T) {
+			var api *mock.S3API
+			if tcase.mock != nil {
+				api = tcase.mock(t)
+			}
+			uploaderOpt := func(u *manager.Uploader) {
+				u.Concurrency = tcase.uploadConc
+				u.PartSize = tcase.uploadPSize
+			}
+			fsys := s3.NewBucketFS(api, tcase.bucket, s3.WithUploaderOptions(uploaderOpt))
+			val, err := fsys.Write(ctx, tcase.key, tcase.body)
+			tcase.expect(t, api, val, err)
+		})
+	}
+}
+
+// TestWriteFSWriteContract_S3 runs the shared WriteFS.Write contract against
+// the S3 backend, using the in-process mock so it runs in CI without a store.
+func TestWriteFSWriteContract_S3(t *testing.T) {
+	fsys := s3.NewBucketFS(mock.New(bucket), bucket)
+	testutil.TestWriteFSWriteContract(t, fsys, testutil.WriteFSWriteContract{
+		WriteDotIsError: true,
+	})
+}
 
 // restoreFailReader is an io.ReadSeeker whose third Seek call — the sniff's
 // restore seek back to the original position — always fails. It models a
