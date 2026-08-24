@@ -47,11 +47,38 @@ type FileWalker interface {
 // WriteFS is a storage backend that supports write and remove operations.
 type WriteFS interface {
 	FS
+	// Write writes the contents of buffer to the file with path name,
+	// replacing any existing file, and returns the number of bytes
+	// written. Implementations should make the write atomic where
+	// possible: name must never be observable with partially written
+	// contents, even if Write fails, its context is canceled, or the
+	// process crashes mid-write. The local filesystem implementation
+	// writes to a temporary file in the target's directory and renames
+	// it over name only after the data is fully written and synced, so
+	// a partial file is never visible (see fs/local). The s3
+	// implementation uploads the full object before it becomes visible
+	// at name. An implementation that cannot provide atomicity should
+	// document that limitation in its Write documentation.
 	Write(ctx context.Context, name string, buffer io.Reader) (int64, error)
-	// Remove the file with path name
+	// Remove removes the file with path name.
+	//
+	// Contract: removing a file that does not exist returns an error that
+	// satisfies errors.Is(err, fs.ErrNotExist), so callers can reliably
+	// detect a missing file regardless of backend. Implementations must
+	// account for idempotent deletes in the underlying store: the S3
+	// backend checks existence with a HEAD request before DeleteObject
+	// (which alone would silently succeed for missing keys), and the local
+	// backend surfaces the "not exist" error from os.Remove.
+	//
+	// Removing the top-level directory (".") is always an error and must
+	// not affect the storage root. The exact error is backend-specific: the
+	// S3 backend reports fs.ErrNotExist, while the local backend returns a
+	// *fs.PathError with a descriptive message. Name "." is the only name
+	// for which this contract permits a backend-dependent error.
 	Remove(ctx context.Context, name string) error
-	// Remove the directory with path name and all its contents. If the path
-	// does not exist, return nil.
+	// RemoveAll removes the directory with path name and all its contents.
+	// Unlike Remove, it is idempotent: if the path does not exist, it
+	// returns nil.
 	RemoveAll(ctx context.Context, name string) error
 }
 
@@ -63,17 +90,40 @@ type CopyFS interface {
 	Copy(ctx context.Context, dst string, src string) (int64, error)
 }
 
-// Copy copies src in srcFS to dst in dstFS. If srcFS and dstFS are the same refererence
-// and it implements CopyFS, then Copy uses the fs's Copy() method.
+// SameBackend is an optional interface that an [FS] implementation can use to
+// report whether two FS values refer to the same underlying storage backend.
+// [Copy] uses it to decide whether the optimized [CopyFS] copy path is safe to
+// use when copying from srcFS to dstFS.
+type SameBackend interface {
+	// SameBackend returns true if other refers to the same underlying storage
+	// backend as the receiver. Implementations must return false if they
+	// cannot determine that other shares the receiver's backend; never assume.
+	SameBackend(other FS) bool
+}
+
+// Copy copies src in srcFS to dst in dstFS. If dstFS implements CopyFS and
+// both srcFS and dstFS implement [SameBackend] and dstFS.SameBackend(srcFS)
+// returns true (i.e. the two FS values refer to the same underlying storage),
+// Copy uses dstFS's Copy() method. Otherwise, Copy falls back to opening src
+// in srcFS and writing it to dst in dstFS.
 func Copy(ctx context.Context, dstFS FS, dst string, srcFS FS, src string) (size int64, err error) {
 	cpFS, ok := dstFS.(CopyFS)
-	// FIXME: better way to compare src and dst FS
-	if ok && dstFS == srcFS {
-		size, err = cpFS.Copy(ctx, dst, src)
-		if err != nil {
-			err = fmt.Errorf("during copy: %w", err)
+	if ok {
+		// Use the destination FS's Copy() only when both srcFS and dstFS
+		// implement SameBackend and dstFS confirms that srcFS refers to the
+		// same underlying storage. dstFS is the receiver because it is the
+		// FS that will perform the copy.
+		// FIXME: FS types that don't implement SameBackend always take the
+		// slow path, even when srcFS and dstFS refer to the same backend.
+		dstSB, dstOK := dstFS.(SameBackend)
+		_, srcOK := srcFS.(SameBackend)
+		if dstOK && srcOK && dstSB.SameBackend(srcFS) {
+			size, err = cpFS.Copy(ctx, dst, src)
+			if err != nil {
+				err = fmt.Errorf("during copy: %w", err)
+			}
+			return
 		}
-		return
 	}
 	// otherwise, manual copy
 	var srcF fs.File
@@ -138,7 +188,8 @@ func ReadAll(ctx context.Context, fsys FS, name string) ([]byte, error) {
 }
 
 // Remove checks if fsys implements WriteFS and calls its Remove method. It
-// returns ErrOpUnsupported if fsys is not a WriteFS
+// returns ErrOpUnsupported if fsys is not a WriteFS. See WriteFS.Remove for
+// the contract on missing files and the top-level directory.
 func Remove(ctx context.Context, fsys FS, name string) error {
 	writeFS, ok := fsys.(WriteFS)
 	if !ok {

@@ -48,6 +48,10 @@ type S3API struct {
 	MPUComplete  bool
 
 	CopyObjectFunc func(context.Context, *s3v2.CopyObjectInput, ...func(*s3v2.Options)) (*s3v2.CopyObjectOutput, error)
+	// CopyObjectCalls counts every CopyObject invocation. Tests use it to
+	// assert which copy strategy was chosen (a large-object copy must never
+	// call CopyObject at all).
+	CopyObjectCalls int
 
 	parts   sync.Map
 	bucket  string
@@ -63,10 +67,22 @@ func (m *S3API) HeadObject(ctx context.Context, in *s3v2.HeadObjectInput, opts .
 		return nil, err
 	}
 	out := &s3v2.HeadObjectOutput{
-		ContentLength: aws.Int64(int64(len(obj.Body))),
+		ContentLength: aws.Int64(headSize(obj)),
 		LastModified:  aws.Time(obj.LastModified),
 	}
 	return out, nil
+}
+
+// headSize returns the ContentLength reported by HeadObject for obj. Objects
+// with a materialized Body report len(Body); "virtual" objects (no Body, but
+// a declared ContentLength) report the declared length without materializing
+// the bytes. Virtual objects let tests exercise > 5 GiB HEAD responses (the
+// multipart copy threshold) without allocating the object.
+func headSize(obj *Object) int64 {
+	if obj.Body == nil && obj.ContentLength > 0 {
+		return obj.ContentLength
+	}
+	return int64(len(obj.Body))
 }
 
 func (m *S3API) GetObject(ctx context.Context, in *s3v2.GetObjectInput, opts ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
@@ -174,13 +190,24 @@ func (m *S3API) PutObject(ctx context.Context, in *s3v2.PutObjectInput, opts ...
 	if in.Key == nil {
 		return nil, errors.New("key is required")
 	}
-	etag, err := md5hex(in.Body)
+	if in.Body == nil {
+		return nil, errors.New("body is required")
+	}
+	body, err := io.ReadAll(in.Body)
+	if err != nil {
+		return nil, err
+	}
+	etag, err := md5hex(bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	out := &s3v2.PutObjectOutput{
 		ETag: &etag,
 	}
+	// Materialize the object exactly like real S3: a subsequent HeadObject
+	// or GetObject of the same key must find it. Without this, the mock
+	// could not round-trip a Write followed by an OpenFile.
+	m.objects[*in.Key] = &Object{Key: *in.Key, Body: body, LastModified: time.Now()}
 	m.UpdatedETags[*in.Key] = `"` + etag + `"`
 	return out, nil
 }
@@ -235,7 +262,11 @@ func (m *S3API) UploadPartCopy(ctx context.Context, in *s3v2.UploadPartCopyInput
 	if in.CopySource == nil {
 		return nil, errors.New("CopySource is required")
 	}
-	copySourceDecoded, err := url.QueryUnescape(*in.CopySource)
+	// Decode with PathUnescape, not QueryUnescape: S3 does not treat '+'
+	// as a space in x-amz-copy-source values (it must be sent as %2B), so
+	// the mock must not either. PathUnescape is the exact inverse of the
+	// per-segment encoding used to build the header.
+	copySourceDecoded, err := url.PathUnescape(*in.CopySource)
 	if err != nil {
 		return nil, fmt.Errorf("parsing copy source: %w", err)
 	}
@@ -254,7 +285,18 @@ func (m *S3API) UploadPartCopy(ctx context.Context, in *s3v2.UploadPartCopyInput
 	if err != nil {
 		return nil, err
 	}
-	etag, err := md5hex(bytes.NewReader(srcObj.Body[start : end+1]))
+	var etag string
+	if srcObj.Body == nil && srcObj.ContentLength > 0 {
+		// Virtual object: there are no materialized source bytes to hash,
+		// so derive a deterministic per-part ETag from the copy request
+		// itself. CompleteMultipartUpload only validates that the submitted
+		// tags match the ones returned here, so the multipart copy round
+		// trip still succeeds end to end.
+		etagSrc := fmt.Sprintf("%s#%d#%d-%d", srcKey, *in.PartNumber, start, end)
+		etag, err = md5hex(strings.NewReader(etagSrc))
+	} else {
+		etag, err = md5hex(bytes.NewReader(srcObj.Body[start : end+1]))
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -325,6 +367,7 @@ func (m *S3API) AbortMultipartUpload(ctx context.Context, in *s3v2.AbortMultipar
 }
 
 func (m *S3API) CopyObject(ctx context.Context, in *s3v2.CopyObjectInput, opts ...func(*s3v2.Options)) (*s3v2.CopyObjectOutput, error) {
+	m.CopyObjectCalls++
 	if m.CopyObjectFunc != nil {
 		return m.CopyObjectFunc(ctx, in, opts...)
 	}
@@ -337,7 +380,9 @@ func (m *S3API) CopyObject(ctx context.Context, in *s3v2.CopyObjectInput, opts .
 	if in.CopySource == nil {
 		return nil, errors.New("CopySource is required")
 	}
-	copySourceDecoded, err := url.QueryUnescape(*in.CopySource)
+	// PathUnescape (not QueryUnescape): see UploadPartCopy. S3 does not
+	// decode '+' as space in x-amz-copy-source values.
+	copySourceDecoded, err := url.PathUnescape(*in.CopySource)
 	if err != nil {
 		return nil, fmt.Errorf("parsing copy source: %w", err)
 	}
@@ -366,6 +411,24 @@ func (m *S3API) DeleteObject(ctx context.Context, in *s3v2.DeleteObjectInput, op
 	}
 	out := &s3v2.DeleteObjectOutput{}
 	m.Deleted[*in.Key] = true
+	return out, nil
+}
+
+func (m *S3API) DeleteObjects(ctx context.Context, in *s3v2.DeleteObjectsInput, opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectsOutput, error) {
+	if err := m.bucketOK(in.Bucket); err != nil {
+		return nil, err
+	}
+	if in.Delete == nil || len(in.Delete.Objects) == 0 {
+		return nil, errors.New("delete.Objects is required")
+	}
+	out := &s3v2.DeleteObjectsOutput{}
+	for _, obj := range in.Delete.Objects {
+		if obj.Key == nil {
+			continue
+		}
+		out.Deleted = append(out.Deleted, types.DeletedObject{Key: obj.Key})
+		m.Deleted[*obj.Key] = true
+	}
 	return out, nil
 }
 

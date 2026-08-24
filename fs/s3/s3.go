@@ -8,16 +8,20 @@ import (
 	"io"
 	"io/fs"
 	"iter"
-	"net/url"
+	"log/slog"
+	"net/http"
 	"path"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
@@ -25,10 +29,10 @@ const (
 	megabyte          int64 = 1024 * 1024
 	partSizeIncrement       = 1 * megabyte
 
-	// error message returned when copy fails because source is too large: used
-	// to trigger multipart upload. (This appears to be the only way to check
-	// this error).
-	copySrcTooLarge = "copy source is larger than the maximum allowable size"
+	// maxCopySize is the maximum size of a source object that can be copied
+	// with a single CopyObject request. Larger objects must be copied in
+	// parts using MultiCopier.
+	maxCopySize int64 = 5 * 1024 * 1024 * 1024
 
 	// modes retured by Stat()
 	fileMode = 0644 | fs.ModeIrregular
@@ -44,7 +48,7 @@ var (
 // Compile-time check that s3File implements io.Seeker
 var _ io.Seeker = (*s3File)(nil)
 
-func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (fs.File, error) {
+func openFile(ctx context.Context, api OpenFileAPI, buck string, name string, logger *slog.Logger) (fs.File, error) {
 	if !fs.ValidPath(name) || name == "." {
 		return nil, pathErr("open", name, fs.ErrInvalid)
 	}
@@ -67,10 +71,61 @@ func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (f
 		bucket: buck,
 		key:    name,
 		info:   headOut,
+		logger: logger,
 	}
 	return f, nil
 }
 
+// dirEntries implements directory listing: the emulation of fs.ReadDir on
+// S3's flat key space. It is the S3 half of the backend readdir contract
+// pinned by fs/s3/direntries_test.go and fs/local/localfs_test.go; read the
+// two together.
+//
+// # S3 has no directories
+//
+// S3 stores only objects; a "directory" is an emergent property of key
+// prefixes (a prefix with a trailing "/" used with a Delimiter), and there
+// is no way to create an empty one. Every branch below follows from that:
+//
+//   - A prefix that has objects or deeper common prefixes lists them as
+//     file entries (fileMode) and subdirectory entries (dirMode),
+//     respectively.
+//   - A non-root prefix with neither objects nor common prefixes is
+//     indistinguishable from a path that never existed — S3 offers no
+//     "empty directory" object to tell the two apart — so it is reported as
+//     missing with fs.ErrNotExist, matching the local backend's readdir of
+//     a missing directory.
+//   - The root, dir=".", is the one prefix that is always known to exist:
+//     it is the bucket itself, and a *missing* bucket surfaces as a
+//     ListObjectsV2 error rather than as an empty listing. On a bucket with
+//     no keys at all, "." therefore yields zero entries and no error,
+//     matching the local backend's readdir of an existing but empty
+//     directory (fs/local/localfs_test.go, "empty top-level directory
+//     returns zero entries").
+//
+// # Why the asymmetry is deliberate
+//
+// The two backends still disagree on empty *non-root* prefixes: a local
+// empty directory reads back as an empty listing, while an S3 prefix that
+// would occupy the same position reads back as fs.ErrNotExist. This is a
+// faithful emulation, not a bug: local storage can represent emptiness, S3
+// cannot, and a valid OCFL object never depends on an empty directory —
+// every OCFL version directory contains at least inventory.json, and OCFL
+// storage-root and object layouts do not create empty directories. OCFL
+// extensions or third-party tooling may create empty directory-like
+// prefixes on local storage; when an object is moved to S3 the same path
+// simply reads as missing, which reflects the key space it now lives in.
+//
+// The root case is the only one where backends must agree, because
+// storage-root scanning (Root.NewRoot in root.go) and ocflfs.RemoveAll(".")
+// (fs/fs.go) both start by reading dir="." : an empty bucket is a valid
+// (new) storage root and must read back as an empty directory, never as
+// fs.ErrNotExist. (NewRoot in root.go happens to tolerate fs.ErrNotExist,
+// but ocflfs.RemoveAll(".") does not — on an empty bucket it would
+// otherwise fail instead of being the no-op it is on local storage — and
+// "empty" is simply the honest answer for a prefix that is guaranteed to
+// exist.) Root-empty behavior is pinned by TestDirEntries_RootEmptyBucket
+// in fs/s3/direntries_test.go.
 func dirEntries(ctx context.Context, api ReadDirAPI, buck string, dir string) iter.Seq2[fs.DirEntry, error] {
 	return func(yield func(fs.DirEntry, error) bool) {
 		if !fs.ValidPath(dir) {
@@ -96,8 +151,11 @@ func dirEntries(ctx context.Context, api ReadDirAPI, buck string, dir string) it
 			numFiles := len(list.Contents)
 			numEntries := numDirs + numFiles
 			if numEntries == 0 {
-				if !prefixHasContent {
-					// treat prefix without objects as a missing directory
+				if !prefixHasContent && dir != "." {
+					// treat prefix without objects as a missing directory.
+					// The root (dir=".") is exempt: "." names the bucket
+					// itself, which always exists, so an empty bucket reads
+					// as an empty directory rather than a missing path.
 					yield(nil, pathErr("readdir", dir, fs.ErrNotExist))
 				}
 				return
@@ -162,6 +220,23 @@ func write(ctx context.Context, uploader *manager.Uploader, buck string, key str
 			size = val.Size()
 		case *io.LimitedReader:
 			size = val.N
+		case io.Seeker:
+			// Generic seekable reader (e.g. *os.File, *strings.Reader):
+			// determine the REMAINING length (end - current offset) by
+			// seeking to the end, recording the offset, and restoring the
+			// original position. A partially-consumed reader (e.g. a
+			// strings.Reader after a first write) must report only the
+			// bytes left, not the total size. If any seek fails, leave
+			// ContentLength nil as before.
+			if cur, err := val.Seek(0, io.SeekCurrent); err == nil {
+				if end, err := val.Seek(0, io.SeekEnd); err == nil {
+					if _, err := val.Seek(cur, io.SeekStart); err == nil {
+						if end >= cur {
+							size = end - cur
+						}
+					}
+				}
+			}
 		}
 		if size > -1 {
 			putInput.ContentLength = &size
@@ -195,20 +270,18 @@ func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, opts .
 		}
 		return 0, fsErr
 	}
-	escapedSrc := url.QueryEscape(buck + "/" + src)
+	escapedSrc := copySourcePath(buck, src)
 	params := &s3.CopyObjectInput{
 		Bucket:     &buck,
 		CopySource: &escapedSrc, // value must be URL-encoded
 		Key:        &dst,
 	}
+	if *srcHead.ContentLength > maxCopySize {
+		// source object is too large for a single CopyObject request:
+		// use multipart copy.
+		return NewMultiCopier(api, opts...).Copy(ctx, buck, dst, src, srcHead)
+	}
 	if _, err := api.CopyObject(ctx, params); err != nil {
-		// if the source is too large, try multipart copy.
-		// this error doesn't seem to have a specific type
-		// associated with it.
-		if strings.Contains(err.Error(), copySrcTooLarge) {
-			// source is too large for basic copy -- try multipart copy
-			return NewMultiCopier(api, opts...).Copy(ctx, buck, dst, src, srcHead)
-		}
 		return 0, pathErr("copy", src, err)
 	}
 	return *srcHead.ContentLength, nil
@@ -221,11 +294,24 @@ func remove(ctx context.Context, api RemoveAPI, b string, name string) error {
 	if name == "." {
 		return pathErr("remove", name, fs.ErrNotExist)
 	}
-	_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{
+	// Contract (WriteFS.Remove in fs/fs.go): removing a missing file must
+	// return an error satisfying errors.Is(err, fs.ErrNotExist). S3's
+	// DeleteObject is idempotent — it succeeds (204) even for missing keys —
+	// so probe existence with HeadObject first and map a not-found HEAD to
+	// fs.ErrNotExist before deleting.
+	if _, err := api.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: &b,
 		Key:    aws.String(name),
-	})
-	if err != nil {
+	}); err != nil {
+		if errIsNotExist(err) {
+			return pathErr("remove", name, fs.ErrNotExist)
+		}
+		return pathErr("remove", name, err)
+	}
+	if _, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: &b,
+		Key:    aws.String(name),
+	}); err != nil {
 		return pathErr("remove", name, err)
 	}
 	return nil
@@ -244,12 +330,17 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 		if err != nil {
 			return pathErr("removeall", name, err)
 		}
-		for _, obj := range list.Contents {
-			_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{
+		// Delete each page of listed objects with a single batch
+		// DeleteObjects request.
+		if len(list.Contents) > 0 {
+			identifiers := make([]types.ObjectIdentifier, 0, len(list.Contents))
+			for _, obj := range list.Contents {
+				identifiers = append(identifiers, types.ObjectIdentifier{Key: obj.Key})
+			}
+			if _, err := api.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 				Bucket: &buck,
-				Key:    obj.Key,
-			})
-			if err != nil {
+				Delete: &types.Delete{Objects: identifiers},
+			}); err != nil {
 				return pathErr("removeall", name, err)
 			}
 		}
@@ -283,6 +374,15 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) iter.
 				return
 			}
 			for _, s3obj := range listPage.Contents {
+				// skip S3 directory placeholder objects: zero-byte keys ending
+				// with "/" created by the S3 console or some clients to
+				// represent directories. They are not files and would
+				// otherwise appear as phantom empty files in OCFL inventories.
+				// This also skips the directory prefix's own placeholder
+				// (e.g. "dir/" when listing under prefix "dir/").
+				if strings.HasSuffix(*s3obj.Key, "/") {
+					continue
+				}
 				refPath := *s3obj.Key
 				if dir != "." {
 					refPath = strings.TrimPrefix(refPath, dir+"/")
@@ -309,8 +409,15 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) iter.
 	}
 }
 
-// s3File implements fs.File and io.Seeker
+// s3File implements fs.File and io.Seeker.
+//
+// s3File is safe for concurrent use: the mu mutex guards the mutable body
+// and offset fields across Read, Seek, and Close. Without it, concurrent
+// calls could corrupt the offset and issue overlapping GetObject requests.
 type s3File struct {
+	// mu guards body and offset, which are mutated by Read and Seek.
+	mu sync.Mutex
+
 	ctx    context.Context
 	api    OpenFileAPI
 	bucket string
@@ -318,6 +425,7 @@ type s3File struct {
 	body   io.ReadCloser
 	info   *s3.HeadObjectOutput
 	offset int64 // current position in the file
+	logger *slog.Logger
 }
 
 func (f *s3File) Stat() (fs.FileInfo, error) {
@@ -331,6 +439,8 @@ func (f *s3File) Stat() (fs.FileInfo, error) {
 }
 
 func (f *s3File) Read(p []byte) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	size := *f.info.ContentLength
 	if f.offset >= size {
 		return 0, io.EOF
@@ -359,6 +469,8 @@ func (f *s3File) Read(p []byte) (int, error) {
 }
 
 func (f *s3File) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.body == nil {
 		return nil
 	}
@@ -370,9 +482,13 @@ func (f *s3File) Name() string {
 }
 
 // Seek implements io.Seeker. It repositions the file offset for the next Read.
-// Seeking invalidates any existing body reader, causing the next Read to
-// issue a new GetObject request with the appropriate Range header.
+// The body reader is closed and reset (and the offset updated) atomically
+// under f.mu, so a concurrent Read never observes a stale body positioned at
+// a different offset; the next Read issues a new GetObject request with the
+// appropriate Range header.
 func (f *s3File) Seek(offset int64, whence int) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	size := *f.info.ContentLength
 	var newOffset int64
 	switch whence {
@@ -388,9 +504,13 @@ func (f *s3File) Seek(offset int64, whence int) (int64, error) {
 	if newOffset < 0 {
 		return 0, errors.New("s3: negative position")
 	}
-	// Close existing body if position changed
+	// Close existing body if position changed. The old body is discarded
+	// either way, so a close error does not fail the Seek, but it may mean
+	// a connection leaked, so log it to make it visible.
 	if f.body != nil && newOffset != f.offset {
-		f.body.Close()
+		if err := f.body.Close(); err != nil && f.logger != nil {
+			f.logger.DebugContext(f.ctx, "s3:seek:close", "bucket", f.bucket, "key", f.key, "error", err)
+		}
 		f.body = nil
 	}
 	f.offset = newOffset
@@ -466,11 +586,47 @@ func byteRange(partNum int32, partSize, totalSize int64) string {
 	return fmt.Sprintf("bytes=%d-%d", start, end)
 }
 
+// errIsNotExist reports whether err represents a missing object ("not found")
+// error from S3 or an S3-compatible store. Callers use it to map HeadObject
+// (and similar) failures to fs.ErrNotExist.
+//
+// The error shapes the AWS SDK v2 can produce for a missing object depend on
+// the service and on whether the error response had a body:
+//
+//   - Operations whose errors deserialize from a body (e.g. GetObject) return
+//     the typed shapes types.NotFound and types.NoSuchKey.
+//   - HeadObject against real S3 returns *smithyhttp.ResponseError with HTTP
+//     status 404 wrapping the failed error deserialization, because HEAD
+//     responses carry no body from which to deserialize an error shape.
+//   - Some S3-compatible stores (e.g. MinIO) return a HEAD 404 with an XML
+//     body whose code (commonly "NoSuchKey") is not one of the shapes
+//     HeadObject's deserializer recognizes (it only maps "NotFound"); in that
+//     case the SDK falls back to *smithy.GenericAPIError carrying the code.
 func errIsNotExist(err error) bool {
 	var notFoundErr *types.NotFound
 	if errors.As(err, &notFoundErr) {
 		return true
 	}
 	var noKeyErr *types.NoSuchKey
-	return errors.As(err, &noKeyErr)
+	if errors.As(err, &noKeyErr) {
+		return true
+	}
+	// HeadObject on a missing object: real S3 returns an HTTP 404 with no
+	// body, which surfaces as a generic smithy http response error.
+	var respErr *smithyhttp.ResponseError
+	if errors.As(err, &respErr) && respErr.Response != nil &&
+		respErr.Response.StatusCode == http.StatusNotFound {
+		return true
+	}
+	// S3-compatible stores that include an error body on HEAD 404 (e.g. MinIO
+	// with code "NoSuchKey", which HeadObject's deserializer does not map to a
+	// typed shape) surface as a generic API error carrying the code.
+	var genericErr *smithy.GenericAPIError
+	if errors.As(err, &genericErr) {
+		switch genericErr.Code {
+		case "NotFound", "NoSuchKey":
+			return true
+		}
+	}
+	return false
 }

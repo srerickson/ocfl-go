@@ -72,7 +72,7 @@ func (f *BucketFS) Bucket() string {
 
 func (f *BucketFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	f.debugLog(ctx, "s3:openfile", "bucket", f.bucket, "name", name)
-	return openFile(ctx, f.client, f.bucket, name)
+	return openFile(ctx, f.client, f.bucket, name, f.logger)
 }
 
 func (f *BucketFS) DirEntries(ctx context.Context, dir string) iter.Seq2[fs.DirEntry, error] {
@@ -84,7 +84,26 @@ func (f *BucketFS) Write(ctx context.Context, name string, r io.Reader) (int64, 
 	return f.WriteWithOptions(ctx, name, r)
 }
 
-// WriteWithOptions writes with custom optionss.
+// WriteWithOptions writes the contents of r to name in the bucket and returns
+// the number of bytes written. opts, when provided, are applied to the
+// underlying s3.PutObjectInput before the upload, allowing callers to set
+// request fields such as ContentLength, ContentType, or metadata.
+//
+// If opts do not set ContentLength, write() attempts to determine it
+// automatically from r. Auto-detection succeeds for common reader types that
+// know their own size, including fs.File, *bytes.Reader, *io.LimitedReader,
+// *os.File, *strings.Reader, and other io.Seeker implementations. When
+// auto-detection fails (for example, when r is a reader without a known size)
+// or is undesirable, set ContentLength explicitly via an option:
+//
+//	length := int64(len(data))
+//	err := fsys.WriteWithOptions(ctx, name, r, func(in *s3.PutObjectInput) {
+//		in.ContentLength = &length
+//	})
+//
+// Without a ContentLength the uploader cannot know the stream size up front
+// and may need to buffer or chunk the upload, so setting it explicitly is
+// recommended whenever it cannot be auto-detected.
 func (f *BucketFS) WriteWithOptions(ctx context.Context, name string, r io.Reader, opts ...func(*s3.PutObjectInput)) (int64, error) {
 	f.debugLog(ctx, "s3:write", "bucket", f.bucket, "name", name)
 	return write(ctx, f.uploader, f.bucket, name, r, opts...)
@@ -169,6 +188,7 @@ type MultiCopyAPI interface {
 
 // RemoveAPI includes S3 methods needed for Remove()
 type RemoveAPI interface {
+	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
 	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 
@@ -176,6 +196,7 @@ type RemoveAPI interface {
 type RemoveAllAPI interface {
 	ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
 	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
+	DeleteObjects(context.Context, *s3.DeleteObjectsInput, ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error)
 }
 
 // ObjectRootsAPI includes S3 methods needed for ObjectRoots()
