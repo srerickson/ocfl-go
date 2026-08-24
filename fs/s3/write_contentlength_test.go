@@ -154,6 +154,27 @@ func TestWriteContentLengthSniffing(t *testing.T) {
 			wantBody: content,
 		},
 		{
+			// Regression (4310a03): a partially-consumed *strings.Reader
+			// (e.g. one reused after a first Write, as in the integration
+			// test TestWriteWithOptions) must report the REMAINING length,
+			// not the total size. A ContentLength larger than the body
+			// breaks the HTTP request before it reaches S3.
+			name: "*strings.Reader partially consumed",
+			reader: func(t *testing.T) (io.Reader, func(), int64) {
+				t.Helper()
+				r := strings.NewReader(string(content))
+				// advance past the first 10 bytes, leaving content[10:]
+				for i := 0; i < 10; i++ {
+					if _, err := r.ReadByte(); err != nil {
+						t.Fatalf("ReadByte: %v", err)
+					}
+				}
+				return r, func() {}, int64(len(content) - 10)
+			},
+			wantCL:   aws.Int64(int64(len(content) - 10)),
+			wantBody: content[10:],
+		},
+		{
 			// Regression: *bytes.Reader must keep its existing case.
 			name: "*bytes.Reader",
 			reader: func(t *testing.T) (io.Reader, func(), int64) {
@@ -215,8 +236,10 @@ func TestWriteContentLengthSniffing(t *testing.T) {
 }
 
 // TestWriteContentLengthRestoresPosition verifies that sniffing seeks to the
-// end and restores the original position, and that the uploaded content is
-// read from the restored position rather than from the end of the reader.
+// end and restores the original position, that the uploaded content is read
+// from the restored position rather than from the end of the reader, and that
+// ContentLength reports the REMAINING bytes (end - current offset): the
+// reader sits mid-stream at offset 4 of a 10-byte string.
 func TestWriteContentLengthRestoresPosition(t *testing.T) {
 	rec := &recordingUploader{}
 	up := newTestUploader(t, rec)
@@ -248,12 +271,16 @@ func TestWriteContentLengthRestoresPosition(t *testing.T) {
 		t.Fatal("no PutObject call recorded")
 	}
 	// The uploader must read from the restored position: the suffix
-	// starting at offset 4, not the empty remainder at the end.
+	// starting at offset 4, not the empty remainder at the end. The
+	// declared ContentLength must match those remaining 6 bytes (not the
+	// stream's total length of 10): a larger declaration would break the
+	// request on the wire (net/http rejects ContentLength larger than the
+	// delivered body).
 	if want := []byte("456789"); !bytes.Equal(call.body, want) {
 		t.Errorf("uploaded body = %q, want %q", call.body, want)
 	}
-	if call.contentLength == nil || *call.contentLength != 10 {
-		t.Errorf("ContentLength = %v, want 10", call.contentLength)
+	if call.contentLength == nil || *call.contentLength != 6 {
+		t.Errorf("ContentLength = %v, want 6", call.contentLength)
 	}
 }
 

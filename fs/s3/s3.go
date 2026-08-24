@@ -220,13 +220,18 @@ func write(ctx context.Context, uploader *manager.Uploader, buck string, key str
 			size = val.N
 		case io.Seeker:
 			// Generic seekable reader (e.g. *os.File, *strings.Reader):
-			// determine the length by seeking to the end, recording the
-			// offset, and restoring the original position. If any seek
-			// fails, leave ContentLength nil as before.
+			// determine the REMAINING length (end - current offset) by
+			// seeking to the end, recording the offset, and restoring the
+			// original position. A partially-consumed reader (e.g. a
+			// strings.Reader after a first write) must report only the
+			// bytes left, not the total size. If any seek fails, leave
+			// ContentLength nil as before.
 			if cur, err := val.Seek(0, io.SeekCurrent); err == nil {
 				if end, err := val.Seek(0, io.SeekEnd); err == nil {
 					if _, err := val.Seek(cur, io.SeekStart); err == nil {
-						size = end
+						if end >= cur {
+							size = end - cur
+						}
 					}
 				}
 			}
