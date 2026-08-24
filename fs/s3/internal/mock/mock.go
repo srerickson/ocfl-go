@@ -369,6 +369,24 @@ func (m *S3API) DeleteObject(ctx context.Context, in *s3v2.DeleteObjectInput, op
 	return out, nil
 }
 
+func (m *S3API) DeleteObjects(ctx context.Context, in *s3v2.DeleteObjectsInput, opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectsOutput, error) {
+	if err := m.bucketOK(in.Bucket); err != nil {
+		return nil, err
+	}
+	if in.Delete == nil || len(in.Delete.Objects) == 0 {
+		return nil, errors.New("delete.Objects is required")
+	}
+	out := &s3v2.DeleteObjectsOutput{}
+	for _, obj := range in.Delete.Objects {
+		if obj.Key == nil {
+			continue
+		}
+		out.Deleted = append(out.Deleted, types.DeletedObject{Key: obj.Key})
+		m.Deleted[*obj.Key] = true
+	}
+	return out, nil
+}
+
 func (m *S3API) PartCount() int {
 	num := 0
 	m.parts.Range(func(_, _ any) bool {
