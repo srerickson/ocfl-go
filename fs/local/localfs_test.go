@@ -232,11 +232,18 @@ func TestFS_Remove(t *testing.T) {
 		ctx := context.Background()
 		err = fsys.Remove(ctx, ".")
 		be.True(t, err != nil)
+		// The name == "." guard returns a PathError naming the top-level
+		// directory instead of calling os.Remove. Pin the guard's exact return
+		// value and the safety property that the root itself still exists.
 
 		var pathErr *fs.PathError
 		be.True(t, errors.As(err, &pathErr))
 		be.Equal(t, "remove", pathErr.Op)
 		be.Equal(t, ".", pathErr.Path)
+		be.Equal(t, "cannot remove top-level directory", pathErr.Err.Error())
+		if _, statErr := os.Stat(tmpDir); statErr != nil {
+			t.Fatalf("root directory was removed: %v", statErr)
+		}
 	})
 
 	t.Run("respects context cancellation", func(t *testing.T) {
@@ -244,14 +251,24 @@ func TestFS_Remove(t *testing.T) {
 		fsys, err := NewFS(tmpDir)
 		be.NilErr(t, err)
 
+		// A canceled context must abort before any OS call: create a file,
+		// cancel, and verify Remove reports the cancellation as a PathError
+		// wrapping context.Canceled without touching the file.
 		ctx, cancel := context.WithCancel(context.Background())
+		_, err = fsys.Write(ctx, "test.txt", strings.NewReader("content"))
+		be.NilErr(t, err)
 		cancel()
 
 		err = fsys.Remove(ctx, "test.txt")
-		be.True(t, err != nil)
+		be.True(t, errors.Is(err, context.Canceled))
 
 		var pathErr *fs.PathError
 		be.True(t, errors.As(err, &pathErr))
+		be.Equal(t, "remove", pathErr.Op)
+		be.Equal(t, "test.txt", pathErr.Path)
+		if _, statErr := os.Stat(filepath.Join(tmpDir, "test.txt")); statErr != nil {
+			t.Fatalf("file was removed despite canceled context: %v", statErr)
+		}
 	})
 
 	t.Run("rejects invalid path", func(t *testing.T) {
@@ -260,11 +277,25 @@ func TestFS_Remove(t *testing.T) {
 		be.NilErr(t, err)
 
 		ctx := context.Background()
-		err = fsys.Remove(ctx, "../outside")
-		be.True(t, err != nil)
+		// Traversal ("..") and other malformed names must be rejected with
+		// fs.ErrInvalid before any OS call: osPath/fs.ValidPath blocks them,
+		// pinning the security property that Remove can never escape the root.
+		invalidPaths := []string{
+			"../escape",
+			"../outside",
+			"/absolute",
+			"./file",
+		}
 
-		var pathErr *fs.PathError
-		be.True(t, errors.As(err, &pathErr))
+		for _, path := range invalidPaths {
+			err = fsys.Remove(ctx, path)
+			be.True(t, errors.Is(err, fs.ErrInvalid))
+
+			var pathErr *fs.PathError
+			be.True(t, errors.As(err, &pathErr))
+			be.Equal(t, "remove", pathErr.Op)
+			be.Equal(t, path, pathErr.Path)
+		}
 	})
 }
 
@@ -319,10 +350,19 @@ func TestFS_RemoveAll(t *testing.T) {
 		ctx := context.Background()
 		err = fsys.RemoveAll(ctx, ".")
 		be.True(t, err != nil)
+		// The name == "." guard returns a PathError naming the top-level
+		// directory instead of calling os.RemoveAll. Pin the guard's exact
+		// return value and the safety property that the root itself still
+		// exists.
 
 		var pathErr *fs.PathError
 		be.True(t, errors.As(err, &pathErr))
 		be.Equal(t, ".", pathErr.Path)
+		be.Equal(t, "remove", pathErr.Op)
+		be.Equal(t, "cannot remove top-level directory", pathErr.Err.Error())
+		if _, statErr := os.Stat(tmpDir); statErr != nil {
+			t.Fatalf("root directory was removed: %v", statErr)
+		}
 	})
 
 	t.Run("succeeds on non-existent path", func(t *testing.T) {
@@ -331,9 +371,19 @@ func TestFS_RemoveAll(t *testing.T) {
 		be.NilErr(t, err)
 
 		ctx := context.Background()
-		// RemoveAll should succeed even if path doesn't exist (like os.RemoveAll)
+		// WriteFS contract: RemoveAll on a missing path returns nil, matching
+		// os.RemoveAll. A missing path nested under an existing directory is
+		// also a no-op that leaves the sibling file untouched.
 		err = fsys.RemoveAll(ctx, "nonexistent")
 		be.NilErr(t, err)
+
+		_, err = fsys.Write(ctx, "dir/keep.txt", strings.NewReader("keep"))
+		be.NilErr(t, err)
+		err = fsys.RemoveAll(ctx, "dir/missing")
+		be.NilErr(t, err)
+		if _, statErr := os.Stat(filepath.Join(tmpDir, "dir", "keep.txt")); statErr != nil {
+			t.Fatalf("existing file removed by missing-path RemoveAll: %v", statErr)
+		}
 	})
 
 	t.Run("respects context cancellation", func(t *testing.T) {
@@ -341,14 +391,24 @@ func TestFS_RemoveAll(t *testing.T) {
 		fsys, err := NewFS(tmpDir)
 		be.NilErr(t, err)
 
+		// A canceled context must abort before any OS call: create a tree,
+		// cancel, and verify RemoveAll reports the cancellation as a PathError
+		// wrapping context.Canceled without touching the tree.
 		ctx, cancel := context.WithCancel(context.Background())
+		_, err = fsys.Write(ctx, "test/file.txt", strings.NewReader("content"))
+		be.NilErr(t, err)
 		cancel()
 
 		err = fsys.RemoveAll(ctx, "test")
-		be.True(t, err != nil)
+		be.True(t, errors.Is(err, context.Canceled))
 
 		var pathErr *fs.PathError
 		be.True(t, errors.As(err, &pathErr))
+		be.Equal(t, "remove", pathErr.Op)
+		be.Equal(t, "test", pathErr.Path)
+		if _, statErr := os.Stat(filepath.Join(tmpDir, "test", "file.txt")); statErr != nil {
+			t.Fatalf("tree removed despite canceled context: %v", statErr)
+		}
 	})
 
 	t.Run("rejects invalid path", func(t *testing.T) {
@@ -357,11 +417,26 @@ func TestFS_RemoveAll(t *testing.T) {
 		be.NilErr(t, err)
 
 		ctx := context.Background()
-		err = fsys.RemoveAll(ctx, "../outside")
-		be.True(t, err != nil)
+		// Traversal ("..") and other malformed names must be rejected with
+		// fs.ErrInvalid before any OS call: osPath/fs.ValidPath blocks them,
+		// pinning the security property that RemoveAll can never escape the
+		// root.
+		invalidPaths := []string{
+			"../escape",
+			"../outside",
+			"/absolute",
+			"./file",
+		}
 
-		var pathErr *fs.PathError
-		be.True(t, errors.As(err, &pathErr))
+		for _, path := range invalidPaths {
+			err = fsys.RemoveAll(ctx, path)
+			be.True(t, errors.Is(err, fs.ErrInvalid))
+
+			var pathErr *fs.PathError
+			be.True(t, errors.As(err, &pathErr))
+			be.Equal(t, "remove", pathErr.Op)
+			be.Equal(t, path, pathErr.Path)
+		}
 	})
 }
 
