@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,9 +72,10 @@ func (u *recordingUploader) last() *putCall {
 // every Seek call, so tests can assert exactly how write() sniffs the length
 // and that it restores the original position.
 type seekSpy struct {
-	r      io.ReadSeeker
-	seeks  []seekCall
-	failAt int // if >= 0, fail the seek at this index (0-based); -1 = never
+	r          io.ReadSeeker
+	seeks      []seekCall
+	failAt     int // if >= 0, fail the seek at this index (0-based); -1 = never
+	failOnceAt int // if >= 0, fail the seek at this index exactly once; -1 = never
 }
 
 type seekCall struct {
@@ -85,6 +87,10 @@ func (s *seekSpy) Seek(offset int64, whence int) (int64, error) {
 	if s.failAt >= 0 && s.failAt == len(s.seeks) {
 		return 0, errors.New("seek failed (injected)")
 	}
+	if s.failOnceAt >= 0 && s.failOnceAt == len(s.seeks) {
+		s.failOnceAt = -1 // fail exactly once, then recover
+		return 0, errors.New("seek failed (injected once)")
+	}
 	s.seeks = append(s.seeks, seekCall{offset, whence})
 	return s.r.Seek(offset, whence)
 }
@@ -93,7 +99,7 @@ func (s *seekSpy) Read(p []byte) (int, error) { return s.r.Read(p) }
 
 // newSeekSpy creates a seekSpy that never fails its seeks.
 func newSeekSpy(r io.ReadSeeker) *seekSpy {
-	return &seekSpy{r: r, failAt: -1}
+	return &seekSpy{r: r, failAt: -1, failOnceAt: -1}
 }
 
 // nonSeekReader is an io.Reader that does not implement io.Seeker (Read only,
@@ -317,7 +323,7 @@ func TestWriteContentLengthRestoresPosition(t *testing.T) {
 func TestWriteContentLengthSeekFailure(t *testing.T) {
 	rec := &recordingUploader{}
 	up := newTestUploader(t, rec)
-	spy := &seekSpy{r: strings.NewReader("0123456789"), failAt: 0}
+	spy := &seekSpy{r: strings.NewReader("0123456789"), failAt: 0, failOnceAt: -1}
 	if _, err := write(context.Background(), up, "bucket", "key", spy); err != nil {
 		t.Fatalf("write returned error: %v", err)
 	}
@@ -421,5 +427,157 @@ func TestWriteContentLengthPartiallyConsumedFile(t *testing.T) {
 	// request to be accepted.
 	if *call.contentLength != int64(len(call.body)) {
 		t.Errorf("ContentLength %d != delivered body length %d (request would be rejected)", *call.contentLength, len(call.body))
+	}
+}
+
+// TestWriteContentLengthSharedReader verifies the sniff leaves a shared
+// reader's position coherent: the caller consumes part of the reader, then
+// hands the SAME reader to write(). The upload must deliver exactly the
+// remaining bytes — the sniff must not leave the reader at EOF (the
+// pre-fix silent-EOF failure) or misdeclare the length. The caller's
+// accounting must add up (4 consumed + 6 uploaded = 10 total).
+func TestWriteContentLengthSharedReader(t *testing.T) {
+	rec := &recordingUploader{}
+	up := newTestUploader(t, rec)
+	r := strings.NewReader("0123456789")
+	// The caller consumes the first 4 bytes, then shares the reader with
+	// the upload path.
+	if _, err := io.CopyN(io.Discard, r, 4); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := write(context.Background(), up, "bucket", "shared-key", r); err != nil {
+		t.Fatalf("write returned error: %v", err)
+	}
+	call := rec.last()
+	if call == nil {
+		t.Fatal("no PutObject call recorded")
+	}
+	if want := []byte("456789"); !bytes.Equal(call.body, want) {
+		t.Errorf("uploaded body = %q, want %q (exactly the remaining bytes; the sniff must not skip or re-read any)", call.body, want)
+	}
+	if call.contentLength == nil || *call.contentLength != 6 {
+		t.Errorf("ContentLength = %v, want 6 (remaining bytes)", call.contentLength)
+	}
+	// Full accounting: the caller read 4 bytes, the upload consumed the
+	// remaining 6. Exactly 10 bytes total means the sniff neither rewound
+	// nor skipped data, and the reader was not left dangling at EOF.
+	if left := r.Len(); left != 0 {
+		t.Errorf("reader has %d unread bytes after write, want 0 (exactly consumed to EOF)", left)
+	}
+}
+
+// TestWriteContentLengthRestoreFailure pins the acceptance criterion that a
+// failed restore seek is a hard error: the reader is left at an unknown
+// position (typically EOF), so continuing would silently upload an empty
+// body. write() must return the error and never issue PutObject.
+func TestWriteContentLengthRestoreFailure(t *testing.T) {
+	rec := &recordingUploader{}
+	up := newTestUploader(t, rec)
+	spy := newSeekSpy(strings.NewReader("0123456789"))
+	// Position the reader mid-stream before the write.
+	if _, err := spy.Seek(4, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	spy.seeks = nil
+	// Seek order in sniffSeekerLength: 0=SeekCurrent, 1=SeekEnd,
+	// 2=restore SeekStart. Failing index 2 simulates an unrestorable
+	// reader (the pre-fix code silently uploaded from EOF here).
+	spy.failAt = 2
+	_, err := write(context.Background(), up, "bucket", "key", spy)
+	if err == nil {
+		t.Fatal("write() returned nil error when the restore seek failed")
+	}
+	// The error follows the fs contract: a *fs.PathError for the write.
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) {
+		t.Fatalf("errors.As(err, &*fs.PathError) = false, err = %T %v", err, err)
+	}
+	if pathErr.Op != "write" || pathErr.Path != "key" {
+		t.Errorf("PathError = {%q %q}, want {%q %q}", pathErr.Op, pathErr.Path, "write", "key")
+	}
+	if !strings.Contains(pathErr.Err.Error(), "restore") {
+		t.Errorf("PathError.Err = %v, want it to mention the failed restore", pathErr.Err)
+	}
+	// The critical fix: no PutObject may be issued after the sniff
+	// failed, otherwise the upload would deliver an empty body.
+	if rec.last() != nil {
+		t.Error("PutObject was called even though the restore seek failed")
+	}
+}
+
+// TestWriteContentLengthEndSeekFailure verifies the restore attempt after a
+// failed seek-to-end probe: (a) if the original position can be restored,
+// write() continues with nil ContentLength and uploads the REMAINING bytes
+// from the restored position; (b) if the restore also fails, write() errors
+// instead of uploading from an unknown position.
+func TestWriteContentLengthEndSeekFailure(t *testing.T) {
+	t.Run("restore succeeds", func(t *testing.T) {
+		rec := &recordingUploader{}
+		up := newTestUploader(t, rec)
+		spy := newSeekSpy(strings.NewReader("0123456789"))
+		if _, err := spy.Seek(4, io.SeekStart); err != nil {
+			t.Fatal(err)
+		}
+		spy.seeks = nil
+		// Fail the SeekEnd probe (index 1) exactly once; the restore
+		// SeekStart (index 2) then succeeds.
+		spy.failOnceAt = 1
+		if _, err := write(context.Background(), up, "bucket", "key", spy); err != nil {
+			t.Fatalf("write returned error: %v", err)
+		}
+		call := rec.last()
+		if call == nil {
+			t.Fatal("no PutObject call recorded")
+		}
+		if call.contentLength != nil {
+			t.Errorf("ContentLength = %d, want nil (length unknown after failed end-seek)", *call.contentLength)
+		}
+		if want := []byte("456789"); !bytes.Equal(call.body, want) {
+			t.Errorf("uploaded body = %q, want %q (upload continues from the restored position)", call.body, want)
+		}
+	})
+	t.Run("restore fails", func(t *testing.T) {
+		rec := &recordingUploader{}
+		up := newTestUploader(t, rec)
+		spy := newSeekSpy(strings.NewReader("0123456789"))
+		if _, err := spy.Seek(4, io.SeekStart); err != nil {
+			t.Fatal(err)
+		}
+		spy.seeks = nil
+		// Fail SeekEnd (index 1); the position restore (index 2) fails
+		// too, so the reader's position is unrecoverable.
+		spy.failAt = 1
+		if _, err := write(context.Background(), up, "bucket", "key", spy); err == nil {
+			t.Fatal("write() returned nil error when the end-seek and its restore both failed")
+		}
+		if rec.last() != nil {
+			t.Error("PutObject was called even though the reader position was unrecoverable")
+		}
+	})
+}
+
+// TestWriteContentLengthSeekerPastEnd verifies that a seekable reader
+// positioned beyond its end reports no length (nil ContentLength) and the
+// upload body reads as empty — the sniff must not error or declare a
+// negative/zero length that would break the request on the wire.
+func TestWriteContentLengthSeekerPastEnd(t *testing.T) {
+	rec := &recordingUploader{}
+	up := newTestUploader(t, rec)
+	spy := newSeekSpy(strings.NewReader("0123456789"))
+	if _, err := spy.Seek(15, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := write(context.Background(), up, "bucket", "key", spy); err != nil {
+		t.Fatalf("write returned error: %v", err)
+	}
+	call := rec.last()
+	if call == nil {
+		t.Fatal("no PutObject call recorded")
+	}
+	if call.contentLength != nil {
+		t.Errorf("ContentLength = %d, want nil (reader positioned past end)", *call.contentLength)
+	}
+	if len(call.body) != 0 {
+		t.Errorf("uploaded body = %q, want empty", call.body)
 	}
 }
