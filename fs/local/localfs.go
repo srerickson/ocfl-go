@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"unicode/utf8"
 
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
@@ -200,12 +201,24 @@ func (fsys *FS) Write(ctx context.Context, name string, src io.Reader) (int64, e
 // normal directory listings, and the random suffix (enforced with O_EXCL at
 // creation) prevents collisions between concurrent writers. The base is
 // truncated when needed so the full name stays within NAME_MAX (255 bytes),
-// which matters for long OCFL content names.
+// which matters for long OCFL content names. Truncation backs off to a UTF-8
+// rune boundary: slicing raw bytes at the limit can split a multibyte rune
+// in half, producing an invalid name that strict filesystems reject and that
+// breaks the name-prefix correlation between the temp file and its target.
 func tempFileName(target string) string {
 	base := filepath.Base(target)
 	const reserved = len(".") + len(".tmp-") + 16 // leading dot, suffix, hex random
 	if max := 255 - reserved; len(base) > max {
-		base = base[:max]
+		// Walk back from the byte limit to the nearest byte that starts a
+		// rune, so the slice never ends in the middle of a UTF-8 sequence.
+		// base[max] is always in range here (len(base) > max), and the
+		// cut > 0 guard stops the scan at the front of the string, so
+		// base[:cut] is a valid UTF-8 prefix for any valid UTF-8 input.
+		cut := max
+		for cut > 0 && !utf8.RuneStart(base[cut]) {
+			cut--
+		}
+		base = base[:cut]
 	}
 	return "." + base + ".tmp-" + fmt.Sprintf("%016x", rand.Uint64())
 }
