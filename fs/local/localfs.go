@@ -72,16 +72,24 @@ func (fsys *FS) SameBackend(other ocflfs.FS) bool {
 
 // Write writes the contents of src to the file named name, creating the
 // file and any missing parent directories, and returns the number of
-// bytes written. The write is atomic: src is copied to a unique temporary
-// file (.<base>.tmp-<random>) in the target's own directory, synced to
-// disk, and renamed over name only when the copy is complete. Readers of
-// name therefore never observe a partial file — a crash, a canceled
-// context, or any other failure leaves either the old file or no file at
-// name, never a truncated one. On any failure before the rename the
-// temporary file is removed (best-effort), so failed writes do not leak
-// temp files. If name already exists, its permissions are preserved on
-// the replacement; otherwise the new file is created with mode 0666
-// subject to the process umask.
+// bytes written. The contents are copied to a unique temporary file
+// (.<base>.tmp-<random>) in the target's own directory, synced to disk,
+// and only the complete temp file is then moved over name, so readers
+// never observe a partial file: a crash, a canceled context, or any
+// other failure before the move leaves either the old file or no file at
+// name, never a truncated one. On POSIX the move is an atomic os.Rename
+// replacement. On Windows, os.Rename cannot replace an existing file, so
+// the move goes through renameReplaceWindows (MoveFileEx with
+// MOVEFILE_REPLACE_EXISTING, falling back to Remove+Rename); that
+// replacement is best-effort, not atomic — a failure between the Remove
+// and the Rename can leave no file at name (see rename_windows.go). On
+// any failure before the move the temporary file is removed
+// (best-effort), so failed writes do not leak temp files. If name
+// already exists, its permissions are preserved on the replacement;
+// otherwise the new file is created with mode 0666 subject to the
+// process umask. If name is a symlink, the move replaces the link entry
+// itself — the referent is untouched, and the replacement inherits the
+// link's own mode, never the referent's.
 func (fsys *FS) Write(ctx context.Context, name string, src io.Reader) (int64, error) {
 	fullPath, err := fsys.osPath(name)
 	if err != nil {
@@ -121,7 +129,8 @@ func (fsys *FS) Write(ctx context.Context, name string, src io.Reader) (int64, e
 		preserveMode = info.Mode().Perm()
 	}
 	// Write to a unique temp file in the same directory as the target: the
-	// final rename is then atomic (same filesystem on POSIX and Windows)
+	// final move is then on the same filesystem on every platform — a
+	// requirement for os.Rename on POSIX and for the Windows rename helpers —
 	// and no partial content ever appears at fullPath. tempFileName names
 	// it .<base>.tmp-<random>, and O_CREATE|O_EXCL at creation guarantees
 	// the name is fresh even if another writer races in the same directory.
@@ -180,9 +189,11 @@ func (fsys *FS) Write(ctx context.Context, name string, src io.Reader) (int64, e
 			Err:  err,
 		}
 	}
-	// Atomic swap: readers of fullPath see either the old file or the new
-	// complete file, never a partial one.
-	if err := os.Rename(tmpPath, fullPath); err != nil {
+	// Final swap: readers of fullPath see either the old file or the new
+	// complete file, never a partial one. renameReplace is os.Rename on
+	// POSIX (an atomic replacement); on Windows it delegates to the
+	// MoveFileEx/Remove+Rename helper (best-effort — see rename_windows.go).
+	if err := renameReplace(tmpPath, fullPath); err != nil {
 		return n, &fs.PathError{
 			Op:   "write",
 			Path: name,

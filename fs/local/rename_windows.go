@@ -14,6 +14,20 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// renameReplace replaces the entry at dst with the entry at src, moving
+// src onto dst (src no longer exists afterwards). If src is a symlink,
+// the link entry itself is moved — dst becomes a symlink to the same
+// referent, which is never followed. On Windows this is always delegated
+// to renameReplaceWindows rather than tried with os.Rename first:
+// os.Rename itself maps to MoveFileEx(MOVEFILE_REPLACE_EXISTING), so a
+// failed os.Rename would already have failed the helper's first strategy,
+// and running both would add a guaranteed failing syscall to every
+// overwrite. The helper's Remove+Rename fallback is not atomic — a
+// failure between the Remove and the Rename leaves no entry at dst.
+func renameReplace(src, dst string) error {
+	return renameReplaceWindows(src, dst)
+}
+
 // renameReplaceWindows replaces the file at dst with the file at src.
 // Plain os.Rename is insufficient on Windows because it refuses to
 // overwrite an existing destination, so replacement is first attempted with
