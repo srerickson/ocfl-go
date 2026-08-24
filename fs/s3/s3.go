@@ -242,12 +242,17 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 		if err != nil {
 			return pathErr("removeall", name, err)
 		}
-		for _, obj := range list.Contents {
-			_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{
+		// Delete each page of listed objects with a single batch
+		// DeleteObjects request.
+		if len(list.Contents) > 0 {
+			identifiers := make([]types.ObjectIdentifier, 0, len(list.Contents))
+			for _, obj := range list.Contents {
+				identifiers = append(identifiers, types.ObjectIdentifier{Key: obj.Key})
+			}
+			if _, err := api.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 				Bucket: &buck,
-				Key:    obj.Key,
-			})
-			if err != nil {
+				Delete: &types.Delete{Objects: identifiers},
+			}); err != nil {
 				return pathErr("removeall", name, err)
 			}
 		}
