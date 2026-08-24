@@ -70,9 +70,14 @@ type S3API struct {
 	parts   sync.Map
 	bucket  string
 	objects map[string]*Object
+
+	// log records every request served, so tests can assert request shape
+	// without wrapping the mock. See calls.go.
+	log callLog
 }
 
 func (m *S3API) HeadObject(ctx context.Context, in *s3v2.HeadObjectInput, opts ...func(*s3v2.Options)) (*s3v2.HeadObjectOutput, error) {
+	m.log.recordKey("HeadObject", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -100,6 +105,7 @@ func headSize(obj *Object) int64 {
 }
 
 func (m *S3API) GetObject(ctx context.Context, in *s3v2.GetObjectInput, opts ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
+	m.log.recordKey("GetObject", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -126,6 +132,13 @@ func (m *S3API) GetObject(ctx context.Context, in *s3v2.GetObjectInput, opts ...
 }
 
 func (m *S3API) ListObjectsV2(ctx context.Context, in *s3v2.ListObjectsV2Input, opts ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
+	if prefix := aws.ToString(in.Prefix); prefix != "" {
+		m.log.record("ListObjectsV2", prefix)
+	} else {
+		// A bucket-wide listing names no prefix; recording "" as a key would
+		// make KeysFor("ListObjectsV2") report a key that was never sent.
+		m.log.record("ListObjectsV2")
+	}
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -198,6 +211,7 @@ func (m *S3API) ListObjectsV2(ctx context.Context, in *s3v2.ListObjectsV2Input, 
 }
 
 func (m *S3API) PutObject(ctx context.Context, in *s3v2.PutObjectInput, opts ...func(*s3v2.Options)) (*s3v2.PutObjectOutput, error) {
+	m.log.recordKey("PutObject", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -227,6 +241,7 @@ func (m *S3API) PutObject(ctx context.Context, in *s3v2.PutObjectInput, opts ...
 }
 
 func (m *S3API) CreateMultipartUpload(ctx context.Context, in *s3v2.CreateMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CreateMultipartUploadOutput, error) {
+	m.log.recordKey("CreateMultipartUpload", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -245,6 +260,7 @@ func (m *S3API) CreateMultipartUpload(ctx context.Context, in *s3v2.CreateMultip
 }
 
 func (m *S3API) UploadPart(ctx context.Context, in *s3v2.UploadPartInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartOutput, error) {
+	m.log.recordKey("UploadPart", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -266,6 +282,7 @@ func (m *S3API) UploadPart(ctx context.Context, in *s3v2.UploadPartInput, opts .
 }
 
 func (m *S3API) UploadPartCopy(ctx context.Context, in *s3v2.UploadPartCopyInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartCopyOutput, error) {
+	m.log.recordKey("UploadPartCopy", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -324,6 +341,7 @@ func (m *S3API) UploadPartCopy(ctx context.Context, in *s3v2.UploadPartCopyInput
 }
 
 func (m *S3API) CompleteMultipartUpload(ctx context.Context, in *s3v2.CompleteMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CompleteMultipartUploadOutput, error) {
+	m.log.recordKey("CompleteMultipartUpload", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -372,6 +390,7 @@ func (m *S3API) CompleteMultipartUpload(ctx context.Context, in *s3v2.CompleteMu
 }
 
 func (m *S3API) AbortMultipartUpload(ctx context.Context, in *s3v2.AbortMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.AbortMultipartUploadOutput, error) {
+	m.log.recordKey("AbortMultipartUpload", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -387,6 +406,7 @@ func (m *S3API) AbortMultipartUpload(ctx context.Context, in *s3v2.AbortMultipar
 }
 
 func (m *S3API) CopyObject(ctx context.Context, in *s3v2.CopyObjectInput, opts ...func(*s3v2.Options)) (*s3v2.CopyObjectOutput, error) {
+	m.log.recordKey("CopyObject", in.Key)
 	m.CopyObjectCalls++
 	if m.CopyObjectFunc != nil {
 		return m.CopyObjectFunc(ctx, in, opts...)
@@ -426,6 +446,7 @@ func (m *S3API) CopyObject(ctx context.Context, in *s3v2.CopyObjectInput, opts .
 }
 
 func (m *S3API) DeleteObject(ctx context.Context, in *s3v2.DeleteObjectInput, opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error) {
+	m.log.recordKey("DeleteObject", in.Key)
 	if _, err := m.getObject(in.Key); err != nil {
 		return nil, &types.NoSuchKey{}
 	}
@@ -435,6 +456,11 @@ func (m *S3API) DeleteObject(ctx context.Context, in *s3v2.DeleteObjectInput, op
 }
 
 func (m *S3API) DeleteObjects(ctx context.Context, in *s3v2.DeleteObjectsInput, opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectsOutput, error) {
+	if in.Delete != nil {
+		m.log.record("DeleteObjects", deleteObjectsKeys(in.Delete.Objects)...)
+	} else {
+		m.log.record("DeleteObjects")
+	}
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}

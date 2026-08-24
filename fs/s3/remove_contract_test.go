@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
@@ -17,32 +16,6 @@ import (
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
 	"github.com/srerickson/ocfl-go/internal/testutil"
 )
-
-// removeRecorder wraps the standard mock.S3API and records the keys passed to
-// HeadObject and DeleteObject so tests can assert the existence-check-then-
-// delete sequence the WriteFS.Remove contract requires: a missing key must
-// never reach the idempotent DeleteObject.
-type removeRecorder struct {
-	*mock.S3API
-	headObjectCalls   []string
-	deleteObjectCalls []string
-}
-
-var _ s3.RemoveAPI = (*removeRecorder)(nil)
-
-func (r *removeRecorder) HeadObject(ctx context.Context, in *s3v2.HeadObjectInput, opts ...func(*s3v2.Options)) (*s3v2.HeadObjectOutput, error) {
-	if in.Key != nil {
-		r.headObjectCalls = append(r.headObjectCalls, *in.Key)
-	}
-	return r.S3API.HeadObject(ctx, in, opts...)
-}
-
-func (r *removeRecorder) DeleteObject(ctx context.Context, in *s3v2.DeleteObjectInput, opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error) {
-	if in.Key != nil {
-		r.deleteObjectCalls = append(r.deleteObjectCalls, *in.Key)
-	}
-	return r.S3API.DeleteObject(ctx, in, opts...)
-}
 
 // TestRemove_MissingKey_ErrNotExist pins the WriteFS.Remove contract
 // (fs/fs.go) on S3: removing a key that does not exist must return an error
@@ -53,7 +26,7 @@ func (r *removeRecorder) DeleteObject(ctx context.Context, in *s3v2.DeleteObject
 // called for a key that isn't there.
 func TestRemove_MissingKey_ErrNotExist(t *testing.T) {
 	ctx := context.Background()
-	rec := &removeRecorder{S3API: mock.New(bucket, &mock.Object{Key: "keep-me", Body: []byte("x")})}
+	rec := mock.New(bucket, &mock.Object{Key: "keep-me", Body: []byte("x")})
 	fsys := s3.NewBucketFS(rec, bucket)
 	err := fsys.Remove(ctx, "no-such-key.txt")
 	be.True(t, err != nil)
@@ -63,8 +36,8 @@ func TestRemove_MissingKey_ErrNotExist(t *testing.T) {
 	be.Equal(t, "no-such-key.txt", pathErr.Path)
 	be.True(t, errors.Is(err, fs.ErrNotExist))
 	// The existence probe ran, and the idempotent DeleteObject did not.
-	be.AllEqual(t, []string{"no-such-key.txt"}, rec.headObjectCalls)
-	be.Equal(t, 0, len(rec.deleteObjectCalls))
+	be.AllEqual(t, []string{"no-such-key.txt"}, rec.KeysFor("HeadObject"))
+	be.Equal(t, 0, len(rec.KeysFor("DeleteObject")))
 	// A failed remove of a missing key must not touch other objects.
 	be.False(t, rec.Deleted["keep-me"])
 }
@@ -131,7 +104,7 @@ func TestRemove_HeadErrorPreserved(t *testing.T) {
 // issue no API calls at all, because the storage root is the bucket itself.
 func TestRemove_Dot_ErrNotExist(t *testing.T) {
 	ctx := context.Background()
-	rec := &removeRecorder{S3API: mock.New(bucket, &mock.Object{Key: "keep-me", Body: []byte("x")})}
+	rec := mock.New(bucket, &mock.Object{Key: "keep-me", Body: []byte("x")})
 	fsys := s3.NewBucketFS(rec, bucket)
 	err := fsys.Remove(ctx, ".")
 	be.True(t, err != nil)
@@ -142,8 +115,8 @@ func TestRemove_Dot_ErrNotExist(t *testing.T) {
 	be.True(t, errors.Is(err, fs.ErrNotExist))
 	// Remove(".") is a pure guard: no existence probe, no delete, and no
 	// object in the bucket is affected.
-	be.Equal(t, 0, len(rec.headObjectCalls))
-	be.Equal(t, 0, len(rec.deleteObjectCalls))
+	be.Equal(t, 0, len(rec.KeysFor("HeadObject")))
+	be.Equal(t, 0, len(rec.KeysFor("DeleteObject")))
 	be.False(t, rec.Deleted["keep-me"])
 }
 
