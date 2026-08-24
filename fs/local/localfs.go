@@ -69,6 +69,18 @@ func (fsys *FS) SameBackend(other ocflfs.FS) bool {
 	return thisRoot == otherRoot
 }
 
+// Write writes the contents of src to the file named name, creating the
+// file and any missing parent directories, and returns the number of
+// bytes written. The write is atomic: src is copied to a unique temporary
+// file (.<base>.tmp-<random>) in the target's own directory, synced to
+// disk, and renamed over name only when the copy is complete. Readers of
+// name therefore never observe a partial file — a crash, a canceled
+// context, or any other failure leaves either the old file or no file at
+// name, never a truncated one. On any failure before the rename the
+// temporary file is removed (best-effort), so failed writes do not leak
+// temp files. If name already exists, its permissions are preserved on
+// the replacement; otherwise the new file is created with mode 0666
+// subject to the process umask.
 func (fsys *FS) Write(ctx context.Context, name string, src io.Reader) (int64, error) {
 	fullPath, err := fsys.osPath(name)
 	if err != nil {

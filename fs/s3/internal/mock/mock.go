@@ -251,7 +251,11 @@ func (m *S3API) UploadPartCopy(ctx context.Context, in *s3v2.UploadPartCopyInput
 	if in.CopySource == nil {
 		return nil, errors.New("CopySource is required")
 	}
-	copySourceDecoded, err := url.QueryUnescape(*in.CopySource)
+	// Decode with PathUnescape, not QueryUnescape: S3 does not treat '+'
+	// as a space in x-amz-copy-source values (it must be sent as %2B), so
+	// the mock must not either. PathUnescape is the exact inverse of the
+	// per-segment encoding used to build the header.
+	copySourceDecoded, err := url.PathUnescape(*in.CopySource)
 	if err != nil {
 		return nil, fmt.Errorf("parsing copy source: %w", err)
 	}
@@ -365,7 +369,9 @@ func (m *S3API) CopyObject(ctx context.Context, in *s3v2.CopyObjectInput, opts .
 	if in.CopySource == nil {
 		return nil, errors.New("CopySource is required")
 	}
-	copySourceDecoded, err := url.QueryUnescape(*in.CopySource)
+	// PathUnescape (not QueryUnescape): see UploadPartCopy. S3 does not
+	// decode '+' as space in x-amz-copy-source values.
+	copySourceDecoded, err := url.PathUnescape(*in.CopySource)
 	if err != nil {
 		return nil, fmt.Errorf("parsing copy source: %w", err)
 	}

@@ -695,6 +695,28 @@ func TestWalkFiles_Mock(t *testing.T) {
 	}
 }
 
+func TestWalkFiles_SkipDirPlaceholders(t *testing.T) {
+	// S3 directory placeholder objects (zero-byte keys ending in "/"),
+	// which the S3 console and some clients create to represent
+	// directories, must not be yielded as files.
+	ctx := context.Background()
+	api := mock.New(bucket,
+		&mock.Object{Key: "dir/"},
+		&mock.Object{Key: "dir/file.txt"},
+	)
+	fsys := s3.NewBucketFS(api, bucket)
+	var files []*ocflfs.FileRef
+	for f, err := range fsys.WalkFiles(ctx, "dir") {
+		be.NilErr(t, err)
+		if f != nil {
+			files = append(files, f)
+		}
+	}
+	be.Equal(t, 1, len(files))
+	be.Equal(t, "file.txt", files[0].Path)
+	be.Equal(t, "dir/file.txt", files[0].FullPath())
+}
+
 func isInvalidPathError(t *testing.T, err error) {
 	t.Helper()
 	isPathError(t, err)

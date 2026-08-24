@@ -47,6 +47,18 @@ type FileWalker interface {
 // WriteFS is a storage backend that supports write and remove operations.
 type WriteFS interface {
 	FS
+	// Write writes the contents of buffer to the file with path name,
+	// replacing any existing file, and returns the number of bytes
+	// written. Implementations should make the write atomic where
+	// possible: name must never be observable with partially written
+	// contents, even if Write fails, its context is canceled, or the
+	// process crashes mid-write. The local filesystem implementation
+	// writes to a temporary file in the target's directory and renames
+	// it over name only after the data is fully written and synced, so
+	// a partial file is never visible (see fs/local). The s3
+	// implementation uploads the full object before it becomes visible
+	// at name. An implementation that cannot provide atomicity should
+	// document that limitation in its Write documentation.
 	Write(ctx context.Context, name string, buffer io.Reader) (int64, error)
 	// Remove the file with path name
 	Remove(ctx context.Context, name string) error
