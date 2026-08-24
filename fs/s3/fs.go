@@ -129,19 +129,12 @@ func (f *BucketFS) RemoveAll(ctx context.Context, name string) error {
 
 func (f *BucketFS) WalkFiles(ctx context.Context, dir string) iter.Seq2[*ocflfs.FileRef, error] {
 	f.debugLog(ctx, "s3:walkfiles", "bucket", f.bucket, "prefix", dir)
-	files := walkFiles(ctx, f.client, f.bucket, dir)
-	// The values yielded by walkfiles don't include the FS, we need to
-	// add it here.
-	return func(yield func(*ocflfs.FileRef, error) bool) {
-		for file, err := range files {
-			if file != nil {
-				file.FS = f
-			}
-			if !yield(file, err) {
-				break
-			}
-		}
-	}
+	// walkFiles stamps f onto every yielded FileRef itself, so BucketFS
+	// exposes the same WalkFiles semantics as the local backend directly:
+	// early termination when the yield callback returns false, and walk
+	// errors delivered as the pair's error element (nothing further
+	// yielded after), with no re-yield wrapper that could diverge.
+	return walkFiles(ctx, f, f.client, f.bucket, dir)
 }
 
 type S3API interface {

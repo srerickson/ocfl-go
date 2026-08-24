@@ -425,8 +425,11 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 	return nil
 }
 
-// walkFiles returns an iterator that yields PathInfo for files in the dir
-func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) iter.Seq2[*ocflfs.FileRef, error] {
+// walkFiles returns an iterator that yields FileRefs for files in the dir.
+// Each yielded FileRef carries fsys in its FS field, matching the contract
+// of the local fileWalk path (fs/fs.go), so callers can open files through
+// the ref without holding the backend separately.
+func walkFiles(ctx context.Context, fsys ocflfs.FS, api FilesAPI, buck string, dir string) iter.Seq2[*ocflfs.FileRef, error] {
 	return func(yield func(*ocflfs.FileRef, error) bool) {
 		const op = "list_files"
 		if !fs.ValidPath(dir) {
@@ -469,6 +472,7 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) iter.
 					refPath = strings.TrimPrefix(refPath, dir+"/")
 				}
 				info := &ocflfs.FileRef{
+					FS:      fsys,
 					BaseDir: dir,
 					Path:    refPath,
 					Info: &iofsInfo{
