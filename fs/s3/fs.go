@@ -14,6 +14,17 @@ import (
 
 // BucketFS implements ocfl.WriteFS, ocfl.CopyFS, and ocfl.ObjectRootIterator
 // for an S3 bucket.
+// Compile-time checks for the interfaces BucketFS implements, including the
+// optional ones ocflfs dispatches on ([ocflfs.SameBackend] is asserted in
+// samebackend.go).
+var (
+	_ ocflfs.WriteFS      = (*BucketFS)(nil)
+	_ ocflfs.CopyFS       = (*BucketFS)(nil)
+	_ ocflfs.RootRemover  = (*BucketFS)(nil)
+	_ ocflfs.FileWalker   = (*BucketFS)(nil)
+	_ ocflfs.DirEntriesFS = (*BucketFS)(nil)
+)
+
 type BucketFS struct {
 	client               S3API
 	bucket               string
@@ -133,6 +144,16 @@ func (f *BucketFS) Remove(ctx context.Context, name string) error {
 func (f *BucketFS) RemoveAll(ctx context.Context, name string) error {
 	f.debugLog(ctx, "s3:remove_all", "bucket", f.bucket, "name", name)
 	return removeAll(ctx, f.client, f.bucket, name)
+}
+
+// RemoveRoot implements [ocflfs.RootRemover]: it deletes every object in the
+// bucket, leaving the (conceptual) root in place. S3 has no directories, so
+// emptying the root is the same bucket-wide listing plus batched
+// DeleteObjects that RemoveAll(ctx, ".") performs — far cheaper than the
+// per-entry walk ocflfs.RemoveAll would otherwise fall back to.
+func (f *BucketFS) RemoveRoot(ctx context.Context) error {
+	f.debugLog(ctx, "s3:remove_root", "bucket", f.bucket)
+	return removeAll(ctx, f.client, f.bucket, ".")
 }
 
 func (f *BucketFS) WalkFiles(ctx context.Context, dir string) iter.Seq2[*ocflfs.FileRef, error] {

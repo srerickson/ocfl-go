@@ -44,13 +44,13 @@ func (r *removeAllDotRecorder) DeleteObject(ctx context.Context, in *s3v2.Delete
 	return r.S3API.DeleteObject(ctx, in, opts...)
 }
 
-// TestRemoveAll_Dot_UsesBatchPath pins that generic fs.RemoveAll(ctx, fsys,
-// ".") reaches the S3 backend's batched removeAll: one bucket-wide listing
-// and a single batched DeleteObjects carrying every object, with no per-key
-// DeleteObject calls — regardless of how deeply keys are nested. The old
-// fs.RemoveAll never delegated "." to the backend; it walked DirEntries(".")
-// and deleted each top-level key individually (a per-key DeleteObject), so
-// the backend's batch path was bypassed and this test fails before the fix.
+// TestRemoveAll_Dot_UsesBatchPath pins that ocflfs.RemoveAll(ctx, fsys, ".")
+// dispatches through BucketFS.RemoveRoot (ocflfs.RootRemover) to the batched
+// removeAll: one bucket-wide listing and a single batched DeleteObjects
+// carrying every object, with no per-key DeleteObject calls — regardless of
+// how deeply keys are nested. Without the RootRemover dispatch the generic
+// per-entry fallback would run instead, deleting each top-level key with its
+// own DeleteObject.
 func TestRemoveAll_Dot_UsesBatchPath(t *testing.T) {
 	keys := []string{"one.txt", "three/more/nested.txt", "two/deep.txt"}
 	objects := make([]*mock.Object, len(keys))

@@ -29,9 +29,11 @@ func (e *removeWalkEntry) Info() (fs.FileInfo, error) { return nil, errors.New("
 // (with the exact name argument, in call order) and returns scripted errors:
 //
 //   - removeErr[name] is the error Remove returns for name (nil when absent);
-//   - removeAllErr[name] is the error RemoveAll returns for name. A backend
-//     that can empty its root in one batch (S3) returns nil for "."; a backend
-//     that must not remove its storage root (local) returns an error for ".".
+//   - removeAllErr[name] is the error RemoveAll returns for name.
+//
+// removeWalkFS deliberately does NOT implement ocflfs.RootRemover, so
+// fs.RemoveAll(".") takes the generic per-entry fallback against it. See
+// rootRemoverFS for the opt-in case.
 type removeWalkFS struct {
 	entries      map[string][]*removeWalkEntry
 	removeErr    map[string]error
@@ -78,6 +80,22 @@ func (f *removeWalkFS) RemoveAll(ctx context.Context, name string) error {
 	return f.removeAllErr[name]
 }
 
+// rootRemoverFS is a removeWalkFS that additionally implements
+// ocflfs.RootRemover, standing in for a backend that can empty its own root
+// in one bulk operation (the S3 backend's bucket-wide batched delete).
+type rootRemoverFS struct {
+	*removeWalkFS
+	removeRootErr  error
+	removeRootCall int
+}
+
+var _ ocflfs.RootRemover = (*rootRemoverFS)(nil)
+
+func (f *rootRemoverFS) RemoveRoot(ctx context.Context) error {
+	f.removeRootCall++
+	return f.removeRootErr
+}
+
 // TestRemoveAll_Dot_PartialFailure pins the partial-failure semantics of
 // fs.RemoveAll("."): when one entry fails to remove, the walk must continue
 // with the remaining entries and return every per-entry failure joined with
@@ -88,13 +106,11 @@ func (f *removeWalkFS) RemoveAll(ctx context.Context, name string) error {
 func TestRemoveAll_Dot_PartialFailure(t *testing.T) {
 	errA := errors.New("remove a.txt failed")
 	errC := errors.New("remove c.txt failed")
-	errRefuseRoot := errors.New("backend refuses to remove storage root")
 	fsys := &removeWalkFS{
 		entries: map[string][]*removeWalkEntry{
 			".": {{name: "a.txt"}, {name: "b.txt"}, {name: "c.txt"}},
 		},
-		removeErr:    map[string]error{"a.txt": errA, "c.txt": errC},
-		removeAllErr: map[string]error{".": errRefuseRoot},
+		removeErr: map[string]error{"a.txt": errA, "c.txt": errC},
 	}
 
 	err := ocflfs.RemoveAll(context.Background(), fsys, ".")
@@ -103,44 +119,72 @@ func TestRemoveAll_Dot_PartialFailure(t *testing.T) {
 	be.DeepEqual(t, []string{"a.txt", "b.txt", "c.txt"}, fsys.removeCalls)
 
 	// The result is the errors.Join of every per-entry failure: both
-	// sentinels are found via errors.Is, and the backend's root-refusal
-	// error is NOT part of the result (it describes the backend guard, not
-	// a failed entry).
+	// sentinels are found via errors.Is.
 	be.Nonzero(t, err)
 	be.True(t, errors.Is(err, errA))
 	be.True(t, errors.Is(err, errC))
-	be.True(t, !errors.Is(err, errRefuseRoot))
 
-	// The backend's own RemoveAll(".") was still probed first, and the
-	// fallback walked "." exactly once.
-	be.DeepEqual(t, []string{"."}, fsys.removeAllCalls)
+	// The backend does not implement RootRemover, so its own RemoveAll was
+	// never called for "." and the fallback walked "." exactly once.
+	be.Zero(t, fsys.removeAllCalls)
 	be.DeepEqual(t, []string{"."}, fsys.dirEntriesCalls)
 }
 
-// TestRemoveAll_Dot_PrefersBackendBatch pins that fs.RemoveAll(".") delegates
-// to the backend's own RemoveAll(".") when the backend can empty the root in
-// one batch (e.g. S3: one bucket-wide listing plus batched DeleteObjects),
-// instead of deleting every top-level entry one by one. The old
-// implementation never called the backend's RemoveAll for "." — it always
-// walked — so this test fails before the fix because removeCalls is non-empty
-// and dirEntriesCalls is non-empty.
-func TestRemoveAll_Dot_PrefersBackendBatch(t *testing.T) {
-	fsys := &removeWalkFS{
-		entries: map[string][]*removeWalkEntry{
-			".": {{name: "a.txt"}, {name: "b.txt"}},
+// TestRemoveAll_Dot_UsesRootRemover pins that fs.RemoveAll(".") dispatches to
+// a backend's RemoveRoot when it implements ocflfs.RootRemover, instead of
+// deleting every top-level entry one by one. This is what lets the S3 backend
+// empty a bucket with one listing and batched DeleteObjects.
+func TestRemoveAll_Dot_UsesRootRemover(t *testing.T) {
+	fsys := &rootRemoverFS{
+		removeWalkFS: &removeWalkFS{
+			entries: map[string][]*removeWalkEntry{
+				".": {{name: "a.txt"}, {name: "b.txt"}},
+			},
 		},
-		// removeAllErr has no "." entry: the backend accepts RemoveAll(".")
-		// and empties the root itself, batch-style.
 	}
 
 	err := ocflfs.RemoveAll(context.Background(), fsys, ".")
 	be.NilErr(t, err)
 
-	// The backend's batched RemoveAll(".") was called exactly once...
-	be.DeepEqual(t, []string{"."}, fsys.removeAllCalls)
-	// ...and the per-entry walk never ran: no Remove calls, no DirEntries.
+	// RemoveRoot was called exactly once...
+	be.Equal(t, 1, fsys.removeRootCall)
+	// ...and the per-entry walk never ran: no RemoveAll, Remove, or
+	// DirEntries calls.
+	be.Zero(t, fsys.removeAllCalls)
 	be.Zero(t, fsys.removeCalls)
 	be.Zero(t, fsys.dirEntriesCalls)
+}
+
+// TestRemoveAll_Dot_RootRemoverErrorPropagates pins that a RemoveRoot failure
+// is returned to the caller unchanged, with no per-entry fallback.
+//
+// A backend that implements RootRemover owns the operation, and its errors
+// are not "refusals" to be retried a different way: a bulk delete that fails
+// partway through a large bucket is indistinguishable from a backend guard,
+// so retrying with the per-entry walk would hide a real failure behind a
+// slower path (and, on S3, cost two requests per surviving object because
+// Remove HEAD-checks existence first).
+func TestRemoveAll_Dot_RootRemoverErrorPropagates(t *testing.T) {
+	errBulk := errors.New("batch delete failed after 2 pages")
+	fsys := &rootRemoverFS{
+		removeWalkFS: &removeWalkFS{
+			entries: map[string][]*removeWalkEntry{
+				".": {{name: "a.txt"}, {name: "b.txt"}},
+			},
+		},
+		removeRootErr: errBulk,
+	}
+
+	err := ocflfs.RemoveAll(context.Background(), fsys, ".")
+
+	// The backend's error reaches the caller, unwrapped and unjoined.
+	be.True(t, errors.Is(err, errBulk))
+	be.Equal(t, 1, fsys.removeRootCall)
+
+	// No fallback walk was attempted after the failure.
+	be.Zero(t, fsys.removeCalls)
+	be.Zero(t, fsys.dirEntriesCalls)
+	be.Zero(t, fsys.removeAllCalls)
 }
 
 // TestRemoveAll_Dot_RecursionPrefixedPaths pins that the "." fallback walk
@@ -149,8 +193,6 @@ func TestRemoveAll_Dot_PrefersBackendBatch(t *testing.T) {
 // the listed directory, which may be clean basenames or full relative paths,
 // and the walk must hand the backend the joined, normalized full path.
 func TestRemoveAll_Dot_RecursionPrefixedPaths(t *testing.T) {
-	errRefuseRoot := errors.New("backend refuses to remove storage root")
-
 	t.Run("nested directory recursed via RemoveAll with joined path", func(t *testing.T) {
 		// A clean basename "sub" must be dispatched to the backend's
 		// RemoveAll with the full relative path path.Join(".", "sub"),
@@ -160,15 +202,13 @@ func TestRemoveAll_Dot_RecursionPrefixedPaths(t *testing.T) {
 				".":   {{name: "sub", isDir: true}, {name: "top.txt"}},
 				"sub": {{name: "file.txt"}},
 			},
-			removeAllErr: map[string]error{".": errRefuseRoot},
 		}
 
 		err := ocflfs.RemoveAll(context.Background(), fsys, ".")
 		be.NilErr(t, err)
 
-		// Probe of the backend's RemoveAll("."), then the recursion into
-		// the subdirectory with the joined path.
-		be.DeepEqual(t, []string{".", "sub"}, fsys.removeAllCalls)
+		// The recursion into the subdirectory uses the joined path.
+		be.DeepEqual(t, []string{"sub"}, fsys.removeAllCalls)
 		be.DeepEqual(t, []string{"top.txt"}, fsys.removeCalls)
 	})
 
@@ -183,13 +223,12 @@ func TestRemoveAll_Dot_RecursionPrefixedPaths(t *testing.T) {
 			entries: map[string][]*removeWalkEntry{
 				".": {{name: "./sub", isDir: true}, {name: "top.txt"}},
 			},
-			removeAllErr: map[string]error{".": errRefuseRoot},
 		}
 
 		err := ocflfs.RemoveAll(context.Background(), fsys, ".")
 		be.NilErr(t, err)
 
-		be.DeepEqual(t, []string{".", "sub"}, fsys.removeAllCalls)
+		be.DeepEqual(t, []string{"sub"}, fsys.removeAllCalls)
 		be.DeepEqual(t, []string{"top.txt"}, fsys.removeCalls)
 	})
 }

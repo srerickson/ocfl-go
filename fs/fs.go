@@ -91,6 +91,26 @@ type WriteFS interface {
 	RemoveAll(ctx context.Context, name string) error
 }
 
+// RootRemover is an optional interface that a [WriteFS] implementation can
+// use to report that it can empty its own top-level directory in one
+// operation. [RemoveAll] calls RemoveRoot instead of walking and deleting
+// the top-level entries one by one, which lets a backend use a bulk
+// operation (the S3 backend lists the whole bucket and deletes it with
+// batched DeleteObjects requests).
+//
+// A backend whose storage root must survive — the local backend, for
+// instance — simply does not implement this interface, and [RemoveAll]
+// falls back to the per-entry walk.
+type RootRemover interface {
+	// RemoveRoot removes the entire contents of the top-level directory
+	// without removing the directory itself. Like [WriteFS.RemoveAll] it
+	// is idempotent: an already-empty root is not an error. Errors are
+	// returned to the caller as-is; [RemoveAll] does not fall back to a
+	// per-entry walk when RemoveRoot fails, because a backend that
+	// implements this interface owns the operation.
+	RemoveRoot(ctx context.Context) error
+}
+
 // CopyFS is a storage backend that supports copying files.
 type CopyFS interface {
 	WriteFS
@@ -208,37 +228,35 @@ func Remove(ctx context.Context, fsys FS, name string) error {
 }
 
 // RemoveAll checks if fsys implements WriteFS and calls its RemoveAll method.
-// It returns ErrOpUnsupported if fsys is not a WriteFS. As a special case, if
-// name == ".", RemoveAll removes the contents of the top-level directory
-// without removing the directory itself, preferring the backend's own
-// RemoveAll when it can empty the root (the S3 backend lists the entire
-// bucket and batch-deletes every object). A backend that must not remove its
-// own root (the local backend, whose storage root must survive) refuses with
-// an error, and RemoveAll falls back to removing the top-level entries one by
-// one. That fallback is best-effort: a failed entry does not stop the walk,
-// all per-entry errors are joined, and a partial deletion may remain when an
-// error is returned. Directory recursion threads the accumulated prefix (see
-// path.Join) instead of passing bare entry names, so the walk does not assume
-// DirEntries(".") yields top-level basenames.
+// It returns ErrOpUnsupported if fsys is not a WriteFS.
+//
+// As a special case, if name == ".", RemoveAll removes the contents of the
+// top-level directory without removing the directory itself. A backend that
+// can empty its own root in one operation signals that by implementing
+// [RootRemover]; RemoveAll calls RemoveRoot and returns its error unchanged.
+// Every other backend gets the generic fallback: the top-level entries are
+// removed one by one, recursing into subdirectories. That fallback is
+// best-effort — a failed entry does not stop the walk, all per-entry errors
+// are joined, and a partial deletion may remain when an error is returned.
+// Directory recursion threads the accumulated prefix (see path.Join) instead
+// of passing bare entry names, so the walk does not assume DirEntries(".")
+// yields top-level basenames.
 func RemoveAll(ctx context.Context, fsys FS, name string) error {
 	writeFS, ok := fsys.(WriteFS)
 	if !ok {
-		return &fs.PathError{Op: "remove_all", Path: name, Err: ErrOpUnsupported}
+		return ErrOpUnsupported
 	}
 	if name != "." {
 		return writeFS.RemoveAll(ctx, name)
 	}
-	// Prefer the backend's RemoveAll for ".": when supported (e.g. S3, whose
-	// removeAll with name "." lists the whole bucket and deletes every object
-	// with batched DeleteObjects requests), it is both faster and atomic per
-	// batch than per-entry deletes. Backends that refuse to remove the
-	// top-level directory (the local backend, which must never delete the
-	// storage root) return an error here; fall through to the per-entry walk.
-	// The refusal error itself is not joined below: it describes the backend's
-	// guard, not a failed entry, and the walk either completes the removal
-	// (nil) or reports the entries that actually failed.
-	if err := writeFS.RemoveAll(ctx, "."); err == nil {
-		return nil
+	// A backend that can empty its own root owns the operation: its error
+	// is returned as-is rather than being swallowed in favor of a per-entry
+	// retry. Sniffing the error to decide whether the backend "refused" or
+	// "tried and failed" is not possible — a bulk delete that fails halfway
+	// through a large bucket is indistinguishable from a backend guard — so
+	// the capability is declared by type instead.
+	if rootRemover, ok := writeFS.(RootRemover); ok {
+		return rootRemover.RemoveRoot(ctx)
 	}
 	return removeRootEntries(ctx, fsys, ".")
 }
