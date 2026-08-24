@@ -131,3 +131,74 @@ func TestCopy_DifferentClientSlowPath(t *testing.T) {
 		t.Error("fs.Copy invoked CopyObject for different clients: SameBackend fast path must not be taken")
 	}
 }
+
+// nonComparableClient is a value-typed S3API whose struct holds a slice, so
+// the type is not comparable: evaluating == on two of these panics at
+// runtime. The embedded interface supplies the S3API method set and is never
+// called — SameBackend only inspects client identity.
+type nonComparableClient struct {
+	s3.S3API
+	tags []string
+}
+
+// comparableClient is a value-typed S3API made only of comparable fields, so
+// == is both legal and meaningful for it.
+type comparableClient struct {
+	s3.S3API
+	name string
+}
+
+// TestBucketFS_SameBackend_NonComparableClient pins that a non-pointer client
+// whose dynamic type is not comparable reports "not the same backend" instead
+// of panicking. The kind switch in sameClient does not catch this case — a
+// struct is not a pointer-like kind — so the guard has to be an explicit
+// Comparable check before ==.
+func TestBucketFS_SameBackend_NonComparableClient(t *testing.T) {
+	client := nonComparableClient{tags: []string{"x"}}
+	a := s3.NewBucketFS(client, "same-bucket")
+	b := s3.NewBucketFS(client, "same-bucket")
+
+	// The panic this guards against happens inside SameBackend, so an
+	// unguarded implementation fails the test by crashing it rather than by
+	// returning a wrong value. Recover to report it as a normal failure.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("SameBackend panicked on a non-comparable client: %v", r)
+		}
+	}()
+
+	// Identity cannot be established for this type, so the answer is false
+	// even though both FS values were built from the same client value.
+	if a.SameBackend(b) {
+		t.Error("SameBackend(non-comparable client) = true, want false (identity is undecidable)")
+	}
+	if b.SameBackend(a) {
+		t.Error("SameBackend should be symmetric for non-comparable clients")
+	}
+	// Self-comparison goes through the same path: still no panic, still false.
+	if a.SameBackend(a) {
+		t.Error("SameBackend(self, non-comparable client) = true, want false")
+	}
+}
+
+// TestBucketFS_SameBackend_ComparableValueClient pins the other half of the
+// guard: a non-pointer client that IS comparable must still be compared by
+// value, so the Comparable check does not turn every value-typed client into
+// a false.
+func TestBucketFS_SameBackend_ComparableValueClient(t *testing.T) {
+	a := s3.NewBucketFS(comparableClient{name: "one"}, "same-bucket")
+	b := s3.NewBucketFS(comparableClient{name: "one"}, "same-bucket")
+	if !a.SameBackend(b) {
+		t.Error("SameBackend(equal comparable value clients) = false, want true")
+	}
+
+	c := s3.NewBucketFS(comparableClient{name: "two"}, "same-bucket")
+	if a.SameBackend(c) {
+		t.Error("SameBackend(unequal comparable value clients) = true, want false")
+	}
+
+	// Different dynamic types never match, comparable or not.
+	if a.SameBackend(s3.NewBucketFS(nonComparableClient{}, "same-bucket")) {
+		t.Error("SameBackend(different dynamic client types) = true, want false")
+	}
+}

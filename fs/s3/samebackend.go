@@ -17,7 +17,9 @@ var _ ocflfs.SameBackend = (*BucketFS)(nil)
 // The client is compared by pointer identity: S3 clients are normally pointer
 // values (e.g. *s3.Client, *mock.S3API). For comparable, non-pointer client
 // types sharing the same dynamic type, interface equality is used as a
-// fallback. Client values of different dynamic types never match.
+// fallback. Client values of different dynamic types never match, and a
+// client type that is neither pointer-like nor comparable reports false
+// rather than panicking on the comparison.
 //
 // Only the client and bucket are compared. Other BucketFS fields (logger,
 // uploader, copy options) do not affect backend identity and are
@@ -36,9 +38,18 @@ func (f *BucketFS) SameBackend(other ocflfs.FS) bool {
 }
 
 // sameClient reports whether two S3API values refer to the same client.
-// Interface equality (==) is safe only when the dynamic type is comparable,
-// so pointer-like and other non-comparable kinds are compared by pointer
-// identity instead. Nil values are identical only to nil.
+// Nil values are identical only to nil, and values of different dynamic types
+// never match.
+//
+// Pointer-like kinds are compared by pointer identity, which is the normal
+// case: S3 clients are pointer values (*s3.Client, *mock.S3API). Anything
+// else falls back to interface equality (==), but only after checking
+// [reflect.Value.Comparable] — evaluating == on a non-comparable dynamic type
+// panics at runtime, and a client is arbitrary caller-supplied code, so the
+// kind switch alone is not enough to rule that out. A struct client with a
+// slice, map or func field is comparable neither by == nor by pointer, so it
+// reports false: SameBackend's contract is to return false when identity
+// cannot be established rather than to guess.
 func sameClient(a, b S3API) bool {
 	if a == nil || b == nil {
 		return a == b
@@ -50,7 +61,9 @@ func sameClient(a, b S3API) bool {
 	switch av.Kind() {
 	case reflect.Chan, reflect.Func, reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
 		return av.Pointer() == bv.Pointer()
-	default:
-		return a == b
 	}
+	if !av.Comparable() || !bv.Comparable() {
+		return false
+	}
+	return a == b
 }
