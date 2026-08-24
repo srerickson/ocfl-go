@@ -404,6 +404,14 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) iter.
 				return
 			}
 			for _, s3obj := range listPage.Contents {
+				// A non-AWS FilesAPI implementation may return partial
+				// entries whose Key is nil. Such objects cannot be
+				// addressed and must be skipped; dereferencing the nil
+				// pointer below would panic inside the iterator instead
+				// of returning an error.
+				if s3obj.Key == nil {
+					continue
+				}
 				// skip S3 directory placeholder objects: zero-byte keys ending
 				// with "/" created by the S3 console or some clients to
 				// represent directories. They are not files and would
@@ -422,9 +430,9 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) iter.
 					Path:    refPath,
 					Info: &iofsInfo{
 						name:    path.Base(*s3obj.Key),
-						size:    *s3obj.Size,
+						size:    aws.ToInt64(s3obj.Size),
 						mode:    fileMode,
-						modTime: *s3obj.LastModified,
+						modTime: aws.ToTime(s3obj.LastModified),
 					},
 				}
 				if !yield(info, nil) {
