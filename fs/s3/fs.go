@@ -188,6 +188,7 @@ type MultiCopyAPI interface {
 
 // RemoveAPI includes S3 methods needed for Remove()
 type RemoveAPI interface {
+	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
 	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 
