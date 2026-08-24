@@ -200,8 +200,17 @@ func Remove(ctx context.Context, fsys FS, name string) error {
 
 // RemoveAll checks if fsys implements WriteFS and calls its RemoveAll method.
 // It returns ErrOpUnsupported if fsys is not a WriteFS. As a special case, if
-// name == ".", RemoveAll reads the contents of the top-level directory and
-// calls Remove/RemoveAll for all entries.
+// name == ".", RemoveAll removes the contents of the top-level directory
+// without removing the directory itself, preferring the backend's own
+// RemoveAll when it can empty the root (the S3 backend lists the entire
+// bucket and batch-deletes every object). A backend that must not remove its
+// own root (the local backend, whose storage root must survive) refuses with
+// an error, and RemoveAll falls back to removing the top-level entries one by
+// one. That fallback is best-effort: a failed entry does not stop the walk,
+// all per-entry errors are joined, and a partial deletion may remain when an
+// error is returned. Directory recursion threads the accumulated prefix (see
+// path.Join) instead of passing bare entry names, so the walk does not assume
+// DirEntries(".") yields top-level basenames.
 func RemoveAll(ctx context.Context, fsys FS, name string) error {
 	writeFS, ok := fsys.(WriteFS)
 	if !ok {
@@ -210,10 +219,44 @@ func RemoveAll(ctx context.Context, fsys FS, name string) error {
 	if name != "." {
 		return writeFS.RemoveAll(ctx, name)
 	}
-	for entry, err := range DirEntries(ctx, fsys, ".") {
+	// Prefer the backend's RemoveAll for ".": when supported (e.g. S3, whose
+	// removeAll with name "." lists the whole bucket and deletes every object
+	// with batched DeleteObjects requests), it is both faster and atomic per
+	// batch than per-entry deletes. Backends that refuse to remove the
+	// top-level directory (the local backend, which must never delete the
+	// storage root) return an error here; fall through to the per-entry walk.
+	// The refusal error itself is not joined below: it describes the backend's
+	// guard, not a failed entry, and the walk either completes the removal
+	// (nil) or reports the entries that actually failed.
+	if err := writeFS.RemoveAll(ctx, "."); err == nil {
+		return nil
+	}
+	return removeRootEntries(ctx, fsys, ".")
+}
+
+// removeRootEntries removes the contents of the directory at dir (the
+// top-level directory when dir == ".") entry by entry, recursing into
+// subdirectories. It never removes dir itself: for the "." case the
+// top-level directory is the storage root and must survive. Removal is
+// best-effort: per-entry errors are collected with errors.Join and remaining
+// entries are still attempted, so a partial deletion is always reported.
+// Names passed to Remove/RemoveAll are full relative paths (path.Join of the
+// accumulated prefix and the entry name); DirEntries yields names relative
+// to the directory being listed, which may be basenames or full relative
+// paths, and the join is correct for both.
+func removeRootEntries(ctx context.Context, fsys FS, dir string) error {
+	var errs []error
+	for entry, err := range DirEntries(ctx, fsys, dir) {
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
+		if entry == nil {
+			// Defensive: a nil entry without an error violates the
+			// DirEntriesFS contract, but must not cause a panic.
+			continue
+		}
+		entryPath := path.Join(dir, entry.Name())
 		var removeFn func(context.Context, FS, string) error
 		switch {
 		case entry.IsDir():
@@ -221,11 +264,11 @@ func RemoveAll(ctx context.Context, fsys FS, name string) error {
 		default:
 			removeFn = Remove
 		}
-		if err := removeFn(ctx, fsys, entry.Name()); err != nil {
-			return err
+		if err := removeFn(ctx, fsys, entryPath); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Write checks if fsys implements WriteFS and calls its Write method. It
