@@ -8,10 +8,12 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"log/slog"
 	"net/url"
 	"path"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -44,7 +46,7 @@ var (
 // Compile-time check that s3File implements io.Seeker
 var _ io.Seeker = (*s3File)(nil)
 
-func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (fs.File, error) {
+func openFile(ctx context.Context, api OpenFileAPI, buck string, name string, logger *slog.Logger) (fs.File, error) {
 	if !fs.ValidPath(name) || name == "." {
 		return nil, pathErr("open", name, fs.ErrInvalid)
 	}
@@ -67,6 +69,7 @@ func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (f
 		bucket: buck,
 		key:    name,
 		info:   headOut,
+		logger: logger,
 	}
 	return f, nil
 }
@@ -162,6 +165,18 @@ func write(ctx context.Context, uploader *manager.Uploader, buck string, key str
 			size = val.Size()
 		case *io.LimitedReader:
 			size = val.N
+		case io.Seeker:
+			// Generic seekable reader (e.g. *os.File, *strings.Reader):
+			// determine the length by seeking to the end, recording the
+			// offset, and restoring the original position. If any seek
+			// fails, leave ContentLength nil as before.
+			if cur, err := val.Seek(0, io.SeekCurrent); err == nil {
+				if end, err := val.Seek(0, io.SeekEnd); err == nil {
+					if _, err := val.Seek(cur, io.SeekStart); err == nil {
+						size = end
+					}
+				}
+			}
 		}
 		if size > -1 {
 			putInput.ContentLength = &size
@@ -312,8 +327,15 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) iter.
 	}
 }
 
-// s3File implements fs.File and io.Seeker
+// s3File implements fs.File and io.Seeker.
+//
+// s3File is safe for concurrent use: the mu mutex guards the mutable body
+// and offset fields across Read, Seek, and Close. Without it, concurrent
+// calls could corrupt the offset and issue overlapping GetObject requests.
 type s3File struct {
+	// mu guards body and offset, which are mutated by Read and Seek.
+	mu sync.Mutex
+
 	ctx    context.Context
 	api    OpenFileAPI
 	bucket string
@@ -321,6 +343,7 @@ type s3File struct {
 	body   io.ReadCloser
 	info   *s3.HeadObjectOutput
 	offset int64 // current position in the file
+	logger *slog.Logger
 }
 
 func (f *s3File) Stat() (fs.FileInfo, error) {
@@ -334,6 +357,8 @@ func (f *s3File) Stat() (fs.FileInfo, error) {
 }
 
 func (f *s3File) Read(p []byte) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	size := *f.info.ContentLength
 	if f.offset >= size {
 		return 0, io.EOF
@@ -362,6 +387,8 @@ func (f *s3File) Read(p []byte) (int, error) {
 }
 
 func (f *s3File) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.body == nil {
 		return nil
 	}
@@ -373,9 +400,13 @@ func (f *s3File) Name() string {
 }
 
 // Seek implements io.Seeker. It repositions the file offset for the next Read.
-// Seeking invalidates any existing body reader, causing the next Read to
-// issue a new GetObject request with the appropriate Range header.
+// The body reader is closed and reset (and the offset updated) atomically
+// under f.mu, so a concurrent Read never observes a stale body positioned at
+// a different offset; the next Read issues a new GetObject request with the
+// appropriate Range header.
 func (f *s3File) Seek(offset int64, whence int) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	size := *f.info.ContentLength
 	var newOffset int64
 	switch whence {
@@ -391,9 +422,13 @@ func (f *s3File) Seek(offset int64, whence int) (int64, error) {
 	if newOffset < 0 {
 		return 0, errors.New("s3: negative position")
 	}
-	// Close existing body if position changed
+	// Close existing body if position changed. The old body is discarded
+	// either way, so a close error does not fail the Seek, but it may mean
+	// a connection leaked, so log it to make it visible.
 	if f.body != nil && newOffset != f.offset {
-		f.body.Close()
+		if err := f.body.Close(); err != nil && f.logger != nil {
+			f.logger.DebugContext(f.ctx, "s3:seek:close", "bucket", f.bucket, "key", f.key, "error", err)
+		}
 		f.body = nil
 	}
 	f.offset = newOffset

@@ -5,13 +5,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"iter"
+	"math/rand"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -894,6 +897,71 @@ func TestSeekCurrent_Mock(t *testing.T) {
 	be.NilErr(t, err)
 	be.Equal(t, 5, n)
 	be.Equal(t, "FGHIJ", string(buf))
+}
+
+// TestConcurrentReadSeek_Mock exercises s3File from multiple goroutines to
+// verify that Read and Seek are safe for concurrent use (run with -race).
+// Every read must return a contiguous slice of the object content, and the
+// file must remain fully readable afterwards.
+func TestConcurrentReadSeek_Mock(t *testing.T) {
+	ctx := context.Background()
+	content := []byte(strings.Repeat("0123456789abcdef", 64))
+	obj := &mock.Object{
+		Key:          "concurrent-file.txt",
+		Body:         content,
+		LastModified: time.Now(),
+	}
+	api := mock.New(bucket, obj)
+	fsys := s3.NewBucketFS(api, bucket)
+	f, err := fsys.OpenFile(ctx, obj.Key)
+	be.NilErr(t, err)
+	defer f.Close()
+
+	seeker, ok := f.(io.Seeker)
+	be.True(t, ok)
+
+	const goroutines = 8
+	const iterations = 200
+
+	var wg sync.WaitGroup
+	errs := make(chan error, goroutines)
+	for g := 0; g < goroutines; g++ {
+		rng := rand.New(rand.NewSource(int64(g + 1)))
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			buf := make([]byte, 16)
+			for i := 0; i < iterations; i++ {
+				pos := rng.Int63n(int64(len(content)))
+				if _, err := seeker.Seek(pos, io.SeekStart); err != nil {
+					errs <- fmt.Errorf("seek: %w", err)
+					return
+				}
+				n, err := f.Read(buf)
+				if err != nil && !errors.Is(err, io.EOF) {
+					errs <- fmt.Errorf("read: %w", err)
+					return
+				}
+				if n > 0 && !bytes.Contains(content, buf[:n]) {
+					errs <- fmt.Errorf("read returned bytes not present in content: %q", buf[:n])
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+
+	// The file must still be intact and fully readable after concurrent use.
+	if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+		t.Fatalf("seek to start: %v", err)
+	}
+	got, err := io.ReadAll(f)
+	be.NilErr(t, err)
+	be.True(t, bytes.Equal(content, got))
 }
 
 func TestSeekWithZip(t *testing.T) {
