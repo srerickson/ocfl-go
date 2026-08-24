@@ -190,13 +190,24 @@ func (m *S3API) PutObject(ctx context.Context, in *s3v2.PutObjectInput, opts ...
 	if in.Key == nil {
 		return nil, errors.New("key is required")
 	}
-	etag, err := md5hex(in.Body)
+	if in.Body == nil {
+		return nil, errors.New("body is required")
+	}
+	body, err := io.ReadAll(in.Body)
+	if err != nil {
+		return nil, err
+	}
+	etag, err := md5hex(bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	out := &s3v2.PutObjectOutput{
 		ETag: &etag,
 	}
+	// Materialize the object exactly like real S3: a subsequent HeadObject
+	// or GetObject of the same key must find it. Without this, the mock
+	// could not round-trip a Write followed by an OpenFile.
+	m.objects[*in.Key] = &Object{Key: *in.Key, Body: body, LastModified: time.Now()}
 	m.UpdatedETags[*in.Key] = `"` + etag + `"`
 	return out, nil
 }
