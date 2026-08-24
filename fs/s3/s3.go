@@ -337,11 +337,25 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 			for _, obj := range list.Contents {
 				identifiers = append(identifiers, types.ObjectIdentifier{Key: obj.Key})
 			}
-			if _, err := api.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+			out, err := api.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 				Bucket: &buck,
 				Delete: &types.Delete{Objects: identifiers},
-			}); err != nil {
+			})
+			if err != nil {
 				return pathErr("removeall", name, err)
+			}
+			// S3 returns HTTP 200 even when individual keys in the batch
+			// fail to delete; the per-key failures are reported in the
+			// response body's Errors list. A successful API call therefore
+			// does not by itself mean all objects were deleted, so surface
+			// any partial failures as a joined PathError.
+			if out != nil && len(out.Errors) > 0 {
+				collected := make([]error, 0, len(out.Errors))
+				for _, e := range out.Errors {
+					collected = append(collected,
+						fmt.Errorf("key %q: %s", aws.ToString(e.Key), aws.ToString(e.Message)))
+				}
+				return pathErr("removeAll", name, errors.Join(collected...))
 			}
 		}
 		params.ContinuationToken = list.NextContinuationToken
