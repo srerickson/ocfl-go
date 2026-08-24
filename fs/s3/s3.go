@@ -65,6 +65,13 @@ func openFile(ctx context.Context, api OpenFileAPI, buck string, name string, lo
 		}
 		return nil, fsErr
 	}
+	if headOut.ContentLength == nil {
+		// S3-compatible stores and proxies may omit Content-Length on
+		// HEAD responses. The object size is required for Stat, Read,
+		// and Seek below, so refuse to open rather than carry an unknown
+		// length. Mirrors the guard in MultiCopier.Copy.
+		return nil, pathErr("open", name, errors.New("missing content length"))
+	}
 	f := &s3File{
 		ctx:    ctx,
 		api:    api,
