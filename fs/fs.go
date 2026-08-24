@@ -78,7 +78,16 @@ type WriteFS interface {
 	Remove(ctx context.Context, name string) error
 	// RemoveAll removes the directory with path name and all its contents.
 	// Unlike Remove, it is idempotent: if the path does not exist, it
-	// returns nil.
+	// returns nil. Removal is best-effort: on error, the remaining
+	// entries are still attempted and all errors are joined, so a partial
+	// deletion may remain when an error is returned.
+	//
+	// For name == "." behavior is backend-dependent: an implementation
+	// may empty the top-level directory without removing the directory
+	// itself (the S3 backend deletes every object in the bucket), or
+	// refuse with an error (the local backend, whose storage root must
+	// survive). The package-level RemoveAll falls back to removing the
+	// top-level entries one by one when the backend refuses.
 	RemoveAll(ctx context.Context, name string) error
 }
 
