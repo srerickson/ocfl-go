@@ -53,6 +53,15 @@ type S3API struct {
 	// call CopyObject at all).
 	CopyObjectCalls int
 
+	// mu guards the multipart bookkeeping fields (UpdatedETags, MPUCreated,
+	// MPUAborted, MPUComplete). Real S3 clients are safe for concurrent use,
+	// and tests drive concurrent copies through one mock (e.g. the
+	// MultiCopier reuse regression test), so these writes must be
+	// synchronized — otherwise -race reports a mock bookkeeping race instead
+	// of the production race under test. Reads of the fields after a copy
+	// round are synchronized by the test's WaitGroup.
+	mu sync.Mutex
+
 	parts   sync.Map
 	bucket  string
 	objects map[string]*Object
@@ -224,7 +233,9 @@ func (m *S3API) CreateMultipartUpload(ctx context.Context, in *s3v2.CreateMultip
 		Key:      in.Key,
 		UploadId: &uploadID,
 	}
+	m.mu.Lock()
 	m.MPUCreated = true
+	m.mu.Unlock()
 	return out, nil
 }
 
@@ -348,8 +359,10 @@ func (m *S3API) CompleteMultipartUpload(ctx context.Context, in *s3v2.CompleteMu
 		Key:    in.Key,
 		ETag:   aws.String(etag),
 	}
+	m.mu.Lock()
 	m.UpdatedETags[*in.Key] = etag
 	m.MPUComplete = true
+	m.mu.Unlock()
 	return out, nil
 }
 
@@ -362,7 +375,9 @@ func (m *S3API) AbortMultipartUpload(ctx context.Context, in *s3v2.AbortMultipar
 	}
 
 	out := &s3v2.AbortMultipartUploadOutput{}
+	m.mu.Lock()
 	m.MPUAborted = true
+	m.mu.Unlock()
 	return out, nil
 }
 
