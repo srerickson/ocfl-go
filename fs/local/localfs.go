@@ -338,6 +338,12 @@ func (fsys *FS) RemoveAll(ctx context.Context, name string) error {
 			Err:  err,
 		}
 	}
+	// The trailing slash marks fullPath as a directory entry, but it is not
+	// what provides symlink safety: os.RemoveAll strips trailing separators
+	// and never follows symlinks, so a symlink at this path is removed as a
+	// link and its target — even one outside the storage root — is never
+	// touched. Keep that invariant if this call is ever rewritten (e.g. a
+	// custom recursive walk must not follow the link).
 	if err := os.RemoveAll(fullPath + "/"); err != nil {
 		return &fs.PathError{
 			Op:   "remove",

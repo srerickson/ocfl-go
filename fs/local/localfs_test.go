@@ -549,6 +549,51 @@ func TestFS_RemoveAll(t *testing.T) {
 		be.True(t, os.IsNotExist(err))
 	})
 
+	t.Run("removes symlink without following it outside the root", func(t *testing.T) {
+		// Regression pin for RemoveAll symlink safety. A symlink at a path
+		// inside the storage root must be removed as a link and never
+		// followed to its target — even when that target is a directory
+		// outside the root. (The trailing slash in the implementation is
+		// not what provides this: os.RemoveAll strips trailing separators
+		// and unlinks the entry itself, so the slash changes nothing on any
+		// supported Go. The property pinned here is the one the slash was
+		// intended to protect: RemoveAll on this path must never delete
+		// anything outside the storage root. Any rewrite that follows the
+		// link — with or without the slash — fails this test by deleting
+		// the external target.)
+		root := t.TempDir()
+		fsys, err := NewFS(root)
+		be.NilErr(t, err)
+
+		// External target: a sibling temporary directory outside the
+		// storage root, containing a known file.
+		ext := filepath.Join(t.TempDir(), "external")
+		be.NilErr(t, os.MkdirAll(ext, 0o755))
+		victim := filepath.Join(ext, "victim.txt")
+		be.NilErr(t, os.WriteFile(victim, []byte("precious"), 0o644))
+
+		// A symlink inside the storage root pointing at the external
+		// directory. Production RemoveAll appends the trailing slash to the
+		// OS path, so this exercises the production call path exactly.
+		link := filepath.Join(root, "link")
+		be.NilErr(t, os.Symlink(ext, link))
+
+		be.NilErr(t, fsys.RemoveAll(context.Background(), "link"))
+
+		// The symlink entry itself is removed...
+		if _, statErr := os.Lstat(link); !os.IsNotExist(statErr) {
+			t.Fatalf("symlink still present after RemoveAll: %v", statErr)
+		}
+		// ...and the external target directory and its file are untouched:
+		// following the link would have deleted them.
+		info, statErr := os.Stat(ext)
+		be.NilErr(t, statErr)
+		be.True(t, info.IsDir())
+		data, readErr := os.ReadFile(victim)
+		be.NilErr(t, readErr)
+		be.Equal(t, "precious", string(data))
+	})
+
 	t.Run("prevents removing root directory", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		fsys, err := NewFS(tmpDir)
