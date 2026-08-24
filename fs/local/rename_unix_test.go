@@ -2,7 +2,7 @@
 
 package local
 
-// POSIX-only tests for rename_posix.go: the symlink semantics of
+// POSIX-only tests for rename_unix.go: the symlink semantics of
 // renameReplace — the primitive FS.Write calls for its final swap — where
 // os.Rename moves link entries without following them:
 //

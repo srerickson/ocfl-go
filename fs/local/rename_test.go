@@ -1,7 +1,7 @@
 package local
 
 // Tests for the rename-replace primitive FS.Write uses for its final swap:
-// rename_posix.go on POSIX, rename_windows.go on Windows. The tests here run
+// rename_unix.go on POSIX, rename_windows.go on Windows. The tests here run
 // on every platform; the symlink cases are POSIX-only and live in
 // rename_unix_test.go, the MoveFileEx cases in rename_windows_test.go.
 

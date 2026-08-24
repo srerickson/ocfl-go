@@ -1,7 +1,7 @@
 // Package local implements an OCFL filesystem backend for a directory on the
 // local filesystem. Each operation lives in its own file: write.go holds
 // FS.Write and its atomic-write machinery, remove.go holds FS.Remove and
-// FS.RemoveAll, and rename_posix.go / rename_windows.go hold the
+// FS.RemoveAll, and rename_unix.go / rename_windows.go hold the
 // platform-specific rename-replace primitive Write relies on. This file holds
 // the FS type itself and the path handling shared by all of them.
 package local
