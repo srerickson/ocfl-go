@@ -59,6 +59,13 @@ func (fsys *WrapFS) DirEntries(ctx context.Context, name string) iter.Seq2[fs.Di
 			return
 		}
 		entries, err := fs.ReadDir(fsys.FS, name)
+		if err != nil {
+			// ReadDir failed: yield the error immediately and stop. Never
+			// yield partial entries from a failed listing (iterator contract:
+			// an error terminates iteration). Matches the s3 backend behavior.
+			yield(nil, err)
+			return
+		}
 		for _, entry := range entries {
 			if err := ctx.Err(); err != nil {
 				yield(nil, &fs.PathError{
@@ -71,9 +78,6 @@ func (fsys *WrapFS) DirEntries(ctx context.Context, name string) iter.Seq2[fs.Di
 			if !yield(entry, nil) {
 				return
 			}
-		}
-		if err != nil {
-			yield(nil, err)
 		}
 	}
 }
