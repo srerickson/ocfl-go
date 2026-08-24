@@ -17,7 +17,7 @@ import (
 )
 
 // maxCopyObjectSize mirrors the unexported maxCopySize constant in
-// fs/s3/s3.go. copy() routes a source to MultiCopier only when the HEAD
+// fs/s3/copy.go. copy() routes a source to MultiCopier only when the HEAD
 // ContentLength strictly exceeds this value. Keep in sync with the
 // implementation.
 const maxCopyObjectSize = int64(5 * 1024 * 1024 * 1024) // 5 GiB

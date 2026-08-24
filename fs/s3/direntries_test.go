@@ -20,18 +20,17 @@ import (
 	"github.com/srerickson/ocfl-go/internal/testutil"
 )
 
-// These tests pin the exact behavior of s3.dirEntries() (fs/s3/s3.go:79) for
+// These tests pin the exact behavior of s3.dirEntries() (direntries.go) for
 // prefixes that have no objects:
 //
 //   - A prefix with no objects and no common prefixes is treated as a missing
-//     directory: dirEntries yields fs.ErrNotExist (fs/s3/s3.go:103-108, the
-//     `prefixHasContent` guard introduced at fs/s3/s3.go:93).
+//     directory: dirEntries yields fs.ErrNotExist, via its
+//     `prefixHasContent` guard.
 //   - A prefix that exists only as a common prefix (object keys are nested
 //     one level deeper) is NOT empty: the CommonPrefixes alone count as
-//     content (fs/s3/s3.go:100-102,110) and are yielded as subdirectory
-//     entries (fs/s3/s3.go:112-117).
+//     content, and are yielded as subdirectory entries.
 //   - dir="." on an empty bucket is the one exception to the missing-directory
-//     rule: no Prefix is set (fs/s3/s3.go:90-92) and the first page is empty,
+//     rule: no Prefix is set and the first page is empty,
 //     but "." names the bucket itself, which always exists (a missing bucket
 //     surfaces as a ListObjectsV2 error), so it yields zero entries and no
 //     error — the same as the local backend's readdir of an existing but
@@ -105,7 +104,7 @@ func TestDirEntries_CommonPrefixOnly(t *testing.T) {
 
 func TestDirEntries_RootEmptyBucket_Empty(t *testing.T) {
 	// Case (3): dir="." on a bucket with no objects at all. No Prefix is set
-	// (fs/s3/s3.go:90-92) and the first page is empty, so dirEntries yields
+	// and the first page is empty, so dirEntries yields
 	// zero entries and no error -- never fs.ErrNotExist. The root always
 	// exists (it is the bucket itself), so an empty bucket reads as an
 	// empty directory, matching the local backend (localfs_test.go, "empty

@@ -2,8 +2,8 @@
 
 package local
 
-// localfs_symlink_test.go pins mode handling in FS.Write when the target is a
-// symlink. The atomic write (temp file + rename) replaces the target entry, so
+// POSIX-only tests for write.go: mode handling in FS.Write when the target
+// is a symlink. The atomic write (temp file + rename) replaces the target entry, so
 // the question is which mode the replacement regular file gets.
 //
 // Neither mode available at the target is the right one to copy. os.Stat would

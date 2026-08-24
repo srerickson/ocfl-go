@@ -42,7 +42,7 @@ type WriteFSWriteContract struct {
 //
 // Atomicity itself (what a concurrent reader observes mid-write) is not
 // asserted here: it is only observable through backend-specific machinery,
-// and the local backend covers it in fs/local/atomic_write_test.go.
+// and the local backend covers it in fs/local/write_internal_test.go.
 func TestWriteFSWriteContract(t *testing.T, fsys ocflfs.WriteFS, contract WriteFSWriteContract) {
 	t.Helper()
 	ctx := context.Background()

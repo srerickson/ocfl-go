@@ -1,22 +1,13 @@
 package local
 
-// atomic_write_test.go pins the atomic-write contract of FS.Write:
-// write-to-temp-file-in-same-directory + rename. Each test is written to
-// fail against the pre-atomic implementation (which opened the target with
-// O_CREATE|O_TRUNC and copied in place with plain io.Copy):
+// Internal tests for write.go: the atomic-write sequence (temp file in the
+// target directory, then rename) and the temp-file naming that supports it.
+// These reach tempFileName, createTempFile, copyWithContext and tempPerm, so
+// they cannot live in the external local_test package.
 //
-//   - a large payload never appears truncated at the final path,
-//   - cancellation or a source error mid-write leaves the final path
-//     unchanged (absent for a new target, previous content for an existing
-//     one) and removes the temp file,
-//   - concurrent readers only ever observe the old or the new complete
-//     content, never a partial file,
-//   - the temp file lives in the target's own directory and is removed on
-//     both success and failure.
-//
-// The file is self-contained (no helpers shared with localfs_test.go) and
-// uses only the public FS API, so every failure here is a behavioral one:
-// nothing it asserts depends on the internal shape of the write path.
+// atomicTempFiles here and tmpFilesIn in write_test.go do the same job on
+// either side of that package boundary.
+
 import (
 	"bytes"
 	"context"
@@ -25,9 +16,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/carlmjohnson/be"
 )
@@ -388,4 +381,150 @@ func TestFS_WriteAtomic(t *testing.T) {
 		}
 		be.Equal(t, 0, len(atomicTempFiles(t, tmpDir)))
 	})
+}
+
+// TestFS_WriteOverwriteRegularFile covers overwriting an existing regular
+// file through the full FS.Write path: the temp file is moved over the
+// existing target, the content is replaced, and no temp files leak. On
+// Windows this is the regression case for the rename helper — before it,
+// the final os.Rename failed and the write returned an error.
+func TestFS_WriteOverwriteRegularFile(t *testing.T) {
+	root := t.TempDir()
+	fsys, err := NewFS(root)
+	be.NilErr(t, err)
+
+	target := filepath.Join(root, "doc.txt")
+	be.NilErr(t, os.WriteFile(target, []byte("old contents"), 0o644))
+
+	n, err := fsys.Write(context.Background(), "doc.txt", strings.NewReader("new contents"))
+	be.NilErr(t, err)
+	be.Equal(t, int64(len("new contents")), n)
+
+	got, err := os.ReadFile(target)
+	be.NilErr(t, err)
+	be.Equal(t, "new contents", string(got))
+	be.Equal(t, 0, len(atomicTempFiles(t, root)))
+}
+
+// TestFS_WriteModePreservation pins that an overwrite keeps the existing
+// target's permissions: Write must copy the old mode onto the temp file
+// (chmod before the move) instead of leaving the default temp mode
+// behind. The assertion is stability of the mode across the write, which
+// holds on every platform: on POSIX the target is 0600 and the default
+// temp mode would be 0644 &^ umask — an unpreserved write changes the
+// reported mode and fails the test; on Windows 0600 is not representable
+// (files are 0666 or 0444 read-only), so the equality assertion is the
+// meaningful cross-platform statement, and exact mode bits are left to
+// the POSIX-only symlink tests.
+func TestFS_WriteModePreservation(t *testing.T) {
+	root := t.TempDir()
+	fsys, err := NewFS(root)
+	be.NilErr(t, err)
+
+	target := filepath.Join(root, "locked.txt")
+	be.NilErr(t, os.WriteFile(target, []byte("old contents"), 0o600))
+	before, err := os.Lstat(target)
+	be.NilErr(t, err)
+
+	if _, err := fsys.Write(context.Background(), "locked.txt", strings.NewReader("new contents")); err != nil {
+		t.Fatalf("write over existing file: %v", err)
+	}
+
+	after, err := os.Lstat(target)
+	be.NilErr(t, err)
+	if after.Mode().Perm() != before.Mode().Perm() {
+		t.Fatalf("mode after overwrite = %v, want preserved mode %v", after.Mode().Perm(), before.Mode().Perm())
+	}
+	got, err := os.ReadFile(target)
+	be.NilErr(t, err)
+	be.Equal(t, "new contents", string(got))
+}
+
+// dotLen and suffixLen are the fixed parts of a tempFileName result that
+// wrap the (possibly truncated) base: the leading dot, the ".tmp-"
+// separator, and the 16 hex random digits.
+const (
+	dotLen    = len(".")          // leading dot
+	suffixLen = len(".tmp-") + 16 // ".tmp-" separator plus hex random
+)
+
+// basePortion extracts the truncated base embedded in a tempFileName result.
+func basePortion(temp string) string {
+	return temp[dotLen : len(temp)-suffixLen]
+}
+
+func TestTempFileNameUTF8(t *testing.T) {
+	t.Run("short name is unchanged", func(t *testing.T) {
+		temp := tempFileName("plain.bin")
+		be.True(t, strings.HasPrefix(temp, ".plain.bin.tmp-"))
+		be.Equal(t, dotLen+len("plain.bin")+suffixLen, len(temp))
+		be.True(t, len(temp) <= 255)
+		be.True(t, utf8.ValidString(temp))
+	})
+
+	t.Run("multibyte name under limit is not truncated", func(t *testing.T) {
+		base := strings.Repeat("é", 100) // 200 bytes, under the 233-byte budget
+		temp := tempFileName(base)
+		be.True(t, strings.HasPrefix(temp, "."+base+".tmp-"))
+		be.Equal(t, dotLen+len(base)+suffixLen, len(temp))
+		be.True(t, utf8.ValidString(temp))
+		createTempFileOnDisk(t, temp)
+	})
+
+	t.Run("long ASCII name truncates exactly at budget", func(t *testing.T) {
+		base := strings.Repeat("a", 300)
+		temp := tempFileName(base)
+		trunc := basePortion(temp)
+		be.Equal(t, 233, len(trunc))
+		be.True(t, strings.HasPrefix(base, trunc))
+		be.Equal(t, 255, len(temp))
+		be.True(t, utf8.ValidString(temp))
+		createTempFileOnDisk(t, temp)
+	})
+
+	t.Run("long multibyte name truncates on a rune boundary", func(t *testing.T) {
+		for _, tc := range []struct {
+			name  string
+			rune  string
+			count int
+		}{
+			{"latin-1 accent e", "é", 128}, // 256 bytes, 2 bytes/rune
+			{"emoji", "😀", 64},             // 256 bytes, 4 bytes/rune
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				base := strings.Repeat(tc.rune, tc.count)
+				t.Logf("base byte length: %d (>255 required)", len(base))
+				be.True(t, len(base) > 255)
+				temp := tempFileName(base)
+
+				// The full temp name must fit NAME_MAX and stay valid UTF-8:
+				// no mid-rune truncation anywhere in the name.
+				be.True(t, len(temp) <= 255)
+				be.True(t, utf8.ValidString(temp))
+
+				// Prefix correlation: the truncated base embedded in the temp
+				// name is a prefix of the original base, and the truncation
+				// only ever shortened it (never to zero for these sizes).
+				trunc := basePortion(temp)
+				be.True(t, strings.HasPrefix(base, trunc))
+				be.True(t, len(trunc) > 0)
+				be.True(t, len(trunc) <= 233)
+
+				// The temp name must actually be creatable on the filesystem.
+				createTempFileOnDisk(t, temp)
+			})
+		}
+	})
+}
+
+// createTempFileOnDisk verifies that name can be created with O_EXCL in a
+// fresh directory on the local filesystem, which is exactly what
+// createTempFile does with tempFileName's result and what strict filesystems
+// reject when a name is invalid UTF-8 or exceeds NAME_MAX.
+func createTempFileOnDisk(t *testing.T, name string) {
+	t.Helper()
+	dir := t.TempDir()
+	f, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, tempPerm)
+	be.NilErr(t, err)
+	be.NilErr(t, f.Close())
 }

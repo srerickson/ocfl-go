@@ -2,8 +2,8 @@
 
 package local
 
-// rename_symlink_test.go pins the symlink semantics of renameReplace —
-// the primitive FS.Write calls for its final swap — on POSIX, where
+// POSIX-only tests for rename_posix.go: the symlink semantics of
+// renameReplace — the primitive FS.Write calls for its final swap — where
 // os.Rename moves link entries without following them:
 //
 //   - replacing an existing symlink target with a regular file replaces
@@ -74,7 +74,7 @@ func TestRenameReplaceOverwriteSymlinkTarget(t *testing.T) {
 // destination becomes a symlink to the same referent (with the link's own
 // mode), the source path is gone, and the referent is untouched. This is
 // the POSIX rename behavior that the Lstat mode-preservation scenario in
-// localfs_symlink_test.go relies on, pinned through the renameReplace
+// write_unix_test.go relies on, pinned through the renameReplace
 // primitive rather than a raw os.Rename call.
 func TestRenameReplaceSymlinkSource(t *testing.T) {
 	dir := t.TempDir()
