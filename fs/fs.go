@@ -63,17 +63,40 @@ type CopyFS interface {
 	Copy(ctx context.Context, dst string, src string) (int64, error)
 }
 
-// Copy copies src in srcFS to dst in dstFS. If srcFS and dstFS are the same refererence
-// and it implements CopyFS, then Copy uses the fs's Copy() method.
+// SameBackend is an optional interface that an [FS] implementation can use to
+// report whether two FS values refer to the same underlying storage backend.
+// [Copy] uses it to decide whether the optimized [CopyFS] copy path is safe to
+// use when copying from srcFS to dstFS.
+type SameBackend interface {
+	// SameBackend returns true if other refers to the same underlying storage
+	// backend as the receiver. Implementations must return false if they
+	// cannot determine that other shares the receiver's backend; never assume.
+	SameBackend(other FS) bool
+}
+
+// Copy copies src in srcFS to dst in dstFS. If dstFS implements CopyFS and
+// both srcFS and dstFS implement [SameBackend] and dstFS.SameBackend(srcFS)
+// returns true (i.e. the two FS values refer to the same underlying storage),
+// Copy uses dstFS's Copy() method. Otherwise, Copy falls back to opening src
+// in srcFS and writing it to dst in dstFS.
 func Copy(ctx context.Context, dstFS FS, dst string, srcFS FS, src string) (size int64, err error) {
 	cpFS, ok := dstFS.(CopyFS)
-	// FIXME: better way to compare src and dst FS
-	if ok && dstFS == srcFS {
-		size, err = cpFS.Copy(ctx, dst, src)
-		if err != nil {
-			err = fmt.Errorf("during copy: %w", err)
+	if ok {
+		// Use the destination FS's Copy() only when both srcFS and dstFS
+		// implement SameBackend and dstFS confirms that srcFS refers to the
+		// same underlying storage. dstFS is the receiver because it is the
+		// FS that will perform the copy.
+		// FIXME: FS types that don't implement SameBackend always take the
+		// slow path, even when srcFS and dstFS refer to the same backend.
+		dstSB, dstOK := dstFS.(SameBackend)
+		_, srcOK := srcFS.(SameBackend)
+		if dstOK && srcOK && dstSB.SameBackend(srcFS) {
+			size, err = cpFS.Copy(ctx, dst, src)
+			if err != nil {
+				err = fmt.Errorf("during copy: %w", err)
+			}
+			return
 		}
-		return
 	}
 	// otherwise, manual copy
 	var srcF fs.File
