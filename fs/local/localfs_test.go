@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/carlmjohnson/be"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
@@ -110,15 +111,37 @@ func TestFS_Write(t *testing.T) {
 		fsys, err := NewFS(tmpDir)
 		be.NilErr(t, err)
 
+		// Canceled before Write: Write must return a *fs.PathError wrapping
+		// context.Canceled without touching the filesystem.
 		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // Cancel before write
+		cancel()
 
 		_, err = fsys.Write(ctx, "test.txt", strings.NewReader("content"))
-		be.True(t, err != nil)
+		be.True(t, errors.Is(err, context.Canceled))
 
 		var pathErr *fs.PathError
 		be.True(t, errors.As(err, &pathErr))
 		be.Equal(t, "write", pathErr.Op)
+		be.Equal(t, "test.txt", pathErr.Path)
+	})
+
+	t.Run("respects deadline exceeded", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		fsys, err := NewFS(tmpDir)
+		be.NilErr(t, err)
+
+		// Already-expired deadline: Write must return a *fs.PathError wrapping
+		// context.DeadlineExceeded without touching the filesystem.
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		defer cancel()
+
+		_, err = fsys.Write(ctx, "test.txt", strings.NewReader("content"))
+		be.True(t, errors.Is(err, context.DeadlineExceeded))
+
+		var pathErr *fs.PathError
+		be.True(t, errors.As(err, &pathErr))
+		be.Equal(t, "write", pathErr.Op)
+		be.Equal(t, "test.txt", pathErr.Path)
 	})
 
 	t.Run("rejects invalid path", func(t *testing.T) {
@@ -128,8 +151,12 @@ func TestFS_Write(t *testing.T) {
 
 		ctx := context.Background()
 
-		// Test various invalid paths
+		// Test various invalid paths. Traversal via ".." (e.g. "../escape")
+		// must be rejected with fs.ErrInvalid before any file is touched:
+		// osPath/fs.ValidPath blocks it, pinning the security property that
+		// Write can never escape the FS root.
 		invalidPaths := []string{
+			"../escape",
 			"../outside",
 			"/absolute",
 			"./file",
@@ -137,10 +164,12 @@ func TestFS_Write(t *testing.T) {
 
 		for _, path := range invalidPaths {
 			_, err = fsys.Write(ctx, path, strings.NewReader("content"))
-			be.True(t, err != nil)
+			be.True(t, errors.Is(err, fs.ErrInvalid))
 
 			var pathErr *fs.PathError
 			be.True(t, errors.As(err, &pathErr))
+			be.Equal(t, "write", pathErr.Op)
+			be.Equal(t, path, pathErr.Path)
 		}
 	})
 
