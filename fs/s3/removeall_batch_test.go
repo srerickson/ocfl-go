@@ -8,6 +8,7 @@ import (
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go/fs/s3"
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
+	"strconv"
 )
 
 // removeAllKey returns the i-th (zero-based) key under the "remove-all" prefix
@@ -79,4 +80,48 @@ func TestRemoveAll_BatchNoKeys(t *testing.T) {
 	be.NilErr(t, err)
 	be.Equal(t, 0, len(rec.KeyBatchesFor("DeleteObjects")))
 	be.Equal(t, 0, rec.CallCount("DeleteObject"))
+}
+
+func TestRemoveAll_Mock(t *testing.T) {
+	ctx := context.Background()
+	type testCase struct {
+		desc   string
+		bucket string
+		dir    string
+		mock   func(*testing.T) *mock.S3API
+		expect func(*testing.T, *mock.S3API, error)
+	}
+	cases := []testCase{
+		{
+			desc: "invalid path",
+			dir:  "..",
+			expect: func(t *testing.T, _ *mock.S3API, err error) {
+				isInvalidPathError(t, err)
+			},
+		}, {
+			desc:   "remove dir",
+			bucket: bucket,
+			dir:    "remove-me",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket, &mock.Object{Key: "remove-me/file"}, &mock.Object{Key: "keep-me"})
+			},
+			expect: func(t *testing.T, state *mock.S3API, err error) {
+				be.NilErr(t, err)
+				be.True(t, state.Deleted["remove-me/file"])
+				be.False(t, state.Deleted["keep-me"])
+			},
+		},
+	}
+	for i, tcase := range cases {
+		t.Run(strconv.Itoa(i)+"-"+tcase.desc, func(t *testing.T) {
+			var api *mock.S3API
+			if tcase.mock != nil {
+				api = tcase.mock(t)
+			}
+			fsys := s3.NewBucketFS(api, tcase.bucket)
+			err := fsys.RemoveAll(ctx, tcase.dir)
+			tcase.expect(t, api, err)
+		})
+	}
+
 }

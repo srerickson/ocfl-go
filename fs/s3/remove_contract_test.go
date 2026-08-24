@@ -15,6 +15,7 @@ import (
 	"github.com/srerickson/ocfl-go/fs/s3"
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
 	"github.com/srerickson/ocfl-go/internal/testutil"
+	"strconv"
 )
 
 // TestRemove_MissingKey_ErrNotExist pins the WriteFS.Remove contract
@@ -160,4 +161,47 @@ func TestRemove_Integration(t *testing.T) {
 	be.NilErr(t, err)
 	_, err = fsys.OpenFile(ctx, "root-probe.txt")
 	isNotExistError(t, "open-after-remove", err)
+}
+
+func TestRemove_Mock(t *testing.T) {
+	ctx := context.Background()
+	type testCase struct {
+		desc   string
+		bucket string
+		key    string
+		mock   func(*testing.T) *mock.S3API
+		expect func(*testing.T, *mock.S3API, error)
+	}
+	cases := []testCase{
+		{
+			desc: "invalid path",
+			key:  "../file.txt",
+			expect: func(t *testing.T, _ *mock.S3API, err error) {
+				isInvalidPathError(t, err)
+			},
+		}, {
+			desc:   "remove file",
+			bucket: bucket,
+			key:    "remove-me",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket, &mock.Object{Key: "remove-me"}, &mock.Object{Key: "keep-me"})
+			},
+			expect: func(t *testing.T, state *mock.S3API, err error) {
+				be.NilErr(t, err)
+				be.True(t, state.Deleted["remove-me"])
+				be.False(t, state.Deleted["keep-me"])
+			},
+		},
+	}
+	for i, tcase := range cases {
+		t.Run(strconv.Itoa(i)+"-"+tcase.desc, func(t *testing.T) {
+			var api *mock.S3API
+			if tcase.mock != nil {
+				api = tcase.mock(t)
+			}
+			fsys := s3.NewBucketFS(api, tcase.bucket)
+			err := fsys.Remove(ctx, tcase.key)
+			tcase.expect(t, api, err)
+		})
+	}
 }

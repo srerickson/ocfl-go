@@ -7,10 +7,14 @@ import (
 	"testing"
 
 	"github.com/carlmjohnson/be"
+	"github.com/srerickson/ocfl-go"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/fs/s3"
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
 	"github.com/srerickson/ocfl-go/internal/testutil"
+	"iter"
+	"sort"
+	"strconv"
 )
 
 // These tests pin the exact behavior of s3.dirEntries() (fs/s3/s3.go:79) for
@@ -187,4 +191,149 @@ func TestDirEntries_RootNonEmptyBucket(t *testing.T) {
 	be.True(t, !entries[0].IsDir())
 	be.Equal(t, "b", entries[1].Name())
 	be.True(t, entries[1].IsDir())
+}
+
+func TestReadDir(t *testing.T) {
+	if !testutil.S3Enabled() {
+		t.Log("s3 test service is not running")
+		return
+	}
+	fixtureFS := ocflfs.DirFS(fixtures)
+	fsys := testutil.TmpS3FS(t, fixtureFS)
+	type test struct {
+		ctx    context.Context
+		name   string
+		expect func(*testing.T, iter.Seq2[fs.DirEntry, error])
+	}
+
+	tests := map[string]test{
+		"root": {
+			name: ".",
+			expect: func(t *testing.T, entries iter.Seq2[fs.DirEntry, error]) {
+				ctx := context.Background()
+				comparDirEntries(t, entries, ocflfs.DirEntries(ctx, fixtureFS, "."))
+			},
+		},
+		"folder1": {
+			name: "folder1",
+			expect: func(t *testing.T, entries iter.Seq2[fs.DirEntry, error]) {
+				ctx := context.Background()
+				comparDirEntries(t, entries, ocflfs.DirEntries(ctx, fixtureFS, "folder1"))
+			},
+		},
+		"missing": {
+			name: "missing-dir",
+			expect: func(t *testing.T, s iter.Seq2[fs.DirEntry, error]) {
+				count := 0
+				for entry, err := range s {
+					count++
+					be.Nonzero(t, err)
+					be.True(t, errors.Is(err, fs.ErrNotExist))
+					be.Zero(t, entry)
+				}
+				be.Equal(t, 1, count)
+			},
+		},
+	}
+	for desc, test := range tests {
+		t.Run(desc, func(t *testing.T) {
+			ctx := test.ctx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			test.expect(t, fsys.DirEntries(ctx, test.name))
+		})
+	}
+}
+
+func TestReadDir_Mock(t *testing.T) {
+	ctx := context.Background()
+	type testCase struct {
+		desc   string
+		bucket string
+		dir    string
+		mock   func(*testing.T) *mock.S3API
+		expect func(*testing.T, []fs.DirEntry, error)
+	}
+	cases := []testCase{
+		{
+			desc: "invalid dir",
+			dir:  "..",
+			expect: func(t *testing.T, _ []fs.DirEntry, err error) {
+				isInvalidPathError(t, err)
+			},
+		}, {
+			desc:   "ErrNotExist",
+			bucket: bucket,
+			dir:    "missing",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket, mock.DirectoryList(10, 0, "tmp/test")...)
+			},
+			expect: func(t *testing.T, entries []fs.DirEntry, err error) {
+				isPathError(t, err)
+				be.True(t, errors.Is(err, fs.ErrNotExist))
+			},
+		}, {
+			desc:   "big directory",
+			bucket: bucket,
+			dir:    "tmp",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket, mock.DirectoryList(1500, 1501, "tmp/test")...)
+			},
+			expect: func(t *testing.T, entries []fs.DirEntry, err error) {
+				be.NilErr(t, err)
+				numFiles, numDirs := 0, 0
+				for _, entry := range entries {
+					info, err := entry.Info()
+					be.NilErr(t, err)
+					be.Nonzero(t, info.Name())
+					be.Nonzero(t, entry.Name())
+					switch {
+					case entry.IsDir():
+						numDirs++
+					default:
+						numFiles++
+					}
+				}
+				be.Equal(t, 1500, numFiles)
+				be.Equal(t, 1501, numDirs)
+				be.True(t, sort.SliceIsSorted(entries, func(i, j int) bool {
+					return entries[i].Name() < entries[j].Name()
+				}))
+			},
+		}, {
+			desc:   "object root",
+			bucket: bucket,
+			dir:    "root",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket,
+					&mock.Object{Key: "root/0=ocfl_object_1.0"},
+					&mock.Object{Key: "root/inventory.json"},
+					&mock.Object{Key: "root/inventory.json.sha512"},
+					&mock.Object{Key: "root/v1/contents/file.txt"},
+					&mock.Object{Key: "root/extensions/ext01/config.json"})
+			},
+			expect: func(t *testing.T, entries []fs.DirEntry, err error) {
+				be.NilErr(t, err)
+				state := ocfl.ParseObjectDir(entries)
+				be.True(t, state.HasNamaste())
+				be.True(t, state.HasInventory())
+				be.True(t, state.HasSidecar())
+				be.True(t, state.HasVersionDir(ocfl.V(1)))
+				be.True(t, state.HasExtensions())
+				be.Equal(t, 1, len(state.VersionDirs))
+			},
+		},
+	}
+	for i, tcase := range cases {
+		t.Run(strconv.Itoa(i)+"-"+tcase.desc, func(t *testing.T) {
+			var api *mock.S3API
+			if tcase.mock != nil {
+				api = tcase.mock(t)
+			}
+			fsys := s3.NewBucketFS(api, tcase.bucket)
+			entries, err := ocflfs.ReadDir(ctx, fsys, tcase.dir)
+			tcase.expect(t, entries, err)
+		})
+	}
 }

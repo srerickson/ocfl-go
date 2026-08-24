@@ -10,6 +10,7 @@ import (
 
 	"github.com/srerickson/ocfl-go/fs/s3"
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
+	"strconv"
 )
 
 // maxCopyObjectSize mirrors the unexported maxCopySize constant in
@@ -111,4 +112,80 @@ func TestCopy_CopyObjectErrorPropagates(t *testing.T) {
 	}
 	be.Equal(t, 1, api.CopyObjectCalls)
 	be.False(t, api.MPUCreated)
+}
+
+func TestCopy_Mock(t *testing.T) {
+	ctx := context.Background()
+	type testCase struct {
+		desc      string
+		mock      func(t *testing.T) *mock.S3API
+		bucket    string
+		copyConc  int
+		copyPSize int64
+		src       string
+		dst       string
+		expect    func(*testing.T, *mock.S3API, int64, error)
+	}
+	cases := []testCase{
+		{
+			desc: "simple copy",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket, &mock.Object{
+					Key:  "src-file",
+					Body: []byte("some content"),
+				})
+			},
+			bucket: bucket,
+			src:    "src-file",
+			dst:    "dst-file",
+			expect: func(t *testing.T, state *mock.S3API, size int64, err error) {
+				be.NilErr(t, err)
+				be.Nonzero(t, state.UpdatedETags["dst-file"])
+				be.Nonzero(t, size)
+				be.Equal(t, 0, state.PartCount())
+			},
+		}, {
+			desc: "multipart copy",
+			mock: func(t *testing.T) *mock.S3API {
+				// Virtual source object: HEAD reports ContentLength > the
+				// 5 GiB maxCopySize threshold without materializing a body.
+				// copy() must route straight to MultiCopier on the declared
+				// size alone and never invoke CopyObject: the threshold is a
+				// size check, not a fallback driven by a failed CopyObject.
+				return mock.New(bucket, &mock.Object{
+					Key:           "src-file",
+					ContentLength: maxCopyObjectSize + 1,
+				})
+			},
+			bucket:    bucket,
+			src:       "src-file",
+			dst:       "dst-file",
+			copyPSize: partSize,
+			expect: func(t *testing.T, state *mock.S3API, size int64, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, maxCopyObjectSize+1, size)
+				be.Equal(t, 0, state.CopyObjectCalls)
+				be.True(t, state.MPUCreated)
+				be.True(t, state.MPUComplete)
+				be.True(t, state.PartCount() > 0)
+				be.Nonzero(t, state.UpdatedETags["dst-file"])
+			},
+		},
+	}
+	for i, tcase := range cases {
+		t.Run(strconv.Itoa(i)+"-"+tcase.desc, func(t *testing.T) {
+			var api *mock.S3API
+			if tcase.mock != nil {
+				api = tcase.mock(t)
+			}
+			copyOpts := func(mc *s3.MultiCopier) {
+				mc.Concurrency = tcase.copyConc
+				mc.PartSize = tcase.copyPSize
+			}
+			fsys := s3.NewBucketFS(api, tcase.bucket,
+				s3.WithMultiPartCopyOption(copyOpts))
+			size, err := fsys.Copy(ctx, tcase.dst, tcase.src)
+			tcase.expect(t, api, size, err)
+		})
+	}
 }
