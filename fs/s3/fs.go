@@ -136,6 +136,12 @@ func (f *BucketFS) Copy(ctx context.Context, dst, src string) (int64, error) {
 	return copy(ctx, f.client, f.bucket, dst, src, f.multiPartCopyOptions...)
 }
 
+// Remove deletes a single object. It costs two round trips, not one: S3's
+// DeleteObject succeeds for a key that does not exist, so a HeadObject probe
+// runs first to satisfy the [ocflfs.WriteFS] contract that removing a missing
+// file returns an error matching fs.ErrNotExist. Callers deleting many keys,
+// or deleting keys whose existence they do not care about, should prefer
+// RemoveAll on a prefix, which lists and deletes in batches.
 func (f *BucketFS) Remove(ctx context.Context, name string) error {
 	f.debugLog(ctx, "s3:remove", "bucket", f.bucket, "name", name)
 	return remove(ctx, f.client, f.bucket, name)
@@ -217,10 +223,11 @@ type RemoveAPI interface {
 	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 
-// RemoveAllAPI includes S3 methods needed for RemoveAll()
+// RemoveAllAPI includes S3 methods needed for RemoveAll(). It lists a prefix
+// and deletes each page in one batched request; single-key DeleteObject is
+// only needed by [RemoveAPI].
 type RemoveAllAPI interface {
 	ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
-	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 	DeleteObjects(context.Context, *s3.DeleteObjectsInput, ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error)
 }
 

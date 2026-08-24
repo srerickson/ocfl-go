@@ -233,13 +233,15 @@ func (fsys *FS) Write(ctx context.Context, name string, src io.Reader) (int64, e
 func tempFileName(target string) string {
 	base := filepath.Base(target)
 	const reserved = len(".") + len(".tmp-") + 16 // leading dot, suffix, hex random
-	if max := 255 - reserved; len(base) > max {
+	// limit, not max: shadowing the builtin here would be legal but reads
+	// badly in a size calculation.
+	if limit := 255 - reserved; len(base) > limit {
 		// Walk back from the byte limit to the nearest byte that starts a
 		// rune, so the slice never ends in the middle of a UTF-8 sequence.
-		// base[max] is always in range here (len(base) > max), and the
+		// base[limit] is always in range here (len(base) > limit), and the
 		// cut > 0 guard stops the scan at the front of the string, so
 		// base[:cut] is a valid UTF-8 prefix for any valid UTF-8 input.
-		cut := max
+		cut := limit
 		for cut > 0 && !utf8.RuneStart(base[cut]) {
 			cut--
 		}
@@ -267,35 +269,27 @@ func createTempFile(dir, target string) (string, *os.File, error) {
 	return "", nil, errors.New("unable to create a unique temp file")
 }
 
-// copyWithContext copies src to dst in chunks, checking ctx between reads so
-// a canceled or expired context aborts the copy promptly. io.Copy is not
-// used because its WriterTo shortcut would bypass these checks for sources
-// that implement io.WriterTo (e.g. strings.Reader, bytes.Reader, os.File).
-func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
-	buf := make([]byte, 32*1024)
-	var n int64
-	for {
-		if err := ctx.Err(); err != nil {
-			return n, err
-		}
-		m, rerr := src.Read(buf)
-		if m > 0 {
-			written, werr := dst.Write(buf[:m])
-			n += int64(written)
-			if werr != nil {
-				return n, werr
-			}
-			if written != m {
-				return n, io.ErrShortWrite
-			}
-		}
-		if rerr != nil {
-			if rerr == io.EOF {
-				return n, nil
-			}
-			return n, rerr
-		}
+// ctxReader wraps a reader so that a canceled or expired context aborts the
+// read. It deliberately exposes nothing but Read: hiding the underlying
+// reader's io.WriterTo (strings.Reader, bytes.Reader, *os.File) and its
+// concrete type is what keeps io.Copy and os.File.ReadFrom from taking a
+// shortcut that would bypass the context check entirely.
+type ctxReader struct {
+	ctx context.Context
+	src io.Reader
+}
+
+func (r ctxReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
 	}
+	return r.src.Read(p)
+}
+
+// copyWithContext copies src to dst, checking ctx before each read so a
+// canceled or expired context aborts the copy promptly.
+func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, error) {
+	return io.Copy(dst, ctxReader{ctx: ctx, src: src})
 }
 
 // Remove removes the file with path name. It satisfies the WriteFS.Remove

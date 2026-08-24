@@ -62,8 +62,9 @@ func (f *spyFS) Copy(ctx context.Context, dst string, src string) (int64, error)
 func (f *spyFS) SameBackend(other ocflfs.FS) bool { return f.same }
 
 // basicCopyFS implements FS, WriteFS, and CopyFS but deliberately NOT
-// SameBackend. fs.Copy must fall back for it (without panicking) because the
-// fast path requires both sides to confirm they share a backend.
+// SameBackend. As a destination it must fall back (without panicking),
+// because only the destination is asked. As a source it is a legitimate
+// candidate for the fast path: the destination decides.
 type basicCopyFS struct {
 	fsys       fstest.MapFS
 	copyCalls  []string
@@ -116,10 +117,13 @@ func (f *readOnlyFS) OpenFile(ctx context.Context, name string) (fs.File, error)
 }
 
 // TestCopy_SameBackend covers fs.Copy's decision logic: the optimized CopyFS
-// path is used exactly when both sides implement SameBackend and
+// path is used exactly when dstFS implements SameBackend and
 // dstFS.SameBackend(srcFS) is true; otherwise Copy falls back to a manual
-// read+write. In particular, the old `dstFS == srcFS` interface-value
-// comparison must not drive the decision in either direction.
+// read+write. The destination is the only side consulted — it is the FS that
+// performs the copy, and SameBackend's contract already requires it to answer
+// false when it cannot establish shared storage. In particular, the old
+// `dstFS == srcFS` interface-value comparison must not drive the decision in
+// either direction.
 func TestCopy_SameBackend(t *testing.T) {
 	const content = "some content"
 	ctx := context.Background()
@@ -155,15 +159,19 @@ func TestCopy_SameBackend(t *testing.T) {
 		be.True(t, bytes.Equal(fsys.fsys["dst-file"].Data, []byte(content)))
 	})
 
-	t.Run("fallback when srcFS does not implement SameBackend", func(t *testing.T) {
+	t.Run("optimized path when only dstFS implements SameBackend", func(t *testing.T) {
+		// srcFS is not asked and need not implement SameBackend: requiring
+		// it to would only cost a genuine same-backend pair the fast path,
+		// since a destination that answers true for storage it does not
+		// share is already violating the interface contract.
 		dstFS := &spyFS{fsys: fstest.MapFS{}, same: true}
 		srcFS := &basicCopyFS{fsys: fstest.MapFS{"src-file": &fstest.MapFile{Data: []byte(content)}}}
-		size, err := ocflfs.Copy(ctx, dstFS, "dst-file", srcFS, "src-file")
-		be.NilErr(t, err)
-		be.Equal(t, int64(len(content)), size)
-		be.Zero(t, dstFS.copyCalls) // fast path requires BOTH sides to implement SameBackend
-		be.AllEqual(t, []string{"dst-file"}, dstFS.writeCalls)
-		be.True(t, bytes.Equal(dstFS.fsys["dst-file"].Data, []byte(content)))
+		sentinel := errors.New("observed optimized Copy path")
+		dstFS.copyErr = sentinel
+		_, err := ocflfs.Copy(ctx, dstFS, "dst-file", srcFS, "src-file")
+		be.AllEqual(t, []string{"src-file -> dst-file"}, dstFS.copyCalls)
+		be.Zero(t, dstFS.writeCalls)
+		be.True(t, errors.Is(err, sentinel))
 	})
 
 	t.Run("fallback when dstFS does not implement SameBackend", func(t *testing.T) {
@@ -172,7 +180,7 @@ func TestCopy_SameBackend(t *testing.T) {
 		size, err := ocflfs.Copy(ctx, dstFS, "dst-file", srcFS, "src-file")
 		be.NilErr(t, err)
 		be.Equal(t, int64(len(content)), size)
-		be.Zero(t, dstFS.copyCalls) // fast path requires BOTH sides to implement SameBackend
+		be.Zero(t, dstFS.copyCalls) // the destination is the side that must answer
 		be.AllEqual(t, []string{"dst-file"}, dstFS.writeCalls)
 		be.True(t, bytes.Equal(dstFS.fsys["dst-file"].Data, []byte(content)))
 	})

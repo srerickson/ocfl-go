@@ -131,22 +131,25 @@ type SameBackend interface {
 }
 
 // Copy copies src in srcFS to dst in dstFS. If dstFS implements CopyFS and
-// both srcFS and dstFS implement [SameBackend] and dstFS.SameBackend(srcFS)
-// returns true (i.e. the two FS values refer to the same underlying storage),
-// Copy uses dstFS's Copy() method. Otherwise, Copy falls back to opening src
-// in srcFS and writing it to dst in dstFS.
+// [SameBackend], and dstFS.SameBackend(srcFS) returns true (i.e. the two FS
+// values refer to the same underlying storage), Copy uses dstFS's Copy()
+// method. Otherwise, Copy falls back to opening src in srcFS and writing it
+// to dst in dstFS.
 func Copy(ctx context.Context, dstFS FS, dst string, srcFS FS, src string) (size int64, err error) {
 	cpFS, ok := dstFS.(CopyFS)
 	if ok {
-		// Use the destination FS's Copy() only when both srcFS and dstFS
-		// implement SameBackend and dstFS confirms that srcFS refers to the
-		// same underlying storage. dstFS is the receiver because it is the
-		// FS that will perform the copy.
-		// FIXME: FS types that don't implement SameBackend always take the
+		// Use the destination FS's Copy() only when dstFS confirms that
+		// srcFS refers to the same underlying storage. dstFS is the receiver
+		// because it is the FS that will perform the copy; srcFS is not
+		// asked, and is not required to implement SameBackend itself. Only
+		// one side can answer authoritatively, and SameBackend's contract
+		// already requires an implementation to return false when it cannot
+		// establish that other shares its backend — so a second opinion from
+		// srcFS would add no safety, only a way for a same-backend pair to
+		// miss the fast path.
+		// FIXME: a dstFS that doesn't implement SameBackend always takes the
 		// slow path, even when srcFS and dstFS refer to the same backend.
-		dstSB, dstOK := dstFS.(SameBackend)
-		_, srcOK := srcFS.(SameBackend)
-		if dstOK && srcOK && dstSB.SameBackend(srcFS) {
+		if dstSB, dstOK := dstFS.(SameBackend); dstOK && dstSB.SameBackend(srcFS) {
 			size, err = cpFS.Copy(ctx, dst, src)
 			if err != nil {
 				err = fmt.Errorf("during copy: %w", err)
