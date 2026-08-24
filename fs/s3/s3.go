@@ -25,10 +25,10 @@ const (
 	megabyte          int64 = 1024 * 1024
 	partSizeIncrement       = 1 * megabyte
 
-	// error message returned when copy fails because source is too large: used
-	// to trigger multipart upload. (This appears to be the only way to check
-	// this error).
-	copySrcTooLarge = "copy source is larger than the maximum allowable size"
+	// maxCopySize is the maximum size of a source object that can be copied
+	// with a single CopyObject request. Larger objects must be copied in
+	// parts using MultiCopier.
+	maxCopySize int64 = 5 * 1024 * 1024 * 1024
 
 	// modes retured by Stat()
 	fileMode = 0644 | fs.ModeIrregular
@@ -201,14 +201,12 @@ func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, opts .
 		CopySource: &escapedSrc, // value must be URL-encoded
 		Key:        &dst,
 	}
+	if *srcHead.ContentLength > maxCopySize {
+		// source object is too large for a single CopyObject request:
+		// use multipart copy.
+		return NewMultiCopier(api, opts...).Copy(ctx, buck, dst, src, srcHead)
+	}
 	if _, err := api.CopyObject(ctx, params); err != nil {
-		// if the source is too large, try multipart copy.
-		// this error doesn't seem to have a specific type
-		// associated with it.
-		if strings.Contains(err.Error(), copySrcTooLarge) {
-			// source is too large for basic copy -- try multipart copy
-			return NewMultiCopier(api, opts...).Copy(ctx, buck, dst, src, srcHead)
-		}
 		return 0, pathErr("copy", src, err)
 	}
 	return *srcHead.ContentLength, nil
