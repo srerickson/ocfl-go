@@ -96,6 +96,12 @@ func TestRemove_MissingKey_ErrorShapes(t *testing.T) {
 			be.True(t, errors.As(err, &pathErr))
 			be.Equal(t, "remove", pathErr.Op)
 			be.Equal(t, "missing-key.txt", pathErr.Path)
+			// The not-exist mapping must wrap, not replace: the store's
+			// original error must remain reachable through the chain so
+			// status/request-ID context survives for debugging, and the
+			// direct PathError.Err must not be the sentinel itself.
+			be.True(t, errors.Is(err, tc.err))
+			be.True(t, pathErr.Err != fs.ErrNotExist)
 		})
 	}
 }

@@ -61,7 +61,7 @@ func openFile(ctx context.Context, api OpenFileAPI, buck string, name string, lo
 			Err:  err,
 		}
 		if errIsNotExist(err) {
-			fsErr.Err = fs.ErrNotExist
+			fsErr.Err = notExistErr(err)
 		}
 		return nil, fsErr
 	}
@@ -276,7 +276,7 @@ func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, opts .
 			Err:  err,
 		}
 		if errIsNotExist(err) {
-			fsErr.Err = fs.ErrNotExist
+			fsErr.Err = notExistErr(err)
 		}
 		return 0, fsErr
 	}
@@ -320,7 +320,7 @@ func remove(ctx context.Context, api RemoveAPI, b string, name string) error {
 		Key:    aws.String(name),
 	}); err != nil {
 		if errIsNotExist(err) {
-			return pathErr("remove", name, fs.ErrNotExist)
+			return pathErr("remove", name, notExistErr(err))
 		}
 		return pathErr("remove", name, err)
 	}
@@ -583,6 +583,15 @@ func (r *countReader) Read(p []byte) (int, error) {
 // pathErr makes fs.PathError errors
 func pathErr(op string, path string, err error) error {
 	return &fs.PathError{Op: op, Path: path, Err: err}
+}
+
+// notExistErr wraps fs.ErrNotExist around err instead of replacing it, so
+// callers can match the missing-file contract with errors.Is(err,
+// fs.ErrNotExist) while the original smithy/HTTP error (status code, request
+// ID, etc.) remains reachable through the unwrap chain for debugging against
+// MinIO and real S3. All not-exist error paths in this package must use it.
+func notExistErr(err error) error {
+	return fmt.Errorf("%w: %w", fs.ErrNotExist, err)
 }
 
 // adjustPartSize returns an adjusted partsize and part count for transfering

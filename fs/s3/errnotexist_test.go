@@ -55,20 +55,22 @@ func smithy404Err() error {
 // http.StatusNotFound.
 func TestOpenFileErrNotExist_Smithy404(t *testing.T) {
 	ctx := context.Background()
-	api := &headErrAPI{S3API: mock.New(bucket), headErr: smithy404Err()}
+	orig := smithy404Err()
+	api := &headErrAPI{S3API: mock.New(bucket), headErr: orig}
 	fsys := s3.NewBucketFS(api, bucket)
 	_, err := fsys.OpenFile(ctx, "missing-key.txt")
-	isNotExistError(t, "open", err)
+	notExistWraps(t, "open", err, orig)
 }
 
 // TestCopyErrNotExist_Smithy404 verifies the same mapping on the fs.Copy path,
 // which also calls HeadObject and errIsNotExist() for its source check.
 func TestCopyErrNotExist_Smithy404(t *testing.T) {
 	ctx := context.Background()
-	api := &headErrAPI{S3API: mock.New(bucket), headErr: smithy404Err()}
+	orig := smithy404Err()
+	api := &headErrAPI{S3API: mock.New(bucket), headErr: orig}
 	fsys := s3.NewBucketFS(api, bucket)
 	_, err := fsys.Copy(ctx, "dst-file.txt", "missing-src.txt")
-	isNotExistError(t, "copy", err)
+	notExistWraps(t, "copy", err, orig)
 }
 
 // isNotExistError asserts that err is a *fs.PathError wrapping fs.ErrNotExist
@@ -78,6 +80,26 @@ func isNotExistError(t *testing.T, op string, err error) {
 	isPathError(t, err)
 	t.Logf("%s: underlying error type: %T", op, err)
 	be.True(t, errors.Is(err, fs.ErrNotExist))
+}
+
+// notExistWraps is the strengthened form of isNotExistError: it asserts the
+// not-exist mapping satisfies the fs.ErrNotExist contract, and that the
+// original backend error survives in the chain instead of being replaced.
+// The replacement pattern (fsErr.Err = fs.ErrNotExist) discarded the
+// smithy/HTTP error with its status code and request ID, which is the
+// regression this task removes.
+func notExistWraps(t *testing.T, op string, err error, orig error) {
+	t.Helper()
+	isNotExistError(t, op, err)
+	// The original error must remain reachable through the unwrap chain
+	// (e.g. for errors.As or errors.Is by a caller debugging against
+	// MinIO or real S3).
+	be.True(t, errors.Is(err, orig))
+	// The direct PathError.Err must be a wrapper around the sentinel, not
+	// the sentinel substituted in place of the original error.
+	var pathErr *fs.PathError
+	be.True(t, errors.As(err, &pathErr))
+	be.True(t, pathErr.Err != fs.ErrNotExist)
 }
 
 // TestOpenFileMissingKey_Integration runs against real S3 or an S3-compatible
