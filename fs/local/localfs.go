@@ -109,11 +109,15 @@ func (fsys *FS) Write(ctx context.Context, name string, src io.Reader) (int64, e
 	// Preserve the target's permissions when it already exists: the temp
 	// file is chmod'd to the exact mode (chmod is not umask-masked). For a
 	// new file, the temp file is left at tempPerm &^ umask, matching plain
-	// os.Create semantics. The stat follows symlinks, so a symlinked
-	// target's referent mode is preserved onto the new regular file that
-	// replaces the link.
+	// os.Create semantics. The target is examined with Lstat, which does
+	// not follow symlinks: a symlinked target contributes its own mode
+	// (typically 0777 on POSIX), never the referent's — the rename below
+	// replaces the link entry itself, so preserving the referent's mode
+	// would silently stamp the referent's permissions onto a brand-new
+	// regular file. Lstat errors are tolerated: a missing target simply
+	// means a new file created with the default temp mode.
 	var preserveMode fs.FileMode
-	if info, err := os.Stat(fullPath); err == nil {
+	if info, err := os.Lstat(fullPath); err == nil {
 		preserveMode = info.Mode().Perm()
 	}
 	// Write to a unique temp file in the same directory as the target: the
