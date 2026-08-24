@@ -552,8 +552,6 @@ func TestRemoveAll_Mock(t *testing.T) {
 
 func TestCopy_Mock(t *testing.T) {
 	ctx := context.Background()
-	srcSize := int64(51 * megabyte)
-	srcBody := mock.RandBytes(srcSize)
 	type testCase struct {
 		desc      string
 		mock      func(t *testing.T) *mock.S3API
@@ -585,16 +583,14 @@ func TestCopy_Mock(t *testing.T) {
 		}, {
 			desc: "multipart copy",
 			mock: func(t *testing.T) *mock.S3API {
-				api := mock.New(bucket, &mock.Object{
-					Key:  "src-file",
-					Body: srcBody,
+				// Virtual source object: HEAD reports ContentLength > the
+				// 5 GiB maxCopySize threshold without materializing a body.
+				// copy() must route straight to MultiCopier and never invoke
+				// CopyObject (the old error-string fallback is gone).
+				return mock.New(bucket, &mock.Object{
+					Key:           "src-file",
+					ContentLength: maxCopyObjectSize + 1,
 				})
-				// override the default CopyObject method to return
-				// the necessary error for initiating multipart copy
-				api.CopyObjectFunc = func(_ context.Context, _ *s3v2.CopyObjectInput, _ ...func(*s3v2.Options)) (*s3v2.CopyObjectOutput, error) {
-					return nil, errors.New("copy source is larger than the maximum allowable size")
-				}
-				return api
 			},
 			bucket:    bucket,
 			src:       "src-file",
@@ -602,9 +598,12 @@ func TestCopy_Mock(t *testing.T) {
 			copyPSize: partSize,
 			expect: func(t *testing.T, state *mock.S3API, size int64, err error) {
 				be.NilErr(t, err)
-				be.Nonzero(t, size)
-				expETag := mock.ETag(srcBody, partSize)
-				be.Equal(t, expETag, state.UpdatedETags["dst-file"])
+				be.Equal(t, maxCopyObjectSize+1, size)
+				be.Equal(t, 0, state.CopyObjectCalls)
+				be.True(t, state.MPUCreated)
+				be.True(t, state.MPUComplete)
+				be.True(t, state.PartCount() > 0)
+				be.Nonzero(t, state.UpdatedETags["dst-file"])
 			},
 		},
 	}
