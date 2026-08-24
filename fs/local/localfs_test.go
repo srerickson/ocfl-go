@@ -553,14 +553,13 @@ func TestFS_RemoveAll(t *testing.T) {
 		// Regression pin for RemoveAll symlink safety. A symlink at a path
 		// inside the storage root must be removed as a link and never
 		// followed to its target — even when that target is a directory
-		// outside the root. (The trailing slash in the implementation is
-		// not what provides this: os.RemoveAll strips trailing separators
-		// and unlinks the entry itself, so the slash changes nothing on any
-		// supported Go. The property pinned here is the one the slash was
-		// intended to protect: RemoveAll on this path must never delete
-		// anything outside the storage root. Any rewrite that follows the
-		// link — with or without the slash — fails this test by deleting
-		// the external target.)
+		// outside the root. Production RemoveAll drives removal through
+		// os.Root.RemoveAll (see the comment in RemoveAll), which unlinks
+		// the final component without following it, so the link itself is
+		// what is removed and nothing outside the storage root is touched.
+		// Any rewrite that follows the link — with or without a trailing
+		// slash on the OS path — fails this test by deleting the external
+		// target.)
 		root := t.TempDir()
 		fsys, err := NewFS(root)
 		be.NilErr(t, err)
@@ -573,8 +572,7 @@ func TestFS_RemoveAll(t *testing.T) {
 		be.NilErr(t, os.WriteFile(victim, []byte("precious"), 0o644))
 
 		// A symlink inside the storage root pointing at the external
-		// directory. Production RemoveAll appends the trailing slash to the
-		// OS path, so this exercises the production call path exactly.
+		// directory.
 		link := filepath.Join(root, "link")
 		be.NilErr(t, os.Symlink(ext, link))
 
@@ -592,6 +590,100 @@ func TestFS_RemoveAll(t *testing.T) {
 		data, readErr := os.ReadFile(victim)
 		be.NilErr(t, readErr)
 		be.Equal(t, "precious", string(data))
+	})
+
+	t.Run("rejects intermediate symlink escaping the root", func(t *testing.T) {
+		// Regression pin for RemoveAll symlink safety through INTERMEDIATE
+		// path components. os.RemoveAll opens the parent directory by full
+		// path (OpenFile(parentDir) in os.removeAll), so it FOLLOWS a
+		// symlink at an intermediate component: with name "link/subdir"
+		// and root/link -> external, the parent "link" resolves to the
+		// external directory and RemoveAll silently deletes ext/subdir
+		// (err == nil) while leaving root/link in place. The fixed
+		// implementation walks every component with openat-based
+		// operations that validate symlink targets stay within the root
+		// (os.Root), so the escape is refused with an error and the
+		// external target survives. A symlink at the FINAL component
+		// remains safe (pinned by "removes symlink without following it
+		// outside the root" above): it is unlinked as a link, never
+		// descended into.
+		root := t.TempDir()
+		fsys, err := NewFS(root)
+		be.NilErr(t, err)
+
+		// External target outside the storage root, with known content.
+		ext := filepath.Join(t.TempDir(), "external")
+		be.NilErr(t, os.MkdirAll(filepath.Join(ext, "subdir"), 0o755))
+		victim := filepath.Join(ext, "subdir", "inner.txt")
+		be.NilErr(t, os.WriteFile(victim, []byte("precious"), 0o644))
+
+		// A symlink inside the storage root pointing at the external
+		// directory. "link/subdir" is a valid name per fs.ValidPath, so
+		// the escape is not blocked by name validation; it happens when
+		// the intermediate "link" component is resolved.
+		link := filepath.Join(root, "link")
+		be.NilErr(t, os.Symlink(ext, link))
+
+		err = fsys.RemoveAll(context.Background(), "link/subdir")
+		be.True(t, err != nil)
+
+		// The refusal is reported as a PathError with the operation and
+		// name used by every other local FS error.
+		var pathErr *fs.PathError
+		be.True(t, errors.As(err, &pathErr))
+		be.Equal(t, "remove", pathErr.Op)
+		be.Equal(t, "link/subdir", pathErr.Path)
+
+		// The external target and its contents survive: the pre-fix
+		// behavior deleted them and returned nil.
+		if _, statErr := os.Stat(ext); statErr != nil {
+			t.Fatalf("external dir missing after RemoveAll: %v", statErr)
+		}
+		data, readErr := os.ReadFile(victim)
+		be.NilErr(t, readErr)
+		be.Equal(t, "precious", string(data))
+		// The planted symlink is also untouched (the removal was refused
+		// before anything under it was reached).
+		if _, statErr := os.Lstat(link); statErr != nil {
+			t.Fatalf("symlink missing after refused RemoveAll: %v", statErr)
+		}
+	})
+
+	t.Run("follows intermediate symlink staying inside the root", func(t *testing.T) {
+		// The fix must not over-reject: an intermediate symlink whose
+		// relative target resolves INSIDE the storage root is followed
+		// (os.Root semantics), so a storage root that legitimately uses
+		// relative in-root symlinks keeps working. Only escapes — an
+		// absolute target, or a relative target resolving outside the
+		// root — are refused.
+		root := t.TempDir()
+		fsys, err := NewFS(root)
+		be.NilErr(t, err)
+
+		_, err = fsys.Write(context.Background(), "real/sub/inner.txt", strings.NewReader("content"))
+		be.NilErr(t, err)
+		_, err = fsys.Write(context.Background(), "real/keep.txt", strings.NewReader("keep"))
+		be.NilErr(t, err)
+
+		// Relative in-root symlink: root/alias -> real.
+		alias := filepath.Join(root, "alias")
+		be.NilErr(t, os.Symlink("real", alias))
+
+		be.NilErr(t, fsys.RemoveAll(context.Background(), "alias/sub"))
+
+		// The in-root target path was removed...
+		if _, statErr := os.Stat(filepath.Join(root, "real", "sub")); !os.IsNotExist(statErr) {
+			t.Fatalf("in-root target not removed through in-root symlink: %v", statErr)
+		}
+		// ...the link itself survived (only the referenced path was
+		// removed, the link entry is a separate top-level entry)...
+		if _, statErr := os.Lstat(alias); statErr != nil {
+			t.Fatalf("symlink removed along with target: %v", statErr)
+		}
+		// ...and the rest of the in-root target is untouched.
+		if _, statErr := os.Stat(filepath.Join(root, "real", "keep.txt")); statErr != nil {
+			t.Fatalf("unrelated in-root file removed: %v", statErr)
+		}
 	})
 
 	t.Run("prevents removing root directory", func(t *testing.T) {
