@@ -219,22 +219,20 @@ func write(ctx context.Context, uploader *manager.Uploader, buck string, key str
 		// try to get content length from r
 		size := int64(-1)
 		switch val := r.(type) {
-		case fs.File:
-			if info, err := val.Stat(); err == nil {
-				size = info.Size()
-			}
 		case *bytes.Reader:
 			size = val.Size()
 		case *io.LimitedReader:
 			size = val.N
 		case io.Seeker:
-			// Generic seekable reader (e.g. *os.File, *strings.Reader):
-			// determine the REMAINING length (end - current offset) by
-			// seeking to the end, recording the offset, and restoring the
-			// original position. A partially-consumed reader (e.g. a
-			// strings.Reader after a first write) must report only the
-			// bytes left, not the total size. If any seek fails, leave
-			// ContentLength nil as before.
+			// Generic seekable reader (e.g. *os.File, *strings.Reader, or
+			// an fs.File that is also an io.Seeker such as the file handle
+			// returned by Open): determine the REMAINING length (end -
+			// current offset) by seeking to the end, recording the offset,
+			// and restoring the original position. A partially-consumed
+			// reader (e.g. a strings.Reader after a first write, or a file
+			// read up to some offset) must report only the bytes left, not
+			// the total size. If any seek fails, leave ContentLength nil
+			// as before.
 			if cur, err := val.Seek(0, io.SeekCurrent); err == nil {
 				if end, err := val.Seek(0, io.SeekEnd); err == nil {
 					if _, err := val.Seek(cur, io.SeekStart); err == nil {
@@ -243,6 +241,11 @@ func write(ctx context.Context, uploader *manager.Uploader, buck string, key str
 						}
 					}
 				}
+			}
+		case fs.File:
+			// Non-seekable fs.File: fall back to the file's total size.
+			if info, err := val.Stat(); err == nil {
+				size = info.Size()
 			}
 		}
 		if size > -1 {
