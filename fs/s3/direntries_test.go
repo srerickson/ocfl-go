@@ -10,6 +10,7 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/fs/s3"
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
+	"github.com/srerickson/ocfl-go/internal/testutil"
 )
 
 // These tests pin the exact behavior of s3.dirEntries() (fs/s3/s3.go:79) for
@@ -22,8 +23,15 @@ import (
 //     one level deeper) is NOT empty: the CommonPrefixes alone count as
 //     content (fs/s3/s3.go:100-102,110) and are yielded as subdirectory
 //     entries (fs/s3/s3.go:112-117).
-//   - dir="." on an empty bucket takes the same no-content path (no Prefix is
-//     set, fs/s3/s3.go:90-92) and yields fs.ErrNotExist with Path=".".
+//   - dir="." on an empty bucket is the one exception to the missing-directory
+//     rule: no Prefix is set (fs/s3/s3.go:90-92) and the first page is empty,
+//     but "." names the bucket itself, which always exists (a missing bucket
+//     surfaces as a ListObjectsV2 error), so it yields zero entries and no
+//     error — the same as the local backend's readdir of an existing but
+//     empty directory (fs/local/localfs_test.go, "empty top-level directory
+//     returns zero entries"). An empty bucket is a valid (new) OCFL storage
+//     root and must read back as empty for Root.NewRoot and
+//     ocflfs.RemoveAll(".").
 //
 // Callers: BucketFS.DirEntries (fs/s3/fs.go:78) -- errors propagate verbatim
 // through ocflfs.ReadDir (fs/fs.go:137).
@@ -88,14 +96,41 @@ func TestDirEntries_CommonPrefixOnly(t *testing.T) {
 	be.True(t, !entries[1].IsDir())
 }
 
-func TestDirEntries_RootEmptyBucket_ErrNotExist(t *testing.T) {
+func TestDirEntries_RootEmptyBucket_Empty(t *testing.T) {
 	// Case (3): dir="." on a bucket with no objects at all. No Prefix is set
 	// (fs/s3/s3.go:90-92) and the first page is empty, so dirEntries yields
-	// fs.ErrNotExist with Path="." -- same as a missing prefix. Note this
-	// differs from the local backend, where reading an empty directory
-	// yields zero entries and nil error.
+	// zero entries and no error -- never fs.ErrNotExist. The root always
+	// exists (it is the bucket itself), so an empty bucket reads as an
+	// empty directory, matching the local backend (localfs_test.go, "empty
+	// top-level directory returns zero entries") and keeping both
+	// Root.NewRoot and ocflfs.RemoveAll(".") working on a fresh bucket.
 	api := mock.New(bucket)
 	fsys := s3.NewBucketFS(api, bucket)
+	ctx := context.Background()
+
+	entries, err := ocflfs.ReadDir(ctx, fsys, ".")
+	be.NilErr(t, err)
+	be.Zero(t, entries)
+
+	// The raw iterator yields zero (entry, err) pairs, exactly like the
+	// local backend's iterator on an empty directory.
+	count := 0
+	for entry, itErr := range fsys.DirEntries(ctx, ".") {
+		count++
+		be.Zero(t, entry)
+		be.NilErr(t, itErr)
+	}
+	be.Equal(t, 0, count)
+}
+
+func TestDirEntries_RootMissingBucket_ListError(t *testing.T) {
+	// Contrast for case (3): "." reads as empty only because the bucket
+	// itself exists. Pointing the FS at a bucket that does not exist
+	// surfaces the ListObjectsV2 error (typed NoSuchBucket) verbatim --
+	// never an empty listing and never fs.ErrNotExist, which would make the
+	// root look like an ordinary missing (non-root) directory.
+	api := mock.New(bucket)
+	fsys := s3.NewBucketFS(api, "no-such-bucket")
 	ctx := context.Background()
 
 	entries, err := ocflfs.ReadDir(ctx, fsys, ".")
@@ -105,13 +140,39 @@ func TestDirEntries_RootEmptyBucket_ErrNotExist(t *testing.T) {
 	be.True(t, errors.As(err, &pathErr))
 	be.Equal(t, "readdir", pathErr.Op)
 	be.Equal(t, ".", pathErr.Path)
-	be.True(t, errors.Is(err, fs.ErrNotExist))
+	be.True(t, !errors.Is(err, fs.ErrNotExist))
+}
+
+func TestDirEntries_RootEmptyBucket_Integration(t *testing.T) {
+	// Live-store counterpart of TestDirEntries_RootEmptyBucket_Empty: a
+	// freshly created (empty) bucket must read dir="." as an empty
+	// directory with no error, never fs.ErrNotExist. Skipped unless
+	// $OCFL_TEST_S3 points at a running store (see internal/testutil).
+	if !testutil.S3Enabled() {
+		t.Skip("s3 test service is not running: set $OCFL_TEST_S3 to enable")
+	}
+	ctx := context.Background()
+	// TmpS3FS creates a random empty test bucket and removes it (with all
+	// objects) in a t.Cleanup callback.
+	fsys := testutil.TmpS3FS(t, nil)
+
+	entries, err := ocflfs.ReadDir(ctx, fsys, ".")
+	be.NilErr(t, err)
+	be.Zero(t, entries)
+
+	count := 0
+	for entry, itErr := range fsys.DirEntries(ctx, ".") {
+		count++
+		be.Zero(t, entry)
+		be.NilErr(t, itErr)
+	}
+	be.Equal(t, 0, count)
 }
 
 func TestDirEntries_RootNonEmptyBucket(t *testing.T) {
-	// Contrast for case (3): the ErrNotExist above applies only to a *truly
-	// empty* bucket. Once any key exists, "." lists normally, mixing file
-	// and common-prefix (subdirectory) entries sorted by name.
+	// Contrast for case (3): "." on a bucket that is not empty lists
+	// normally, mixing file and common-prefix (subdirectory) entries sorted
+	// by name, and never yields ErrNotExist.
 	api := mock.New(bucket,
 		&mock.Object{Key: "b/c.txt"},
 		&mock.Object{Key: "a.txt"},
