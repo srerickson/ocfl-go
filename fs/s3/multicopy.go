@@ -3,6 +3,7 @@ package s3
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -13,6 +14,12 @@ import (
 const (
 	defaultCopyPartConcurrency = 6
 	defaultCopyPartSize        = 32 * megabyte
+	// mpCleanupTimeout bounds how long the deferred multipart cleanup
+	// (abort or complete) may take. Only the cleanup runs under this
+	// deadline: the copy itself is bounded by the caller's ctx. It is
+	// ample for either single-request cleanup and prevents the defer from
+	// hanging indefinitely if the S3 endpoint stops responding.
+	mpCleanupTimeout = 30 * time.Second
 )
 
 type MultiCopier struct {
@@ -73,8 +80,19 @@ func (c *MultiCopier) Copy(ctx context.Context, buck string, dst, src string, sr
 		err = pathErr("copy", dst, err)
 		return
 	}
+	// The deferred abort/complete must survive caller cancellation: if the
+	// caller's ctx is canceled while the parts are being copied, grp.Wait
+	// below fails and this defer runs with a canceled ctx, which would fail
+	// the cleanup and leave an orphaned MPU with uploaded parts (abort path)
+	// or a stranded fully-uploaded MPU (complete path). The cleanup runs on
+	// a context derived with context.WithoutCancel — same values, no
+	// cancellation and no deadline from the caller — bounded only by
+	// mpCleanupTimeout, which starts when the cleanup runs, so a long copy
+	// does not eat into it.
 	defer func() {
 		// complete or abort the multipart upload
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), mpCleanupTimeout)
+		defer cleanupCancel()
 		switch {
 		case err != nil:
 			params := &s3.AbortMultipartUploadInput{
@@ -82,7 +100,7 @@ func (c *MultiCopier) Copy(ctx context.Context, buck string, dst, src string, sr
 				Key:      &dst,
 				UploadId: newUp.UploadId,
 			}
-			_, abortErr := c.api.AbortMultipartUpload(ctx, params)
+			_, abortErr := c.api.AbortMultipartUpload(cleanupCtx, params)
 			err = errors.Join(err, abortErr)
 		default:
 			upload := &types.CompletedMultipartUpload{
@@ -94,7 +112,7 @@ func (c *MultiCopier) Copy(ctx context.Context, buck string, dst, src string, sr
 				UploadId:        newUp.UploadId,
 				MultipartUpload: upload,
 			}
-			_, err = c.api.CompleteMultipartUpload(ctx, params)
+			_, err = c.api.CompleteMultipartUpload(cleanupCtx, params)
 		}
 	}()
 	grp, grpCtx := errgroup.WithContext(ctx)
