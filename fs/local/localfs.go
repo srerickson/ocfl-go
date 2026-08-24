@@ -260,6 +260,11 @@ func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) (int64, 
 	}
 }
 
+// Remove removes the file with path name. It satisfies the WriteFS.Remove
+// contract: a missing file yields an error that satisfies
+// errors.Is(err, fs.ErrNotExist) (the underlying os.Remove error), while
+// removing the top-level directory (".") is rejected without touching the
+// storage root, though with a backend-specific error (not fs.ErrNotExist).
 func (fsys *FS) Remove(ctx context.Context, name string) error {
 	fullPath, err := fsys.osPath(name)
 	if err != nil {

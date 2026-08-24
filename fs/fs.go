@@ -60,10 +60,25 @@ type WriteFS interface {
 	// at name. An implementation that cannot provide atomicity should
 	// document that limitation in its Write documentation.
 	Write(ctx context.Context, name string, buffer io.Reader) (int64, error)
-	// Remove the file with path name
+	// Remove removes the file with path name.
+	//
+	// Contract: removing a file that does not exist returns an error that
+	// satisfies errors.Is(err, fs.ErrNotExist), so callers can reliably
+	// detect a missing file regardless of backend. Implementations must
+	// account for idempotent deletes in the underlying store: the S3
+	// backend checks existence with a HEAD request before DeleteObject
+	// (which alone would silently succeed for missing keys), and the local
+	// backend surfaces the "not exist" error from os.Remove.
+	//
+	// Removing the top-level directory (".") is always an error and must
+	// not affect the storage root. The exact error is backend-specific: the
+	// S3 backend reports fs.ErrNotExist, while the local backend returns a
+	// *fs.PathError with a descriptive message. Name "." is the only name
+	// for which this contract permits a backend-dependent error.
 	Remove(ctx context.Context, name string) error
-	// Remove the directory with path name and all its contents. If the path
-	// does not exist, return nil.
+	// RemoveAll removes the directory with path name and all its contents.
+	// Unlike Remove, it is idempotent: if the path does not exist, it
+	// returns nil.
 	RemoveAll(ctx context.Context, name string) error
 }
 
@@ -173,7 +188,8 @@ func ReadAll(ctx context.Context, fsys FS, name string) ([]byte, error) {
 }
 
 // Remove checks if fsys implements WriteFS and calls its Remove method. It
-// returns ErrOpUnsupported if fsys is not a WriteFS
+// returns ErrOpUnsupported if fsys is not a WriteFS. See WriteFS.Remove for
+// the contract on missing files and the top-level directory.
 func Remove(ctx context.Context, fsys FS, name string) error {
 	writeFS, ok := fsys.(WriteFS)
 	if !ok {
