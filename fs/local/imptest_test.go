@@ -27,7 +27,6 @@ func tmpLocalFS(t *testing.T) *local.FS {
 // backend.
 func TestWriteFSWrite_Local(t *testing.T) {
 	imptest.TestWriteFSWrite(t, tmpLocalFS(t), imptest.WriteFSWrite{
-		WriteDotIsError: true,
 		// Write opens the destination with O_TRUNC and copies into it, so a
 		// source that fails partway leaves the target truncated — and creates
 		// an empty file where there was none.
