@@ -1,5 +1,5 @@
-// Package testutil holds the cross-backend contract test suite for the
-// [ocflfs] interfaces.
+// Package internal holds the cross-backend contract test suite for the
+// ocflfs interfaces.
 //
 // Each entry point takes a live backend and asserts the behavior every
 // implementation of the interface must share:
@@ -30,7 +30,7 @@
 // cases are not yet honored by a backend on main. Those cases are guarded by
 // a Skip* field holding the reason, which the caller sets:
 //
-//	testutil.TestWriteFSRemoveContract(t, fsys, testutil.WriteFSRemoveContract{
+//	internal.TestWriteFSRemoveContract(t, fsys, internal.WriteFSRemoveContract{
 //	    RemoveDotIsNotExist:   true,
 //	    SkipMissingIsNotExist: "Remove of a missing key returns nil on the s3 backend; see #166",
 //	})
@@ -46,4 +46,4 @@
 // local_test, package s3_test). That keeps this package free to grow
 // backend-specific fixtures — importing fs/local and fs/s3 — without an
 // import cycle. It is a compile-time constraint, not a style preference.
-package testutil
+package internal

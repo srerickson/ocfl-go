@@ -7,7 +7,7 @@ import (
 
 	"github.com/carlmjohnson/be"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
-	"github.com/srerickson/ocfl-go/fs/internal/testutil"
+	"github.com/srerickson/ocfl-go/fs/internal"
 	"github.com/srerickson/ocfl-go/fs/local"
 )
 
@@ -26,7 +26,7 @@ func tmpLocalFS(t *testing.T) *local.FS {
 // TestWriteFSWriteContract_Local runs the shared WriteFS.Write contract
 // against the local backend.
 func TestWriteFSWriteContract_Local(t *testing.T) {
-	testutil.TestWriteFSWriteContract(t, tmpLocalFS(t), testutil.WriteFSWriteContract{
+	internal.TestWriteFSWriteContract(t, tmpLocalFS(t), internal.WriteFSWriteContract{
 		WriteDotIsError: true,
 		// Write opens the destination with O_TRUNC and copies into it, so a
 		// source that fails partway leaves the target truncated — and creates
@@ -40,7 +40,7 @@ func TestWriteFSWriteContract_Local(t *testing.T) {
 // returns a descriptive *fs.PathError for "." rather than fs.ErrNotExist,
 // while a missing file still satisfies errors.Is(err, fs.ErrNotExist).
 func TestWriteFSRemoveContract_Local(t *testing.T) {
-	testutil.TestWriteFSRemoveContract(t, tmpLocalFS(t), testutil.WriteFSRemoveContract{
+	internal.TestWriteFSRemoveContract(t, tmpLocalFS(t), internal.WriteFSRemoveContract{
 		RemoveDotIsNotExist: false,
 	})
 }
@@ -49,7 +49,7 @@ func TestWriteFSRemoveContract_Local(t *testing.T) {
 // contract against the local backend, which refuses "." (its storage root
 // must survive) and removes a file addressed directly, matching os.RemoveAll.
 func TestWriteFSRemoveAllContract_Local(t *testing.T) {
-	testutil.TestWriteFSRemoveAllContract(t, tmpLocalFS(t), testutil.WriteFSRemoveAllContract{
+	internal.TestWriteFSRemoveAllContract(t, tmpLocalFS(t), internal.WriteFSRemoveAllContract{
 		RemoveAllDotIsError:      true,
 		RemoveAllOnFileRemovesIt: true,
 	})
@@ -58,7 +58,7 @@ func TestWriteFSRemoveAllContract_Local(t *testing.T) {
 // TestDirEntriesContract_Local runs the shared DirEntriesFS contract against
 // the local backend.
 func TestDirEntriesContract_Local(t *testing.T) {
-	testutil.TestDirEntriesContract(t, tmpLocalFS(t))
+	internal.TestDirEntriesContract(t, tmpLocalFS(t))
 }
 
 // TestWalkFilesContract_Local runs the shared WalkFiles contract against the
@@ -70,7 +70,7 @@ func TestDirEntriesContract_Local(t *testing.T) {
 // file where the walk expects to descend into a directory, so the directory
 // read errors.
 func TestWalkFilesContract_Local(t *testing.T) {
-	testutil.TestWalkFilesContract(t, tmpLocalFS(t), testutil.WalkFilesContract{
+	internal.TestWalkFilesContract(t, tmpLocalFS(t), internal.WalkFilesContract{
 		ErrWalk: func(t *testing.T) ocflfs.WriteFS {
 			errFS := tmpLocalFS(t)
 			_, err := errFS.Write(context.Background(), "blocked", strings.NewReader("x"))
