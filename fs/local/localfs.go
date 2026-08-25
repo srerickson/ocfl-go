@@ -112,11 +112,13 @@ func (fsys *FS) Remove(ctx context.Context, name string) error {
 			Err:  err,
 		}
 	}
+	// "." names the storage root, never a file, so removing it is a bad
+	// name rather than a failed removal — the same rejection Write gives it.
 	if name == "." {
 		return &fs.PathError{
 			Op:   "remove",
 			Path: name,
-			Err:  errors.New("cannot remove top-level directory"),
+			Err:  fs.ErrInvalid,
 		}
 	}
 	if err := ctx.Err(); err != nil {

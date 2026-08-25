@@ -35,13 +35,9 @@ func TestWriteFSWrite_Local(t *testing.T) {
 }
 
 // TestWriteFSRemove_Local runs the shared WriteFS.Remove suite against the
-// local backend. RemoveDotIsNotExist is false: the local backend returns a
-// descriptive *fs.PathError for "." rather than fs.ErrNotExist, while a
-// missing file still satisfies errors.Is(err, fs.ErrNotExist).
+// local backend, which satisfies it outright.
 func TestWriteFSRemove_Local(t *testing.T) {
-	imptest.TestWriteFSRemove(t, tmpLocalFS(t), imptest.WriteFSRemove{
-		RemoveDotIsNotExist: false,
-	})
+	imptest.TestWriteFSRemove(t, tmpLocalFS(t), imptest.WriteFSRemove{})
 }
 
 // TestWriteFSRemoveAll_Local runs the shared WriteFS.RemoveAll suite against

@@ -27,12 +27,10 @@ func TestWriteFSWrite_S3(t *testing.T) {
 }
 
 // TestWriteFSRemove_S3 runs the shared WriteFS.Remove suite against the S3
-// backend. RemoveDotIsNotExist is true: the backend guards "." with
-// fs.ErrNotExist, unlike the local backend's descriptive *fs.PathError.
+// backend.
 func TestWriteFSRemove_S3(t *testing.T) {
 	fsys := s3.NewBucketFS(mock.New(bucket), bucket)
 	imptest.TestWriteFSRemove(t, fsys, imptest.WriteFSRemove{
-		RemoveDotIsNotExist: true,
 		// remove() calls DeleteObject with no existence check, and S3's
 		// DeleteObject is idempotent: a key that was never there deletes
 		// successfully, so Remove reports nil where the local backend

@@ -12,22 +12,10 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
-// WriteFSRemove configures [TestWriteFSRemove] with the part of Remove that
-// is implementation-specific, plus the Skip fields for behavior a backend does
-// not satisfy yet.
-//
-// Removing a missing file should return an error satisfying
-// errors.Is(err, fs.ErrNotExist) on every backend, and removing the top-level
-// directory (".") should always be an error that leaves the storage root
-// alone. Name "." is the only name whose error legitimately differs between
-// implementations: the S3 backend reports fs.ErrNotExist, while the local
-// backend returns a descriptive *fs.PathError instead.
+// WriteFSRemove configures [TestWriteFSRemove]. Remove has no
+// implementation-specific behavior left to configure, so the struct carries
+// only the Skip fields for behavior a backend does not satisfy yet.
 type WriteFSRemove struct {
-	// RemoveDotIsNotExist reports whether the backend's Remove(".") error
-	// satisfies errors.Is(err, fs.ErrNotExist): true for the S3 backend,
-	// false for the local backend.
-	RemoveDotIsNotExist bool
-
 	// SkipMissingIsNotExist, when non-empty, skips the missing-file subtest
 	// using this string as the skip reason.
 	SkipMissingIsNotExist string
@@ -42,10 +30,13 @@ type WriteFSRemove struct {
 //     errors.Is(err, fs.ErrNotExist), reported as a *fs.PathError with
 //     Op "remove". S3 does not give this for free: DeleteObject is
 //     idempotent and succeeds for a key that was never there;
-//   - removing "." returns a non-nil *fs.PathError naming ".", never touches
-//     the storage root (a file written before the call must still be present
-//     and readable afterwards), and satisfies errors.Is(err, fs.ErrNotExist)
-//     exactly when opts.RemoveDotIsNotExist says it does.
+//   - removing "." is rejected with fs.ErrInvalid, as a *fs.PathError naming
+//     ".", and never touches the storage root: a file written before the call
+//     must still be present and readable afterwards. "." names the storage
+//     root and not a file on every backend, so it is a bad name rather than a
+//     failed removal -- and in particular not fs.ErrNotExist, which would
+//     tell a caller the root is absent when it is the one thing guaranteed to
+//     exist.
 func TestWriteFSRemove(t *testing.T, fsys ocflfs.WriteFS, opts WriteFSRemove) {
 	t.Helper()
 	ctx := context.Background()
@@ -79,9 +70,11 @@ func TestWriteFSRemove(t *testing.T, fsys ocflfs.WriteFS, opts WriteFSRemove) {
 		be.True(t, errors.As(err, &pathErr))
 		be.Equal(t, "remove", pathErr.Op)
 		be.Equal(t, ".", pathErr.Path)
-		// errors.Is must behave exactly as the backend documents for "." —
-		// the one name whose error is allowed to differ.
-		be.Equal(t, opts.RemoveDotIsNotExist, errors.Is(err, fs.ErrNotExist))
+		// One classification for every backend, so a caller can recognize
+		// the refusal without knowing which storage it is talking to, and
+		// with the same handling it gives every other bad name.
+		be.True(t, errors.Is(err, fs.ErrInvalid))
+		be.False(t, errors.Is(err, fs.ErrNotExist))
 		// The storage root must be unaffected: the probe file written before
 		// Remove(".") must still be present and readable.
 		file, err := fsys.OpenFile(ctx, probe)
