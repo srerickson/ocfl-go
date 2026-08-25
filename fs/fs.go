@@ -57,6 +57,13 @@ type WriteFS interface {
 	Remove(ctx context.Context, name string) error
 	// Remove the directory with path name and all its contents. If the path
 	// does not exist, return nil.
+	//
+	// Whether name "." empties the storage root or is refused is left to the
+	// implementation: a backend whose root must survive (a filesystem
+	// directory) returns an error, while a backend whose root is a namespace
+	// (an S3 bucket) may empty it. Note the package-level RemoveAll handles
+	// "." itself and never reaches this method for that name, so callers
+	// after uniform root-emptying behavior should use it instead.
 	RemoveAll(ctx context.Context, name string) error
 }
 
@@ -155,7 +162,10 @@ func Remove(ctx context.Context, fsys FS, name string) error {
 // RemoveAll checks if fsys implements WriteFS and calls its RemoveAll method.
 // It returns ErrOpUnsupported if fsys is not a WriteFS. As a special case, if
 // name == ".", RemoveAll reads the contents of the top-level directory and
-// calls Remove/RemoveAll for all entries.
+// calls Remove/RemoveAll for all entries. That case is handled here, not by
+// the backend, so the backend's own RemoveAll(".") behavior -- refuse or
+// empty, both allowed by WriteFS -- is only observable by calling it
+// directly.
 func RemoveAll(ctx context.Context, fsys FS, name string) error {
 	writeFS, ok := fsys.(WriteFS)
 	if !ok {
