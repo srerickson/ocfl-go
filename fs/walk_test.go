@@ -32,11 +32,10 @@ type walkStep struct {
 }
 
 // walkErrorFS is an FS implementing DirEntriesFS whose DirEntries iterator
-// replays a script of (entry, error) yields back-to-back. This stresses the
-// DirEntriesFS contract: a well-behaved iterator terminates after an error
-// yield, but fileWalk must not panic or corrupt its output when one doesn't
-// (ocflfs.DirEntries itself yields (nil, err) for a non-DirEntriesFS, and a
-// listing can fail partway through).
+// replays a script of (entry, error) yields back-to-back. A well-behaved
+// iterator terminates after an error yield, but fileWalk must not panic or
+// corrupt its output when one doesn't — ocflfs.DirEntries itself yields
+// (nil, err) for a non-DirEntriesFS, and a listing can fail partway through.
 type walkErrorFS struct {
 	script []walkStep
 }
@@ -64,14 +63,13 @@ type walkYield struct {
 	err error
 }
 
-// TestWalkFiles_DirEntriesErrorContract pins fileWalk's handling of a
-// DirEntriesFS that yields (nil, err) pairs and entries whose Info() fails.
-// The contract:
+// TestWalkFiles_DirEntriesError pins fileWalk's handling of a DirEntriesFS
+// that yields (nil, err) pairs and entries whose Info() fails. It must:
 //   - never panic,
 //   - propagate every yielded error (in order),
 //   - never produce a FileRef with a nil Info field after an Info() error,
 //   - keep walking valid entries after error yields.
-func TestWalkFiles_DirEntriesErrorContract(t *testing.T) {
+func TestWalkFiles_DirEntriesError(t *testing.T) {
 	// The (nil, err) yield is propagated and then falls through to
 	// path.Join(subDir, e.Name()) on the nil entry, so the walk panics; an
 	// Info() error produces a *FileRef with a nil Info field.
@@ -93,8 +91,8 @@ func TestWalkFiles_DirEntriesErrorContract(t *testing.T) {
 		// produces when the FS isn't a DirEntriesFS.
 		{err: errYield},
 		// A valid entry whose Info() fails: fileWalk must yield the error and
-		// produce no FileRef, because a FileRef with a nil Info field would
-		// violate the FileRef contract.
+		// produce no FileRef, because a FileRef with a nil Info field is not
+		// usable by a caller.
 		{entry: &scriptedDirEntry{name: "bad.txt", infoErr: errInfo}},
 		// A healthy entry after the error yields: iteration must continue and
 		// the entry must still yield a fully-populated FileRef.
