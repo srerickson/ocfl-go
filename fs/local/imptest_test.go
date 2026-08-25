@@ -26,18 +26,13 @@ func tmpLocalFS(t *testing.T) *local.FS {
 // TestWriteFSWrite_Local runs the shared WriteFS.Write suite against the local
 // backend.
 func TestWriteFSWrite_Local(t *testing.T) {
-	imptest.TestWriteFSWrite(t, tmpLocalFS(t), imptest.WriteFSWrite{
-		// Write opens the destination with O_TRUNC and copies into it, so a
-		// source that fails partway leaves the target truncated — and creates
-		// an empty file where there was none.
-		SkipFailedSourceKeepsFile: "local Write is not atomic: a failing source truncates or creates the target; see #163",
-	})
+	imptest.TestWriteFSWrite(t, tmpLocalFS(t))
 }
 
 // TestWriteFSRemove_Local runs the shared WriteFS.Remove suite against the
-// local backend, which satisfies it outright.
+// local backend.
 func TestWriteFSRemove_Local(t *testing.T) {
-	imptest.TestWriteFSRemove(t, tmpLocalFS(t), imptest.WriteFSRemove{})
+	imptest.TestWriteFSRemove(t, tmpLocalFS(t))
 }
 
 // TestWriteFSRemoveAll_Local runs the shared WriteFS.RemoveAll suite against
@@ -72,9 +67,5 @@ func TestWalkFiles_Local(t *testing.T) {
 			be.NilErr(t, err)
 			return errFS
 		},
-		// fileWalk yields the directory-read error and then falls through to
-		// e.Name() on the nil entry it was yielded with, so the walk panics
-		// instead of terminating.
-		SkipWalkErrors: "fileWalk panics on an error-yielding DirEntries; see #165",
 	})
 }
