@@ -83,11 +83,6 @@ func TestWriteFSWrite(t *testing.T, fsys ocflfs.WriteFS) {
 	})
 
 	t.Run("source error leaves previous content intact", func(t *testing.T) {
-		// TODO(#163): local Write opens the destination with O_TRUNC and
-		// copies into it, so a failing source leaves the target truncated.
-		// The s3 backend already satisfies this; drop the skip when #163
-		// makes local Write atomic and the assertion runs for both.
-		t.Skip("local Write is not atomic; see #163")
 		const name, original = "imptest-write/failed-overwrite.txt", "original content"
 		_, err := fsys.Write(ctx, name, strings.NewReader(original))
 		be.NilErr(t, err)
@@ -103,9 +98,6 @@ func TestWriteFSWrite(t *testing.T, fsys ocflfs.WriteFS) {
 	})
 
 	t.Run("source error on a new file leaves nothing behind", func(t *testing.T) {
-		// TODO(#163): the same non-atomic local Write creates an empty file
-		// at name before the source fails. Already satisfied by s3.
-		t.Skip("local Write is not atomic; see #163")
 		const name = "imptest-write/never-created.txt"
 		_, err := fsys.Write(ctx, name, &failingReader{
 			prefix: []byte("bytes that must not become a file"),
