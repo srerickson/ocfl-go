@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/carlmjohnson/be"
 )
@@ -109,15 +110,37 @@ func TestFS_Write(t *testing.T) {
 		fsys, err := NewFS(tmpDir)
 		be.NilErr(t, err)
 
+		// Canceled before Write: Write must return a *fs.PathError wrapping
+		// context.Canceled without touching the filesystem.
 		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // Cancel before write
+		cancel()
 
 		_, err = fsys.Write(ctx, "test.txt", strings.NewReader("content"))
-		be.True(t, err != nil)
+		be.True(t, errors.Is(err, context.Canceled))
 
 		var pathErr *fs.PathError
 		be.True(t, errors.As(err, &pathErr))
 		be.Equal(t, "write", pathErr.Op)
+		be.Equal(t, "test.txt", pathErr.Path)
+	})
+
+	t.Run("respects deadline exceeded", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		fsys, err := NewFS(tmpDir)
+		be.NilErr(t, err)
+
+		// An expired deadline surfaces as context.DeadlineExceeded itself,
+		// not as some read error it happened to cause downstream.
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		defer cancel()
+
+		_, err = fsys.Write(ctx, "test.txt", strings.NewReader("content"))
+		be.True(t, errors.Is(err, context.DeadlineExceeded))
+
+		var pathErr *fs.PathError
+		be.True(t, errors.As(err, &pathErr))
+		be.Equal(t, "write", pathErr.Op)
+		be.Equal(t, "test.txt", pathErr.Path)
 	})
 
 	t.Run("rejects invalid path", func(t *testing.T) {
@@ -143,7 +166,7 @@ func TestFS_Write(t *testing.T) {
 		}
 	})
 
-	t.Run("sets correct file permissions", func(t *testing.T) {
+	t.Run("sets permissions per umask for new files", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		fsys, err := NewFS(tmpDir)
 		be.NilErr(t, err)
@@ -152,10 +175,41 @@ func TestFS_Write(t *testing.T) {
 		_, err = fsys.Write(ctx, "test.txt", strings.NewReader("content"))
 		be.NilErr(t, err)
 
-		// Check file permissions
+		// The contract for a new file is 0666 subject to the process umask,
+		// matching os.Create. The reference file measures the umask instead
+		// of assuming one: a hardcoded 0644 would only be right under 022.
+		ref := filepath.Join(tmpDir, "ref.txt")
+		be.NilErr(t, os.WriteFile(ref, []byte("x"), 0666))
+		refInfo, err := os.Stat(ref)
+		be.NilErr(t, err)
+
 		info, err := os.Stat(filepath.Join(tmpDir, "test.txt"))
 		be.NilErr(t, err)
-		be.Equal(t, fs.FileMode(0644), info.Mode().Perm())
+		be.Equal(t, refInfo.Mode().Perm(), info.Mode().Perm())
+		be.True(t, info.Mode().Perm()&0600 == 0600)
+	})
+
+	t.Run("preserves permissions of existing file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		fsys, err := NewFS(tmpDir)
+		be.NilErr(t, err)
+
+		ctx := context.Background()
+		_, err = fsys.Write(ctx, "test.txt", strings.NewReader("first"))
+		be.NilErr(t, err)
+		be.NilErr(t, os.Chmod(filepath.Join(tmpDir, "test.txt"), 0600))
+
+		// Overwriting keeps the target's mode rather than resetting it to
+		// the umask-derived default: a private file stays private.
+		_, err = fsys.Write(ctx, "test.txt", strings.NewReader("second"))
+		be.NilErr(t, err)
+
+		data, err := os.ReadFile(filepath.Join(tmpDir, "test.txt"))
+		be.NilErr(t, err)
+		be.Equal(t, "second", string(data))
+		info, err := os.Stat(filepath.Join(tmpDir, "test.txt"))
+		be.NilErr(t, err)
+		be.Equal(t, fs.FileMode(0600), info.Mode().Perm())
 	})
 }
 
