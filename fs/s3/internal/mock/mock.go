@@ -42,19 +42,29 @@ func New(bucket string, objects ...*Object) *S3API {
 
 type S3API struct {
 	UpdatedETags map[string]string
-	Deleted      map[string]bool
-	MPUCreated   bool
-	MPUAborted   bool
-	MPUComplete  bool
+	// Deleted records every key a delete request targeted. It is a call
+	// log, not the bucket's state: a deleted key is also removed from the
+	// bucket, so prefer asserting through HeadObject, GetObject or
+	// ListObjectsV2 unless the test is specifically about which requests
+	// were issued.
+	Deleted     map[string]bool
+	MPUCreated  bool
+	MPUAborted  bool
+	MPUComplete bool
 
 	CopyObjectFunc func(context.Context, *s3v2.CopyObjectInput, ...func(*s3v2.Options)) (*s3v2.CopyObjectOutput, error)
 
 	parts   sync.Map
 	bucket  string
 	objects map[string]*Object
+
+	// log records every request served, so tests can assert request shape
+	// without wrapping the mock. See calls.go.
+	log callLog
 }
 
 func (m *S3API) HeadObject(ctx context.Context, in *s3v2.HeadObjectInput, opts ...func(*s3v2.Options)) (*s3v2.HeadObjectOutput, error) {
+	m.log.recordKey("HeadObject", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -70,6 +80,7 @@ func (m *S3API) HeadObject(ctx context.Context, in *s3v2.HeadObjectInput, opts .
 }
 
 func (m *S3API) GetObject(ctx context.Context, in *s3v2.GetObjectInput, opts ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
+	m.log.recordKey("GetObject", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -96,6 +107,13 @@ func (m *S3API) GetObject(ctx context.Context, in *s3v2.GetObjectInput, opts ...
 }
 
 func (m *S3API) ListObjectsV2(ctx context.Context, in *s3v2.ListObjectsV2Input, opts ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
+	if prefix := aws.ToString(in.Prefix); prefix != "" {
+		m.log.record("ListObjectsV2", prefix)
+	} else {
+		// A bucket-wide listing names no prefix; recording "" as a key would
+		// make KeysFor("ListObjectsV2") report a key that was never sent.
+		m.log.record("ListObjectsV2")
+	}
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -168,24 +186,43 @@ func (m *S3API) ListObjectsV2(ctx context.Context, in *s3v2.ListObjectsV2Input, 
 }
 
 func (m *S3API) PutObject(ctx context.Context, in *s3v2.PutObjectInput, opts ...func(*s3v2.Options)) (*s3v2.PutObjectOutput, error) {
+	m.log.recordKey("PutObject", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
 	if in.Key == nil {
 		return nil, errors.New("key is required")
 	}
-	etag, err := md5hex(in.Body)
+	if in.Body == nil {
+		return nil, errors.New("body is required")
+	}
+	body, err := io.ReadAll(in.Body)
+	if err != nil {
+		return nil, err
+	}
+	etag, err := md5hex(bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	out := &s3v2.PutObjectOutput{
 		ETag: &etag,
 	}
+	// Materialize the object exactly like real S3: a subsequent HeadObject,
+	// GetObject or ListObjectsV2 must find it. Without this the mock cannot
+	// round-trip a Write followed by an OpenFile, so a test against it can
+	// only assert which requests were sent, never what the bucket holds.
+	m.objects[*in.Key] = &Object{
+		Key:           *in.Key,
+		Body:          body,
+		ContentLength: int64(len(body)),
+		LastModified:  time.Now(),
+	}
 	m.UpdatedETags[*in.Key] = `"` + etag + `"`
 	return out, nil
 }
 
 func (m *S3API) CreateMultipartUpload(ctx context.Context, in *s3v2.CreateMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CreateMultipartUploadOutput, error) {
+	m.log.recordKey("CreateMultipartUpload", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -202,6 +239,7 @@ func (m *S3API) CreateMultipartUpload(ctx context.Context, in *s3v2.CreateMultip
 }
 
 func (m *S3API) UploadPart(ctx context.Context, in *s3v2.UploadPartInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartOutput, error) {
+	m.log.recordKey("UploadPart", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -223,6 +261,7 @@ func (m *S3API) UploadPart(ctx context.Context, in *s3v2.UploadPartInput, opts .
 }
 
 func (m *S3API) UploadPartCopy(ctx context.Context, in *s3v2.UploadPartCopyInput, opts ...func(*s3v2.Options)) (*s3v2.UploadPartCopyOutput, error) {
+	m.log.recordKey("UploadPartCopy", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -266,6 +305,7 @@ func (m *S3API) UploadPartCopy(ctx context.Context, in *s3v2.UploadPartCopyInput
 }
 
 func (m *S3API) CompleteMultipartUpload(ctx context.Context, in *s3v2.CompleteMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.CompleteMultipartUploadOutput, error) {
+	m.log.recordKey("CompleteMultipartUpload", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -312,6 +352,7 @@ func (m *S3API) CompleteMultipartUpload(ctx context.Context, in *s3v2.CompleteMu
 }
 
 func (m *S3API) AbortMultipartUpload(ctx context.Context, in *s3v2.AbortMultipartUploadInput, opts ...func(*s3v2.Options)) (*s3v2.AbortMultipartUploadOutput, error) {
+	m.log.recordKey("AbortMultipartUpload", in.Key)
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
@@ -325,6 +366,7 @@ func (m *S3API) AbortMultipartUpload(ctx context.Context, in *s3v2.AbortMultipar
 }
 
 func (m *S3API) CopyObject(ctx context.Context, in *s3v2.CopyObjectInput, opts ...func(*s3v2.Options)) (*s3v2.CopyObjectOutput, error) {
+	m.log.recordKey("CopyObject", in.Key)
 	if m.CopyObjectFunc != nil {
 		return m.CopyObjectFunc(ctx, in, opts...)
 	}
@@ -361,12 +403,27 @@ func (m *S3API) CopyObject(ctx context.Context, in *s3v2.CopyObjectInput, opts .
 }
 
 func (m *S3API) DeleteObject(ctx context.Context, in *s3v2.DeleteObjectInput, opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error) {
+	m.log.recordKey("DeleteObject", in.Key)
 	if _, err := m.getObject(in.Key); err != nil {
 		return nil, &types.NoSuchKey{}
 	}
 	out := &s3v2.DeleteObjectOutput{}
-	m.Deleted[*in.Key] = true
+	m.deleteKey(*in.Key)
 	return out, nil
+}
+
+// deleteKey removes the object from the bucket and records the deletion.
+//
+// Removing it from m.objects is what makes a deletion observable the way a
+// real store's is: the key stops appearing in ListObjectsV2 and stops
+// answering HeadObject and GetObject. The Deleted map is call bookkeeping
+// kept alongside it — useful for asserting that a specific key was targeted,
+// and for distinguishing "never deleted" from "deleted and then rewritten" —
+// but a test that only consults Deleted is checking which requests were sent,
+// not what the bucket now contains.
+func (m *S3API) deleteKey(key string) {
+	delete(m.objects, key)
+	m.Deleted[key] = true
 }
 
 func (m *S3API) PartCount() int {
