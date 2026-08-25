@@ -22,8 +22,9 @@ type Call struct {
 // wrappers are identical wherever they appear, and being per-test they can
 // only observe what that test thought to wrap.
 //
-// The log is guarded by its own mutex rather than the mock's MPU mutex: every
-// method records, including the ones that already hold that lock.
+// The log is guarded by its own mutex rather than the mock's state mutex:
+// every method records, including the ones that already hold that lock, and
+// a recording-only lock taken at method entry keeps the two independent.
 type callLog struct {
 	mu    sync.Mutex
 	calls []Call
