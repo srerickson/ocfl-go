@@ -35,4 +35,10 @@ jobs:
               exit 1
             fi
 
+            # The repo builds for windows too (fs/local's atomic Write relies
+            # on os.Rename being MoveFileEx(MOVEFILE_REPLACE_EXISTING) there),
+            # but CI only runs linux. Cross-compile vet is the cheap check
+            # that nothing windows-only has broken.
+            GOOS=windows go vet ./...
+
             go test ./... -count=5 -race
