@@ -17,6 +17,13 @@
 // backend can look correct against its own tests and still be wrong in a way
 // that only shows up when a caller swaps local storage for S3.
 //
+// # File layout
+//
+// One file per interface under test, so a new assertion has an obvious home:
+// writefs.go covers [ocflfs.WriteFS] — Write, Remove and RemoveAll —
+// direntriesfs.go covers [ocflfs.DirEntriesFS], and filewalker.go covers
+// [ocflfs.FileWalker].
+//
 // # Options structs
 //
 // An entry point takes an options struct only when the suite genuinely cannot
