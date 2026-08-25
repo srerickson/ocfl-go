@@ -423,7 +423,7 @@ func TestWrite_Mock(t *testing.T) {
 			},
 			expect: func(t *testing.T, state *mock.S3API, size int64, err error) {
 				be.NilErr(t, err)
-				be.Nonzero(t, state.UpdatedETags["tmp"])
+				be.Nonzero(t, state.UpdatedETag("tmp"))
 
 			},
 		}, {
@@ -440,9 +440,9 @@ func TestWrite_Mock(t *testing.T) {
 				be.NilErr(t, err)
 				be.Equal(t, int64(bodySize), size)
 				expectETag := mock.ETag(body, partSize)
-				be.Equal(t, expectETag, state.UpdatedETags["tmp"])
+				be.Equal(t, expectETag, state.UpdatedETag("tmp"))
 				be.Equal(t, bodySize/partSize+1, state.PartCount())
-				be.Equal(t, true, state.MPUComplete)
+				be.True(t, state.MPUCompleteFlag())
 			},
 		},
 	}
@@ -488,8 +488,8 @@ func TestRemove_Mock(t *testing.T) {
 			},
 			expect: func(t *testing.T, state *mock.S3API, err error) {
 				be.NilErr(t, err)
-				be.True(t, state.Deleted["remove-me"])
-				be.False(t, state.Deleted["keep-me"])
+				be.True(t, state.WasDeleted("remove-me"))
+				be.False(t, state.WasDeleted("keep-me"))
 			},
 		},
 	}
@@ -531,8 +531,8 @@ func TestRemoveAll_Mock(t *testing.T) {
 			},
 			expect: func(t *testing.T, state *mock.S3API, err error) {
 				be.NilErr(t, err)
-				be.True(t, state.Deleted["remove-me/file"])
-				be.False(t, state.Deleted["keep-me"])
+				be.True(t, state.WasDeleted("remove-me/file"))
+				be.False(t, state.WasDeleted("keep-me"))
 			},
 		},
 	}
@@ -578,7 +578,7 @@ func TestCopy_Mock(t *testing.T) {
 			dst:    "dst-file",
 			expect: func(t *testing.T, state *mock.S3API, size int64, err error) {
 				be.NilErr(t, err)
-				be.Nonzero(t, state.UpdatedETags["dst-file"])
+				be.Nonzero(t, state.UpdatedETag("dst-file"))
 				be.Nonzero(t, size)
 				be.Equal(t, 0, state.PartCount())
 			},
@@ -604,7 +604,7 @@ func TestCopy_Mock(t *testing.T) {
 				be.NilErr(t, err)
 				be.Nonzero(t, size)
 				expETag := mock.ETag(srcBody, partSize)
-				be.Equal(t, expETag, state.UpdatedETags["dst-file"])
+				be.Equal(t, expETag, state.UpdatedETag("dst-file"))
 			},
 		},
 	}

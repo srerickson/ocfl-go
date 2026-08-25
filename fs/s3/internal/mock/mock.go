@@ -41,6 +41,14 @@ func New(bucket string, objects ...*Object) *S3API {
 }
 
 type S3API struct {
+	// UpdatedETags, Deleted and the MPU flags are written by the mock's
+	// handlers and read by tests. Handlers may run on the uploader's
+	// goroutines while the test reads from its own, so read them through
+	// the accessors (UpdatedETag, WasDeleted, MPUCreatedFlag, ...) rather
+	// than directly: the accessor takes the state mutex, the bare field
+	// read does not. The fields stay exported for construction-time
+	// compatibility, but direct reads are only safe before the mock has
+	// served its first concurrent request.
 	UpdatedETags map[string]string
 	// Deleted records every key a delete request targeted. It is a call
 	// log, not the bucket's state: a deleted key is also removed from the
@@ -57,6 +65,11 @@ type S3API struct {
 	parts   sync.Map
 	bucket  string
 	objects map[string]*Object
+
+	// mu guards objects, UpdatedETags, Deleted and the MPU flags. parts
+	// keeps its own sync.Map and log its own mutex, so a handler never
+	// holds mu while touching either — no lock ordering to reason about.
+	mu sync.Mutex
 
 	// log records every request served, so tests can assert request shape
 	// without wrapping the mock. See calls.go.
@@ -84,25 +97,35 @@ func (m *S3API) GetObject(ctx context.Context, in *s3v2.GetObjectInput, opts ...
 	if err := m.bucketOK(in.Bucket); err != nil {
 		return nil, err
 	}
-	obj, err := m.getObject(in.Key)
+	// Clone under the lock: the caller reads the returned body after this
+	// method returns, and a concurrent PutObject to the same key replaces
+	// m.objects — the read of obj.Body must not race that write, and the
+	// returned buffer must stay valid if it does.
+	m.mu.Lock()
+	obj, err := m.getObjectLocked(in.Key)
 	if err != nil {
+		m.mu.Unlock()
 		return nil, err
 	}
 	body := obj.Body
+	lastMod := obj.LastModified
 	contentLength := int64(len(obj.Body))
 	// Handle Range header for partial reads
 	if in.Range != nil && *in.Range != "" {
 		start, end, err := parseGetObjectRange(*in.Range, contentLength)
 		if err != nil {
+			m.mu.Unlock()
 			return nil, err
 		}
 		body = obj.Body[start : end+1]
 		contentLength = end - start + 1
 	}
+	body = bytes.Clone(body)
+	m.mu.Unlock()
 	return &s3v2.GetObjectOutput{
 		Body:          io.NopCloser(bytes.NewBuffer(body)),
 		ContentLength: aws.Int64(contentLength),
-		LastModified:  aws.Time(obj.LastModified),
+		LastModified:  aws.Time(lastMod),
 	}, nil
 }
 
@@ -133,6 +156,12 @@ func (m *S3API) ListObjectsV2(ctx context.Context, in *s3v2.ListObjectsV2Input, 
 		ContinuationToken: in.ContinuationToken,
 		IsTruncated:       aws.Bool(false),
 	}
+	// The listing must be a consistent snapshot of the bucket, so the state
+	// lock is held for the whole scan: a concurrent PutObject or DeleteObject
+	// between objectKeys() and the per-key read would otherwise be a data
+	// race, not just a stale listing.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for i, key := range m.objectKeys() {
 		if in.ContinuationToken != nil && key <= *in.ContinuationToken {
 			continue
@@ -211,6 +240,7 @@ func (m *S3API) PutObject(ctx context.Context, in *s3v2.PutObjectInput, opts ...
 	// GetObject or ListObjectsV2 must find it. Without this the mock cannot
 	// round-trip a Write followed by an OpenFile, so a test against it can
 	// only assert which requests were sent, never what the bucket holds.
+	m.mu.Lock()
 	m.objects[*in.Key] = &Object{
 		Key:           *in.Key,
 		Body:          body,
@@ -218,6 +248,7 @@ func (m *S3API) PutObject(ctx context.Context, in *s3v2.PutObjectInput, opts ...
 		LastModified:  time.Now(),
 	}
 	m.UpdatedETags[*in.Key] = `"` + etag + `"`
+	m.mu.Unlock()
 	return out, nil
 }
 
@@ -234,7 +265,9 @@ func (m *S3API) CreateMultipartUpload(ctx context.Context, in *s3v2.CreateMultip
 		Key:      in.Key,
 		UploadId: &uploadID,
 	}
+	m.mu.Lock()
 	m.MPUCreated = true
+	m.mu.Unlock()
 	return out, nil
 }
 
@@ -293,7 +326,13 @@ func (m *S3API) UploadPartCopy(ctx context.Context, in *s3v2.UploadPartCopyInput
 	if err != nil {
 		return nil, err
 	}
-	etag, err := md5hex(bytes.NewReader(srcObj.Body[start : end+1]))
+	// Copy the source range under the state lock, as in CopyObject: the
+	// backend issues UploadPartCopy concurrently with other requests, and
+	// slicing srcObj.Body must not race a PutObject replacing the source.
+	m.mu.Lock()
+	srcRange := bytes.Clone(srcObj.Body[start : end+1])
+	m.mu.Unlock()
+	etag, err := md5hex(bytes.NewReader(srcRange))
 	if err != nil {
 		return nil, err
 	}
@@ -346,8 +385,10 @@ func (m *S3API) CompleteMultipartUpload(ctx context.Context, in *s3v2.CompleteMu
 		Key:    in.Key,
 		ETag:   aws.String(etag),
 	}
+	m.mu.Lock()
 	m.UpdatedETags[*in.Key] = etag
 	m.MPUComplete = true
+	m.mu.Unlock()
 	return out, nil
 }
 
@@ -361,7 +402,9 @@ func (m *S3API) AbortMultipartUpload(ctx context.Context, in *s3v2.AbortMultipar
 	}
 
 	out := &s3v2.AbortMultipartUploadOutput{}
+	m.mu.Lock()
 	m.MPUAborted = true
+	m.mu.Unlock()
 	return out, nil
 }
 
@@ -391,28 +434,38 @@ func (m *S3API) CopyObject(ctx context.Context, in *s3v2.CopyObjectInput, opts .
 	if err != nil {
 		return nil, err
 	}
-	etag, err := md5hex(bytes.NewReader(srcObj.Body))
+	// Copy the body under the state lock: a concurrent PutObject to the
+	// source key would otherwise race the read in md5hex.
+	m.mu.Lock()
+	srcBody := bytes.Clone(srcObj.Body)
+	m.mu.Unlock()
+	etag, err := md5hex(bytes.NewReader(srcBody))
 	if err != nil {
 		return nil, err
 	}
 	out := &s3v2.CopyObjectOutput{
 		CopyObjectResult: &types.CopyObjectResult{ETag: aws.String(etag)},
 	}
+	m.mu.Lock()
 	m.UpdatedETags[*in.Key] = `"` + etag + `"` // etag is quoted string
+	m.mu.Unlock()
 	return out, nil
 }
 
 func (m *S3API) DeleteObject(ctx context.Context, in *s3v2.DeleteObjectInput, opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error) {
 	m.log.recordKey("DeleteObject", in.Key)
-	if _, err := m.getObject(in.Key); err != nil {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.getObjectLocked(in.Key); err != nil {
 		return nil, &types.NoSuchKey{}
 	}
 	out := &s3v2.DeleteObjectOutput{}
-	m.deleteKey(*in.Key)
+	m.deleteKeyLocked(*in.Key)
 	return out, nil
 }
 
-// deleteKey removes the object from the bucket and records the deletion.
+// deleteKeyLocked removes the object from the bucket and records the
+// deletion. The caller must hold m.mu.
 //
 // Removing it from m.objects is what makes a deletion observable the way a
 // real store's is: the key stops appearing in ListObjectsV2 and stops
@@ -421,7 +474,7 @@ func (m *S3API) DeleteObject(ctx context.Context, in *s3v2.DeleteObjectInput, op
 // and for distinguishing "never deleted" from "deleted and then rewritten" —
 // but a test that only consults Deleted is checking which requests were sent,
 // not what the bucket now contains.
-func (m *S3API) deleteKey(key string) {
+func (m *S3API) deleteKeyLocked(key string) {
 	delete(m.objects, key)
 	m.Deleted[key] = true
 }
@@ -433,6 +486,45 @@ func (m *S3API) PartCount() int {
 		return true
 	})
 	return num
+}
+
+// WasDeleted reports whether a delete request targeted key. Prefer this over
+// reading the Deleted map directly: the map is written by handlers that may
+// be running on the uploader's goroutines, and the accessor takes the state
+// mutex.
+func (m *S3API) WasDeleted(key string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.Deleted[key]
+}
+
+// UpdatedETag returns the etag recorded for key, or "" if the mock never
+// completed a write to it. Prefer this over reading UpdatedETags directly,
+// for the same reason as WasDeleted.
+func (m *S3API) UpdatedETag(key string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.UpdatedETags[key]
+}
+
+// MPUCreatedFlag, MPUAbortedFlag and MPUCompleteFlag report the corresponding
+// MPU flag under the state mutex; prefer them over the bare fields.
+func (m *S3API) MPUCreatedFlag() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.MPUCreated
+}
+
+func (m *S3API) MPUAbortedFlag() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.MPUAborted
+}
+
+func (m *S3API) MPUCompleteFlag() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.MPUComplete
 }
 
 func (m *S3API) PartETag(num int32) string {
@@ -460,6 +552,15 @@ func (m *S3API) bucketOK(b *string) error {
 }
 
 func (m *S3API) getObject(k *string) (*Object, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.getObjectLocked(k)
+}
+
+// getObjectLocked looks up an object; the caller must hold m.mu. Callers
+// that mutate or hand out the object's Body should copy it before releasing
+// the lock (see CopyObject).
+func (m *S3API) getObjectLocked(k *string) (*Object, error) {
 	if k == nil {
 		return nil, errors.New("object key is required")
 	}
