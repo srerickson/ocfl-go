@@ -1,4 +1,4 @@
-package internal
+package imptest
 
 import (
 	"context"
@@ -12,10 +12,10 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
-// WriteFSWriteContract configures [TestWriteFSWriteContract] with the parts of
-// the [ocflfs.WriteFS] Write contract a backend is allowed to decide for
-// itself, plus the Skip fields for cases a backend does not honor yet.
-type WriteFSWriteContract struct {
+// WriteFSWrite configures [TestWriteFSWrite] with the parts of Write an
+// implementation is allowed to decide for itself, plus the Skip fields for
+// behavior a backend does not satisfy yet.
+type WriteFSWrite struct {
 	// WriteDotIsError reports whether Write(ctx, ".", …) must fail. Every
 	// backend where "." names a directory rejects it; a backend with no
 	// directories at all may treat it as an ordinary key.
@@ -27,12 +27,12 @@ type WriteFSWriteContract struct {
 	SkipFailedSourceKeepsFile string
 }
 
-// TestWriteFSWriteContract asserts the [ocflfs.WriteFS] Write behavior that
-// all backends share, against whichever backend fsys implements. Call it from
-// a backend's own external test package.
+// TestWriteFSWrite asserts the [ocflfs.WriteFS] Write behavior every
+// implementation must share, against whichever backend fsys implements. Call
+// it from a backend's own external test package.
 //
-// The interesting cases are the ones where a backend can look correct on a
-// happy-path test and still be wrong:
+// The interesting cases are the ones where an implementation can look correct
+// on a happy-path test and still be wrong:
 //
 //   - a shorter overwrite must fully replace the file, not overlay it. A
 //     write that opens the target with O_TRUNC gets this right by accident
@@ -45,9 +45,9 @@ type WriteFSWriteContract struct {
 //     cannot half-create something outside the namespace.
 //
 // Atomicity itself — what a concurrent reader observes mid-write — is not
-// asserted here: it is only observable through backend-specific machinery, so
-// it belongs in the backend's own tests.
-func TestWriteFSWriteContract(t *testing.T, fsys ocflfs.WriteFS, contract WriteFSWriteContract) {
+// asserted here: it is only observable through implementation-specific
+// machinery, so it belongs in the backend's own tests.
+func TestWriteFSWrite(t *testing.T, fsys ocflfs.WriteFS, opts WriteFSWrite) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -62,7 +62,7 @@ func TestWriteFSWriteContract(t *testing.T, fsys ocflfs.WriteFS, contract WriteF
 	}
 
 	t.Run("write new file returns size and content", func(t *testing.T) {
-		const name, content = "write-contract/new.txt", "hello contract"
+		const name, content = "imptest-write/new.txt", "hello write"
 		n, err := fsys.Write(ctx, name, strings.NewReader(content))
 		be.NilErr(t, err)
 		be.Equal(t, int64(len(content)), n)
@@ -70,7 +70,7 @@ func TestWriteFSWriteContract(t *testing.T, fsys ocflfs.WriteFS, contract WriteF
 	})
 
 	t.Run("overwrite with shorter content replaces entirely", func(t *testing.T) {
-		const name = "write-contract/shrink.txt"
+		const name = "imptest-write/shrink.txt"
 		const long = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		const short = "bb"
 		_, err := fsys.Write(ctx, name, strings.NewReader(long))
@@ -83,7 +83,7 @@ func TestWriteFSWriteContract(t *testing.T, fsys ocflfs.WriteFS, contract WriteF
 	})
 
 	t.Run("write empty content creates an empty file", func(t *testing.T) {
-		const name = "write-contract/empty.txt"
+		const name = "imptest-write/empty.txt"
 		n, err := fsys.Write(ctx, name, strings.NewReader(""))
 		be.NilErr(t, err)
 		be.Equal(t, int64(0), n)
@@ -91,17 +91,17 @@ func TestWriteFSWriteContract(t *testing.T, fsys ocflfs.WriteFS, contract WriteF
 	})
 
 	t.Run("write creates intermediate directories", func(t *testing.T) {
-		const name, content = "write-contract/a/b/c/deep.txt", "deep"
+		const name, content = "imptest-write/a/b/c/deep.txt", "deep"
 		_, err := fsys.Write(ctx, name, strings.NewReader(content))
 		be.NilErr(t, err)
 		be.Equal(t, content, readBack(t, name))
 	})
 
 	t.Run("source error leaves previous content intact", func(t *testing.T) {
-		if contract.SkipFailedSourceKeepsFile != "" {
-			t.Skip(contract.SkipFailedSourceKeepsFile)
+		if opts.SkipFailedSourceKeepsFile != "" {
+			t.Skip(opts.SkipFailedSourceKeepsFile)
 		}
-		const name, original = "write-contract/failed-overwrite.txt", "original content"
+		const name, original = "imptest-write/failed-overwrite.txt", "original content"
 		_, err := fsys.Write(ctx, name, strings.NewReader(original))
 		be.NilErr(t, err)
 
@@ -116,10 +116,10 @@ func TestWriteFSWriteContract(t *testing.T, fsys ocflfs.WriteFS, contract WriteF
 	})
 
 	t.Run("source error on a new file leaves nothing behind", func(t *testing.T) {
-		if contract.SkipFailedSourceKeepsFile != "" {
-			t.Skip(contract.SkipFailedSourceKeepsFile)
+		if opts.SkipFailedSourceKeepsFile != "" {
+			t.Skip(opts.SkipFailedSourceKeepsFile)
 		}
-		const name = "write-contract/never-created.txt"
+		const name = "imptest-write/never-created.txt"
 		_, err := fsys.Write(ctx, name, &failingReader{
 			prefix: []byte("bytes that must not become a file"),
 			err:    errors.New("source read failed"),
@@ -144,7 +144,7 @@ func TestWriteFSWriteContract(t *testing.T, fsys ocflfs.WriteFS, contract WriteF
 		}
 	})
 
-	if contract.WriteDotIsError {
+	if opts.WriteDotIsError {
 		t.Run("write to dot is rejected", func(t *testing.T) {
 			_, err := fsys.Write(ctx, ".", strings.NewReader("nope"))
 			be.True(t, err != nil)

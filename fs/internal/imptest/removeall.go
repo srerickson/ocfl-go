@@ -1,4 +1,4 @@
-package internal
+package imptest
 
 import (
 	"context"
@@ -12,16 +12,15 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
-// WriteFSRemoveAllContract configures [TestWriteFSRemoveAllContract] with the
-// parts of the [ocflfs.WriteFS] RemoveAll contract that are left to the
-// backend.
-type WriteFSRemoveAllContract struct {
+// WriteFSRemoveAll configures [TestWriteFSRemoveAll] with the parts of
+// RemoveAll that are left to the implementation.
+type WriteFSRemoveAll struct {
 	// RemoveAllDotIsError reports whether the backend's own
 	// RemoveAll(ctx, ".") refuses rather than emptying the top-level
-	// directory. This is genuinely backend-dependent: the local backend
-	// refuses because its storage root must survive, the S3 backend empties
-	// the bucket. Callers who want uniform behavior use the package-level
-	// [ocflfs.RemoveAll], which is covered separately.
+	// directory. This genuinely differs between correct implementations: the
+	// local backend refuses because its storage root must survive, the S3
+	// backend empties the bucket. Callers who want uniform behavior use the
+	// package-level [ocflfs.RemoveAll], which is covered separately.
 	RemoveAllDotIsError bool
 
 	// RemoveAllOnFileRemovesIt reports whether RemoveAll applied directly to
@@ -31,19 +30,19 @@ type WriteFSRemoveAllContract struct {
 	RemoveAllOnFileRemovesIt bool
 }
 
-// TestWriteFSRemoveAllContract asserts the [ocflfs.WriteFS] RemoveAll behavior
-// that all backends share, against whichever backend fsys implements. Call it
-// from a backend's own external test package.
+// TestWriteFSRemoveAll asserts the [ocflfs.WriteFS] RemoveAll behavior every
+// implementation must share, against whichever backend fsys implements. Call
+// it from a backend's own external test package.
 //
-// The cases worth pinning across backends are the ones where the two families
-// of implementation drift apart. A hierarchical backend removes a subtree; a
+// The cases worth pinning are the ones where the two families of
+// implementation drift apart. A hierarchical backend removes a subtree; a
 // key-value backend removes a key prefix. Those agree on the happy path and
 // disagree at the boundary — "a" as a prefix also matches "ab", but as a
 // directory it does not — so the sibling case below is the one that catches a
 // backend building its prefix without the trailing separator. Idempotency is
 // the other: RemoveAll returns nil for a path that does not exist, which is
 // the opposite of Remove and easy to implement backwards.
-func TestWriteFSRemoveAllContract(t *testing.T, fsys ocflfs.WriteFS, contract WriteFSRemoveAllContract) {
+func TestWriteFSRemoveAll(t *testing.T, fsys ocflfs.WriteFS, opts WriteFSRemoveAll) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -69,11 +68,11 @@ func TestWriteFSRemoveAllContract(t *testing.T, fsys ocflfs.WriteFS, contract Wr
 	t.Run("missing path is not an error", func(t *testing.T) {
 		// The documented inversion of Remove: absent is success, not
 		// fs.ErrNotExist.
-		be.NilErr(t, fsys.RemoveAll(ctx, "removeall-contract/never-existed"))
+		be.NilErr(t, fsys.RemoveAll(ctx, "imptest-removeall/never-existed"))
 	})
 
 	t.Run("removes the whole subtree", func(t *testing.T) {
-		const dir = "removeall-contract/tree"
+		const dir = "imptest-removeall/tree"
 		write(t, dir+"/one.txt")
 		write(t, dir+"/nested/two.txt")
 		write(t, dir+"/nested/deeper/three.txt")
@@ -87,7 +86,7 @@ func TestWriteFSRemoveAllContract(t *testing.T, fsys ocflfs.WriteFS, contract Wr
 	})
 
 	t.Run("is idempotent", func(t *testing.T) {
-		const dir = "removeall-contract/twice"
+		const dir = "imptest-removeall/twice"
 		write(t, dir+"/file.txt")
 		be.NilErr(t, fsys.RemoveAll(ctx, dir))
 		// The second call has nothing to do and must still succeed.
@@ -100,7 +99,7 @@ func TestWriteFSRemoveAllContract(t *testing.T, fsys ocflfs.WriteFS, contract Wr
 		// Building the S3 listing prefix as name rather than name+"/" makes
 		// every assertion in this subtest fail, and nothing else here
 		// notices.
-		const base = "removeall-contract/siblings"
+		const base = "imptest-removeall/siblings"
 		write(t, base+"/a/inside.txt")
 		write(t, base+"/ab/outside.txt")
 		write(t, base+"/a-sibling.txt")
@@ -117,7 +116,7 @@ func TestWriteFSRemoveAllContract(t *testing.T, fsys ocflfs.WriteFS, contract Wr
 	})
 
 	t.Run("leaves unrelated paths alone", func(t *testing.T) {
-		const base = "removeall-contract/scoped"
+		const base = "imptest-removeall/scoped"
 		write(t, base+"/target/gone.txt")
 		write(t, base+"/keep/stays.txt")
 
@@ -140,19 +139,19 @@ func TestWriteFSRemoveAllContract(t *testing.T, fsys ocflfs.WriteFS, contract Wr
 	})
 
 	t.Run("applied to a file", func(t *testing.T) {
-		const name = "removeall-contract/lone-file.txt"
+		const name = "imptest-removeall/lone-file.txt"
 		write(t, name)
 		be.NilErr(t, fsys.RemoveAll(ctx, name))
-		be.Equal(t, !contract.RemoveAllOnFileRemovesIt, exists(t, name))
+		be.Equal(t, !opts.RemoveAllOnFileRemovesIt, exists(t, name))
 	})
 
 	// Runs last: on a backend that empties its root, this subtest removes
 	// everything the ones above wrote.
 	t.Run("dot", func(t *testing.T) {
-		const probe = "removeall-contract/dot-probe.txt"
+		const probe = "imptest-removeall/dot-probe.txt"
 		write(t, probe)
 		err := fsys.RemoveAll(ctx, ".")
-		if contract.RemoveAllDotIsError {
+		if opts.RemoveAllDotIsError {
 			// Refusing must be inert: the root is untouched.
 			be.True(t, err != nil)
 			be.True(t, exists(t, probe))

@@ -1,4 +1,4 @@
-package internal
+package imptest
 
 import (
 	"context"
@@ -13,10 +13,10 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
-// WalkFilesContract configures [TestWalkFilesContract] with the
-// backend-specific part of the WalkFiles contract.
+// WalkFiles configures [TestWalkFiles] with the implementation-specific part
+// of the walk: the fixture that makes a walk fail.
 //
-// The behaviors the shared suite pins are the ones every backend must share:
+// The behaviors the suite pins are the ones every implementation must share:
 //   - early termination: when the yield callback returns false, iteration
 //     stops and no further paths are yielded;
 //   - error propagation: a walk failure is yielded to the caller as the error
@@ -25,10 +25,10 @@ import (
 //   - every yielded *[ocflfs.FileRef] has its FS field set to the backend's
 //     own instance, so callers can open the file through the ref without
 //     carrying the backend around.
-type WalkFilesContract struct {
+type WalkFiles struct {
 	// ErrWalk returns a backend filesystem whose walk of the fixed name
-	// "blocked" is guaranteed to fail. The shared error-propagation test
-	// uses it to observe how a backend delivers a walk failure. For s3 this
+	// "blocked" is guaranteed to fail. The error-propagation subtest uses it
+	// to observe how an implementation delivers a walk failure. For s3 this
 	// is a BucketFS over an API that errors when asked to list the
 	// "blocked/" prefix; for local it is an FS where "blocked" is a regular
 	// file where the walk expects a directory, so the directory read fails.
@@ -40,7 +40,7 @@ type WalkFilesContract struct {
 	SkipWalkErrors string
 }
 
-// TestWalkFilesContract asserts the WalkFiles contract behaviors all backends
+// TestWalkFiles asserts the WalkFiles behavior every implementation must
 // share, against whichever backend fsys implements. Call it from a backend's
 // own external test package.
 //
@@ -54,7 +54,7 @@ type WalkFilesContract struct {
 // The seed enumerates identically on both backends — lexicographic key order
 // on s3, sorted DirEntries order on local — so the suite can pin exact paths,
 // ordering, and relative Path values without backend-specific logic.
-func TestWalkFilesContract(t *testing.T, fsys ocflfs.WriteFS, contract WalkFilesContract) {
+func TestWalkFiles(t *testing.T, fsys ocflfs.WriteFS, opts WalkFiles) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -137,12 +137,12 @@ func TestWalkFilesContract(t *testing.T, fsys ocflfs.WriteFS, contract WalkFiles
 	})
 
 	t.Run("walk errors are delivered and terminate iteration", func(t *testing.T) {
-		if contract.SkipWalkErrors != "" {
-			t.Skip(contract.SkipWalkErrors)
+		if opts.SkipWalkErrors != "" {
+			t.Skip(opts.SkipWalkErrors)
 		}
 		// The fixture's walk of "blocked" fails: s3's ListObjectsV2 errors on
 		// that prefix, local's directory read of a regular file fails.
-		got := walkAll(contract.ErrWalk(t), "blocked")
+		got := walkAll(opts.ErrWalk(t), "blocked")
 
 		// Exactly one error is yielded and nothing else: the error is
 		// returned to the caller as the pair's error element, and no further

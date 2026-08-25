@@ -1,4 +1,4 @@
-package internal
+package imptest
 
 import (
 	"context"
@@ -12,17 +12,17 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
-// WriteFSRemoveContract configures [TestWriteFSRemoveContract] with the
-// backend-specific part of the [ocflfs.WriteFS] Remove contract, plus the Skip
-// fields for cases a backend does not honor yet.
+// WriteFSRemove configures [TestWriteFSRemove] with the part of Remove that
+// is implementation-specific, plus the Skip fields for behavior a backend does
+// not satisfy yet.
 //
 // Removing a missing file should return an error satisfying
 // errors.Is(err, fs.ErrNotExist) on every backend, and removing the top-level
 // directory (".") should always be an error that leaves the storage root
-// alone. Name "." is the only name whose error is legitimately
-// backend-specific: the S3 backend reports fs.ErrNotExist, while the local
+// alone. Name "." is the only name whose error legitimately differs between
+// implementations: the S3 backend reports fs.ErrNotExist, while the local
 // backend returns a descriptive *fs.PathError instead.
-type WriteFSRemoveContract struct {
+type WriteFSRemove struct {
 	// RemoveDotIsNotExist reports whether the backend's Remove(".") error
 	// satisfies errors.Is(err, fs.ErrNotExist): true for the S3 backend,
 	// false for the local backend.
@@ -33,9 +33,9 @@ type WriteFSRemoveContract struct {
 	SkipMissingIsNotExist string
 }
 
-// TestWriteFSRemoveContract asserts the [ocflfs.WriteFS] Remove behavior that
-// all backends share, against whichever backend fsys implements. Call it from
-// a backend's own external test package.
+// TestWriteFSRemove asserts the [ocflfs.WriteFS] Remove behavior every
+// implementation must share, against whichever backend fsys implements. Call
+// it from a backend's own external test package.
 //
 // The test covers:
 //   - removing a missing file returns an error satisfying
@@ -45,14 +45,14 @@ type WriteFSRemoveContract struct {
 //   - removing "." returns a non-nil *fs.PathError naming ".", never touches
 //     the storage root (a file written before the call must still be present
 //     and readable afterwards), and satisfies errors.Is(err, fs.ErrNotExist)
-//     exactly when contract.RemoveDotIsNotExist says it does.
-func TestWriteFSRemoveContract(t *testing.T, fsys ocflfs.WriteFS, contract WriteFSRemoveContract) {
+//     exactly when opts.RemoveDotIsNotExist says it does.
+func TestWriteFSRemove(t *testing.T, fsys ocflfs.WriteFS, opts WriteFSRemove) {
 	t.Helper()
 	ctx := context.Background()
 
 	t.Run("remove missing file returns ErrNotExist", func(t *testing.T) {
-		if contract.SkipMissingIsNotExist != "" {
-			t.Skip(contract.SkipMissingIsNotExist)
+		if opts.SkipMissingIsNotExist != "" {
+			t.Skip(opts.SkipMissingIsNotExist)
 		}
 		const missing = "no-such-file.txt"
 		err := fsys.Remove(ctx, missing)
@@ -68,7 +68,7 @@ func TestWriteFSRemoveContract(t *testing.T, fsys ocflfs.WriteFS, contract Write
 
 	t.Run("remove dot errors and leaves root intact", func(t *testing.T) {
 		const (
-			probe   = "remove-contract/root-probe.txt"
+			probe   = "imptest-remove/root-probe.txt"
 			payload = "probe payload"
 		)
 		_, err := fsys.Write(ctx, probe, strings.NewReader(payload))
@@ -80,8 +80,8 @@ func TestWriteFSRemoveContract(t *testing.T, fsys ocflfs.WriteFS, contract Write
 		be.Equal(t, "remove", pathErr.Op)
 		be.Equal(t, ".", pathErr.Path)
 		// errors.Is must behave exactly as the backend documents for "." —
-		// the one name whose error the contract permits to differ.
-		be.Equal(t, contract.RemoveDotIsNotExist, errors.Is(err, fs.ErrNotExist))
+		// the one name whose error is allowed to differ.
+		be.Equal(t, opts.RemoveDotIsNotExist, errors.Is(err, fs.ErrNotExist))
 		// The storage root must be unaffected: the probe file written before
 		// Remove(".") must still be present and readable.
 		file, err := fsys.OpenFile(ctx, probe)
@@ -93,7 +93,7 @@ func TestWriteFSRemoveContract(t *testing.T, fsys ocflfs.WriteFS, contract Write
 	})
 
 	t.Run("removes an existing file", func(t *testing.T) {
-		const name = "remove-contract/goes-away.txt"
+		const name = "imptest-remove/goes-away.txt"
 		_, err := fsys.Write(ctx, name, strings.NewReader("x"))
 		be.NilErr(t, err)
 		be.NilErr(t, fsys.Remove(ctx, name))

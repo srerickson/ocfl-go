@@ -1,4 +1,4 @@
-package internal
+package imptest
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
-// TestDirEntriesContract asserts the [ocflfs.DirEntriesFS] behavior all
-// backends share, against whichever backend fsys implements.
+// TestDirEntries asserts the [ocflfs.DirEntriesFS] behavior every
+// implementation must share, against whichever backend fsys implements.
 //
 // DirEntries is where the two backend families are most tempted to diverge,
 // because S3 has no directories: its listing is flat, and the
@@ -30,10 +30,10 @@ import (
 //   - entries are sorted, as [ocflfs.DirEntriesFS] documents, so callers may
 //     rely on the order without sorting defensively.
 //
-// Unlike the Remove and RemoveAll contracts this one takes no backend knobs:
-// the two backends agree on every case here, including a missing directory,
-// which S3 reports as fs.ErrNotExist rather than as an empty listing.
-func TestDirEntriesContract(t *testing.T, fsys ocflfs.WriteFS) {
+// Unlike Remove and RemoveAll this entry point takes no knobs: the two
+// backends agree on every case here, including a missing directory, which S3
+// reports as fs.ErrNotExist rather than as an empty listing.
+func TestDirEntries(t *testing.T, fsys ocflfs.WriteFS) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -44,7 +44,7 @@ func TestDirEntriesContract(t *testing.T, fsys ocflfs.WriteFS) {
 
 	// A deliberately unsorted creation order, so a backend that happens to
 	// return insertion order fails the sorted-order assertion.
-	const base = "direntries-contract"
+	const base = "imptest-direntries"
 	for _, name := range []string{
 		base + "/zeta.txt",
 		base + "/alpha.txt",
