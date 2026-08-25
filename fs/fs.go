@@ -48,7 +48,12 @@ type FileWalker interface {
 type WriteFS interface {
 	FS
 	Write(ctx context.Context, name string, buffer io.Reader) (int64, error)
-	// Remove the file with path name
+	// Remove the file with path name.
+	//
+	// Removing a file that does not exist returns an error satisfying
+	// errors.Is(err, fs.ErrNotExist). Name "." is never removable -- it
+	// names the storage root, not a file -- and returns an error satisfying
+	// errors.Is(err, fs.ErrInvalid) without affecting the root's contents.
 	Remove(ctx context.Context, name string) error
 	// Remove the directory with path name and all its contents. If the path
 	// does not exist, return nil.

@@ -218,8 +218,11 @@ func remove(ctx context.Context, api RemoveAPI, b string, name string) error {
 	if !fs.ValidPath(name) {
 		return pathErr("remove", name, fs.ErrInvalid)
 	}
+	// "." names the bucket, not an object, so removing it is a bad name
+	// rather than a failed removal — matching openFile and write, which
+	// already reject "." that way. The guard issues no request.
 	if name == "." {
-		return pathErr("remove", name, fs.ErrNotExist)
+		return pathErr("remove", name, fs.ErrInvalid)
 	}
 	_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: &b,
