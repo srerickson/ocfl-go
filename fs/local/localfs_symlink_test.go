@@ -163,3 +163,205 @@ func TestFS_Write_ToleratesLstatError(t *testing.T) {
 	be.NilErr(t, err)
 	be.Equal(t, "x", string(data))
 }
+
+// The tests below pin containment: a symlink inside the storage root must
+// never let a name reach a file outside it. Each one builds the same shape --
+// an "outside" directory next to the root, a symlink in the root pointing at
+// it -- and asserts both halves of the guarantee: the operation fails, and
+// the external target is exactly as it was.
+//
+// They assert a non-nil error rather than a sentinel deliberately. os.Root
+// reports an escape as an unexported errors.errorString ("path escapes from
+// parent") that matches none of fs.ErrNotExist, fs.ErrInvalid or
+// fs.ErrPermission, and the error a caller actually gets varies by method:
+// writing through an intermediate symlink fails in MkdirAll with "file
+// exists", not with the escape error at all. Pinning any particular error
+// would pin an implementation detail of the standard library; the surviving
+// external state is the property that matters.
+
+// escapeFixture builds a root containing "link" -> outside, where outside
+// holds a file "secret" and a directory "subdir" with a file in it. It
+// returns the FS, the root path and the outside path.
+func escapeFixture(t *testing.T) (*FS, string, string) {
+	t.Helper()
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	outside := filepath.Join(base, "outside")
+	be.NilErr(t, os.MkdirAll(root, 0o755))
+	be.NilErr(t, os.MkdirAll(filepath.Join(outside, "subdir"), 0o755))
+	be.NilErr(t, os.WriteFile(filepath.Join(outside, "secret"), []byte("secret data"), 0o600))
+	be.NilErr(t, os.WriteFile(filepath.Join(outside, "subdir", "nested"), []byte("nested data"), 0o600))
+	be.NilErr(t, os.Symlink(outside, filepath.Join(root, "link")))
+	return MustNewFS(root), root, outside
+}
+
+// assertOutsideIntact checks that nothing under outside was created, removed
+// or modified.
+func assertOutsideIntact(t *testing.T, outside string) {
+	t.Helper()
+	secret, err := os.ReadFile(filepath.Join(outside, "secret"))
+	be.NilErr(t, err)
+	be.Equal(t, "secret data", string(secret))
+	nested, err := os.ReadFile(filepath.Join(outside, "subdir", "nested"))
+	be.NilErr(t, err)
+	be.Equal(t, "nested data", string(nested))
+	entries, err := os.ReadDir(outside)
+	be.NilErr(t, err)
+	be.Equal(t, 2, len(entries)) // secret, subdir -- nothing new
+}
+
+// TestFS_Write_IntermediateSymlinkEscape: Write("link/pwned.txt") created
+// outside/pwned.txt before the FS was rebuilt on os.Root.
+func TestFS_Write_IntermediateSymlinkEscape(t *testing.T) {
+	fsys, _, outside := escapeFixture(t)
+	_, err := fsys.Write(context.Background(), "link/pwned.txt", strings.NewReader("pwned"))
+	be.True(t, err != nil)
+	if _, statErr := os.Lstat(filepath.Join(outside, "pwned.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("write through an intermediate symlink created a file outside the root")
+	}
+	assertOutsideIntact(t, outside)
+}
+
+// TestFS_Remove_IntermediateSymlinkEscape: Remove("link/secret") deleted
+// outside/secret before the rebuild.
+func TestFS_Remove_IntermediateSymlinkEscape(t *testing.T) {
+	fsys, _, outside := escapeFixture(t)
+	err := fsys.Remove(context.Background(), "link/secret")
+	be.True(t, err != nil)
+	assertOutsideIntact(t, outside)
+}
+
+// TestFS_RemoveAll_IntermediateSymlinkEscape: RemoveAll("link/subdir")
+// deleted outside/subdir and returned nil before the rebuild -- the worst of
+// the four, since the caller saw success.
+func TestFS_RemoveAll_IntermediateSymlinkEscape(t *testing.T) {
+	fsys, _, outside := escapeFixture(t)
+	err := fsys.RemoveAll(context.Background(), "link/subdir")
+	be.True(t, err != nil)
+	assertOutsideIntact(t, outside)
+}
+
+// TestFS_Read_IntermediateSymlinkEscape covers the read path, which os.DirFS
+// documents as following symlinks out of the directory it was given.
+func TestFS_Read_IntermediateSymlinkEscape(t *testing.T) {
+	fsys, _, outside := escapeFixture(t)
+	ctx := context.Background()
+
+	t.Run("OpenFile", func(t *testing.T) {
+		f, err := fsys.OpenFile(ctx, "link/secret")
+		if err == nil {
+			f.Close()
+			t.Fatal("OpenFile read a file outside the storage root")
+		}
+	})
+
+	t.Run("DirEntries", func(t *testing.T) {
+		var (
+			got     []string
+			dirErr  error
+			entries = fsys.DirEntries(ctx, "link")
+		)
+		for entry, err := range entries {
+			if err != nil {
+				dirErr = err
+				continue
+			}
+			got = append(got, entry.Name())
+		}
+		be.True(t, dirErr != nil)
+		be.Equal(t, 0, len(got))
+	})
+
+	// Reading the link itself is equally an escape: the target is outside.
+	t.Run("OpenFile on the link", func(t *testing.T) {
+		f, err := fsys.OpenFile(ctx, "link")
+		if err == nil {
+			f.Close()
+			t.Fatal("OpenFile followed a symlink out of the storage root")
+		}
+	})
+
+	assertOutsideIntact(t, outside)
+}
+
+// TestFS_Remove_SymlinkAtName pins the other half of removal: a symlink named
+// directly is removed as the link entry it is, leaving its referent -- even an
+// external one -- untouched. This is not an escape and must succeed.
+func TestFS_Remove_SymlinkAtName(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		remove func(*FS, context.Context) error
+	}{
+		{"Remove", func(fsys *FS, ctx context.Context) error { return fsys.Remove(ctx, "link") }},
+		{"RemoveAll", func(fsys *FS, ctx context.Context) error { return fsys.RemoveAll(ctx, "link") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fsys, root, outside := escapeFixture(t)
+			be.NilErr(t, tc.remove(fsys, context.Background()))
+			if _, err := os.Lstat(filepath.Join(root, "link")); !os.IsNotExist(err) {
+				t.Fatalf("link entry still present after %s", tc.name)
+			}
+			assertOutsideIntact(t, outside)
+		})
+	}
+}
+
+// TestFS_Write_SymlinkAtNameToExternalTarget covers the case the existing
+// mode tests do not: the target name is a symlink whose referent is outside
+// the root. The write must replace the link entry with a regular file inside
+// the root and leave the external referent's contents and mode alone. It is
+// not an escape -- the rename never follows the final component -- so it
+// succeeds.
+func TestFS_Write_SymlinkAtNameToExternalTarget(t *testing.T) {
+	fsys, root, outside := escapeFixture(t)
+	referent := filepath.Join(outside, "secret")
+	be.NilErr(t, os.Symlink(referent, filepath.Join(root, "target")))
+
+	n, err := fsys.Write(context.Background(), "target", strings.NewReader("replacement"))
+	be.NilErr(t, err)
+	be.Equal(t, int64(len("replacement")), n)
+
+	// The name now holds a regular file inside the root with the new bytes.
+	info, err := os.Lstat(filepath.Join(root, "target"))
+	be.NilErr(t, err)
+	if info.Mode()&fs.ModeSymlink != 0 {
+		t.Fatal("write left a symlink at the target name")
+	}
+	data, err := os.ReadFile(filepath.Join(root, "target"))
+	be.NilErr(t, err)
+	be.Equal(t, "replacement", string(data))
+
+	// The external referent kept both its contents and its mode: nothing was
+	// written through the link, and its 0600 did not become the new file's.
+	refData, err := os.ReadFile(referent)
+	be.NilErr(t, err)
+	be.Equal(t, "secret data", string(refData))
+	refInfo, err := os.Stat(referent)
+	be.NilErr(t, err)
+	be.Equal(t, fs.FileMode(0o600), refInfo.Mode().Perm())
+	if info.Mode().Perm() == 0o600 {
+		t.Fatalf("external referent's mode leaked onto the replacement: %v", info.Mode().Perm())
+	}
+	assertOutsideIntact(t, outside)
+}
+
+// TestFS_DirEntries_Sorted guards the trap in reading a directory handle
+// directly: os.DirFS implements ReadDirFS and sorts internally, so the
+// previous implementation got sorted output for free. os.File.ReadDir does
+// not sort, so DirEntries sorts explicitly -- and this pins it, with names
+// written in an order that is not the sorted one.
+func TestFS_DirEntries_Sorted(t *testing.T) {
+	fsys := MustNewFS(t.TempDir())
+	ctx := context.Background()
+	for _, name := range []string{"zulu", "alpha", "mike", "bravo", "delta"} {
+		_, err := fsys.Write(ctx, "d/"+name, strings.NewReader(name))
+		be.NilErr(t, err)
+	}
+	var got []string
+	for entry, err := range fsys.DirEntries(ctx, "d") {
+		be.NilErr(t, err)
+		got = append(got, entry.Name())
+	}
+	want := []string{"alpha", "bravo", "delta", "mike", "zulu"}
+	be.Equal(t, strings.Join(want, ","), strings.Join(got, ","))
+}

@@ -5,9 +5,13 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +37,21 @@ func TestNewFS(t *testing.T) {
 		root := fsys.Root()
 		be.True(t, filepath.IsAbs(root))
 		be.True(t, strings.HasSuffix(root, filepath.Base(tmpDir)))
+	})
+
+	// NewFS now opens an os.Root on the directory, so a path that is not an
+	// existing directory fails here rather than at the first operation on it.
+	t.Run("rejects a missing directory", func(t *testing.T) {
+		_, err := NewFS(filepath.Join(t.TempDir(), "no-such-dir"))
+		be.True(t, err != nil)
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+	})
+
+	t.Run("rejects a path that is not a directory", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "regular.txt")
+		be.NilErr(t, os.WriteFile(file, []byte("x"), 0o644))
+		_, err := NewFS(file)
+		be.True(t, err != nil)
 	})
 }
 
@@ -389,42 +408,74 @@ func TestFS_RemoveAll(t *testing.T) {
 	})
 }
 
-func TestFS_osPath(t *testing.T) {
-	t.Run("converts valid fs path to OS path", func(t *testing.T) {
+// TestFS_NameResolution replaces the old TestFS_osPath. Names are no longer
+// turned into an OS path at all: every method hands the slash-separated name
+// to the FS's os.Root, which resolves it one component at a time. What is
+// left to pin is the observable half of what osPath did — a valid name lands
+// under the storage root at the place its components name, and an invalid one
+// is rejected as fs.ErrInvalid by every method rather than reaching the OS.
+func TestFS_NameResolution(t *testing.T) {
+	t.Run("nested name lands under the root", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		fsys, err := NewFS(tmpDir)
 		be.NilErr(t, err)
 
-		osPath, err := fsys.osPath("test.txt")
+		ctx := context.Background()
+		_, err = fsys.Write(ctx, "a/b/c/test.txt", strings.NewReader("nested"))
 		be.NilErr(t, err)
-		be.Equal(t, filepath.Join(tmpDir, "test.txt"), osPath)
+
+		data, err := os.ReadFile(filepath.Join(tmpDir, "a", "b", "c", "test.txt"))
+		be.NilErr(t, err)
+		be.Equal(t, "nested", string(data))
 	})
 
-	t.Run("handles nested paths", func(t *testing.T) {
+	t.Run("invalid names are rejected by every method", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		fsys, err := NewFS(tmpDir)
 		be.NilErr(t, err)
 
-		osPath, err := fsys.osPath("a/b/c/test.txt")
-		be.NilErr(t, err)
-		expected := filepath.Join(tmpDir, "a", "b", "c", "test.txt")
-		be.Equal(t, expected, osPath)
-	})
-
-	t.Run("rejects invalid paths", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		fsys, err := NewFS(tmpDir)
-		be.NilErr(t, err)
-
-		invalidPaths := []string{
+		ctx := context.Background()
+		invalidNames := []string{
 			"../outside",
 			"/absolute",
+			"./file",
+			"",
 		}
-
-		for _, path := range invalidPaths {
-			_, err := fsys.osPath(path)
-			be.True(t, err != nil)
-			be.Equal(t, fs.ErrInvalid, err)
+		for _, name := range invalidNames {
+			ops := map[string]error{
+				"write": func() error {
+					_, err := fsys.Write(ctx, name, strings.NewReader("x"))
+					return err
+				}(),
+				"remove":    fsys.Remove(ctx, name),
+				"removeall": fsys.RemoveAll(ctx, name),
+				"openfile": func() error {
+					_, err := fsys.OpenFile(ctx, name)
+					return err
+				}(),
+			}
+			for _, entry := range slices.Sorted(maps.Keys(ops)) {
+				opErr := ops[entry]
+				if opErr == nil {
+					t.Fatalf("%s(%q) = nil, want an error", entry, name)
+				}
+				var pathErr *fs.PathError
+				be.True(t, errors.As(opErr, &pathErr))
+				be.Equal(t, name, pathErr.Path)
+				if !errors.Is(opErr, fs.ErrInvalid) {
+					t.Fatalf("%s(%q) = %v, want fs.ErrInvalid", entry, name, opErr)
+				}
+			}
+			// DirEntries reports the same rejection through its iterator.
+			var dirErr error
+			for _, err := range fsys.DirEntries(ctx, name) {
+				if err != nil {
+					dirErr = err
+				}
+			}
+			if !errors.Is(dirErr, fs.ErrInvalid) {
+				t.Fatalf("DirEntries(%q) = %v, want fs.ErrInvalid", name, dirErr)
+			}
 		}
 	})
 }
@@ -447,4 +498,105 @@ func TestFS_Implements_Interfaces(t *testing.T) {
 	data, err := io.ReadAll(f)
 	be.NilErr(t, err)
 	be.Equal(t, "test", string(data))
+}
+
+// TestFS_Write_ConcurrentNestedWrites pins the tolerance mkdirAll adds over
+// Root.MkdirAll. Root.MkdirAll opens each intermediate component and, on
+// ENOENT, calls mkdirat exactly once, reporting EEXIST as an error if another
+// goroutine created that directory in between -- so two concurrent writes
+// under a common new prefix fail with "file exists". Writing an object
+// version does exactly that, which is how this surfaced.
+func TestFS_Write_ConcurrentNestedWrites(t *testing.T) {
+	fsys, err := NewFS(t.TempDir())
+	be.NilErr(t, err)
+	ctx := context.Background()
+
+	// A deep shared prefix widens the window: every writer must create the
+	// same chain of missing parents.
+	const prefix = "obj/v2/content/docs/deep"
+	const writers = 16
+
+	start := make(chan struct{})
+	errs := make(chan error, writers)
+	var wg sync.WaitGroup
+	for i := range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			name := prefix + "/file-" + strconv.Itoa(i) + ".txt"
+			_, err := fsys.Write(ctx, name, strings.NewReader(name))
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		be.NilErr(t, err)
+	}
+
+	for i := range writers {
+		name := prefix + "/file-" + strconv.Itoa(i) + ".txt"
+		data, err := os.ReadFile(filepath.Join(fsys.Root(), filepath.FromSlash(name)))
+		be.NilErr(t, err)
+		be.Equal(t, name, string(data))
+	}
+}
+
+// TestFS_Write_ParentExistsAsFile pins the other side of mkdirAll's EEXIST
+// handling: tolerating an existing directory must not tolerate an existing
+// regular file standing where a parent directory belongs.
+func TestFS_Write_ParentExistsAsFile(t *testing.T) {
+	fsys, err := NewFS(t.TempDir())
+	be.NilErr(t, err)
+	ctx := context.Background()
+
+	_, err = fsys.Write(ctx, "blocker", strings.NewReader("x"))
+	be.NilErr(t, err)
+
+	_, err = fsys.Write(ctx, "blocker/child.txt", strings.NewReader("y"))
+	be.True(t, err != nil)
+	var pathErr *fs.PathError
+	be.True(t, errors.As(err, &pathErr))
+	be.Equal(t, "write", pathErr.Op)
+	be.Equal(t, "blocker/child.txt", pathErr.Path)
+}
+
+// TestFS_Close pins the descriptor lifecycle NewFS introduces: Close releases
+// the root, after which operations fail rather than silently succeeding, and
+// a second Close is harmless.
+func TestFS_Close(t *testing.T) {
+	fsys, err := NewFS(t.TempDir())
+	be.NilErr(t, err)
+	ctx := context.Background()
+
+	_, err = fsys.Write(ctx, "before.txt", strings.NewReader("x"))
+	be.NilErr(t, err)
+
+	be.NilErr(t, fsys.Close())
+	be.NilErr(t, fsys.Close()) // idempotent
+
+	_, err = fsys.Write(ctx, "after.txt", strings.NewReader("x"))
+	be.True(t, err != nil)
+	_, err = fsys.OpenFile(ctx, "before.txt")
+	be.True(t, err != nil)
+}
+
+// TestMustNewFS covers both halves of the Must contract.
+func TestMustNewFS(t *testing.T) {
+	t.Run("returns an FS for an existing directory", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		fsys := MustNewFS(tmpDir)
+		be.Equal(t, tmpDir, fsys.Root())
+	})
+
+	t.Run("panics when the directory is missing", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("MustNewFS did not panic on a missing directory")
+			}
+		}()
+		MustNewFS(filepath.Join(t.TempDir(), "no-such-dir"))
+	})
 }
