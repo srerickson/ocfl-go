@@ -12,15 +12,10 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
-// WriteFSWrite configures [TestWriteFSWrite] with the parts of Write an
-// implementation is allowed to decide for itself, plus the Skip fields for
+// WriteFSWrite configures [TestWriteFSWrite]. Nothing about Write is left to
+// the implementation to decide, so the struct carries only a Skip field for
 // behavior a backend does not satisfy yet.
 type WriteFSWrite struct {
-	// WriteDotIsError reports whether Write(ctx, ".", …) must fail. Every
-	// backend where "." names a directory rejects it; a backend with no
-	// directories at all may treat it as an ordinary key.
-	WriteDotIsError bool
-
 	// SkipFailedSourceKeepsFile, when non-empty, skips the two subtests that
 	// require a failing source to leave the target as it was, using this
 	// string as the skip reason.
@@ -144,12 +139,21 @@ func TestWriteFSWrite(t *testing.T, fsys ocflfs.WriteFS, opts WriteFSWrite) {
 		}
 	})
 
-	if opts.WriteDotIsError {
-		t.Run("write to dot is rejected", func(t *testing.T) {
-			_, err := fsys.Write(ctx, ".", strings.NewReader("nope"))
-			be.True(t, err != nil)
-		})
-	}
+	t.Run("write to dot is rejected as an invalid path", func(t *testing.T) {
+		// "." passes fs.ValidPath, so it reaches a backend that rejects every
+		// other bad name earlier. It still names a container and never a
+		// file, on a backend with directories and on one without, so it is
+		// rejected the same way: an error matching fs.ErrInvalid. A backend
+		// that leaves this to its storage layer fails here — the OS reports
+		// EISDIR, which matches nothing a caller can test for.
+		_, err := fsys.Write(ctx, ".", strings.NewReader("nope"))
+		if err == nil {
+			t.Fatal(`Write(".") = nil error, want a rejection`)
+		}
+		if !errors.Is(err, fs.ErrInvalid) {
+			t.Errorf(`Write(".") error = %v, want one matching fs.ErrInvalid`, err)
+		}
+	})
 }
 
 // failingReader delivers prefix and then fails, standing in for a source that

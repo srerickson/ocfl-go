@@ -50,6 +50,17 @@ func (fsys *FS) Write(ctx context.Context, name string, src io.Reader) (int64, e
 			Err:  err,
 		}
 	}
+	// "." names the storage root, never a file. fs.ValidPath accepts it, and
+	// without this guard the rejection would come from the OS refusing to
+	// open a directory for writing — an EISDIR that callers cannot match
+	// against fs.ErrInvalid the way they match every other bad name.
+	if name == "." {
+		return 0, &fs.PathError{
+			Op:   "write",
+			Path: name,
+			Err:  fs.ErrInvalid,
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return 0, &fs.PathError{
 			Op:   "write",

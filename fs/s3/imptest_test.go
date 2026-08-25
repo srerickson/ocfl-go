@@ -23,9 +23,7 @@ import (
 // backend.
 func TestWriteFSWrite_S3(t *testing.T) {
 	fsys := s3.NewBucketFS(mock.New(bucket), bucket)
-	imptest.TestWriteFSWrite(t, fsys, imptest.WriteFSWrite{
-		WriteDotIsError: true,
-	})
+	imptest.TestWriteFSWrite(t, fsys, imptest.WriteFSWrite{})
 }
 
 // TestWriteFSRemove_S3 runs the shared WriteFS.Remove suite against the S3
