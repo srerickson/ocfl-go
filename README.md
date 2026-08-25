@@ -6,7 +6,10 @@
 This is an implementation of the [Oxford Common File Layout](https://ocfl.io/)
 for [Go](https://go.dev). The module can be used in Go programs to support
 operations on OCFL storage roots and objects. It supports the local file system
-or s3 storage backends. Several complete [example programs](examples) are
+or s3 storage backends. Writes to the local backend replace files in one step:
+content goes to a temporary file that is renamed over the target, so a failed,
+canceled, or interrupted write leaves the previous file intact and never
+exposes a truncated one. Several complete [example programs](examples) are
 included.
 
 > [!WARNING]  
