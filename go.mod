@@ -10,6 +10,7 @@ require (
 	github.com/aws/smithy-go v1.27.3
 	github.com/carlmjohnson/be v0.23.2
 	github.com/hashicorp/go-multierror v1.1.1
+	github.com/rogpeppe/go-internal v1.16.0
 	golang.org/x/crypto v0.53.0
 	golang.org/x/sync v0.21.0
 )
