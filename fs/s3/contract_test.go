@@ -7,7 +7,7 @@ import (
 
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
-	"github.com/srerickson/ocfl-go/fs/internal/testutil"
+	"github.com/srerickson/ocfl-go/fs/internal"
 	"github.com/srerickson/ocfl-go/fs/s3"
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
 )
@@ -23,7 +23,7 @@ import (
 // the S3 backend.
 func TestWriteFSWriteContract_S3(t *testing.T) {
 	fsys := s3.NewBucketFS(mock.New(bucket), bucket)
-	testutil.TestWriteFSWriteContract(t, fsys, testutil.WriteFSWriteContract{
+	internal.TestWriteFSWriteContract(t, fsys, internal.WriteFSWriteContract{
 		WriteDotIsError: true,
 	})
 }
@@ -33,7 +33,7 @@ func TestWriteFSWriteContract_S3(t *testing.T) {
 // fs.ErrNotExist, unlike the local backend's descriptive *fs.PathError.
 func TestWriteFSRemoveContract_S3(t *testing.T) {
 	fsys := s3.NewBucketFS(mock.New(bucket), bucket)
-	testutil.TestWriteFSRemoveContract(t, fsys, testutil.WriteFSRemoveContract{
+	internal.TestWriteFSRemoveContract(t, fsys, internal.WriteFSRemoveContract{
 		RemoveDotIsNotExist: true,
 		// remove() calls DeleteObject with no existence check, and S3's
 		// DeleteObject is idempotent: a key that was never there deletes
@@ -48,7 +48,7 @@ func TestWriteFSRemoveContract_S3(t *testing.T) {
 // a name is a key prefix, so RemoveAll on a file's own path matches nothing.
 func TestWriteFSRemoveAllContract_S3(t *testing.T) {
 	fsys := s3.NewBucketFS(mock.New(bucket), bucket)
-	testutil.TestWriteFSRemoveAllContract(t, fsys, testutil.WriteFSRemoveAllContract{
+	internal.TestWriteFSRemoveAllContract(t, fsys, internal.WriteFSRemoveAllContract{
 		RemoveAllDotIsError:      false,
 		RemoveAllOnFileRemovesIt: false,
 	})
@@ -58,7 +58,7 @@ func TestWriteFSRemoveAllContract_S3(t *testing.T) {
 // S3 backend.
 func TestDirEntriesContract_S3(t *testing.T) {
 	fsys := s3.NewBucketFS(mock.New(bucket), bucket)
-	testutil.TestDirEntriesContract(t, fsys)
+	internal.TestDirEntriesContract(t, fsys)
 }
 
 // TestWalkFilesContract_S3 runs the shared WalkFiles contract against the S3
@@ -72,7 +72,7 @@ func TestDirEntriesContract_S3(t *testing.T) {
 // same name "blocked" the local fixture uses.
 func TestWalkFilesContract_S3(t *testing.T) {
 	fsys := s3.NewBucketFS(mock.New(bucket), bucket)
-	testutil.TestWalkFilesContract(t, fsys, testutil.WalkFilesContract{
+	internal.TestWalkFilesContract(t, fsys, internal.WalkFilesContract{
 		ErrWalk: func(t *testing.T) ocflfs.WriteFS {
 			api := &listErrAPI{
 				S3API:       mock.New(bucket),
