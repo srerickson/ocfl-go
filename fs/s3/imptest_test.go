@@ -23,20 +23,14 @@ import (
 // backend.
 func TestWriteFSWrite_S3(t *testing.T) {
 	fsys := s3.NewBucketFS(mock.New(bucket), bucket)
-	imptest.TestWriteFSWrite(t, fsys, imptest.WriteFSWrite{})
+	imptest.TestWriteFSWrite(t, fsys)
 }
 
 // TestWriteFSRemove_S3 runs the shared WriteFS.Remove suite against the S3
 // backend.
 func TestWriteFSRemove_S3(t *testing.T) {
 	fsys := s3.NewBucketFS(mock.New(bucket), bucket)
-	imptest.TestWriteFSRemove(t, fsys, imptest.WriteFSRemove{
-		// remove() calls DeleteObject with no existence check, and S3's
-		// DeleteObject is idempotent: a key that was never there deletes
-		// successfully, so Remove reports nil where the local backend
-		// reports fs.ErrNotExist.
-		SkipMissingIsNotExist: "Remove of a missing key returns nil on the s3 backend; see #166",
-	})
+	imptest.TestWriteFSRemove(t, fsys)
 }
 
 // TestWriteFSRemoveAll_S3 runs the shared WriteFS.RemoveAll suite against the
