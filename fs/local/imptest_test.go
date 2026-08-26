@@ -40,7 +40,6 @@ func TestWriteFSRemove_Local(t *testing.T) {
 // removes a file addressed directly, matching os.RemoveAll.
 func TestWriteFSRemoveAll_Local(t *testing.T) {
 	imptest.TestWriteFSRemoveAll(t, tmpLocalFS(t), imptest.WriteFSRemoveAll{
-		RemoveAllDotIsError:      true,
 		RemoveAllOnFileRemovesIt: true,
 	})
 }

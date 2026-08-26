@@ -240,12 +240,22 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 	}
 	params := &s3.ListObjectsV2Input{Bucket: &buck, MaxKeys: &maxKeys}
 	if name != "." {
+		// The trailing separator is what keeps "a" from matching the
+		// sibling key "ab". "." carries no prefix at all: it names the
+		// whole bucket.
 		params.Prefix = aws.String(name + "/")
 	}
+	// Deletion is best-effort, per the WriteFS.RemoveAll contract: one key
+	// that will not delete must not abandon the keys after it, which would
+	// leave a partial deletion and report only the first of possibly many
+	// failures.
+	var errs error
 	for {
 		list, err := api.ListObjectsV2(ctx, params)
 		if err != nil {
-			return pathErr("removeall", name, err)
+			// Without a listing there is nothing further to attempt, so
+			// this one does stop the loop.
+			return errors.Join(errs, pathErr("removeall", name, err))
 		}
 		for _, obj := range list.Contents {
 			_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{
@@ -253,7 +263,11 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 				Key:    obj.Key,
 			})
 			if err != nil {
-				return pathErr("removeall", name, err)
+				key := name
+				if obj.Key != nil {
+					key = *obj.Key
+				}
+				errs = errors.Join(errs, pathErr("removeall", key, err))
 			}
 		}
 		params.ContinuationToken = list.NextContinuationToken
@@ -261,7 +275,7 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 			break
 		}
 	}
-	return nil
+	return errs
 }
 
 // walkFiles returns an iterator that yields PathInfo for files in the dir

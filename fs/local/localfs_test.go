@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -354,18 +355,69 @@ func TestFS_RemoveAll(t *testing.T) {
 		be.True(t, os.IsNotExist(err))
 	})
 
-	t.Run("prevents removing root directory", func(t *testing.T) {
+	t.Run("empties root directory", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		fsys, err := NewFS(tmpDir)
 		be.NilErr(t, err)
 
 		ctx := context.Background()
+		_, err = fsys.Write(ctx, "top.txt", strings.NewReader("top"))
+		be.NilErr(t, err)
+		_, err = fsys.Write(ctx, "adir/nested.txt", strings.NewReader("nested"))
+		be.NilErr(t, err)
+
+		be.NilErr(t, fsys.RemoveAll(ctx, "."))
+
+		entries, err := os.ReadDir(tmpDir)
+		be.NilErr(t, err)
+		be.Equal(t, 0, len(entries))
+
+		// The root directory itself survives -- it is the container, not an
+		// entry in it, and the FS's os.Root handle resolves every other
+		// method through it.
+		info, err := os.Stat(tmpDir)
+		be.NilErr(t, err)
+		be.True(t, info.IsDir())
+		_, err = fsys.Write(ctx, "after.txt", strings.NewReader("after"))
+		be.NilErr(t, err)
+	})
+
+	t.Run("emptying root is best-effort", func(t *testing.T) {
+		// One undeletable entry must not abandon its siblings. The entry is
+		// made undeletable by clearing write permission on the directory
+		// holding it, which only works where the permission bits are
+		// actually enforced against this process.
+		if runtime.GOOS == "windows" {
+			t.Skip("directory permissions do not block removal on Windows")
+		}
+		if os.Geteuid() == 0 {
+			t.Skip("running as root: permission bits do not block removal")
+		}
+		tmpDir := t.TempDir()
+		fsys, err := NewFS(tmpDir)
+		be.NilErr(t, err)
+
+		ctx := context.Background()
+		_, err = fsys.Write(ctx, "adir/inner.txt", strings.NewReader("inner"))
+		be.NilErr(t, err)
+		_, err = fsys.Write(ctx, "keep.txt", strings.NewReader("keep"))
+		be.NilErr(t, err)
+
+		blocked := filepath.Join(tmpDir, "adir")
+		be.NilErr(t, os.Chmod(blocked, 0500))
+		t.Cleanup(func() { _ = os.Chmod(blocked, 0755) })
+
 		err = fsys.RemoveAll(ctx, ".")
 		be.True(t, err != nil)
-
+		// The failure names the entry that failed, not just ".", so a
+		// joined error says which entries are left behind.
 		var pathErr *fs.PathError
 		be.True(t, errors.As(err, &pathErr))
-		be.Equal(t, ".", pathErr.Path)
+		be.Equal(t, "adir", pathErr.Path)
+
+		// The sibling after the failure was still attempted, and removed.
+		_, err = os.Stat(filepath.Join(tmpDir, "keep.txt"))
+		be.True(t, os.IsNotExist(err))
 	})
 
 	t.Run("succeeds on non-existent path", func(t *testing.T) {

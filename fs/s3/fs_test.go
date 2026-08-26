@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"iter"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1089,4 +1090,94 @@ func (s *seekerReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 		return 0, err
 	}
 	return s.rs.Read(p)
+}
+
+// failDeleteAPI is the mock with DeleteObject made to fail for one chosen key.
+// The mock records calls but injects no errors, and does not need to: the
+// method set it satisfies is an interface, so shadowing one method on an
+// embedding type is enough to stand in for the whole thing.
+type failDeleteAPI struct {
+	*mock.S3API
+	failKey string
+	err     error
+	// attempted records every key DeleteObject was called with. The mock's
+	// own call log cannot serve here: the failing key never reaches it.
+	attempted []string
+}
+
+func (a *failDeleteAPI) DeleteObject(ctx context.Context, in *s3v2.DeleteObjectInput,
+	opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error) {
+	if in.Key != nil {
+		a.attempted = append(a.attempted, *in.Key)
+	}
+	if in.Key != nil && *in.Key == a.failKey {
+		return nil, a.err
+	}
+	return a.S3API.DeleteObject(ctx, in, opts...)
+}
+
+// TestRemoveAllBestEffort pins the WriteFS.RemoveAll contract that one key
+// which will not delete must not abandon the keys after it. The subtree case
+// is the one this changed: removeAll used to return on the first failing
+// DeleteObject, leaving every later key in place and reporting only that one
+// failure.
+func TestRemoveAllBestEffort(t *testing.T) {
+	ctx := context.Background()
+	boom := errors.New("boom")
+
+	// Keys are chosen so the failing one sorts in the middle: a listing is
+	// returned in key order, so a survivor after it is what proves the loop
+	// kept going.
+	for _, tc := range []struct {
+		name    string
+		remove  string
+		keys    []string
+		failKey string
+	}{
+		{
+			name:    "dot",
+			remove:  ".",
+			keys:    []string{"a.txt", "b.txt", "c.txt"},
+			failKey: "b.txt",
+		},
+		{
+			name:    "subtree",
+			remove:  "dir",
+			keys:    []string{"dir/a.txt", "dir/b.txt", "dir/c.txt"},
+			failKey: "dir/b.txt",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			objects := make([]*mock.Object, 0, len(tc.keys))
+			for _, key := range tc.keys {
+				objects = append(objects, &mock.Object{Key: key, Body: []byte(key)})
+			}
+			api := &failDeleteAPI{
+				S3API:   mock.New(bucket, objects...),
+				failKey: tc.failKey,
+				err:     boom,
+			}
+			fsys := s3.NewBucketFS(api, bucket)
+
+			err := fsys.RemoveAll(ctx, tc.remove)
+			be.True(t, err != nil)
+			be.True(t, errors.Is(err, boom))
+
+			// Every key was attempted, the failing one included.
+			attempted := slices.Clone(api.attempted)
+			sort.Strings(attempted)
+			be.AllEqual(t, tc.keys, attempted)
+
+			// And every key but the failing one is actually gone.
+			for _, key := range tc.keys {
+				if key == tc.failKey {
+					be.False(t, api.WasDeleted(key))
+					continue
+				}
+				if !api.WasDeleted(key) {
+					t.Errorf("%q was not deleted; RemoveAll(%q) abandoned it", key, tc.remove)
+				}
+			}
+		})
+	}
 }

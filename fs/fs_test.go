@@ -139,8 +139,43 @@ func TestCopyDispatch_NonComparableDynamicType(t *testing.T) {
 	be.NilErr(t, err)
 }
 
-// stubDirEntry is a minimal fs.DirEntry for exercising the RemoveAll(".")
-// loop without a real backend.
+// recordingWriteFS records the names passed to Remove and RemoveAll. It also
+// implements DirEntriesFS, yielding an entry that must never be removed: the
+// package-level RemoveAll used to list the root and remove entries one by one
+// for name ".", and this is what catches a return to that.
+type recordingWriteFS struct {
+	removeAllNames []string
+	removeNames    []string
+	dirEntriesFor  []string
+}
+
+func (r *recordingWriteFS) OpenFile(context.Context, string) (fs.File, error) {
+	return nil, fs.ErrNotExist
+}
+
+func (r *recordingWriteFS) Write(context.Context, string, io.Reader) (int64, error) {
+	return 0, fs.ErrInvalid
+}
+
+func (r *recordingWriteFS) Remove(_ context.Context, name string) error {
+	r.removeNames = append(r.removeNames, name)
+	return nil
+}
+
+func (r *recordingWriteFS) RemoveAll(_ context.Context, name string) error {
+	r.removeAllNames = append(r.removeAllNames, name)
+	return nil
+}
+
+func (r *recordingWriteFS) DirEntries(_ context.Context, name string) iter.Seq2[fs.DirEntry, error] {
+	r.dirEntriesFor = append(r.dirEntriesFor, name)
+	return func(yield func(fs.DirEntry, error) bool) {
+		yield(&stubDirEntry{name: "must-not-be-removed.txt"}, nil)
+	}
+}
+
+// stubDirEntry is a minimal fs.DirEntry, enough for recordingWriteFS to yield
+// something from DirEntries.
 type stubDirEntry struct {
 	name  string
 	isDir bool
@@ -156,133 +191,33 @@ func (e *stubDirEntry) Type() fs.FileMode {
 }
 func (e *stubDirEntry) Info() (fs.FileInfo, error) { return nil, fs.ErrInvalid }
 
-// rootStubFS is a WriteFS/DirEntriesFS spy whose root entries and per-name
-// removal errors are configured directly, used to exercise the
-// package-level RemoveAll(".") loop.
-type rootStubFS struct {
-	entries    []fs.DirEntry
-	entriesErr error // if set, yielded after entries, with a nil entry
-	yieldNil   bool  // if true, also yield a (nil, nil) pair before entriesErr/entries end
-
-	removeErr map[string]error // per-name error returned by Remove/RemoveAll
-
-	removed []string // names actually passed to Remove/RemoveAll, in order
-}
-
-func (r *rootStubFS) OpenFile(context.Context, string) (fs.File, error) { return nil, fs.ErrNotExist }
-
-func (r *rootStubFS) DirEntries(_ context.Context, _ string) iter.Seq2[fs.DirEntry, error] {
-	return func(yield func(fs.DirEntry, error) bool) {
-		if r.yieldNil {
-			if !yield(nil, nil) {
-				return
-			}
-		}
-		for _, e := range r.entries {
-			if !yield(e, nil) {
-				return
-			}
-		}
-		if r.entriesErr != nil {
-			yield(nil, r.entriesErr)
-		}
-	}
-}
-
-func (r *rootStubFS) Write(context.Context, string, io.Reader) (int64, error) {
-	return 0, fs.ErrInvalid
-}
-
-func (r *rootStubFS) Remove(_ context.Context, name string) error {
-	r.removed = append(r.removed, name)
-	return r.removeErr[name]
-}
-
-func (r *rootStubFS) RemoveAll(_ context.Context, name string) error {
-	r.removed = append(r.removed, name)
-	return r.removeErr[name]
-}
-
 var (
-	_ ocflfs.FS           = (*rootStubFS)(nil)
-	_ ocflfs.WriteFS      = (*rootStubFS)(nil)
-	_ ocflfs.DirEntriesFS = (*rootStubFS)(nil)
+	_ ocflfs.FS           = (*recordingWriteFS)(nil)
+	_ ocflfs.WriteFS      = (*recordingWriteFS)(nil)
+	_ ocflfs.DirEntriesFS = (*recordingWriteFS)(nil)
 )
 
-func TestRemoveAllDot(t *testing.T) {
+func TestRemoveAllDelegates(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("attempts every sibling and joins the errors", func(t *testing.T) {
-		boom := errors.New("boom")
-		fsys := &rootStubFS{
-			entries: []fs.DirEntry{
-				&stubDirEntry{name: "adir", isDir: true},
-				&stubDirEntry{name: "boom.txt"},
-				&stubDirEntry{name: "keep.txt"},
-			},
-			removeErr: map[string]error{"boom.txt": boom},
-		}
-		err := ocflfs.RemoveAll(ctx, fsys, ".")
-		be.True(t, err != nil)
-		be.True(t, errors.Is(err, boom))
-		// Every sibling must have been attempted, not just the ones before
-		// the failure.
-		be.AllEqual(t, []string{"adir", "boom.txt", "keep.txt"}, fsys.removed)
-	})
-
-	t.Run("skips a nil entry paired with a nil error without panicking", func(t *testing.T) {
-		fsys := &rootStubFS{
-			yieldNil: true,
-			entries:  []fs.DirEntry{&stubDirEntry{name: "keep.txt"}},
-		}
-		err := ocflfs.RemoveAll(ctx, fsys, ".")
-		be.NilErr(t, err)
-		be.AllEqual(t, []string{"keep.txt"}, fsys.removed)
-	})
-
-	t.Run("joins a DirEntries iteration error with per-entry errors", func(t *testing.T) {
-		boom := errors.New("boom")
-		iterErr := errors.New("iteration failed")
-		fsys := &rootStubFS{
-			entries:    []fs.DirEntry{&stubDirEntry{name: "boom.txt"}},
-			removeErr:  map[string]error{"boom.txt": boom},
-			entriesErr: iterErr,
-		}
-		err := ocflfs.RemoveAll(ctx, fsys, ".")
-		be.True(t, errors.Is(err, boom))
-		be.True(t, errors.Is(err, iterErr))
-	})
-}
-
-// rootRemoverStubFS is a WriteFS additionally implementing RootRemover, used
-// to assert that the package-level RemoveAll(".") prefers RemoveRoot and
-// never falls back to a per-entry loop.
-type rootRemoverStubFS struct {
-	rootStubFS
-	removeRootCalls int
-	removeRootErr   error
-}
-
-func (r *rootRemoverStubFS) RemoveRoot(context.Context) error {
-	r.removeRootCalls++
-	return r.removeRootErr
-}
-
-var _ ocflfs.RootRemover = (*rootRemoverStubFS)(nil)
-
-func TestRemoveAllDot_PrefersRootRemover(t *testing.T) {
-	ctx := context.Background()
-	boom := errors.New("boom")
-	fsys := &rootRemoverStubFS{
-		rootStubFS: rootStubFS{
-			entries: []fs.DirEntry{&stubDirEntry{name: "boom.txt"}},
-		},
-		removeRootErr: boom,
+	// "." is the interesting name: emptying the storage root is the
+	// backend's job now, so the helper must hand it over untouched rather
+	// than listing the root and removing entries itself.
+	for _, name := range []string{".", "some/dir"} {
+		t.Run(name, func(t *testing.T) {
+			fsys := &recordingWriteFS{}
+			be.NilErr(t, ocflfs.RemoveAll(ctx, fsys, name))
+			be.AllEqual(t, []string{name}, fsys.removeAllNames)
+			be.Equal(t, 0, len(fsys.removeNames))
+			be.Equal(t, 0, len(fsys.dirEntriesFor))
+		})
 	}
-	err := ocflfs.RemoveAll(ctx, fsys, ".")
-	// The error is returned exactly as RemoveRoot reported it.
-	be.True(t, errors.Is(err, boom))
-	be.Equal(t, 1, fsys.removeRootCalls)
-	// No per-entry fallback: DirEntries/Remove is never consulted.
-	be.Equal(t, 0, len(fsys.removed))
+}
+
+func TestRemoveAllNotAWriteFS(t *testing.T) {
+	err := ocflfs.RemoveAll(context.Background(), &spySrcFS{}, ".")
+	be.True(t, errors.Is(err, ocflfs.ErrOpUnsupported))
+	var pathErr *fs.PathError
+	be.True(t, errors.As(err, &pathErr))
+	be.Equal(t, ".", pathErr.Path)
 }

@@ -234,14 +234,6 @@ func TestWriteFSRemove(t *testing.T, fsys ocflfs.WriteFS) {
 // WriteFSRemoveAll configures [TestWriteFSRemoveAll] with the parts of
 // RemoveAll that are left to the implementation.
 type WriteFSRemoveAll struct {
-	// RemoveAllDotIsError reports whether the backend's own
-	// RemoveAll(ctx, ".") refuses rather than emptying the top-level
-	// directory. This genuinely differs between correct implementations: the
-	// local backend refuses because its storage root must survive, the S3
-	// backend empties the bucket. Callers who want uniform behavior use the
-	// package-level [ocflfs.RemoveAll], which is covered separately.
-	RemoveAllDotIsError bool
-
 	// RemoveAllOnFileRemovesIt reports whether RemoveAll applied directly to
 	// a file path removes that file. A hierarchical backend deletes it
 	// (os.RemoveAll does); a backend that treats the name as a key prefix
@@ -364,22 +356,43 @@ func TestWriteFSRemoveAll(t *testing.T, fsys ocflfs.WriteFS, opts WriteFSRemoveA
 		be.Equal(t, !opts.RemoveAllOnFileRemovesIt, exists(t, name))
 	})
 
-	// Runs last: on a backend that empties its root, this subtest removes
-	// everything the ones above wrote.
+	// Runs last: this subtest removes everything the ones above wrote.
 	t.Run("dot", func(t *testing.T) {
-		const probe = "imptest-removeall/dot-probe.txt"
+		// "." empties the storage root on every backend. The two families
+		// reach it differently -- one walks a directory it must not delete,
+		// the other lists a bucket with no prefix -- and used to disagree
+		// about whether it was allowed at all, which is why the assertions
+		// below pin the result rather than the mechanism.
+		const (
+			probe  = "imptest-removeall/dot-probe.txt"
+			nested = "imptest-removeall/deeper/nested.txt"
+			toplvl = "dot-toplevel.txt"
+		)
 		write(t, probe)
-		err := fsys.RemoveAll(ctx, ".")
-		if opts.RemoveAllDotIsError {
-			// Refusing must be inert: the root is untouched.
-			be.True(t, err != nil)
-			be.True(t, exists(t, probe))
-			return
-		}
+		write(t, nested)
+		write(t, toplvl)
+
 		// Emptying must actually empty, and must not report the now-absent
 		// entries as an error.
-		be.NilErr(t, err)
-		be.False(t, exists(t, probe))
+		be.NilErr(t, fsys.RemoveAll(ctx, "."))
+		for _, name := range []string{probe, nested, toplvl} {
+			if exists(t, name) {
+				t.Errorf("%q survived RemoveAll(\".\")", name)
+			}
+		}
+
+		// The root itself survives: it is the container, not an entry in
+		// it. A backend that deletes its own root passes every assertion
+		// above and fails here -- on the local backend that also
+		// invalidates the handle every other method resolves through.
+		const after = "imptest-removeall/after-dot.txt"
+		write(t, after)
+		be.True(t, exists(t, after))
+
+		// Idempotent, like RemoveAll for any other name.
+		be.NilErr(t, fsys.RemoveAll(ctx, "."))
+		be.False(t, exists(t, after))
+		be.NilErr(t, fsys.RemoveAll(ctx, "."))
 	})
 }
 

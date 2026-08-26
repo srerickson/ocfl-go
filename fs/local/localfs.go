@@ -559,22 +559,21 @@ func (fsys *FS) Remove(ctx context.Context, name string) error {
 // inside the storage root, so a symlink in an intermediate component cannot
 // direct the removal at a tree outside it. A symlink at name itself is
 // removed as the link entry it is; the tree it points at is untouched.
+//
+// Name "." empties the storage root without removing the root directory
+// itself, per the [ocflfs.WriteFS] RemoveAll contract.
+//
+// Removal is best-effort either way. Root.RemoveAll already keeps going past
+// an entry it cannot remove, reporting the first failure it hit; emptying the
+// root joins the failures across the top-level entries instead, so one
+// undeletable entry neither hides its siblings nor stops them being
+// attempted.
 func (fsys *FS) RemoveAll(ctx context.Context, name string) error {
 	if !fs.ValidPath(name) {
 		return &fs.PathError{
 			Op:   "remove",
 			Path: name,
 			Err:  fs.ErrInvalid,
-		}
-	}
-	// The guard stays ahead of the Root call: Root.RemoveAll(".") reports a
-	// bare EINVAL that does not satisfy errors.Is(err, fs.ErrInvalid), so the
-	// refusal is spelled out here where callers can match it.
-	if name == "." {
-		return &fs.PathError{
-			Op:   "remove",
-			Path: name,
-			Err:  errors.New("cannot remove top-level directory"),
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -584,6 +583,12 @@ func (fsys *FS) RemoveAll(ctx context.Context, name string) error {
 			Err:  err,
 		}
 	}
+	// The branch stays ahead of the Root call: Root.RemoveAll(".") reports a
+	// bare EINVAL, and removing the root directory would invalidate the
+	// os.Root handle every other method resolves through.
+	if name == "." {
+		return fsys.removeRootContents(ctx)
+	}
 	if err := fsys.root.RemoveAll(name); err != nil {
 		return &fs.PathError{
 			Op:   "remove",
@@ -592,6 +597,67 @@ func (fsys *FS) RemoveAll(ctx context.Context, name string) error {
 		}
 	}
 	return nil
+}
+
+// removeRootContents removes every entry in the storage root, leaving the root
+// directory itself in place. Failures are joined rather than returned on the
+// first, so a single undeletable entry does not abandon the rest.
+func (fsys *FS) removeRootContents(ctx context.Context) error {
+	dir, err := fsys.root.Open(".")
+	if err != nil {
+		return &fs.PathError{
+			Op:   "remove",
+			Path: ".",
+			Err:  unwrapPathError(err),
+		}
+	}
+	// The whole listing is read and the handle closed before anything is
+	// removed: holding a directory handle open across the deletion of its
+	// children is harmless on POSIX but can block removal on Windows.
+	entries, readErr := dir.ReadDir(-1)
+	closeErr := dir.Close()
+	// Sorted for the same reason DirEntries sorts: the handle returns
+	// directory order, and a caller reading a joined error should see the
+	// failures in a stable order rather than one that varies by filesystem.
+	slices.SortFunc(entries, func(a, b fs.DirEntry) int {
+		return strings.Compare(a.Name(), b.Name())
+	})
+	var errs error
+	if readErr != nil {
+		// A partial read still names entries worth removing, so the error
+		// is collected and the entries it did yield are attempted.
+		errs = errors.Join(errs, &fs.PathError{
+			Op:   "remove",
+			Path: ".",
+			Err:  unwrapPathError(readErr),
+		})
+	}
+	if closeErr != nil {
+		errs = errors.Join(errs, &fs.PathError{
+			Op:   "remove",
+			Path: ".",
+			Err:  unwrapPathError(closeErr),
+		})
+	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(errs, &fs.PathError{
+				Op:   "remove",
+				Path: ".",
+				Err:  err,
+			})
+		}
+		// Path is the entry rather than ".", so a joined error says which
+		// entries failed.
+		if err := fsys.root.RemoveAll(entry.Name()); err != nil {
+			errs = errors.Join(errs, &fs.PathError{
+				Op:   "remove",
+				Path: entry.Name(),
+				Err:  unwrapPathError(err),
+			})
+		}
+	}
+	return errs
 }
 
 // unwrapPathError returns the underlying error of a *fs.PathError, so an
