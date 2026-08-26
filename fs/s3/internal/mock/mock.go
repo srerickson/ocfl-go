@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/srerickson/ocfl-go/fs/s3"
 )
 
@@ -491,6 +492,53 @@ func (m *S3API) DeleteObject(ctx context.Context, in *s3v2.DeleteObjectInput, op
 	// look strict under test while returning nil in production.
 	m.deleteKeyLocked(*in.Key)
 	return &s3v2.DeleteObjectOutput{}, nil
+}
+
+// MaxDeleteBatch is the most keys DeleteObjects accepts in one request. It is
+// a fixed S3 API limit, not a tunable, and the mock enforces it: a caller that
+// batches a listing page must not be able to send an oversized request that
+// only a real endpoint rejects.
+const MaxDeleteBatch = 1000
+
+func (m *S3API) DeleteObjects(ctx context.Context, in *s3v2.DeleteObjectsInput, opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectsOutput, error) {
+	// Record every key the request carried, so a test can tell one batch of
+	// n keys from n separate DeleteObject calls -- KeysFor is identical for
+	// the two, KeyBatchesFor is not.
+	var keys []string
+	if in.Delete != nil {
+		for _, obj := range in.Delete.Objects {
+			keys = append(keys, aws.ToString(obj.Key))
+		}
+	}
+	m.log.record("DeleteObjects", keys...)
+	if err := m.bucketOK(in.Bucket); err != nil {
+		return nil, err
+	}
+	if in.Delete == nil || len(in.Delete.Objects) == 0 {
+		return nil, errors.New("Delete with at least one object is required")
+	}
+	if len(in.Delete.Objects) > MaxDeleteBatch {
+		return nil, &smithy.GenericAPIError{
+			Code:    "MalformedXML",
+			Message: fmt.Sprintf("a delete request carries at most %d keys, got %d", MaxDeleteBatch, len(in.Delete.Objects)),
+		}
+	}
+	quiet := aws.ToBool(in.Delete.Quiet)
+	out := &s3v2.DeleteObjectsOutput{}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, obj := range in.Delete.Objects {
+		if obj.Key == nil {
+			return nil, errors.New("object key is required")
+		}
+		// Each key deletes the way DeleteObject does: idempotently, whether
+		// or not the bucket held it.
+		m.deleteKeyLocked(*obj.Key)
+		if !quiet {
+			out.Deleted = append(out.Deleted, types.DeletedObject{Key: obj.Key})
+		}
+	}
+	return out, nil
 }
 
 // deleteKeyLocked removes the object from the bucket and records the

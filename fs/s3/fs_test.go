@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"iter"
@@ -17,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -809,6 +811,10 @@ func (stubClient) CopyObject(context.Context, *s3v2.CopyObjectInput, ...func(*s3
 	return nil, nil
 }
 
+func (stubClient) DeleteObjects(context.Context, *s3v2.DeleteObjectsInput, ...func(*s3v2.Options)) (*s3v2.DeleteObjectsOutput, error) {
+	return nil, nil
+}
+
 func (stubClient) DeleteObject(context.Context, *s3v2.DeleteObjectInput, ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error) {
 	return nil, nil
 }
@@ -1162,38 +1168,244 @@ func (s *seekerReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 	return s.rs.Read(p)
 }
 
-// failDeleteAPI is the mock with DeleteObject made to fail for one chosen key.
+// failDeleteAPI is the mock with DeleteObjects made to report a failure for
+// one chosen key. The failure is not a transport error: DeleteObjects answers
+// 200 and names the key in the response's Errors list, which is how a real
+// endpoint reports a key that would not delete. Every other key in the batch
+// deletes as usual.
+//
 // The mock records calls but injects no errors, and does not need to: the
 // method set it satisfies is an interface, so shadowing one method on an
 // embedding type is enough to stand in for the whole thing.
 type failDeleteAPI struct {
 	*mock.S3API
 	failKey string
-	err     error
-	// attempted records every key DeleteObject was called with. The mock's
-	// own call log cannot serve here: the failing key never reaches it.
+	code    string
+	message string
+	// pageSize, when > 0, clamps the listing page size so the keys span
+	// several pages -- enough to show that a page whose delete reported a
+	// failure is still followed by the next one.
+	pageSize int32
+	// attempted records every key a delete request carried. The mock's own
+	// call log cannot serve here: the failing key is filtered out before
+	// the request reaches it.
 	attempted []string
 }
 
-func (a *failDeleteAPI) DeleteObject(ctx context.Context, in *s3v2.DeleteObjectInput,
-	opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error) {
-	if in.Key != nil {
-		a.attempted = append(a.attempted, *in.Key)
+func (a *failDeleteAPI) ListObjectsV2(ctx context.Context, in *s3v2.ListObjectsV2Input,
+	opts ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
+	if a.pageSize <= 0 {
+		return a.S3API.ListObjectsV2(ctx, in, opts...)
 	}
-	if in.Key != nil && *in.Key == a.failKey {
-		return nil, a.err
+	req := *in
+	req.MaxKeys = aws.Int32(a.pageSize)
+	return a.S3API.ListObjectsV2(ctx, &req, opts...)
+}
+
+func (a *failDeleteAPI) DeleteObjects(ctx context.Context, in *s3v2.DeleteObjectsInput,
+	opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectsOutput, error) {
+	kept := make([]types.ObjectIdentifier, 0, len(in.Delete.Objects))
+	var failed *types.Error
+	for _, obj := range in.Delete.Objects {
+		key := aws.ToString(obj.Key)
+		a.attempted = append(a.attempted, key)
+		if key == a.failKey {
+			failed = &types.Error{
+				Key:     obj.Key,
+				Code:    aws.String(a.code),
+				Message: aws.String(a.message),
+			}
+			continue
+		}
+		kept = append(kept, obj)
 	}
-	return a.S3API.DeleteObject(ctx, in, opts...)
+	if failed == nil {
+		return a.S3API.DeleteObjects(ctx, in, opts...)
+	}
+	if len(kept) == 0 {
+		// Nothing left to send: a real endpoint would still answer 200 with
+		// the one failure, and the mock rejects an empty request.
+		return &s3v2.DeleteObjectsOutput{Errors: []types.Error{*failed}}, nil
+	}
+	req := *in
+	del := *in.Delete
+	del.Objects = kept
+	req.Delete = &del
+	out, err := a.S3API.DeleteObjects(ctx, &req, opts...)
+	if err != nil {
+		return out, err
+	}
+	out.Errors = append(out.Errors, *failed)
+	return out, nil
+}
+
+// pageAPI is the mock with a chosen listing page size, so a test can exercise
+// the paging and batching paths without seeding thousands of objects: the
+// mock already honors MaxKeys and continuation tokens, so clamping the page
+// size drives the same loop a full bucket would.
+//
+// It also records every DeleteObjects request it served, which is how a test
+// sees the request shape -- the batch each one carried, and whether it asked
+// for quiet mode -- and can fail a chosen one at the transport level.
+type pageAPI struct {
+	*mock.S3API
+	pageSize int32
+	// failCall, when > 0, makes the DeleteObjects call with that 1-based
+	// number fail outright, the way a dropped connection would.
+	failCall int
+	failErr  error
+
+	deletes []*s3v2.DeleteObjectsInput
+}
+
+var _ s3.S3API = (*pageAPI)(nil)
+
+func (a *pageAPI) ListObjectsV2(ctx context.Context, in *s3v2.ListObjectsV2Input,
+	opts ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
+	req := *in
+	req.MaxKeys = aws.Int32(a.pageSize)
+	return a.S3API.ListObjectsV2(ctx, &req, opts...)
+}
+
+func (a *pageAPI) DeleteObjects(ctx context.Context, in *s3v2.DeleteObjectsInput,
+	opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectsOutput, error) {
+	a.deletes = append(a.deletes, in)
+	if a.failCall > 0 && len(a.deletes) == a.failCall {
+		return nil, a.failErr
+	}
+	return a.S3API.DeleteObjects(ctx, in, opts...)
+}
+
+// TestRemoveAllBatches_Mock covers how removeAll issues its deletes. Listing a
+// page and then deleting one key per request cost a round trip per file: an
+// OCFL object of 10,000 files took 10,000 sequential DeleteObject calls where
+// DeleteObjects takes a whole page at once.
+//
+// KeyBatchesFor is the assertion that catches a regression back to per-key
+// deletes. KeysFor cannot: 500 keys in one batch and 500 separate calls name
+// exactly the same keys.
+func TestRemoveAllBatches_Mock(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("one request per page, quietly", func(t *testing.T) {
+		keys := []string{"d/a", "d/b", "d/c", "d/d", "d/e"}
+		objects := make([]*mock.Object, len(keys))
+		for i, key := range keys {
+			objects[i] = &mock.Object{Key: key, Body: []byte(key)}
+		}
+		api := &pageAPI{S3API: mock.New(bucket, objects...), pageSize: 2}
+		fsys := s3.NewBucketFS(api, bucket)
+		be.NilErr(t, fsys.RemoveAll(ctx, "d"))
+
+		// Three pages of two, two, one -- one delete request each, carrying
+		// that page's keys and nothing else.
+		be.DeepEqual(t, [][]string{{"d/a", "d/b"}, {"d/c", "d/d"}, {"d/e"}},
+			api.KeyBatchesFor("DeleteObjects"))
+		// And not one per-key delete anywhere.
+		be.Equal(t, 0, api.CallCount("DeleteObject"))
+
+		// Quiet mode: the response then carries only the failures, which is
+		// all removeAll reads.
+		for _, in := range api.deletes {
+			be.True(t, aws.ToBool(in.Delete.Quiet))
+		}
+
+		// The keys are actually gone, not merely named in a request.
+		for _, key := range keys {
+			be.True(t, api.WasDeleted(key))
+		}
+	})
+
+	// The page size and the batch limit are separate numbers that happen to
+	// be equal today. A page larger than a batch must still be split, so a
+	// future page-size bump cannot silently send a request S3 rejects
+	// outright -- the mock enforces the limit the way a real endpoint does.
+	t.Run("a page larger than the batch limit is split", func(t *testing.T) {
+		const numKeys = mock.MaxDeleteBatch + 200
+		objects := make([]*mock.Object, numKeys)
+		for i := range objects {
+			objects[i] = &mock.Object{Key: fmt.Sprintf("d/%05d", i)}
+		}
+		api := &pageAPI{S3API: mock.New(bucket, objects...), pageSize: numKeys}
+		fsys := s3.NewBucketFS(api, bucket)
+		be.NilErr(t, fsys.RemoveAll(ctx, "d"))
+
+		batches := api.KeyBatchesFor("DeleteObjects")
+		be.Equal(t, 2, len(batches))
+		be.Equal(t, mock.MaxDeleteBatch, len(batches[0]))
+		be.Equal(t, 200, len(batches[1]))
+		be.Equal(t, numKeys, len(api.KeysFor("DeleteObjects")))
+	})
+
+	// DeleteObjects answers 200 even when individual keys fail, reporting
+	// them in the response body. Reading only the transport error would call
+	// a RemoveAll successful while the prefix is still partly populated.
+	t.Run("per-key failures are reported", func(t *testing.T) {
+		api := &failDeleteAPI{
+			S3API:   mock.New(bucket, &mock.Object{Key: "d/a"}, &mock.Object{Key: "d/b"}),
+			failKey: "d/b",
+			code:    "AccessDenied",
+			message: "Access Denied",
+		}
+		fsys := s3.NewBucketFS(api, bucket)
+
+		err := fsys.RemoveAll(ctx, "d")
+		be.True(t, err != nil)
+		// The error names the key that failed, not the name RemoveAll was
+		// called with, and carries the reason the response gave.
+		be.True(t, strings.Contains(err.Error(), "d/b"))
+		be.True(t, strings.Contains(err.Error(), "AccessDenied"))
+		be.False(t, strings.Contains(err.Error(), "d/a"))
+		var pathErr *fs.PathError
+		be.True(t, errors.As(err, &pathErr))
+		be.Equal(t, "removeall", pathErr.Op)
+		be.Equal(t, "d/b", pathErr.Path)
+
+		// The rest of the batch still deleted.
+		be.True(t, api.WasDeleted("d/a"))
+		be.False(t, api.WasDeleted("d/b"))
+	})
+
+	// A DeleteObjects that fails at the transport level says nothing about
+	// individual keys, so it is reported once against the name the caller
+	// passed -- and, being best-effort, does not stop the next page.
+	t.Run("a failed request does not stop the walk", func(t *testing.T) {
+		boom := errors.New("boom")
+		keys := []string{"d/a", "d/b", "d/c", "d/d"}
+		objects := make([]*mock.Object, len(keys))
+		for i, key := range keys {
+			objects[i] = &mock.Object{Key: key}
+		}
+		api := &pageAPI{
+			S3API:    mock.New(bucket, objects...),
+			pageSize: 2,
+			failCall: 1,
+			failErr:  boom,
+		}
+		fsys := s3.NewBucketFS(api, bucket)
+
+		err := fsys.RemoveAll(ctx, "d")
+		be.True(t, errors.Is(err, boom))
+
+		// Page 2 was listed and deleted anyway. The count comes from the
+		// wrapper's own record: the failing request never reaches the mock,
+		// so the mock's call log cannot see it.
+		be.Equal(t, 2, len(api.deletes))
+		be.False(t, api.WasDeleted("d/a"))
+		be.False(t, api.WasDeleted("d/b"))
+		be.True(t, api.WasDeleted("d/c"))
+		be.True(t, api.WasDeleted("d/d"))
+	})
 }
 
 // TestRemoveAllBestEffort pins the WriteFS.RemoveAll contract that one key
 // which will not delete must not abandon the keys after it. The subtree case
 // is the one this changed: removeAll used to return on the first failing
-// DeleteObject, leaving every later key in place and reporting only that one
-// failure.
+// delete, leaving every later key in place and reporting only that one
+// failure. Batching does not weaken it -- a page whose response reports a
+// failure must still be followed by the next page.
 func TestRemoveAllBestEffort(t *testing.T) {
 	ctx := context.Background()
-	boom := errors.New("boom")
 
 	// Keys are chosen so the failing one sorts in the middle: a listing is
 	// returned in key order, so a survivor after it is what proves the loop
@@ -1203,6 +1415,9 @@ func TestRemoveAllBestEffort(t *testing.T) {
 		remove  string
 		keys    []string
 		failKey string
+		// pageSize, when set, splits the keys across several listing pages
+		// so the failure lands on a page with pages after it.
+		pageSize int32
 	}{
 		{
 			name:    "dot",
@@ -1216,6 +1431,13 @@ func TestRemoveAllBestEffort(t *testing.T) {
 			keys:    []string{"dir/a.txt", "dir/b.txt", "dir/c.txt"},
 			failKey: "dir/b.txt",
 		},
+		{
+			name:     "across pages",
+			remove:   "dir",
+			keys:     []string{"dir/a.txt", "dir/b.txt", "dir/c.txt", "dir/d.txt"},
+			failKey:  "dir/a.txt",
+			pageSize: 2,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			objects := make([]*mock.Object, 0, len(tc.keys))
@@ -1223,15 +1445,18 @@ func TestRemoveAllBestEffort(t *testing.T) {
 				objects = append(objects, &mock.Object{Key: key, Body: []byte(key)})
 			}
 			api := &failDeleteAPI{
-				S3API:   mock.New(bucket, objects...),
-				failKey: tc.failKey,
-				err:     boom,
+				S3API:    mock.New(bucket, objects...),
+				failKey:  tc.failKey,
+				code:     "InternalError",
+				message:  "boom",
+				pageSize: tc.pageSize,
 			}
 			fsys := s3.NewBucketFS(api, bucket)
 
 			err := fsys.RemoveAll(ctx, tc.remove)
 			be.True(t, err != nil)
-			be.True(t, errors.Is(err, boom))
+			be.True(t, strings.Contains(err.Error(), "boom"))
+			be.True(t, strings.Contains(err.Error(), tc.failKey))
 
 			// Every key was attempted, the failing one included.
 			attempted := slices.Clone(api.attempted)

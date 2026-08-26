@@ -112,6 +112,19 @@ func (f *BucketFS) Remove(ctx context.Context, name string) error {
 	return remove(ctx, f.client, f.bucket, name)
 }
 
+// RemoveAll deletes every object under name, per [ocflfs.WriteFS]. Name "."
+// empties the bucket. A name that matches nothing is not an error.
+//
+// Keys are listed a page at a time and each page is deleted in as few
+// DeleteObjects requests as the API allows, so removing an OCFL object costs
+// a request per thousand files rather than one per file.
+//
+// Deletion is best-effort: a key that will not delete does not abandon the
+// keys after it, on that page or on any later one. Only a failed listing
+// stops the walk, since without one there is nothing left to attempt. The
+// returned error joins every failure, naming the key each one is about --
+// including the per-key failures DeleteObjects reports in an otherwise
+// successful response.
 func (f *BucketFS) RemoveAll(ctx context.Context, name string) error {
 	f.debugLog(ctx, "s3:remove_all", "bucket", f.bucket, "name", name)
 	return removeAll(ctx, f.client, f.bucket, name)
@@ -218,10 +231,14 @@ type RemoveAPI interface {
 	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 
-// RemoveAllAPI includes S3 methods needed for RemoveAll()
+// RemoveAllAPI includes S3 methods needed for RemoveAll().
+//
+// The delete is DeleteObjects, not DeleteObject: RemoveAll deletes a whole
+// listing page per request rather than one key per request. See
+// [BucketFS.RemoveAll].
 type RemoveAllAPI interface {
 	ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
-	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
+	DeleteObjects(context.Context, *s3.DeleteObjectsInput, ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error)
 }
 
 // ObjectRootsAPI includes S3 methods needed for ObjectRoots()

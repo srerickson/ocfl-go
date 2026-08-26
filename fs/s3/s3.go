@@ -38,10 +38,18 @@ const (
 	dirMode  = 0755 | fs.ModeDir
 )
 
+// maxDeleteBatch is the most keys DeleteObjects accepts in one request. It is
+// a fixed S3 API limit, not a tunable: a larger request is rejected outright.
+// removeAll splits each listing page into batches of this size, so the page
+// size below can change without silently sending an oversized delete.
+const maxDeleteBatch = 1000
+
 var (
 	// these are variable because we need pass them as pointers
-	delim         = "/"
-	maxKeys int32 = 1000
+	delim = "/"
+	// maxKeys is the page size for every listing in this package. It is the
+	// batch limit today, which makes a page exactly one delete request.
+	maxKeys int32 = maxDeleteBatch
 )
 
 // Compile-time check that s3File implements io.Seeker
@@ -263,7 +271,8 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 	// Deletion is best-effort, per the WriteFS.RemoveAll contract: one key
 	// that will not delete must not abandon the keys after it, which would
 	// leave a partial deletion and report only the first of possibly many
-	// failures.
+	// failures. That holds across pages too -- a page that reports failures
+	// must still be followed by the next one.
 	var errs error
 	for {
 		list, err := api.ListObjectsV2(ctx, params)
@@ -272,25 +281,77 @@ func removeAll(ctx context.Context, api RemoveAllAPI, buck string, name string) 
 			// this one does stop the loop.
 			return errors.Join(errs, pathErr("removeall", name, err))
 		}
-		for _, obj := range list.Contents {
-			_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{
-				Bucket: &buck,
-				Key:    obj.Key,
-			})
-			if err != nil {
-				key := name
-				if obj.Key != nil {
-					key = *obj.Key
-				}
-				errs = errors.Join(errs, pathErr("removeall", key, err))
-			}
-		}
+		errs = errors.Join(errs, deleteKeys(ctx, api, buck, name, list.Contents))
 		params.ContinuationToken = list.NextContinuationToken
 		if params.ContinuationToken == nil {
 			break
 		}
 	}
 	return errs
+}
+
+// deleteKeys deletes one listing page in as few requests as the API allows,
+// and returns every per-key failure it can see, joined.
+//
+// name is the name the caller passed RemoveAll; it is used only for a failure
+// that says nothing about individual keys.
+func deleteKeys(ctx context.Context, api RemoveAllAPI, buck, name string, contents []types.Object) error {
+	ids := make([]types.ObjectIdentifier, 0, len(contents))
+	for _, obj := range contents {
+		if obj.Key == nil {
+			continue
+		}
+		ids = append(ids, types.ObjectIdentifier{Key: obj.Key})
+	}
+	var errs error
+	for batch := range slices.Chunk(ids, maxDeleteBatch) {
+		out, err := api.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+			Bucket: &buck,
+			Delete: &types.Delete{
+				Objects: batch,
+				// In quiet mode the response carries only the keys that
+				// failed, which is all this code reads.
+				Quiet: aws.Bool(true),
+			},
+		})
+		if err != nil {
+			// A transport-level failure says nothing about individual keys:
+			// every key in the batch is simply unaccounted for. Report it
+			// once against the name the caller passed rather than repeating
+			// it for up to maxDeleteBatch keys, and keep going -- the next
+			// batch and the next page may well succeed.
+			errs = errors.Join(errs, pathErr("removeall", name, err))
+			continue
+		}
+		// DeleteObjects answers 200 even when individual keys fail, listing
+		// them in the response body. Checking only the transport error would
+		// report a successful RemoveAll for a prefix that is still partly
+		// populated -- worse than the per-key loop this replaced, which at
+		// least saw each failure.
+		if out == nil {
+			continue
+		}
+		for _, e := range out.Errors {
+			errs = errors.Join(errs, pathErr("removeall", aws.ToString(e.Key), deleteErr(e)))
+		}
+	}
+	return errs
+}
+
+// deleteErr turns one entry of a DeleteObjects response's Errors list into an
+// error. Neither field is guaranteed to be set, so the fallbacks matter: a
+// failure reported with no reason at all still has to read as a failure.
+func deleteErr(e types.Error) error {
+	code, msg := aws.ToString(e.Code), aws.ToString(e.Message)
+	switch {
+	case code != "" && msg != "":
+		return fmt.Errorf("%s: %s", code, msg)
+	case code != "":
+		return errors.New(code)
+	case msg != "":
+		return errors.New(msg)
+	}
+	return errors.New("delete failed, no reason reported")
 }
 
 // walkFiles returns an iterator that yields PathInfo for files in the dir
