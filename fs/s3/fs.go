@@ -96,6 +96,17 @@ func (f *BucketFS) Copy(ctx context.Context, dst, src string) (int64, error) {
 	return copy(ctx, f.client, f.bucket, dst, src, f.multiPartCopyOptions...)
 }
 
+// Remove deletes the object at name, per [ocflfs.WriteFS].
+//
+// Removing a key that is not in the bucket returns an error satisfying
+// errors.Is(err, fs.ErrNotExist), which S3 does not give for free: DeleteObject
+// answers 204 whether or not the key was there. Remove therefore issues a
+// HeadObject first, so it costs two round trips rather than one, and the pair
+// is not atomic -- a key deleted by another writer between the HEAD and the
+// DELETE is reported as removed rather than missing.
+//
+// Name "." is rejected with fs.ErrInvalid without issuing any request: it
+// names the bucket, not an object.
 func (f *BucketFS) Remove(ctx context.Context, name string) error {
 	f.debugLog(ctx, "s3:remove", "bucket", f.bucket, "name", name)
 	return remove(ctx, f.client, f.bucket, name)
@@ -197,8 +208,13 @@ type MultiCopyAPI interface {
 	AbortMultipartUpload(context.Context, *s3.AbortMultipartUploadInput, ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error)
 }
 
-// RemoveAPI includes S3 methods needed for Remove()
+// RemoveAPI includes S3 methods needed for Remove().
+//
+// HeadObject is here because DeleteObject is idempotent and cannot report a
+// key that was never there, which the WriteFS.Remove contract requires. See
+// [BucketFS.Remove].
 type RemoveAPI interface {
+	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
 	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 

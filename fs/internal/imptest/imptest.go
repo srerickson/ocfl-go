@@ -44,23 +44,6 @@
 // backends agreed. If both callers would pass the same value, the knob should
 // not exist; assert the behavior directly instead.
 //
-// # Behavior no backend satisfies yet
-//
-// The suite landed before the fixes it exists to guard, so some of what it
-// asserts is not true on main yet. Those subtests are written out in full and
-// skipped where they stand, under a TODO naming the issue that closes the
-// gap:
-//
-//	// TODO(#166): s3's remove() calls the idempotent DeleteObject with no
-//	// existence check ... drop the skip when #166 adds the HEAD probe.
-//	t.Skip("Remove of a missing key returns nil on the s3 backend; see #166")
-//
-// The skip is unconditional rather than per-backend, so a subtest one backend
-// already satisfies is skipped for both — the TODO says which, so the fixing
-// PR knows what it is turning on. Writing the test now and skipping it is the
-// point: the PR that fixes the defect deletes one line, and its diff shows
-// exactly which behavior it makes good on.
-//
 // # Import direction
 //
 // Every caller lives in an external test package (package local_test, package

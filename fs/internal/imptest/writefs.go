@@ -161,11 +161,6 @@ func TestWriteFSRemove(t *testing.T, fsys ocflfs.WriteFS) {
 	ctx := context.Background()
 
 	t.Run("remove missing file returns ErrNotExist", func(t *testing.T) {
-		// TODO(#166): s3's remove() calls the idempotent DeleteObject with no
-		// existence check, so a key that was never there deletes
-		// successfully and Remove reports nil. The local backend already
-		// satisfies this; drop the skip when #166 adds the HEAD probe.
-		t.Skip("Remove of a missing key returns nil on the s3 backend; see #166")
 		const missing = "no-such-file.txt"
 		err := fsys.Remove(ctx, missing)
 		be.True(t, err != nil)

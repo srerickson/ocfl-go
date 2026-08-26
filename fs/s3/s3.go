@@ -217,6 +217,28 @@ func remove(ctx context.Context, api RemoveAPI, b string, name string) error {
 	if name == "." {
 		return pathErr("remove", name, fs.ErrInvalid)
 	}
+	// DeleteObject is idempotent: it answers 204 whether or not the key was
+	// there, and says nothing about which it was. The WriteFS.Remove
+	// contract requires fs.ErrNotExist for a name that is not there, so the
+	// existence has to be established separately, with a HEAD.
+	//
+	// Two consequences, documented rather than engineered around. The probe
+	// is not atomic with the delete: a key another writer removes between
+	// the HEAD and the DELETE is reported as removed, since the DELETE
+	// succeeds either way. And Remove costs two round trips instead of one.
+	// The library calls Remove only to undo a failed update and to replace
+	// the storage root's layout file, so the extra HEAD lands off the happy
+	// path; a caller that removes keys in bulk should use RemoveAll, which
+	// still lists and deletes without probing.
+	if _, err := api.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: &b,
+		Key:    aws.String(name),
+	}); err != nil {
+		if errIsNotExist(err) {
+			err = notExistErr(err)
+		}
+		return pathErr("remove", name, err)
+	}
 	_, err := api.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: &b,
 		Key:    aws.String(name),

@@ -476,6 +476,9 @@ func TestRemove_Mock(t *testing.T) {
 		bucket string
 		key    string
 		mock   func(*testing.T) *mock.S3API
+		// api optionally wraps the mock, for a case that needs a failure
+		// the mock does not itself produce.
+		api    func(*testing.T, *mock.S3API) s3.S3API
 		expect func(*testing.T, *mock.S3API, error)
 	}
 	cases := []testCase{
@@ -496,6 +499,65 @@ func TestRemove_Mock(t *testing.T) {
 				be.NilErr(t, err)
 				be.True(t, state.WasDeleted("remove-me"))
 				be.False(t, state.WasDeleted("keep-me"))
+				// The probe precedes the delete and names the same key.
+				be.AllEqual(t, []string{"remove-me"}, state.KeysFor("HeadObject"))
+				be.AllEqual(t, []string{"remove-me"}, state.KeysFor("DeleteObject"))
+			},
+		}, {
+			// DeleteObject is idempotent, so without the HEAD probe this
+			// reports success for a key that was never in the bucket --
+			// silently changing what a revert means when storage moves
+			// from a directory to a bucket.
+			desc:   "remove missing key",
+			bucket: bucket,
+			key:    "never-existed",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket, &mock.Object{Key: "keep-me"})
+			},
+			expect: func(t *testing.T, state *mock.S3API, err error) {
+				be.True(t, errors.Is(err, fs.ErrNotExist))
+				var pathErr *fs.PathError
+				be.True(t, errors.As(err, &pathErr))
+				be.Equal(t, "remove", pathErr.Op)
+				be.Equal(t, "never-existed", pathErr.Path)
+				// The probe failed, so no delete was ever issued: a
+				// DeleteObject here would mean Remove had decided the key
+				// was there.
+				be.Equal(t, 0, state.CallCount("DeleteObject"))
+				// And the cause of the failed probe is still reachable.
+				var apiErr smithy.APIError
+				be.True(t, errors.As(err, &apiErr))
+				be.Equal(t, "NotFound", apiErr.ErrorCode())
+			},
+		}, {
+			// The same, against a store whose missing-key error the SDK
+			// cannot resolve to a typed error.
+			desc:   "remove missing key, generic not-found style",
+			bucket: bucket,
+			key:    "never-existed",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket).WithNotFoundStyle(mock.NotFoundStyleGeneric)
+			},
+			expect: func(t *testing.T, state *mock.S3API, err error) {
+				be.True(t, errors.Is(err, fs.ErrNotExist))
+				be.Equal(t, 0, state.CallCount("DeleteObject"))
+			},
+		}, {
+			// A probe that fails for any other reason is not a missing
+			// key, and must not be reported as one.
+			desc:   "probe fails for another reason",
+			bucket: bucket,
+			key:    "remove-me",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket, &mock.Object{Key: "remove-me"})
+			},
+			api: func(t *testing.T, m *mock.S3API) s3.S3API {
+				return &headErrAPI{S3API: m, err: respErr(403, &smithy.GenericAPIError{Code: "AccessDenied"})}
+			},
+			expect: func(t *testing.T, state *mock.S3API, err error) {
+				be.True(t, err != nil)
+				be.False(t, errors.Is(err, fs.ErrNotExist))
+				be.Equal(t, 0, state.CallCount("DeleteObject"))
 			},
 		},
 	}
@@ -505,7 +567,11 @@ func TestRemove_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			fsys := s3.NewBucketFS(api, tcase.bucket)
+			var client s3.S3API = api
+			if tcase.api != nil {
+				client = tcase.api(t, api)
+			}
+			fsys := s3.NewBucketFS(client, tcase.bucket)
 			err := fsys.Remove(ctx, tcase.key)
 			tcase.expect(t, api, err)
 		})
