@@ -50,6 +50,7 @@ type FS struct {
 
 var _ ocflfs.WriteFS = (*FS)(nil)
 var _ ocflfs.DirEntriesFS = (*FS)(nil)
+var _ ocflfs.SameBackend = (*FS)(nil)
 
 // NewFS returns an FS for the directory at path, which must exist and be a
 // directory: the [os.Root] opened here holds a descriptor on it, so a missing
@@ -88,6 +89,20 @@ func (fsys *FS) Close() error {
 
 func (fsys *FS) Root() string {
 	return fsys.path
+}
+
+// SameBackend implements [ocflfs.SameBackend] for fsys. It reports true if
+// other is a *FS opened at the same absolute path.
+//
+// This is a conservative predicate, not a guarantee: it cannot see through
+// bind mounts or hard links, and it reports true for two roots opened at the
+// same path even if the directory was replaced between constructions.
+func (fsys *FS) SameBackend(other ocflfs.FS) bool {
+	o, ok := other.(*FS)
+	if !ok {
+		return false
+	}
+	return fsys.path == o.path
 }
 
 // OpenFile opens the named file for reading. name is resolved inside the

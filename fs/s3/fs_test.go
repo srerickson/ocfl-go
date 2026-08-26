@@ -40,6 +40,7 @@ var (
 	_ ocflfs.CopyFS       = (*s3.BucketFS)(nil)
 	_ ocflfs.WriteFS      = (*s3.BucketFS)(nil)
 	_ ocflfs.FileWalker   = (*s3.BucketFS)(nil)
+	_ ocflfs.SameBackend  = (*s3.BucketFS)(nil)
 
 	fixtures = filepath.Join("..", "..", "testdata", "content-fixture")
 )
@@ -625,6 +626,123 @@ func TestCopy_Mock(t *testing.T) {
 		})
 	}
 }
+
+func TestSameBackend_Mock(t *testing.T) {
+	client1 := mock.New(bucket)
+	client2 := mock.New(bucket)
+	type testCase struct {
+		desc   string
+		fsys   *s3.BucketFS
+		other  ocflfs.FS
+		expect bool
+	}
+	cases := []testCase{
+		{
+			desc:   "same bucket and client",
+			fsys:   s3.NewBucketFS(client1, bucket),
+			other:  s3.NewBucketFS(client1, bucket),
+			expect: true,
+		}, {
+			desc:   "different bucket",
+			fsys:   s3.NewBucketFS(client1, bucket),
+			other:  s3.NewBucketFS(client1, "other-bucket"),
+			expect: false,
+		}, {
+			desc:   "different client",
+			fsys:   s3.NewBucketFS(client1, bucket),
+			other:  s3.NewBucketFS(client2, bucket),
+			expect: false,
+		}, {
+			desc:   "not a *BucketFS",
+			fsys:   s3.NewBucketFS(client1, bucket),
+			other:  ocflfs.DirFS(t.TempDir()),
+			expect: false,
+		}, {
+			// The client is caller-supplied and can itself be non-comparable
+			// (a struct value carrying a map, say). SameBackend must guard
+			// against that rather than reproduce the dstFS == srcFS panic one
+			// level down.
+			desc:   "non-comparable client",
+			fsys:   s3.NewBucketFS(stubClient{m: map[string]string{}}, bucket),
+			other:  s3.NewBucketFS(stubClient{m: map[string]string{}}, bucket),
+			expect: false,
+		},
+	}
+	for _, tcase := range cases {
+		t.Run(tcase.desc, func(t *testing.T) {
+			be.Equal(t, tcase.expect, tcase.fsys.SameBackend(tcase.other))
+		})
+	}
+}
+
+func TestCopyDispatch_Mock(t *testing.T) {
+	ctx := context.Background()
+	api := mock.New(bucket, &mock.Object{Key: "src-file", Body: []byte("some content")})
+	// Two separately constructed *BucketFS values over the same bucket and
+	// client are the same backend: ocflfs.Copy should take the server-side
+	// fast path (one CopyObject), not a GetObject/PutObject round trip.
+	dstFS := s3.NewBucketFS(api, bucket)
+	srcFS := s3.NewBucketFS(api, bucket)
+	_, err := ocflfs.Copy(ctx, dstFS, "dst-file", srcFS, "src-file")
+	be.NilErr(t, err)
+	be.Equal(t, 1, api.CallCount("CopyObject"))
+	be.Equal(t, 0, api.CallCount("GetObject"))
+	be.Equal(t, 0, api.CallCount("PutObject"))
+}
+
+// stubClient is a minimal s3.S3API implementation whose dynamic type carries
+// a map field, so it is not comparable with ==. It's never actually called:
+// it exists only to exercise BucketFS.SameBackend's guard against a
+// non-comparable client.
+type stubClient struct {
+	m map[string]string
+}
+
+func (stubClient) HeadObject(context.Context, *s3v2.HeadObjectInput, ...func(*s3v2.Options)) (*s3v2.HeadObjectOutput, error) {
+	return nil, nil
+}
+
+func (stubClient) GetObject(context.Context, *s3v2.GetObjectInput, ...func(*s3v2.Options)) (*s3v2.GetObjectOutput, error) {
+	return nil, nil
+}
+
+func (stubClient) ListObjectsV2(context.Context, *s3v2.ListObjectsV2Input, ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
+	return nil, nil
+}
+
+func (stubClient) PutObject(context.Context, *s3v2.PutObjectInput, ...func(*s3v2.Options)) (*s3v2.PutObjectOutput, error) {
+	return nil, nil
+}
+
+func (stubClient) UploadPart(context.Context, *s3v2.UploadPartInput, ...func(*s3v2.Options)) (*s3v2.UploadPartOutput, error) {
+	return nil, nil
+}
+
+func (stubClient) CreateMultipartUpload(context.Context, *s3v2.CreateMultipartUploadInput, ...func(*s3v2.Options)) (*s3v2.CreateMultipartUploadOutput, error) {
+	return nil, nil
+}
+
+func (stubClient) CompleteMultipartUpload(context.Context, *s3v2.CompleteMultipartUploadInput, ...func(*s3v2.Options)) (*s3v2.CompleteMultipartUploadOutput, error) {
+	return nil, nil
+}
+
+func (stubClient) AbortMultipartUpload(context.Context, *s3v2.AbortMultipartUploadInput, ...func(*s3v2.Options)) (*s3v2.AbortMultipartUploadOutput, error) {
+	return nil, nil
+}
+
+func (stubClient) UploadPartCopy(context.Context, *s3v2.UploadPartCopyInput, ...func(*s3v2.Options)) (*s3v2.UploadPartCopyOutput, error) {
+	return nil, nil
+}
+
+func (stubClient) CopyObject(context.Context, *s3v2.CopyObjectInput, ...func(*s3v2.Options)) (*s3v2.CopyObjectOutput, error) {
+	return nil, nil
+}
+
+func (stubClient) DeleteObject(context.Context, *s3v2.DeleteObjectInput, ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error) {
+	return nil, nil
+}
+
+var _ s3.S3API = stubClient{}
 
 func TestWalkFiles_Mock(t *testing.T) {
 	ctx := context.Background()
