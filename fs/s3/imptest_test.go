@@ -39,7 +39,6 @@ func TestWriteFSRemove_S3(t *testing.T) {
 func TestWriteFSRemoveAll_S3(t *testing.T) {
 	fsys := s3.NewBucketFS(mock.New(bucket), bucket)
 	imptest.TestWriteFSRemoveAll(t, fsys, imptest.WriteFSRemoveAll{
-		RemoveAllDotIsError:      false,
 		RemoveAllOnFileRemovesIt: false,
 	})
 }

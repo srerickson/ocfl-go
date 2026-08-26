@@ -29,12 +29,13 @@
 // An entry point takes an options struct only when the suite genuinely cannot
 // assert something for every backend at once. That is a high bar, and most do
 // not clear it: [TestDirEntries], [TestWriteFSWrite] and [TestWriteFSRemove]
-// take no struct at all. [WriteFSRemoveAll] holds the only real knobs,
-// because the backends differ there in capability rather than in wording — s3
-// can empty its bucket and local cannot remove its own root. The ErrWalk
-// field on [WalkFiles] is a fixture rather than a knob: it supplies a backend
-// whose walk fails, and the assertions made about that failure are the same
-// either way.
+// take no struct at all. [WriteFSRemoveAll] holds the only real knob,
+// RemoveAllOnFileRemovesIt, because the backends differ there in capability
+// rather than in wording: RemoveAll on a file's own path deletes it on a
+// hierarchical backend and does not on a key-value one, where a key is not
+// under its own prefix. The ErrWalk field on [WalkFiles] is a fixture rather
+// than a knob: it supplies a backend whose walk fails, and the assertions
+// made about that failure are the same either way.
 //
 // Before adding a knob, check which of the two it is. A field that lets each
 // backend name a different error is usually recording a defect, not a

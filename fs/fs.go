@@ -74,26 +74,20 @@ type WriteFS interface {
 	// Remove the directory with path name and all its contents. If the path
 	// does not exist, return nil.
 	//
-	// Whether name "." empties the storage root or is refused is left to the
-	// implementation: a backend whose root must survive (a filesystem
-	// directory) returns an error, while a backend whose root is a namespace
-	// (an S3 bucket) may empty it. Note the package-level RemoveAll handles
-	// "." itself and never reaches this method for that name, so callers
-	// after uniform root-emptying behavior should use it instead: it is
-	// best-effort, attempting every top-level entry and joining their
-	// errors, so a failure part-way through can still leave a partial
-	// deletion behind.
+	// Removal is best-effort: every entry is attempted even after an earlier
+	// one fails, so a failure can leave a partial deletion behind. The
+	// returned error reports the failures the implementation can see --
+	// joined with errors.Join where it walks the entries itself, and a
+	// single error where it delegates to a backend call that reports only
+	// one of them.
+	//
+	// Name "." empties the storage root: every entry in the top-level
+	// directory is removed and the root itself survives. The root is a
+	// container on every backend -- a filesystem directory, an S3 bucket --
+	// and not something a caller can delete through this interface. Note
+	// this is the one name Remove refuses outright, since "." never names a
+	// file.
 	RemoveAll(ctx context.Context, name string) error
-}
-
-// RootRemover is an optional interface for a [WriteFS] whose backend can
-// empty its storage root in a single operation, without listing and removing
-// entries one at a time. The package-level RemoveAll uses it for name "."
-// when present.
-type RootRemover interface {
-	// RemoveRoot removes the entire contents of the top-level directory
-	// without removing the directory itself. Idempotent, like RemoveAll.
-	RemoveRoot(ctx context.Context) error
 }
 
 // CopyFS is a storage backend that supports copying files.
@@ -201,47 +195,16 @@ func Remove(ctx context.Context, fsys FS, name string) error {
 }
 
 // RemoveAll checks if fsys implements WriteFS and calls its RemoveAll method.
-// It returns ErrOpUnsupported if fsys is not a WriteFS. As a special case, if
-// name == ".", RemoveAll empties the top-level directory itself: if fsys
-// implements [RootRemover], its RemoveRoot method is called and its error
-// returned as-is; otherwise RemoveAll reads the contents of the top-level
-// directory and calls Remove/RemoveAll for every entry, on a best-effort
-// basis -- every entry is attempted even if an earlier one fails, and any
-// errors are joined with errors.Join. That case is handled here, not by the
-// backend, so the backend's own RemoveAll(".") behavior -- refuse or empty,
-// both allowed by WriteFS -- is only observable by calling it directly.
+// It returns ErrOpUnsupported if fsys is not a WriteFS. Every name is passed
+// through, "." included: emptying the storage root is part of the
+// [WriteFS.RemoveAll] contract, which also documents the best-effort removal
+// and error-joining every backend provides.
 func RemoveAll(ctx context.Context, fsys FS, name string) error {
 	writeFS, ok := fsys.(WriteFS)
 	if !ok {
 		return &fs.PathError{Op: "remove_all", Path: name, Err: ErrOpUnsupported}
 	}
-	if name != "." {
-		return writeFS.RemoveAll(ctx, name)
-	}
-	if remover, ok := fsys.(RootRemover); ok {
-		return remover.RemoveRoot(ctx)
-	}
-	var errs error
-	for entry, err := range DirEntries(ctx, fsys, ".") {
-		if entry == nil && err == nil {
-			continue
-		}
-		if err != nil {
-			errs = errors.Join(errs, err)
-			continue
-		}
-		var removeFn func(context.Context, FS, string) error
-		switch {
-		case entry.IsDir():
-			removeFn = RemoveAll
-		default:
-			removeFn = Remove
-		}
-		if err := removeFn(ctx, fsys, entry.Name()); err != nil {
-			errs = errors.Join(errs, err)
-		}
-	}
-	return errs
+	return writeFS.RemoveAll(ctx, name)
 }
 
 // Write checks if fsys implements WriteFS and calls its Write method. It
