@@ -40,6 +40,18 @@ func New(bucket string, objects ...*Object) *S3API {
 	return api
 }
 
+// WithNotFoundStyle sets the error shape m returns for a request naming a key
+// the bucket does not hold, and returns m so it can be chained onto New:
+//
+//	mock.New(bucket, objs...).WithNotFoundStyle(mock.NotFoundStyleGeneric)
+//
+// The default is [NotFoundStyleAWS]. Set it before serving any request: the
+// field is read without the state lock.
+func (m *S3API) WithNotFoundStyle(style NotFoundStyle) *S3API {
+	m.notFoundStyle = style
+	return m
+}
+
 type S3API struct {
 	// UpdatedETags, Deleted and the MPU flags are written by the mock's
 	// handlers and read by tests. Handlers may run on the uploader's
@@ -66,6 +78,11 @@ type S3API struct {
 	bucket  string
 	objects map[string]*Object
 
+	// notFoundStyle selects the error shape returned for a missing key.
+	// It is set at construction and never written afterwards, so it needs
+	// no lock. See errors.go.
+	notFoundStyle NotFoundStyle
+
 	// mu guards objects, UpdatedETags, Deleted and the MPU flags. parts
 	// keeps its own sync.Map and log its own mutex, so a handler never
 	// holds mu while touching either — no lock ordering to reason about.
@@ -82,6 +99,12 @@ func (m *S3API) HeadObject(ctx context.Context, in *s3v2.HeadObjectInput, opts .
 		return nil, err
 	}
 	obj, err := m.getObject(in.Key)
+	if errors.Is(err, errMissingKey) {
+		// A HEAD response has no body, so a real endpoint has nothing to
+		// deserialize a code from and the SDK derives one from the 404
+		// status: NotFound, not NoSuchKey.
+		err = m.notFound(&types.NotFound{Message: aws.String("Not Found")})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +128,7 @@ func (m *S3API) GetObject(ctx context.Context, in *s3v2.GetObjectInput, opts ...
 	obj, err := m.getObjectLocked(in.Key)
 	if err != nil {
 		m.mu.Unlock()
-		return nil, err
+		return nil, m.noSuchKeyErr(err)
 	}
 	body := obj.Body
 	lastMod := obj.LastModified
@@ -317,7 +340,7 @@ func (m *S3API) UploadPartCopy(ctx context.Context, in *s3v2.UploadPartCopyInput
 	}
 	srcObj, err := m.getObject(&srcKey)
 	if err != nil {
-		return nil, err
+		return nil, m.noSuchKeyErr(err)
 	}
 	if in.CopySourceRange == nil {
 		return nil, errors.New("CopySourceRange is required")
@@ -432,7 +455,7 @@ func (m *S3API) CopyObject(ctx context.Context, in *s3v2.CopyObjectInput, opts .
 	}
 	srcObj, err := m.getObject(&srcKey)
 	if err != nil {
-		return nil, err
+		return nil, m.noSuchKeyErr(err)
 	}
 	// Copy the body under the state lock: a concurrent PutObject to the
 	// source key would otherwise race the read in md5hex.
@@ -454,14 +477,20 @@ func (m *S3API) CopyObject(ctx context.Context, in *s3v2.CopyObjectInput, opts .
 
 func (m *S3API) DeleteObject(ctx context.Context, in *s3v2.DeleteObjectInput, opts ...func(*s3v2.Options)) (*s3v2.DeleteObjectOutput, error) {
 	m.log.recordKey("DeleteObject", in.Key)
+	if err := m.bucketOK(in.Bucket); err != nil {
+		return nil, err
+	}
+	if in.Key == nil {
+		return nil, errors.New("key is required")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, err := m.getObjectLocked(in.Key); err != nil {
-		return nil, &types.NoSuchKey{}
-	}
-	out := &s3v2.DeleteObjectOutput{}
+	// DeleteObject is idempotent: a real endpoint answers 204 whether or
+	// not the key was there, and reports nothing about which it was. A
+	// mock that errored on a missing key would let the s3 backend's Remove
+	// look strict under test while returning nil in production.
 	m.deleteKeyLocked(*in.Key)
-	return out, nil
+	return &s3v2.DeleteObjectOutput{}, nil
 }
 
 // deleteKeyLocked removes the object from the bucket and records the
@@ -566,7 +595,7 @@ func (m *S3API) getObjectLocked(k *string) (*Object, error) {
 	}
 	obj, ok := m.objects[*k]
 	if !ok {
-		return nil, &types.NoSuchKey{}
+		return nil, errMissingKey
 	}
 	return obj, nil
 }
