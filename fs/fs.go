@@ -245,6 +245,10 @@ func fileWalk(ctx context.Context, fsys FS, walkRoot string, subDir string, yiel
 			if !yield(nil, err) {
 				return false
 			}
+			continue
+		}
+		if e == nil {
+			continue
 		}
 		entryPath := path.Join(subDir, e.Name())
 		switch {
@@ -258,6 +262,7 @@ func fileWalk(ctx context.Context, fsys FS, walkRoot string, subDir string, yiel
 				if !yield(nil, err) {
 					return false
 				}
+				continue
 			}
 			ref := &FileRef{
 				FS:      fsys,
