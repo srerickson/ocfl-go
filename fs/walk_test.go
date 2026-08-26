@@ -70,12 +70,6 @@ type walkYield struct {
 //   - never produce a FileRef with a nil Info field after an Info() error,
 //   - keep walking valid entries after error yields.
 func TestWalkFiles_DirEntriesError(t *testing.T) {
-	// TODO(#165): the (nil, err) yield is propagated and then falls through
-	// to path.Join(subDir, e.Name()) on the nil entry, so the walk panics; an
-	// Info() error produces a *FileRef with a nil Info field. Drop the skip
-	// when #165 fixes both.
-	t.Skip("fileWalk panics on an error-yielding DirEntries; see #165")
-
 	errYield := errors.New("direntries: listing failed")
 	errInfo := errors.New("direntries: stat failed")
 

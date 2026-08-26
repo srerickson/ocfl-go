@@ -169,8 +169,17 @@ func (fsys *FS) DirEntries(ctx context.Context, name string) iter.Seq2[fs.DirEnt
 			}
 		}
 		// A partial read yields what it got and then the error, matching
-		// fs.ReadDir.
+		// fs.ReadDir. Unlike root.Open's error above, the handle's ReadDir
+		// error carries the OS-level path (e.g. reading a regular file as a
+		// directory yields "readdirent <tmpdir>/blocked: not a directory"),
+		// so both Op and Path need rewriting to keep the storage root out of
+		// the error and match the name the caller passed in.
 		if err != nil {
+			var pathErr *fs.PathError
+			if errors.As(err, &pathErr) {
+				pathErr.Op = "readdir"
+				pathErr.Path = name
+			}
 			yield(nil, err)
 		}
 	}
