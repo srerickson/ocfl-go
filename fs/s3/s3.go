@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"net/http"
 	"net/url"
 	"path"
 	"slices"
@@ -18,6 +19,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
@@ -51,15 +54,10 @@ func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (f
 	headIn := &s3.HeadObjectInput{Bucket: &buck, Key: &name}
 	headOut, err := api.HeadObject(ctx, headIn)
 	if err != nil {
-		fsErr := &fs.PathError{
-			Op:   "open",
-			Path: name,
-			Err:  err,
-		}
 		if errIsNotExist(err) {
-			fsErr.Err = fs.ErrNotExist
+			err = notExistErr(err)
 		}
-		return nil, fsErr
+		return nil, pathErr("open", name, err)
 	}
 	f := &s3File{
 		ctx:    ctx,
@@ -185,15 +183,10 @@ func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, opts .
 		Key:    &src,
 	})
 	if err != nil {
-		fsErr := &fs.PathError{
-			Op:   "copy",
-			Path: src,
-			Err:  err,
-		}
 		if errIsNotExist(err) {
-			fsErr.Err = fs.ErrNotExist
+			err = notExistErr(err)
 		}
-		return 0, fsErr
+		return 0, pathErr("copy", src, err)
 	}
 	escapedSrc := url.QueryEscape(buck + "/" + src)
 	params := &s3.CopyObjectInput{
@@ -483,11 +476,52 @@ func byteRange(partNum int32, partSize, totalSize int64) string {
 	return fmt.Sprintf("bytes=%d-%d", start, end)
 }
 
+// errIsNotExist reports whether err is an S3 API error meaning "that object
+// is not there". Four shapes reach here, because what comes back depends on
+// the operation and on the store:
+//
+//   - *types.NoSuchKey, deserialized from the response body of GetObject,
+//     CopyObject and UploadPartCopy;
+//   - *types.NotFound, which is what HeadObject produces: a HEAD response
+//     has no body to deserialize a code from, so the SDK derives one from
+//     the 404 status;
+//   - *smithy.GenericAPIError carrying the code as a string, from an
+//     S3-compatible store that sent a code the SDK could not resolve to one
+//     of the typed errors;
+//   - any error carrying a 404 response, for a store whose code neither the
+//     SDK nor the cases above recognize.
+//
+// A missing bucket is deliberately not in that list even though it is also a
+// 404. It is a configuration error, not a missing file: a caller told
+// fs.ErrNotExist would conclude the object was never written, when in fact
+// nothing at all can be read or written.
 func errIsNotExist(err error) bool {
 	var notFoundErr *types.NotFound
 	if errors.As(err, &notFoundErr) {
 		return true
 	}
 	var noKeyErr *types.NoSuchKey
-	return errors.As(err, &noKeyErr)
+	if errors.As(err, &noKeyErr) {
+		return true
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "NoSuchKey", "NotFound":
+			return true
+		case "NoSuchBucket":
+			return false
+		}
+	}
+	var respErr *smithyhttp.ResponseError
+	return errors.As(err, &respErr) && respErr.HTTPStatusCode() == http.StatusNotFound
+}
+
+// notExistErr wraps err so that errors.Is(err, fs.ErrNotExist) matches while
+// the cause stays reachable. Replacing the cause with fs.ErrNotExist -- what
+// this package used to do -- throws away the status code, the request ID and
+// the API error code, which is most of what makes a failure against a real
+// endpoint diagnosable.
+func notExistErr(err error) error {
+	return fmt.Errorf("%w: %w", fs.ErrNotExist, err)
 }

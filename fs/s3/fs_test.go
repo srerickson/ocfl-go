@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"net/http"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -16,9 +17,12 @@ import (
 	"testing"
 	"time"
 
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
@@ -1180,4 +1184,165 @@ func TestRemoveAllBestEffort(t *testing.T) {
 			}
 		})
 	}
+}
+
+// headErrAPI is the mock with HeadObject made to fail with a chosen error, so
+// a test can present an error shape the mock does not itself produce.
+type headErrAPI struct {
+	*mock.S3API
+	err error
+}
+
+var _ s3.S3API = (*headErrAPI)(nil)
+
+func (a *headErrAPI) HeadObject(ctx context.Context, in *s3v2.HeadObjectInput,
+	opts ...func(*s3v2.Options)) (*s3v2.HeadObjectOutput, error) {
+	return nil, a.err
+}
+
+// respErr builds the error an endpoint's 404 arrives as: the API error the
+// SDK deserialized, inside the transport error carrying the response.
+func respErr(status int, inner error) error {
+	return &awshttp.ResponseError{
+		ResponseError: &smithyhttp.ResponseError{
+			Response: &smithyhttp.Response{
+				Response: &http.Response{StatusCode: status, Header: http.Header{}},
+			},
+			Err: inner,
+		},
+		RequestID: "TESTREQUESTID",
+	}
+}
+
+// TestNotExistMapping_Mock covers which S3 API errors mean "not there" and
+// what the backend does with the ones that do.
+//
+// The shapes matter because they are not interchangeable: HeadObject has no
+// response body, so a real endpoint's 404 deserializes to *types.NotFound
+// rather than the *types.NoSuchKey a GetObject body carries, and an
+// S3-compatible store the SDK cannot type at all yields a
+// *smithy.GenericAPIError holding the code as a string. A check written
+// against one shape passes CI against a mock that speaks it and fails against
+// a store that does not.
+func TestNotExistMapping_Mock(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("recognized shapes", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			err  error
+		}{
+			{"typed NotFound", respErr(404, &types.NotFound{})},
+			{"typed NoSuchKey", respErr(404, &types.NoSuchKey{})},
+			{"generic code NotFound", respErr(404, &smithy.GenericAPIError{Code: "NotFound"})},
+			{"generic code NoSuchKey", respErr(404, &smithy.GenericAPIError{Code: "NoSuchKey"})},
+			// A store whose code neither the SDK nor this package knows:
+			// the 404 is the only thing left to go on, and it is enough.
+			{"unrecognized code with 404", respErr(404, &smithy.GenericAPIError{Code: "KeyNotPresent"})},
+			// Bare typed errors, with no transport error around them.
+			{"bare NotFound", &types.NotFound{}},
+			{"bare NoSuchKey", &types.NoSuchKey{}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				fsys := s3.NewBucketFS(&headErrAPI{S3API: mock.New(bucket), err: tc.err}, bucket)
+				_, err := fsys.OpenFile(ctx, "missing.txt")
+				be.True(t, errors.Is(err, fs.ErrNotExist))
+			})
+		}
+	})
+
+	t.Run("not-exist shapes it must not claim", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			err  error
+		}{
+			// A missing bucket is a 404 too, and is a configuration error
+			// rather than a missing file. Reporting fs.ErrNotExist would
+			// tell a caller the object was never written when in fact
+			// nothing can be read or written at all.
+			{"typed NoSuchBucket", respErr(404, &types.NoSuchBucket{})},
+			{"generic code NoSuchBucket", respErr(404, &smithy.GenericAPIError{Code: "NoSuchBucket"})},
+			{"access denied", respErr(403, &smithy.GenericAPIError{Code: "AccessDenied"})},
+			{"server error", respErr(500, &smithy.GenericAPIError{Code: "InternalError"})},
+			{"transport failure", errors.New("dial tcp: connection refused")},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				fsys := s3.NewBucketFS(&headErrAPI{S3API: mock.New(bucket), err: tc.err}, bucket)
+				_, err := fsys.OpenFile(ctx, "missing.txt")
+				be.True(t, err != nil)
+				be.False(t, errors.Is(err, fs.ErrNotExist))
+			})
+		}
+	})
+
+	// The mapping wraps fs.ErrNotExist around the cause instead of replacing
+	// it. Replacing threw away the status code, the request ID and the API
+	// error code -- most of what makes a failure against a real endpoint
+	// diagnosable -- and left a caller with an error it could match but not
+	// read.
+	t.Run("the cause survives the wrap", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			open func() error
+		}{
+			{
+				name: "OpenFile",
+				open: func() error {
+					fsys := s3.NewBucketFS(mock.New(bucket), bucket)
+					_, err := fsys.OpenFile(ctx, "missing.txt")
+					return err
+				},
+			},
+			{
+				name: "Copy",
+				open: func() error {
+					fsys := s3.NewBucketFS(mock.New(bucket), bucket)
+					_, err := fsys.Copy(ctx, "dst.txt", "missing.txt")
+					return err
+				},
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				err := tc.open()
+				be.True(t, errors.Is(err, fs.ErrNotExist))
+
+				// Still a *fs.PathError naming the file, as before.
+				var pathErr *fs.PathError
+				be.True(t, errors.As(err, &pathErr))
+				be.Equal(t, "missing.txt", pathErr.Path)
+
+				// And the API error underneath is still reachable.
+				var apiErr smithy.APIError
+				be.True(t, errors.As(err, &apiErr))
+				be.Equal(t, "NotFound", apiErr.ErrorCode())
+				var respErr *smithyhttp.ResponseError
+				be.True(t, errors.As(err, &respErr))
+				be.Equal(t, 404, respErr.HTTPStatusCode())
+				var reqIDErr interface{ ServiceRequestID() string }
+				be.True(t, errors.As(err, &reqIDErr))
+				be.Equal(t, mock.RequestID(), reqIDErr.ServiceRequestID())
+			})
+		}
+	})
+
+	// The generic style is the one the old typed-only check missed: a store
+	// whose error the SDK cannot resolve to *types.NotFound or
+	// *types.NoSuchKey still has to read as a missing file end to end.
+	t.Run("generic style backend", func(t *testing.T) {
+		api := mock.New(bucket, &mock.Object{Key: "present.txt", Body: []byte("x")}).
+			WithNotFoundStyle(mock.NotFoundStyleGeneric)
+		fsys := s3.NewBucketFS(api, bucket)
+
+		_, err := fsys.OpenFile(ctx, "missing.txt")
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+
+		_, err = fsys.Copy(ctx, "dst.txt", "missing.txt")
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+
+		// A key that is there still opens: the mapping did not turn every
+		// error into a missing file.
+		file, err := fsys.OpenFile(ctx, "present.txt")
+		be.NilErr(t, err)
+		be.NilErr(t, file.Close())
+	})
 }
