@@ -70,6 +70,15 @@ type WriteFS interface {
 	// errors.Is(err, fs.ErrNotExist). Name "." is never removable -- it
 	// names the storage root, not a file -- and returns an error satisfying
 	// errors.Is(err, fs.ErrInvalid) without affecting the root's contents.
+	//
+	// The missing-file case is a guarantee rather than a best effort, and
+	// holds on a backend whose own delete cannot supply it: S3's
+	// DeleteObject is idempotent, answering the same way whether or not the
+	// key was there, so the s3 implementation establishes existence itself
+	// before deleting and pays a round trip for it. A caller can therefore
+	// read fs.ErrNotExist as "there was nothing to remove" without knowing
+	// which storage it is talking to -- which is what lets undoing a
+	// partial write mean the same thing on every backend.
 	Remove(ctx context.Context, name string) error
 	// Remove the directory with path name and all its contents. If the path
 	// does not exist, return nil.
