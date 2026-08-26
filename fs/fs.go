@@ -91,17 +91,29 @@ type CopyFS interface {
 	Copy(ctx context.Context, dst string, src string) (int64, error)
 }
 
-// Copy copies src in srcFS to dst in dstFS. If srcFS and dstFS are the same refererence
-// and it implements CopyFS, then Copy uses the fs's Copy() method.
+// SameBackend is an optional interface an FS implementation can use to report
+// whether other refers to the same underlying storage backend as the
+// receiver.
+type SameBackend interface {
+	// SameBackend returns true if other refers to the same underlying storage
+	// backend as the receiver. Implementations must return false if they
+	// cannot determine that other shares the receiver's backend; never
+	// assume.
+	SameBackend(other FS) bool
+}
+
+// Copy copies src in srcFS to dst in dstFS. If dstFS implements CopyFS and
+// SameBackend, and dstFS.SameBackend(srcFS) reports true, Copy uses dstFS's
+// Copy method. Otherwise, Copy reads src from srcFS and writes it to dstFS.
 func Copy(ctx context.Context, dstFS FS, dst string, srcFS FS, src string) (size int64, err error) {
-	cpFS, ok := dstFS.(CopyFS)
-	// FIXME: better way to compare src and dst FS
-	if ok && dstFS == srcFS {
-		size, err = cpFS.Copy(ctx, dst, src)
-		if err != nil {
-			err = fmt.Errorf("during copy: %w", err)
+	if cpFS, ok := dstFS.(CopyFS); ok {
+		if sb, ok := dstFS.(SameBackend); ok && sb.SameBackend(srcFS) {
+			size, err = cpFS.Copy(ctx, dst, src)
+			if err != nil {
+				err = fmt.Errorf("during copy: %w", err)
+			}
+			return
 		}
-		return
 	}
 	// otherwise, manual copy
 	var srcF fs.File

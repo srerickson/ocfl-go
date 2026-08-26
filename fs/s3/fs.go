@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"iter"
 	"log/slog"
+	"reflect"
 
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -103,6 +104,35 @@ func (f *BucketFS) Remove(ctx context.Context, name string) error {
 func (f *BucketFS) RemoveAll(ctx context.Context, name string) error {
 	f.debugLog(ctx, "s3:remove_all", "bucket", f.bucket, "name", name)
 	return removeAll(ctx, f.client, f.bucket, name)
+}
+
+// SameBackend implements [ocflfs.SameBackend] for f. It reports true if other
+// is a *BucketFS naming the same bucket, using the same client. Client
+// identity is checked with reflect: pointer-like clients (the common case)
+// compare by pointer, and any other comparable client type falls back to ==;
+// a client whose dynamic type isn't comparable (e.g. a struct value with a
+// map field) reports false rather than risk a panic comparing it directly.
+func (f *BucketFS) SameBackend(other ocflfs.FS) bool {
+	o, ok := other.(*BucketFS)
+	if !ok || o.bucket != f.bucket {
+		return false
+	}
+	return sameClient(f.client, o.client)
+}
+
+func sameClient(a, b S3API) bool {
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if !va.IsValid() || !vb.IsValid() || va.Type() != vb.Type() {
+		return false
+	}
+	switch va.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
+		return va.Pointer() == vb.Pointer()
+	}
+	if va.Comparable() {
+		return va.Interface() == vb.Interface()
+	}
+	return false
 }
 
 func (f *BucketFS) WalkFiles(ctx context.Context, dir string) iter.Seq2[*ocflfs.FileRef, error] {
