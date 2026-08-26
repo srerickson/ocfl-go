@@ -58,10 +58,7 @@
 // already satisfies is skipped for both — the TODO says which, so the fixing
 // PR knows what it is turning on. Writing the test now and skipping it is the
 // point: the PR that fixes the defect deletes one line, and its diff shows
-// exactly which behavior it makes good on. The s3 Remove skip above (#166)
-// stands at the moment; local Write atomicity (#163) and the fileWalk
-// nil-deref (#173) were the other two until each landed and turned its
-// subtests on.
+// exactly which behavior it makes good on.
 //
 // # Import direction
 //
