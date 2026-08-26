@@ -245,6 +245,12 @@ func fileWalk(ctx context.Context, fsys FS, walkRoot string, subDir string, yiel
 			if !yield(nil, err) {
 				return false
 			}
+			continue
+		}
+		if e == nil {
+			// a nil entry paired with a nil error is a contract violation by
+			// the backend, not a reason to panic.
+			continue
 		}
 		entryPath := path.Join(subDir, e.Name())
 		switch {
@@ -258,6 +264,7 @@ func fileWalk(ctx context.Context, fsys FS, walkRoot string, subDir string, yiel
 				if !yield(nil, err) {
 					return false
 				}
+				continue
 			}
 			ref := &FileRef{
 				FS:      fsys,
