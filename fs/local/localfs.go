@@ -34,6 +34,12 @@ const (
 // root. That holds for reads as well as writes — the difference from
 // [os.DirFS], whose documentation is explicit that it does follow symlinks out
 // of the directory it was given.
+//
+// One consequence is stricter than "stays inside the root": a symlink whose
+// target is an absolute path is refused even when that path names a file
+// inside the root, because os.Root treats any absolute target as leaving it.
+// Relative symlinks, chains included, resolve normally so long as every step
+// stays inside.
 type FS struct {
 	// path is the os-specific path to the root directory. It is kept for
 	// Root() and is never used to build a path handed to the OS.
@@ -233,6 +239,14 @@ func (fsys *FS) Write(ctx context.Context, name string, src io.Reader) (int64, e
 	// takes them in that form on every platform, so nothing here converts to
 	// or from an OS-specific path.
 	parent := path.Dir(name)
+	// Errors from here on keep the *fs.PathError os.Root reports, nested
+	// inside this method's own, rather than routing through unwrapPathError
+	// the way Remove and RemoveAll do. There the inner error names the same
+	// name the caller passed and is pure redundancy; here it names a
+	// different path worth keeping -- mkdirat reports the component that
+	// actually failed, and the temp file's create, chmod, sync and close
+	// report the temp file. Neither names the storage root, and errors.Is
+	// and errors.As see through either shape.
 	if err := mkdirAll(fsys.root, parent); err != nil {
 		return 0, &fs.PathError{
 			Op:   "write",

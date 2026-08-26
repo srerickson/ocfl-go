@@ -59,8 +59,7 @@ type WriteFS interface {
 	// gets this from object-upload semantics — the object appears at name
 	// only once fully uploaded. The local implementation writes to a
 	// temporary file in the target's own directory and renames it over
-	// name, which is an atomic replace on POSIX and, via
-	// MoveFileEx(MOVEFILE_REPLACE_EXISTING), on Windows.
+	// name, which is an atomic replace on POSIX and on Windows alike.
 	//
 	// An implementation that cannot offer this should say so in its own
 	// Write documentation.
