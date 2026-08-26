@@ -171,6 +171,11 @@ func (fsys *FS) DirEntries(ctx context.Context, name string) iter.Seq2[fs.DirEnt
 		// A partial read yields what it got and then the error, matching
 		// fs.ReadDir.
 		if err != nil {
+			var pathErr *fs.PathError
+			if errors.As(err, &pathErr) {
+				pathErr.Op = "readdir"
+				pathErr.Path = name
+			}
 			yield(nil, err)
 		}
 	}

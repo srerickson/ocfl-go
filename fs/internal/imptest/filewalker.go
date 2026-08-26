@@ -136,11 +136,6 @@ func TestWalkFiles(t *testing.T, fsys ocflfs.WriteFS, opts WalkFiles) {
 	})
 
 	t.Run("walk errors are delivered and terminate iteration", func(t *testing.T) {
-		// TODO(#165): fileWalk yields the directory-read error and then falls
-		// through to e.Name() on the nil entry it was yielded with, so the
-		// local walk panics instead of terminating. The s3 backend already
-		// satisfies this; drop the skip when #165 fixes the nil deref.
-		t.Skip("fileWalk panics on an error-yielding DirEntries; see #165")
 		// The fixture's walk of "blocked" fails: s3's ListObjectsV2 errors on
 		// that prefix, local's directory read of a regular file fails.
 		got := walkAll(opts.ErrWalk(t), "blocked")
