@@ -32,10 +32,6 @@ type WalkFiles struct {
 	// is a BucketFS over an API that errors when asked to list the
 	// "blocked/" prefix; for local it is an FS where "blocked" is a regular
 	// file where the walk expects a directory, so the directory read fails.
-	//
-	// The subtest that uses it is skipped pending #165, so the fixture is
-	// built and not run; it stays wired up so closing that issue is a
-	// one-line change.
 	ErrWalk func(t *testing.T) ocflfs.WriteFS
 }
 
