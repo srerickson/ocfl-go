@@ -58,6 +58,13 @@
 //     still reachable through errors.As. A missing bucket is deliberately not
 //     reported that way: it is a configuration error, not a missing file.
 //
+//   - [MultiCopier.Copy] aborts or completes its multipart upload on a
+//     context derived from the caller's, not the caller's context itself: if
+//     the caller cancels mid-copy, that cleanup request still needs to reach
+//     S3, or the upload's parts are orphaned until a lifecycle rule reaps
+//     them. The derived context keeps the caller's values but not its
+//     cancellation or deadline, under its own fixed timeout.
+//
 // # Compatibility
 //
 // The interfaces above are part of the API, so changing them breaks any
