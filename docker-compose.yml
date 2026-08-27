@@ -1,0 +1,31 @@
+# MinIO S3 service for running tests that need a real S3 backend.
+# Usage:
+#   make s3-up        Start MinIO
+#   make s3-down      Stop MinIO
+#   make s3-test      Run S3-backed tests
+#
+# Or with docker compose directly:
+#   docker compose -f docker-compose.yml up -d
+#   OCFL_TEST_S3=http://localhost:9000 go test ./fs/s3/...
+
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ocfltest
+      MINIO_ROOT_PASSWORD: ocfltest
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+volumes:
+  minio-data:
