@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"iter"
 	"net/http"
-	"net/url"
 	"path"
 	"slices"
 	"strings"
@@ -198,10 +197,10 @@ func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, opts .
 		// handed on so MultiCopier does not repeat it.
 		return NewMultiCopier(api, opts...).Copy(ctx, buck, dst, src, srcHead)
 	}
-	escapedSrc := url.QueryEscape(buck + "/" + src)
+	escapedSrc := encodeCopySource(buck, src)
 	params := &s3.CopyObjectInput{
 		Bucket:     &buck,
-		CopySource: &escapedSrc, // value must be URL-encoded
+		CopySource: &escapedSrc, // percent-encoded per encodeCopySource
 		Key:        &dst,
 	}
 	if _, err := api.CopyObject(ctx, params); err != nil {
