@@ -48,9 +48,24 @@ func TestFS_Write_SymlinkTargetGetsDefaultMode(t *testing.T) {
 	defaultPerm := probeInfo.Mode().Perm()
 
 	// Referent with a mode that differs from both the symlink's own mode and
-	// the default, so a leak from either direction is visible.
+	// the default, so a leak from either direction is visible. The mode is
+	// derived from the measured default rather than fixed: with a
+	// restrictive umask (077), a hard-coded 0600 would *be* the default new
+	// file mode and the leak check below would report a leak that did not
+	// happen. XOR keeps the result inside rwx bits and never equals the
+	// default, and the default is never the symlink's 0777 (both are 0666 &^
+	// umask, and umask has no 0100 bit in any bit position common to them).
+	referentMode := defaultPerm ^ 0o006
+	if referentMode == 0 {
+		// defaultPerm 0006: only possible under a umask like 0660. Fall back
+		// to a fixed mode that is neither the default nor 0777.
+		referentMode = 0o400
+	}
 	referent := filepath.Join(root, "referent")
-	be.NilErr(t, os.WriteFile(referent, []byte("referent data"), 0o600))
+	be.NilErr(t, os.WriteFile(referent, []byte("referent data"), referentMode))
+	// WriteFile is umask-masked; chmod after so the referent holds exactly
+	// the intended mode even when referentMode has bits the umask removes.
+	be.NilErr(t, os.Chmod(referent, referentMode))
 
 	// A symlink source...
 	link := filepath.Join(root, "src-link")
@@ -101,7 +116,7 @@ func TestFS_Write_SymlinkTargetGetsDefaultMode(t *testing.T) {
 	if after.Mode().Perm() == linkInfo.Mode().Perm() {
 		t.Fatalf("symlink's own mode leaked onto the replacement: %v (world-writable on POSIX)", after.Mode().Perm())
 	}
-	if after.Mode().Perm() == 0o600 {
+	if after.Mode().Perm() == referentMode {
 		t.Fatalf("referent mode leaked onto the replacement: %v", after.Mode().Perm())
 	}
 
@@ -112,7 +127,7 @@ func TestFS_Write_SymlinkTargetGetsDefaultMode(t *testing.T) {
 	be.Equal(t, "referent data", string(refData))
 	refInfo, err := os.Stat(referent)
 	be.NilErr(t, err)
-	be.Equal(t, fs.FileMode(0o600), refInfo.Mode().Perm())
+	be.Equal(t, referentMode, refInfo.Mode().Perm())
 }
 
 // TestFS_Write_PreservesModeZero pins the one mode a "preserveMode != 0"
@@ -191,6 +206,10 @@ func escapeFixture(t *testing.T) (*FS, string, string) {
 	be.NilErr(t, os.MkdirAll(filepath.Join(outside, "subdir"), 0o755))
 	be.NilErr(t, os.WriteFile(filepath.Join(outside, "secret"), []byte("secret data"), 0o600))
 	be.NilErr(t, os.WriteFile(filepath.Join(outside, "subdir", "nested"), []byte("nested data"), 0o600))
+	// WriteFile is umask-masked; chmod so these assertions can rely on the
+	// exact modes.
+	be.NilErr(t, os.Chmod(filepath.Join(outside, "secret"), 0o600))
+	be.NilErr(t, os.Chmod(filepath.Join(outside, "subdir", "nested"), 0o600))
 	be.NilErr(t, os.Symlink(outside, filepath.Join(root, "link")))
 	return MustNewFS(root), root, outside
 }
@@ -332,16 +351,25 @@ func TestFS_Write_SymlinkAtNameToExternalTarget(t *testing.T) {
 	be.Equal(t, "replacement", string(data))
 
 	// The external referent kept both its contents and its mode: nothing was
-	// written through the link, and its 0600 did not become the new file's.
+	// written through the link, and its mode did not become the new file's.
+	// The leak check compares against the *measured* default new-file mode:
+	// under a restrictive umask (077) the default is 0600, the referent's
+	// mode, and comparing modes directly would report a leak that did not
+	// happen. The replacement is untainted when its mode is exactly the
+	// default and the referent below is untouched.
+	probe := "probe-mode"
+	_, err = fsys.Write(context.Background(), probe, strings.NewReader("p"))
+	be.NilErr(t, err)
+	probeInfo, err := os.Lstat(filepath.Join(root, probe))
+	be.NilErr(t, err)
+	be.Equal(t, probeInfo.Mode().Perm(), info.Mode().Perm())
+
 	refData, err := os.ReadFile(referent)
 	be.NilErr(t, err)
 	be.Equal(t, "secret data", string(refData))
 	refInfo, err := os.Stat(referent)
 	be.NilErr(t, err)
 	be.Equal(t, fs.FileMode(0o600), refInfo.Mode().Perm())
-	if info.Mode().Perm() == 0o600 {
-		t.Fatalf("external referent's mode leaked onto the replacement: %v", info.Mode().Perm())
-	}
 	assertOutsideIntact(t, outside)
 }
 
