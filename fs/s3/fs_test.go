@@ -155,6 +155,36 @@ func TestWriteReadDeleteFile(t *testing.T) {
 	be.NilErr(t, fsys.Remove(ctx, key))
 }
 
+// TestWritePartialReader is the mock cases' counterpart against a real
+// endpoint, where a wrongly declared Content-Length fails before the request
+// leaves the client.
+func TestWritePartialReader(t *testing.T) {
+	if !testutil.S3Enabled() {
+		t.Log("s3 test service is not running")
+		return
+	}
+	ctx := t.Context()
+	fsys := testutil.TmpS3FS(t, nil)
+	buff := mock.RandBytes(4096)
+	const offset = 1000
+
+	r := bytes.NewReader(buff)
+	_, err := r.Seek(offset, io.SeekStart)
+	be.NilErr(t, err)
+
+	key := "partial"
+	n, err := fsys.Write(ctx, key, r)
+	be.NilErr(t, err)
+	be.Equal(t, int64(len(buff)-offset), n)
+
+	f, err := fsys.OpenFile(ctx, key)
+	be.NilErr(t, err)
+	defer f.Close()
+	got, err := io.ReadAll(f)
+	be.NilErr(t, err)
+	be.True(t, bytes.Equal(buff[offset:], got))
+}
+
 func TestWriteWithOptions(t *testing.T) {
 	if !testutil.S3Enabled() {
 		t.Log("s3 test service is not running")
@@ -413,7 +443,13 @@ func TestWrite_Mock(t *testing.T) {
 		uploadPSize int64
 		mock        func(*testing.T) *mock.S3API
 		expect      func(*testing.T, *mock.S3API, int64, error)
+		// expectContent, when set, is read back through OpenFile and compared
+		// to what the bucket now holds under key. The mock materializes
+		// objects, so this asserts the bytes that landed, not just the
+		// requests that were sent.
+		expectContent *string
 	}
+	content := func(s string) *string { return &s }
 	cases := []testCase{
 		{
 			desc: "invalid path",
@@ -452,6 +488,46 @@ func TestWrite_Mock(t *testing.T) {
 				be.Equal(t, bodySize/partSize+1, state.PartCount())
 				be.True(t, state.MPUCompleteFlag())
 			},
+		}, {
+			// Write reads r from where it is, not from where it started.
+			desc:   "partially consumed reader",
+			bucket: bucket,
+			key:    "tmp",
+			body: func() io.Reader {
+				r := bytes.NewReader([]byte("0123456789"))
+				if _, err := r.Seek(3, io.SeekStart); err != nil {
+					panic(err)
+				}
+				return r
+			}(),
+			expectContent: content("3456789"),
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket)
+			},
+			expect: func(t *testing.T, state *mock.S3API, size int64, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, int64(7), size)
+			},
+		}, {
+			// Nothing left to read is an empty object, not a failure.
+			desc:   "exhausted reader",
+			bucket: bucket,
+			key:    "tmp",
+			body: func() io.Reader {
+				r := bytes.NewReader([]byte("already read"))
+				if _, err := io.ReadAll(r); err != nil {
+					panic(err)
+				}
+				return r
+			}(),
+			expectContent: content(""),
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket)
+			},
+			expect: func(t *testing.T, state *mock.S3API, size int64, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, int64(0), size)
+			},
 		},
 	}
 	for i, tcase := range cases {
@@ -467,8 +543,60 @@ func TestWrite_Mock(t *testing.T) {
 			fsys := s3.NewBucketFS(api, tcase.bucket, s3.WithUploaderOptions(uploaderOpt))
 			val, err := fsys.Write(ctx, tcase.key, tcase.body)
 			tcase.expect(t, api, val, err)
+			if tcase.expectContent != nil {
+				f, err := fsys.OpenFile(ctx, tcase.key)
+				be.NilErr(t, err)
+				defer f.Close()
+				got, err := io.ReadAll(f)
+				be.NilErr(t, err)
+				be.Equal(t, *tcase.expectContent, string(got))
+			}
 		})
 	}
+}
+
+// TestWriteContentLengthOption_Mock pins what Write does with the request's
+// ContentLength: it sets none of its own, and forwards a caller's untouched,
+// including when it is wrong.
+func TestWriteContentLengthOption_Mock(t *testing.T) {
+	ctx := context.Background()
+	const key, body = "tmp", "some content"
+
+	withLength := func(n int64) func(*s3v2.PutObjectInput) {
+		return func(in *s3v2.PutObjectInput) { in.ContentLength = &n }
+	}
+
+	t.Run("write declares no length of its own", func(t *testing.T) {
+		// A reader whose total size and remaining bytes differ, so a declared
+		// length taken from either would be visible to the mock.
+		r := bytes.NewReader([]byte(body))
+		_, err := r.Seek(5, io.SeekStart)
+		be.NilErr(t, err)
+		api := mock.New(bucket)
+		fsys := s3.NewBucketFS(api, bucket)
+		n, err := fsys.Write(ctx, key, r)
+		be.NilErr(t, err)
+		be.Equal(t, int64(len(body)-5), n)
+	})
+
+	t.Run("matching option is honored", func(t *testing.T) {
+		api := mock.New(bucket)
+		fsys := s3.NewBucketFS(api, bucket)
+		n, err := fsys.WriteWithOptions(ctx, key, strings.NewReader(body), withLength(int64(len(body))))
+		be.NilErr(t, err)
+		be.Equal(t, int64(len(body)), n)
+	})
+
+	t.Run("wrong option is passed through, not corrected", func(t *testing.T) {
+		api := mock.New(bucket)
+		fsys := s3.NewBucketFS(api, bucket)
+		_, err := fsys.WriteWithOptions(ctx, key, strings.NewReader(body), withLength(int64(len(body))+10))
+		be.Nonzero(t, err)
+		isPathError(t, err)
+		var apiErr smithy.APIError
+		be.True(t, errors.As(err, &apiErr))
+		be.Equal(t, "IncompleteBody", apiErr.ErrorCode())
+	})
 }
 
 func TestRemove_Mock(t *testing.T) {

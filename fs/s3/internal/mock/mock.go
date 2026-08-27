@@ -253,6 +253,11 @@ func (m *S3API) PutObject(ctx context.Context, in *s3v2.PutObjectInput, opts ...
 	if err != nil {
 		return nil, err
 	}
+	// A declared Content-Length is a promise about the body, so hold the
+	// request to it instead of storing whatever arrived. See incompleteBody.
+	if in.ContentLength != nil && *in.ContentLength != int64(len(body)) {
+		return nil, incompleteBody(*in.ContentLength, int64(len(body)))
+	}
 	etag, err := md5hex(bytes.NewReader(body))
 	if err != nil {
 		return nil, err
