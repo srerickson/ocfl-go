@@ -365,8 +365,14 @@ func deleteErr(e types.Error) error {
 	return errors.New("delete failed, no reason reported")
 }
 
-// walkFiles returns an iterator that yields PathInfo for files in the dir
-func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) iter.Seq2[*ocflfs.FileRef, error] {
+// walkFiles returns an iterator that yields a *[ocflfs.FileRef] for every
+// object under dir. fsys is stamped onto each ref's FS field, so a caller can
+// open the file through the ref without carrying the backend around. It is a
+// parameter rather than something the caller patches in afterwards: a wrapper
+// that re-yields to set it would be a second implementation of this
+// iterator's early-termination and error semantics, free to drift from this
+// one.
+func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string, fsys ocflfs.FS) iter.Seq2[*ocflfs.FileRef, error] {
 	return func(yield func(*ocflfs.FileRef, error) bool) {
 		const op = "list_files"
 		if !fs.ValidPath(dir) {
@@ -392,6 +398,7 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string) iter.
 					refPath = strings.TrimPrefix(refPath, dir+"/")
 				}
 				info := &ocflfs.FileRef{
+					FS:      fsys,
 					BaseDir: dir,
 					Path:    refPath,
 					Info: &iofsInfo{

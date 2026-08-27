@@ -184,21 +184,16 @@ func sameClient(a, b S3API) bool {
 	return false
 }
 
+// WalkFiles returns an iterator over every object under dir, per
+// [ocflfs.FileWalker].
+//
+// Each yielded ref carries this BucketFS as its FS, so a caller can open the
+// file through the ref alone. Iteration stops as soon as the callback returns
+// false, and a listing failure is delivered as the pair's error element with
+// nothing yielded after it.
 func (f *BucketFS) WalkFiles(ctx context.Context, dir string) iter.Seq2[*ocflfs.FileRef, error] {
 	f.debugLog(ctx, "s3:walkfiles", "bucket", f.bucket, "prefix", dir)
-	files := walkFiles(ctx, f.client, f.bucket, dir)
-	// The values yielded by walkfiles don't include the FS, we need to
-	// add it here.
-	return func(yield func(*ocflfs.FileRef, error) bool) {
-		for file, err := range files {
-			if file != nil {
-				file.FS = f
-			}
-			if !yield(file, err) {
-				break
-			}
-		}
-	}
+	return walkFiles(ctx, f.client, f.bucket, dir, f)
 }
 
 type S3API interface {
