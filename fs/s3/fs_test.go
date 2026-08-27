@@ -978,6 +978,50 @@ func TestMultiCopierSpecialCharacters_Mock(t *testing.T) {
 	be.Nonzero(t, api.PartCount())
 }
 
+// TestMultiCopierConcurrentReuse_Mock drives one MultiCopier, left at its
+// zero-value PartSize/Concurrency, through several concurrent Copy calls.
+// BucketFS shares a single set of copy options -- and so, in effect, a
+// single MultiCopier -- across every copy it makes, so two copies racing on
+// one MultiCopier is the shape production traffic actually takes. Before
+// this fix, Copy wrote its defaulted PartSize and Concurrency back onto the
+// receiver; run with -race, concurrent copies here reliably reported a
+// write/write race on both fields. The zero-value assertions below are the
+// deterministic half of the proof: they fail on the old code whether or not
+// -race is enabled, because some copy's defaulting always won the race and
+// left the receiver non-zero.
+func TestMultiCopierConcurrentReuse_Mock(t *testing.T) {
+	ctx := context.Background()
+	const srcSize = int64(6 * megabyte) // over the 5 MiB min part size, under the 32 MiB default: one part per copy
+	srcBody := mock.RandBytes(srcSize)
+	api := mock.New(bucket, &mock.Object{Key: "src-file", Body: srcBody})
+	copier := s3.NewMultiCopier(api)
+
+	const workers = 4
+	var wg sync.WaitGroup
+	errs := make([]error, workers)
+	sizes := make([]int64, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			dst := fmt.Sprintf("dst-file-%d", i)
+			sizes[i], errs[i] = copier.Copy(ctx, bucket, dst, "src-file")
+		}(i)
+	}
+	wg.Wait()
+
+	const defaultCopyPartSize = 32 * megabyte
+	expETag := mock.ETag(srcBody, defaultCopyPartSize)
+	for i := 0; i < workers; i++ {
+		be.NilErr(t, errs[i])
+		be.Equal(t, srcSize, sizes[i])
+		dst := fmt.Sprintf("dst-file-%d", i)
+		be.Equal(t, expETag, api.UpdatedETag(dst))
+	}
+	be.Equal(t, int64(0), copier.PartSize)
+	be.Equal(t, 0, copier.Concurrency)
+}
+
 // sizedCopyAPI is the mock with HeadObject's ContentLength overridden, so a
 // test can drive copy's size-based strategy choice for a source far larger
 // than anything actually worth allocating. UploadPartCopy and
