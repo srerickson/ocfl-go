@@ -56,6 +56,21 @@ const maxDeleteBatch = 1000
 // errors.Is.
 var ErrNoContentLength = errors.New("missing content length")
 
+// ErrIncompleteListing is the error wrapped by [BucketFS.DirEntries] and
+// [BucketFS.WalkFiles] when a ListObjectsV2 page carries an entry missing a
+// field they need: an object's Key, Size or LastModified, or a common
+// prefix's Prefix. The AWS SDK models all four as pointers -- Size only
+// since service/s3 v1.43.0, which corrected the nullability of most S3
+// structure fields -- but a conforming store sends every one of them.
+//
+// The listers refuse rather than skipping the entry or substituting a zero
+// value. A skipped entry silently under-reports the bucket, and a nil Size
+// read as 0 is indistinguishable from a genuinely empty object; both are
+// wrong-but-plausible answers, which is worse in a listing that builds OCFL
+// manifests than a failure the caller can see. A caller can check for it
+// with errors.Is.
+var ErrIncompleteListing = errors.New("incomplete listing entry")
+
 var (
 	// these are variable because we need pass them as pointers
 	delim = "/"
@@ -128,21 +143,36 @@ func dirEntries(ctx context.Context, api ReadDirAPI, buck string, dir string) it
 				return
 			}
 			prefixHasContent = true
-			entries := make([]fs.DirEntry, numEntries)
-			for i, item := range list.CommonPrefixes {
-				entries[i] = &iofsInfo{
+			// A conforming store sets every field read below; the SDK
+			// models them as pointers because Smithy makes S3 structure
+			// members optional, not because S3 omits them. Refuse a page
+			// that leaves one unset rather than skipping the entry or
+			// reading it as a zero value: a listing that quietly loses an
+			// object, or reports a real one as empty, is a wrong answer a
+			// caller cannot detect. See [ErrIncompleteListing].
+			entries := make([]fs.DirEntry, 0, numEntries)
+			for _, item := range list.CommonPrefixes {
+				if item.Prefix == nil {
+					yield(nil, pathErr("readdir", dir, ErrIncompleteListing))
+					return
+				}
+				entries = append(entries, &iofsInfo{
 					name: path.Base(*item.Prefix),
 					mode: dirMode,
-				}
+				})
 			}
-			for i, item := range list.Contents {
-				entries[numDirs+i] = &iofsInfo{
+			for _, item := range list.Contents {
+				if item.Key == nil || item.Size == nil || item.LastModified == nil {
+					yield(nil, pathErr("readdir", dir, ErrIncompleteListing))
+					return
+				}
+				entries = append(entries, &iofsInfo{
 					name:    path.Base(*item.Key),
 					size:    *item.Size,
 					mode:    fileMode,
 					modTime: *item.LastModified,
 					//sys:     &item,
-				}
+				})
 			}
 			slices.SortFunc(entries, func(a, b fs.DirEntry) int {
 				return strings.Compare(a.Name(), b.Name())
@@ -393,6 +423,14 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string, fsys 
 				return
 			}
 			for _, s3obj := range listPage.Contents {
+				// See [ErrIncompleteListing]: an entry the store described
+				// incompletely is refused, not skipped. Dropping it here
+				// would under-report the walk, and a walk is how OCFL
+				// enumerates content.
+				if s3obj.Key == nil || s3obj.Size == nil || s3obj.LastModified == nil {
+					yield(nil, pathErr(op, dir, ErrIncompleteListing))
+					return
+				}
 				refPath := *s3obj.Key
 				if dir != "." {
 					refPath = strings.TrimPrefix(refPath, dir+"/")

@@ -2230,3 +2230,182 @@ func TestOpenNilHeadField_Mock(t *testing.T) {
 		})
 	}
 }
+
+// nilListFieldAPI is the mock with chosen fields on ListObjectsV2's response
+// nilled out, so a test can drive the listers' nil-field guards without a
+// store that actually omits them. blank is a closure rather than a set of
+// flags because a listing needs per-entry selection -- one object mangled,
+// its siblings intact -- and has to reach CommonPrefixes as well as Contents.
+type nilListFieldAPI struct {
+	*mock.S3API
+	blank func(*s3v2.ListObjectsV2Output)
+}
+
+var _ s3.S3API = (*nilListFieldAPI)(nil)
+
+func (a *nilListFieldAPI) ListObjectsV2(ctx context.Context, in *s3v2.ListObjectsV2Input,
+	opts ...func(*s3v2.Options)) (*s3v2.ListObjectsV2Output, error) {
+	out, err := a.S3API.ListObjectsV2(ctx, in, opts...)
+	if err != nil || out == nil {
+		return out, err
+	}
+	a.blank(out)
+	return out, nil
+}
+
+// blankContents returns a mangle that nils one field on every object in the
+// listing, leaving common prefixes alone.
+func blankContents(field string) func(*s3v2.ListObjectsV2Output) {
+	return func(out *s3v2.ListObjectsV2Output) {
+		for i := range out.Contents {
+			switch field {
+			case "Key":
+				out.Contents[i].Key = nil
+			case "Size":
+				out.Contents[i].Size = nil
+			case "LastModified":
+				out.Contents[i].LastModified = nil
+			}
+		}
+	}
+}
+
+// TestWalkFilesNilListField_Mock covers the walkFiles half of the
+// nil-listing-field guard: a page describing an object without a Key, Size or
+// LastModified fails the walk instead of nil-dereferencing inside the
+// iterator, where a caller cannot recover it as an error.
+func TestWalkFilesNilListField_Mock(t *testing.T) {
+	ctx := context.Background()
+	objs := []*mock.Object{
+		{Key: "obj/a.txt", Body: []byte("a"), LastModified: time.Now()},
+		{Key: "obj/b.txt", Body: []byte("bb"), LastModified: time.Now()},
+		{Key: "obj/c.txt", Body: []byte("ccc"), LastModified: time.Now()},
+	}
+
+	for _, field := range []string{"Key", "Size", "LastModified"} {
+		t.Run("nil "+field, func(t *testing.T) {
+			api := &nilListFieldAPI{
+				S3API: mock.New(bucket, objs...),
+				blank: blankContents(field),
+			}
+			fsys := s3.NewBucketFS(api, bucket)
+
+			var files []*ocflfs.FileRef
+			var walkErr error
+			var yieldedAfterErr bool
+			for f, err := range fsys.WalkFiles(ctx, "obj") {
+				if walkErr != nil {
+					// The iterator must not yield anything after an error.
+					yieldedAfterErr = true
+				}
+				if err != nil {
+					walkErr = err
+					continue
+				}
+				be.Nonzero(t, f)
+				be.Nonzero(t, f.Info)
+				files = append(files, f)
+			}
+
+			be.False(t, yieldedAfterErr)
+			isPathError(t, walkErr)
+			be.True(t, errors.Is(walkErr, s3.ErrIncompleteListing))
+			// The objects are there; the store just described them badly. A
+			// caller must not read that as a missing prefix.
+			be.False(t, errors.Is(walkErr, fs.ErrNotExist))
+			be.Equal(t, 0, len(files))
+		})
+	}
+
+	// The control: with nothing blanked the same fixture walks cleanly, so
+	// the guard is not firing on well-formed input.
+	t.Run("intact listing walks", func(t *testing.T) {
+		api := &nilListFieldAPI{
+			S3API: mock.New(bucket, objs...),
+			blank: func(*s3v2.ListObjectsV2Output) {},
+		}
+		fsys := s3.NewBucketFS(api, bucket)
+		var files []*ocflfs.FileRef
+		for f, err := range fsys.WalkFiles(ctx, "obj") {
+			be.NilErr(t, err)
+			files = append(files, f)
+		}
+		be.Equal(t, 3, len(files))
+	})
+}
+
+// TestReadDirNilListField_Mock is the dirEntries half of the same guard. It
+// covers CommonPrefixes too, which walkFiles never sees: dirEntries is the
+// only lister that sets a Delimiter.
+func TestReadDirNilListField_Mock(t *testing.T) {
+	ctx := context.Background()
+	objs := []*mock.Object{
+		{Key: "d/a.txt", Body: []byte("a"), LastModified: time.Now()},
+		{Key: "d/z.txt", Body: []byte("zz"), LastModified: time.Now()},
+		{Key: "d/sub/child.txt", Body: []byte("c"), LastModified: time.Now()},
+	}
+
+	blankPrefixes := func(out *s3v2.ListObjectsV2Output) {
+		for i := range out.CommonPrefixes {
+			out.CommonPrefixes[i].Prefix = nil
+		}
+	}
+
+	for _, tc := range []struct {
+		desc  string
+		blank func(*s3v2.ListObjectsV2Output)
+	}{
+		{"nil Key", blankContents("Key")},
+		{"nil Size", blankContents("Size")},
+		{"nil LastModified", blankContents("LastModified")},
+		{"nil Prefix", blankPrefixes},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			api := &nilListFieldAPI{
+				S3API: mock.New(bucket, objs...),
+				blank: tc.blank,
+			}
+			fsys := s3.NewBucketFS(api, bucket)
+
+			var entries []fs.DirEntry
+			var readErr error
+			var yieldedAfterErr bool
+			for entry, err := range fsys.DirEntries(ctx, "d") {
+				if readErr != nil {
+					yieldedAfterErr = true
+				}
+				if err != nil {
+					readErr = err
+					// A nil entry must accompany the error, never a
+					// half-built one -- the append rewrite exists so the
+					// sort comparator can never see a nil DirEntry.
+					be.Zero(t, entry)
+					continue
+				}
+				be.Nonzero(t, entry)
+				entries = append(entries, entry)
+			}
+
+			be.False(t, yieldedAfterErr)
+			isPathError(t, readErr)
+			be.True(t, errors.Is(readErr, s3.ErrIncompleteListing))
+			be.False(t, errors.Is(readErr, fs.ErrNotExist))
+			be.Equal(t, 0, len(entries))
+		})
+	}
+
+	t.Run("intact listing reads", func(t *testing.T) {
+		api := &nilListFieldAPI{
+			S3API: mock.New(bucket, objs...),
+			blank: func(*s3v2.ListObjectsV2Output) {},
+		}
+		fsys := s3.NewBucketFS(api, bucket)
+		entries, err := ocflfs.ReadDir(ctx, fsys, "d")
+		be.NilErr(t, err)
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		be.AllEqual(t, []string{"a.txt", "sub", "z.txt"}, names)
+	})
+}
