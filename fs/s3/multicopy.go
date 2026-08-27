@@ -3,7 +3,6 @@ package s3
 import (
 	"context"
 	"errors"
-	"net/url"
 
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -100,7 +99,7 @@ func (c *MultiCopier) Copy(ctx context.Context, buck string, dst, src string, sr
 	}()
 	grp, grpCtx := errgroup.WithContext(ctx)
 	grp.SetLimit(c.Concurrency)
-	copySource := url.QueryEscape(buck + "/" + src)
+	copySource := encodeCopySource(buck, src)
 	for i := range partCount {
 		grp.Go(func() error {
 			var err error

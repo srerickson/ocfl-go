@@ -336,11 +336,10 @@ func (m *S3API) UploadPartCopy(ctx context.Context, in *s3v2.UploadPartCopyInput
 	if in.CopySource == nil {
 		return nil, errors.New("CopySource is required")
 	}
-	copySourceDecoded, err := url.QueryUnescape(*in.CopySource)
+	srcBucket, srcKey, err := parseCopySource(*in.CopySource)
 	if err != nil {
 		return nil, fmt.Errorf("parsing copy source: %w", err)
 	}
-	srcBucket, srcKey, _ := strings.Cut(copySourceDecoded, "/")
 	if srcBucket != m.bucket {
 		return nil, &types.NoSuchBucket{}
 	}
@@ -451,11 +450,10 @@ func (m *S3API) CopyObject(ctx context.Context, in *s3v2.CopyObjectInput, opts .
 	if in.CopySource == nil {
 		return nil, errors.New("CopySource is required")
 	}
-	copySourceDecoded, err := url.QueryUnescape(*in.CopySource)
+	srcBucket, srcKey, err := parseCopySource(*in.CopySource)
 	if err != nil {
 		return nil, fmt.Errorf("parsing copy source: %w", err)
 	}
-	srcBucket, srcKey, _ := strings.Cut(copySourceDecoded, "/")
 	if srcBucket != m.bucket {
 		return nil, &types.NoSuchBucket{}
 	}
@@ -756,6 +754,25 @@ func eql[T comparable](expect T, ptr *T) bool {
 		return false
 	}
 	return *ptr == expect
+}
+
+// parseCopySource splits an x-amz-copy-source header value into bucket and
+// key, mirroring how S3 actually parses it: split at the first literal "/",
+// then percent-decode the key. This matters for testing the caller's
+// encoding -- a caller that (wrongly) escapes "/" as %2F produces a value
+// with no literal slash, which fails the split here exactly as it would
+// against a real bucket, rather than silently decoding back to the
+// original path.
+func parseCopySource(copySource string) (bucket, key string, err error) {
+	bucket, encodedKey, ok := strings.Cut(copySource, "/")
+	if !ok {
+		return "", "", fmt.Errorf("missing bucket/key separator in copy source: %q", copySource)
+	}
+	key, err = url.PathUnescape(encodedKey)
+	if err != nil {
+		return "", "", err
+	}
+	return bucket, key, nil
 }
 
 func parseByteRange(brange string) (start int64, end int64, err error) {

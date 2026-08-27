@@ -156,6 +156,45 @@ func TestWriteReadDeleteFile(t *testing.T) {
 	be.NilErr(t, fsys.Remove(ctx, key))
 }
 
+// TestCopySpecialCharacters is the mock cases' counterpart against a real
+// endpoint for #167 item 3: it proves the copy-source header is encoded
+// correctly for keys a bug in url.QueryEscape would corrupt or misroute --
+// a space, a "+", non-ASCII characters, and a nested path -- since the mock
+// alone cannot prove what a real bucket does with the header.
+func TestCopySpecialCharacters(t *testing.T) {
+	if !testutil.S3Enabled() {
+		t.Log("s3 test service is not running")
+		return
+	}
+	ctx := t.Context()
+	fsys := testutil.TmpS3FS(t, nil)
+	cases := []struct {
+		desc string
+		src  string
+		dst  string
+	}{
+		{desc: "space in nested key", src: "dir/sub dir/a file.txt", dst: "dst-dir/a file.txt"},
+		{desc: "plus in key", src: "a+b.txt", dst: "dst+c.txt"},
+		{desc: "non-ASCII key", src: "café/日本語.txt", dst: "dst-café.txt"},
+	}
+	for _, tcase := range cases {
+		t.Run(tcase.desc, func(t *testing.T) {
+			buff := mock.RandBytes(1024)
+			_, err := fsys.Write(ctx, tcase.src, bytes.NewReader(buff))
+			be.NilErr(t, err)
+			size, err := fsys.Copy(ctx, tcase.dst, tcase.src)
+			be.NilErr(t, err)
+			be.Equal(t, len(buff), int(size))
+			f, err := fsys.OpenFile(ctx, tcase.dst)
+			be.NilErr(t, err)
+			defer f.Close()
+			got, err := io.ReadAll(f)
+			be.NilErr(t, err)
+			be.True(t, bytes.Equal(buff, got))
+		})
+	}
+}
+
 // TestWritePartialReader is the mock cases' counterpart against a real
 // endpoint, where a wrongly declared Content-Length fails before the request
 // leaves the client.
@@ -815,6 +854,66 @@ func TestCopy_Mock(t *testing.T) {
 				be.Equal(t, int64(0), size)
 				be.Equal(t, 0, state.CallCount("CreateMultipartUpload"))
 			},
+		}, {
+			// regression test for #167 item 3: the copy-source header was
+			// built with url.QueryEscape, which encodes "/" as %2F
+			// (destroying path separators) and space as "+" (which S3
+			// reads literally). The mock's CopyObject splits the header on
+			// a literal "/" before percent-decoding, the same way a real
+			// bucket does, so it rejects that encoding on its own.
+			desc: "copy with space and nested path in source key",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket, &mock.Object{
+					Key:  "dir/sub dir/a file.txt",
+					Body: []byte("some content"),
+				})
+			},
+			bucket: bucket,
+			src:    "dir/sub dir/a file.txt",
+			dst:    "dir2/a file.txt",
+			expect: func(t *testing.T, state *mock.S3API, size int64, err error) {
+				be.NilErr(t, err)
+				be.Nonzero(t, state.UpdatedETag("dir2/a file.txt"))
+				be.Nonzero(t, size)
+				be.Equal(t, 1, state.CallCount("CopyObject"))
+				be.Equal(t, 0, state.CallCount("CreateMultipartUpload"))
+			},
+		}, {
+			desc: "copy with plus in source key",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket, &mock.Object{
+					Key:  "a+b.txt",
+					Body: []byte("some content"),
+				})
+			},
+			bucket: bucket,
+			src:    "a+b.txt",
+			dst:    "dst+c.txt",
+			expect: func(t *testing.T, state *mock.S3API, size int64, err error) {
+				be.NilErr(t, err)
+				be.Nonzero(t, state.UpdatedETag("dst+c.txt"))
+				be.Nonzero(t, size)
+				be.Equal(t, 1, state.CallCount("CopyObject"))
+				be.Equal(t, 0, state.CallCount("CreateMultipartUpload"))
+			},
+		}, {
+			desc: "copy with non-ASCII source key",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket, &mock.Object{
+					Key:  "café/日本語.txt",
+					Body: []byte("some content"),
+				})
+			},
+			bucket: bucket,
+			src:    "café/日本語.txt",
+			dst:    "dst-café.txt",
+			expect: func(t *testing.T, state *mock.S3API, size int64, err error) {
+				be.NilErr(t, err)
+				be.Nonzero(t, state.UpdatedETag("dst-café.txt"))
+				be.Nonzero(t, size)
+				be.Equal(t, 1, state.CallCount("CopyObject"))
+				be.Equal(t, 0, state.CallCount("CreateMultipartUpload"))
+			},
 		},
 	}
 	for i, tcase := range cases {
@@ -853,6 +952,29 @@ func TestMultiCopier_Mock(t *testing.T) {
 	be.Equal(t, srcSize, size)
 	expETag := mock.ETag(srcBody, partSize)
 	be.Equal(t, expETag, api.UpdatedETag("dst-file"))
+	be.Nonzero(t, api.PartCount())
+}
+
+// TestMultiCopierSpecialCharacters_Mock is TestMultiCopier_Mock's
+// counterpart for #167 item 3: it drives MultiCopier.Copy directly with a
+// source key containing a space and non-ASCII characters, exercising the
+// UploadPartCopy call site's copy-source encoding independently of copy()'s
+// CopyObject path.
+func TestMultiCopierSpecialCharacters_Mock(t *testing.T) {
+	ctx := context.Background()
+	srcSize := int64(51 * megabyte)
+	srcBody := mock.RandBytes(srcSize)
+	const src = "dir/a file+é.txt"
+	const dst = "dst/a file+é.txt"
+	api := mock.New(bucket, &mock.Object{Key: src, Body: srcBody})
+	copier := s3.NewMultiCopier(api, func(mc *s3.MultiCopier) {
+		mc.PartSize = partSize
+	})
+	size, err := copier.Copy(ctx, bucket, dst, src)
+	be.NilErr(t, err)
+	be.Equal(t, srcSize, size)
+	expETag := mock.ETag(srcBody, partSize)
+	be.Equal(t, expETag, api.UpdatedETag(dst))
 	be.Nonzero(t, api.PartCount())
 }
 
