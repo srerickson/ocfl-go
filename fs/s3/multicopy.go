@@ -55,7 +55,7 @@ func (c *MultiCopier) Copy(ctx context.Context, buck string, dst, src string, sr
 		}
 	}
 	if srcHead.ContentLength == nil {
-		err = pathErr("copy", src, errNoContentLength)
+		err = pathErr("copy", src, ErrNoContentLength)
 		return
 	}
 	srcSize = *srcHead.ContentLength
