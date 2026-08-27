@@ -157,10 +157,10 @@ func TestWriteReadDeleteFile(t *testing.T) {
 }
 
 // TestCopySpecialCharacters is the mock cases' counterpart against a real
-// endpoint for #167 item 3: it proves the copy-source header is encoded
-// correctly for keys a bug in url.QueryEscape would corrupt or misroute --
-// a space, a "+", non-ASCII characters, and a nested path -- since the mock
-// alone cannot prove what a real bucket does with the header.
+// endpoint: it proves the copy-source header is encoded correctly for keys
+// a bug in url.QueryEscape would corrupt or misroute -- a space, a "+",
+// non-ASCII characters, and a nested path -- since the mock alone cannot
+// prove what a real bucket does with the header.
 func TestCopySpecialCharacters(t *testing.T) {
 	if !testutil.S3Enabled() {
 		t.Log("s3 test service is not running")
@@ -855,12 +855,12 @@ func TestCopy_Mock(t *testing.T) {
 				be.Equal(t, 0, state.CallCount("CreateMultipartUpload"))
 			},
 		}, {
-			// regression test for #167 item 3: the copy-source header was
-			// built with url.QueryEscape, which encodes "/" as %2F
-			// (destroying path separators) and space as "+" (which S3
-			// reads literally). The mock's CopyObject splits the header on
-			// a literal "/" before percent-decoding, the same way a real
-			// bucket does, so it rejects that encoding on its own.
+			// regression test: the copy-source header was built with
+			// url.QueryEscape, which encodes "/" as %2F (destroying path
+			// separators) and space as "+" (which S3 reads literally). The
+			// mock's CopyObject splits the header on a literal "/" before
+			// percent-decoding, the same way a real bucket does, so it
+			// rejects that encoding on its own.
 			desc: "copy with space and nested path in source key",
 			mock: func(t *testing.T) *mock.S3API {
 				return mock.New(bucket, &mock.Object{
@@ -956,10 +956,10 @@ func TestMultiCopier_Mock(t *testing.T) {
 }
 
 // TestMultiCopierSpecialCharacters_Mock is TestMultiCopier_Mock's
-// counterpart for #167 item 3: it drives MultiCopier.Copy directly with a
-// source key containing a space and non-ASCII characters, exercising the
-// UploadPartCopy call site's copy-source encoding independently of copy()'s
-// CopyObject path.
+// counterpart for special characters in the source key: it drives
+// MultiCopier.Copy directly with a source key containing a space and
+// non-ASCII characters, exercising the UploadPartCopy call site's
+// copy-source encoding independently of copy()'s CopyObject path.
 func TestMultiCopierSpecialCharacters_Mock(t *testing.T) {
 	ctx := context.Background()
 	srcSize := int64(51 * megabyte)
