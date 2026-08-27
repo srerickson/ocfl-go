@@ -32,6 +32,14 @@
 //     reports are joined into the returned error rather than being lost
 //     behind a successful HTTP status.
 //
+//   - [BucketFS.Write] streams through the SDK's upload manager, which reads up
+//     to PartSize bytes before sending anything: that first read is how it
+//     decides between a single PutObject and a multipart upload. A small write
+//     allocates roughly its own size, but a large one holds up to
+//     Concurrency+1 buffers of PartSize at once. PartSize also caps a single
+//     write at PartSize x 10,000 -- about 48 GiB at the SDK's default, which
+//     [WithUploaderOptions] can raise.
+//
 //   - A missing key is reported as an error satisfying errors.Is(err,
 //     fs.ErrNotExist) whatever shape the store's error arrived in -- a typed
 //     SDK error, an API error code, or a bare 404 -- with the original error

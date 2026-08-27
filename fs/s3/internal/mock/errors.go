@@ -2,6 +2,7 @@ package mock
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -80,6 +81,38 @@ const mockRequestID = "MOCKREQUESTID0001"
 
 // RequestID returns the request ID the mock stamps on its error responses.
 func RequestID() string { return mockRequestID }
+
+// incompleteBody returns the error a PutObject gets back when its declared
+// ContentLength does not match the body it carried.
+//
+// Neither half of that mismatch reaches a real S3 endpoint in this shape. A
+// body shorter than the declared length is refused by net/http before the
+// request is sent ("http: ContentLength=N with Body length M"); a longer one is
+// truncated to the declared length, and the object silently stores a prefix.
+// The mock collapses both into one refusal because it stands in for the whole
+// stack, not just the endpoint, and because its job here is narrow: a declared
+// length that disagrees with the body must fail a test rather than pass
+// unnoticed, which is what it did while this handler ignored the field.
+func incompleteBody(declared, actual int64) error {
+	return &awshttp.ResponseError{
+		ResponseError: &smithyhttp.ResponseError{
+			Response: &smithyhttp.Response{
+				Response: &http.Response{
+					StatusCode: http.StatusBadRequest,
+					Status:     "400 Bad Request",
+					Header:     http.Header{},
+				},
+			},
+			Err: &smithy.GenericAPIError{
+				Code: "IncompleteBody",
+				Message: fmt.Sprintf(
+					"declared Content-Length %d, body carried %d bytes",
+					declared, actual),
+			},
+		},
+		RequestID: mockRequestID,
+	}
+}
 
 // noSuchKeyErr converts getObject's missing-key sentinel into the shape an
 // operation with a response body returns -- GetObject, CopyObject and

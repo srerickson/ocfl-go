@@ -1,7 +1,6 @@
 package s3
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -156,23 +155,10 @@ func write(ctx context.Context, uploader *manager.Uploader, buck string, key str
 	putInput.Bucket = &buck
 	putInput.Key = &key
 	putInput.Body = countReader
-	if putInput.ContentLength == nil {
-		// try to get content length from r
-		size := int64(-1)
-		switch val := r.(type) {
-		case fs.File:
-			if info, err := val.Stat(); err == nil {
-				size = info.Size()
-			}
-		case *bytes.Reader:
-			size = val.Size()
-		case *io.LimitedReader:
-			size = val.N
-		}
-		if size > -1 {
-			putInput.ContentLength = &size
-		}
-	}
+	// ContentLength is left unset. The uploader sends its own buffered chunks,
+	// and the SDK sets each request's Content-Length from the bytes it is
+	// actually sending, so a value set here overrides that rather than
+	// enabling it. An explicit one from an option is passed through as given.
 	if _, err := uploader.Upload(ctx, &putInput); err != nil {
 		return 0, &fs.PathError{Op: "write", Path: key, Err: err}
 	}
@@ -511,7 +497,10 @@ func (i iofsInfo) Sys() any           { return i.sys }
 func (i iofsInfo) Info() (fs.FileInfo, error) { return i, nil }
 func (i iofsInfo) Type() fs.FileMode          { return i.mode.Type() }
 
-// countReader is a reader that updates a size counter with each read.
+// countReader is a reader that updates a size counter with each read. It is
+// what write returns a byte count from. It must not grow an io.ReaderAt: the
+// upload manager has a fast path for one that reads each part from absolute
+// offset zero rather than from where the reader is.
 type countReader struct {
 	io.Reader
 	size int64
