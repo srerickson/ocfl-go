@@ -1082,7 +1082,7 @@ func TestCopyStrategy_Mock(t *testing.T) {
 		api := &sizedCopyAPI{S3API: base, size: -1}
 		fsys := s3.NewBucketFS(api, bucket)
 		_, err := fsys.Copy(ctx, "dst-file", "src-file")
-		be.Nonzero(t, err)
+		be.True(t, errors.Is(err, s3.ErrNoContentLength))
 		be.Equal(t, 0, api.CallCount("CopyObject"))
 	})
 }
@@ -2077,6 +2077,7 @@ func TestOpenNilHeadField_Mock(t *testing.T) {
 			f, err := fsys.OpenFile(ctx, obj.Key)
 			be.Zero(t, f)
 			isPathError(t, err)
+			be.True(t, errors.Is(err, s3.ErrNoContentLength))
 			// The object is there; the store just didn't say how big (or how
 			// recently modified) it is. A caller must not mistake that for a
 			// missing key.

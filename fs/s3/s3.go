@@ -46,13 +46,15 @@ const maxCopySize int64 = 5 * 1024 * megabyte
 // size below can change without silently sending an oversized delete.
 const maxDeleteBatch = 1000
 
-// errNoContentLength is returned when a HEAD response omits ContentLength.
-// The AWS SDK models the field as *int64 because it can be absent, and some
-// S3-compatible stores and reverse proxies do omit it. openFile, copy and
-// MultiCopier.Copy all need a size to proceed -- for Stat/Read/Seek and for
-// the copy strategy choice, respectively -- so each refuses rather than
-// carrying an unknown length forward.
-var errNoContentLength = errors.New("missing content length")
+// ErrNoContentLength is the error wrapped by [BucketFS.OpenFile],
+// [BucketFS.Copy] and [MultiCopier.Copy] when a HEAD response omits
+// ContentLength. The AWS SDK models the field as *int64 because it can be
+// absent, and some S3-compatible stores and reverse proxies do omit it.
+// Each of those callers needs a size to proceed -- for Stat/Read/Seek and
+// for the copy strategy choice, respectively -- so each refuses rather than
+// carrying an unknown length forward. A caller can check for it with
+// errors.Is.
+var ErrNoContentLength = errors.New("missing content length")
 
 var (
 	// these are variable because we need pass them as pointers
@@ -81,7 +83,7 @@ func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (f
 	// refusing here is better than a File whose Stat/Read/Seek nil-deref the
 	// first time they need the size.
 	if headOut.ContentLength == nil || headOut.LastModified == nil {
-		return nil, pathErr("open", name, errNoContentLength)
+		return nil, pathErr("open", name, ErrNoContentLength)
 	}
 	f := &s3File{
 		ctx:    ctx,
@@ -204,7 +206,7 @@ func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, opts .
 	// A store may omit ContentLength on a HEAD response; refusing here is
 	// better than carrying an unknown size into a choice that depends on it.
 	if srcHead.ContentLength == nil {
-		return 0, pathErr("copy", src, errNoContentLength)
+		return 0, pathErr("copy", src, ErrNoContentLength)
 	}
 	srcSize := *srcHead.ContentLength
 	if srcSize > maxCopySize {
