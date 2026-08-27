@@ -455,6 +455,33 @@ func TestReadDir_Mock(t *testing.T) {
 				be.True(t, state.HasExtensions())
 				be.Equal(t, 1, len(state.VersionDirs))
 			},
+		}, {
+			desc:   "skips directory placeholder keys",
+			bucket: bucket,
+			dir:    "dir",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket,
+					// The dir's own placeholder, created by the S3 console
+					// or AWS DataSync -- not something this package writes.
+					&mock.Object{Key: "dir/"},
+					&mock.Object{Key: "dir/file.txt"})
+			},
+			expect: func(t *testing.T, entries []fs.DirEntry, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, 1, len(entries))
+				be.Equal(t, "file.txt", entries[0].Name())
+			},
+		}, {
+			desc:   "prefix with only a placeholder reads as empty, not missing",
+			bucket: bucket,
+			dir:    "dir",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket, &mock.Object{Key: "dir/"})
+			},
+			expect: func(t *testing.T, entries []fs.DirEntry, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, 0, len(entries))
+			},
 		},
 	}
 	for i, tcase := range cases {
@@ -1393,6 +1420,46 @@ func TestWalkFiles_Mock(t *testing.T) {
 			bucket: bucket,
 			expect: func(t *testing.T, state *mock.S3API, files []*ocflfs.FileRef, err error) {
 				isInvalidPathError(t, err)
+			},
+		},
+		{
+			desc: "skips directory placeholder keys under a prefix",
+			dir:  "obj",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket,
+					// Placeholders a console or DataSync leaves behind, not
+					// something this package writes: the walked prefix's own
+					// marker, and one for a subdirectory.
+					&mock.Object{Key: "obj/"},
+					&mock.Object{Key: "obj/v1/"},
+					&mock.Object{Key: "obj/inventory.json"},
+					&mock.Object{Key: "obj/v1/contents/file.txt"},
+				)
+			},
+			bucket: bucket,
+			expect: func(t *testing.T, state *mock.S3API, files []*ocflfs.FileRef, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, 2, len(files))
+				for _, f := range files {
+					be.True(t, fs.ValidPath(f.Path))
+					be.Nonzero(t, f.Path)
+				}
+			},
+		},
+		{
+			desc: "skips directory placeholder keys with no prefix",
+			dir:  ".",
+			mock: func(t *testing.T) *mock.S3API {
+				return mock.New(bucket,
+					&mock.Object{Key: "obj/"},
+					&mock.Object{Key: "obj/inventory.json"},
+				)
+			},
+			bucket: bucket,
+			expect: func(t *testing.T, state *mock.S3API, files []*ocflfs.FileRef, err error) {
+				be.NilErr(t, err)
+				be.Equal(t, 1, len(files))
+				be.Equal(t, "obj/inventory.json", files[0].FullPath())
 			},
 		},
 	}
