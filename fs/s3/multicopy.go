@@ -16,14 +16,14 @@ const (
 )
 
 type MultiCopier struct {
-	// PartSize sets the size of the object parts used
-	// for multipart object copy. If the part size is too
-	// small to be copied using the max number of parts,
-	// the part size will be increased in 1 MiB increments
-	// until it fits.
+	// PartSize sets the size of the object parts used for multipart object
+	// copy. If it is below the SDK's minimum upload part size, defaultCopyPartSize
+	// is used instead. If the resulting part size is too small to copy the
+	// object within the max number of parts, the part size is increased in 1
+	// MiB increments until it fits.
 	PartSize int64
-	// Concurrency stes the number of goroutines
-	// per copy for copying object parts. defaults to 12.
+	// Concurrency sets the number of goroutines per copy for copying object
+	// parts. Defaults to defaultCopyPartConcurrency (6) when less than 1.
 	Concurrency int
 
 	api MultiCopyAPI
@@ -41,6 +41,11 @@ func NewMultiCopier(api MultiCopyAPI, opts ...func(*MultiCopier)) *MultiCopier {
 	return &copier
 }
 
+// Copy copies the object at src to dst within buck using S3's multipart
+// UploadPartCopy API. PartSize and Concurrency are read from c but never
+// written back to it: Copy defaults an out-of-range value into a local for
+// the duration of the call, so one MultiCopier is safe to share and call
+// concurrently.
 func (c *MultiCopier) Copy(ctx context.Context, buck string, dst, src string, srcHeads ...*s3.HeadObjectOutput) (srcSize int64, err error) {
 	var srcHead *s3.HeadObjectOutput
 	if len(srcHeads) > 0 {
@@ -59,13 +64,15 @@ func (c *MultiCopier) Copy(ctx context.Context, buck string, dst, src string, sr
 		return
 	}
 	srcSize = *srcHead.ContentLength
-	if c.PartSize < manager.MinUploadPartSize {
-		c.PartSize = defaultCopyPartSize
+	partSize := c.PartSize
+	if partSize < manager.MinUploadPartSize {
+		partSize = defaultCopyPartSize
 	}
-	if c.Concurrency < 1 {
-		c.Concurrency = defaultCopyPartConcurrency
+	concurrency := c.Concurrency
+	if concurrency < 1 {
+		concurrency = defaultCopyPartConcurrency
 	}
-	psize, partCount := adjustPartSize(srcSize, c.PartSize, manager.MaxUploadParts)
+	psize, partCount := adjustPartSize(srcSize, partSize, manager.MaxUploadParts)
 	completedParts := make([]types.CompletedPart, partCount)
 	uploadParams := &s3.CreateMultipartUploadInput{Bucket: &buck, Key: &dst}
 	newUp, err := c.api.CreateMultipartUpload(ctx, uploadParams)
@@ -98,7 +105,7 @@ func (c *MultiCopier) Copy(ctx context.Context, buck string, dst, src string, sr
 		}
 	}()
 	grp, grpCtx := errgroup.WithContext(ctx)
-	grp.SetLimit(c.Concurrency)
+	grp.SetLimit(concurrency)
 	copySource := encodeCopySource(buck, src)
 	for i := range partCount {
 		grp.Go(func() error {
