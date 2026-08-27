@@ -2024,3 +2024,64 @@ func TestNotExistMapping_Mock(t *testing.T) {
 		be.NilErr(t, file.Close())
 	})
 }
+
+// nilHeadFieldAPI is the mock with chosen fields on HeadObject's response
+// nilled out, so a test can drive openFile's missing-ContentLength (or
+// missing-LastModified) guard without a store that actually omits the
+// header.
+type nilHeadFieldAPI struct {
+	*mock.S3API
+	nilContentLength bool
+	nilLastModified  bool
+}
+
+func (a *nilHeadFieldAPI) HeadObject(ctx context.Context, in *s3v2.HeadObjectInput,
+	opts ...func(*s3v2.Options)) (*s3v2.HeadObjectOutput, error) {
+	out, err := a.S3API.HeadObject(ctx, in, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if a.nilContentLength {
+		out.ContentLength = nil
+	}
+	if a.nilLastModified {
+		out.LastModified = nil
+	}
+	return out, nil
+}
+
+// TestOpenNilHeadField_Mock covers the openFile side of the nil-HEAD-field
+// guard: OpenFile refuses a HEAD response missing ContentLength or
+// LastModified instead of handing back a File whose Stat, Read or Seek would
+// nil-deref the first time they need the value.
+func TestOpenNilHeadField_Mock(t *testing.T) {
+	ctx := context.Background()
+	obj := &mock.Object{Key: "src-file", Body: []byte("some content"), LastModified: time.Now()}
+
+	for _, tc := range []struct {
+		desc             string
+		nilContentLength bool
+		nilLastModified  bool
+	}{
+		{"nil ContentLength", true, false},
+		{"nil LastModified", false, true},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			base := mock.New(bucket, obj)
+			api := &nilHeadFieldAPI{
+				S3API:            base,
+				nilContentLength: tc.nilContentLength,
+				nilLastModified:  tc.nilLastModified,
+			}
+			fsys := s3.NewBucketFS(api, bucket)
+			f, err := fsys.OpenFile(ctx, obj.Key)
+			be.Zero(t, f)
+			isPathError(t, err)
+			// The object is there; the store just didn't say how big (or how
+			// recently modified) it is. A caller must not mistake that for a
+			// missing key.
+			be.False(t, errors.Is(err, fs.ErrNotExist))
+			be.Equal(t, 0, api.CallCount("GetObject"))
+		})
+	}
+}

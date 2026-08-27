@@ -46,6 +46,12 @@
 //     one request, and a larger one is copied part by part with
 //     [MultiCopier].
 //
+//   - [BucketFS.OpenFile] and [BucketFS.Copy] both resolve the source's size
+//     from a HEAD response's ContentLength, which the AWS SDK models as
+//     *int64 because some stores and reverse proxies omit it. Either call
+//     refuses with an error rather than carrying an unknown size into Stat,
+//     Read, Seek, or the copy strategy choice.
+//
 //   - A missing key is reported as an error satisfying errors.Is(err,
 //     fs.ErrNotExist) whatever shape the store's error arrived in -- a typed
 //     SDK error, an API error code, or a bare 404 -- with the original error
