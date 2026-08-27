@@ -111,6 +111,19 @@ func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (f
 	return f, nil
 }
 
+// isDirPlaceholder reports whether key is a directory marker rather than an
+// object this package can address: it ends in the listing delimiter, so
+// fs.ValidPath rejects it as a file path regardless of size. Nothing in this
+// package's write path (write, openFile) ever creates such a key -- but the
+// S3 console creates exactly one when a user makes a folder, and AWS
+// DataSync does the same when replicating a directory tree, so a bucket
+// used as an OCFL storage root can carry these before this package ever
+// touches it. A lister must not emit a path fs.ValidPath rejects, so this is
+// skipped rather than yielded as a phantom empty file.
+func isDirPlaceholder(key string) bool {
+	return strings.HasSuffix(key, delim)
+}
+
 func dirEntries(ctx context.Context, api ReadDirAPI, buck string, dir string) iter.Seq2[fs.DirEntry, error] {
 	return func(yield func(fs.DirEntry, error) bool) {
 		if !fs.ValidPath(dir) {
@@ -162,7 +175,20 @@ func dirEntries(ctx context.Context, api ReadDirAPI, buck string, dir string) it
 				})
 			}
 			for _, item := range list.Contents {
-				if item.Key == nil || item.Size == nil || item.LastModified == nil {
+				if item.Key == nil {
+					yield(nil, pathErr("readdir", dir, ErrIncompleteListing))
+					return
+				}
+				if isDirPlaceholder(*item.Key) {
+					// A directory marker, not a file: see [isDirPlaceholder].
+					// It still counts toward numEntries above, so a prefix
+					// holding only its own marker reads as an existing,
+					// empty directory rather than fs.ErrNotExist -- the same
+					// answer the local backend gives for a real empty
+					// directory.
+					continue
+				}
+				if item.Size == nil || item.LastModified == nil {
 					yield(nil, pathErr("readdir", dir, ErrIncompleteListing))
 					return
 				}
@@ -427,7 +453,17 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string, fsys 
 				// incompletely is refused, not skipped. Dropping it here
 				// would under-report the walk, and a walk is how OCFL
 				// enumerates content.
-				if s3obj.Key == nil || s3obj.Size == nil || s3obj.LastModified == nil {
+				if s3obj.Key == nil {
+					yield(nil, pathErr(op, dir, ErrIncompleteListing))
+					return
+				}
+				if isDirPlaceholder(*s3obj.Key) {
+					// A directory marker, not a file: see [isDirPlaceholder].
+					// This also skips the walked prefix's own marker (dir/
+					// itself, when walking under prefix dir/).
+					continue
+				}
+				if s3obj.Size == nil || s3obj.LastModified == nil {
 					yield(nil, pathErr(op, dir, ErrIncompleteListing))
 					return
 				}
