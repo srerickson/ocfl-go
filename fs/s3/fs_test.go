@@ -1022,6 +1022,106 @@ func TestMultiCopierConcurrentReuse_Mock(t *testing.T) {
 	be.Equal(t, 0, copier.Concurrency)
 }
 
+// cleanupCtxAPI wraps the mock to make MultiCopier.Copy's cleanup-context
+// fix observable. The mock ignores ctx entirely, so on its own it cannot
+// tell a canceled context from a live one; this wrapper is what makes that
+// distinction visible to a test.
+//
+// cancel is called from inside UploadPartCopy, simulating the caller giving
+// up on the copy while a part request is in flight -- the same point
+// grp.Wait would observe the cancellation from in production. failPart
+// controls which of Copy's two cleanup paths the cancellation lands on:
+// true fails the part (driving the abort path), false lets it succeed
+// (driving the complete path, with cancellation arriving just after).
+// AbortMultipartUpload and CompleteMultipartUpload each record the ctx.Err()
+// they were called with and refuse the request if it is non-nil, standing
+// in for a real client that fails a request made on a dead context. Before
+// the fix, both are called with ctx itself, so cancel having already fired
+// means their recorded ctx.Err() is non-nil and the request is refused; the
+// fix's derived cleanupCtx has no error, so cleanup proceeds and the mock's
+// normal handler sets the corresponding flag.
+type cleanupCtxAPI struct {
+	*mock.S3API
+	cancel   context.CancelFunc
+	failPart bool
+
+	mu              sync.Mutex
+	abortCtxErr     error
+	completeCtxErr  error
+	gotAbortCall    bool
+	gotCompleteCall bool
+}
+
+func (a *cleanupCtxAPI) UploadPartCopy(ctx context.Context, in *s3v2.UploadPartCopyInput,
+	opts ...func(*s3v2.Options)) (*s3v2.UploadPartCopyOutput, error) {
+	out, err := a.S3API.UploadPartCopy(ctx, in, opts...)
+	a.cancel()
+	if a.failPart {
+		return nil, context.Canceled
+	}
+	return out, err
+}
+
+func (a *cleanupCtxAPI) AbortMultipartUpload(ctx context.Context, in *s3v2.AbortMultipartUploadInput,
+	opts ...func(*s3v2.Options)) (*s3v2.AbortMultipartUploadOutput, error) {
+	a.mu.Lock()
+	a.gotAbortCall = true
+	a.abortCtxErr = ctx.Err()
+	a.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return a.S3API.AbortMultipartUpload(ctx, in, opts...)
+}
+
+func (a *cleanupCtxAPI) CompleteMultipartUpload(ctx context.Context, in *s3v2.CompleteMultipartUploadInput,
+	opts ...func(*s3v2.Options)) (*s3v2.CompleteMultipartUploadOutput, error) {
+	a.mu.Lock()
+	a.gotCompleteCall = true
+	a.completeCtxErr = ctx.Err()
+	a.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return a.S3API.CompleteMultipartUpload(ctx, in, opts...)
+}
+
+// TestMultiCopierCleanupContext_Mock covers both of Copy's cleanup paths --
+// abort and complete -- against a context the caller cancels while a part
+// copy is in flight. Before the fix, the deferred cleanup request ran on
+// that same canceled context and was refused, leaving the multipart upload
+// neither aborted nor completed: an orphan that S3 bills until a lifecycle
+// rule reaps it.
+func TestMultiCopierCleanupContext_Mock(t *testing.T) {
+	t.Run("abort survives caller cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		base := mock.New(bucket, &mock.Object{Key: "src-file", Body: []byte("some content")})
+		api := &cleanupCtxAPI{S3API: base, cancel: cancel, failPart: true}
+		copier := s3.NewMultiCopier(api)
+
+		_, err := copier.Copy(ctx, bucket, "dst-file", "src-file")
+		be.True(t, errors.Is(err, context.Canceled))
+		be.True(t, api.gotAbortCall)
+		be.True(t, api.MPUAbortedFlag())
+		be.NilErr(t, api.abortCtxErr)
+	})
+
+	t.Run("complete survives caller cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		base := mock.New(bucket, &mock.Object{Key: "src-file", Body: []byte("some content")})
+		api := &cleanupCtxAPI{S3API: base, cancel: cancel, failPart: false}
+		copier := s3.NewMultiCopier(api)
+
+		_, err := copier.Copy(ctx, bucket, "dst-file", "src-file")
+		be.NilErr(t, err)
+		be.True(t, api.gotCompleteCall)
+		be.True(t, api.MPUCompleteFlag())
+		be.NilErr(t, api.completeCtxErr)
+	})
+}
+
 // sizedCopyAPI is the mock with HeadObject's ContentLength overridden, so a
 // test can drive copy's size-based strategy choice for a source far larger
 // than anything actually worth allocating. UploadPartCopy and
