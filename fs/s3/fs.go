@@ -71,6 +71,12 @@ func (f *BucketFS) Bucket() string {
 	return f.bucket
 }
 
+// OpenFile opens the object at name for reading, per [ocflfs.FS].
+//
+// A HEAD request resolves the object's size and mtime up front, so Stat,
+// Read and Seek never need another round trip to answer with them. A store
+// that omits ContentLength or LastModified from its HEAD response is
+// refused here rather than producing a File whose methods can't answer.
 func (f *BucketFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	f.debugLog(ctx, "s3:openfile", "bucket", f.bucket, "name", name)
 	return openFile(ctx, f.client, f.bucket, name)

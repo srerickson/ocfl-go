@@ -46,6 +46,14 @@ const maxCopySize int64 = 5 * 1024 * megabyte
 // size below can change without silently sending an oversized delete.
 const maxDeleteBatch = 1000
 
+// errNoContentLength is returned when a HEAD response omits ContentLength.
+// The AWS SDK models the field as *int64 because it can be absent, and some
+// S3-compatible stores and reverse proxies do omit it. openFile, copy and
+// MultiCopier.Copy all need a size to proceed -- for Stat/Read/Seek and for
+// the copy strategy choice, respectively -- so each refuses rather than
+// carrying an unknown length forward.
+var errNoContentLength = errors.New("missing content length")
+
 var (
 	// these are variable because we need pass them as pointers
 	delim = "/"
@@ -69,12 +77,19 @@ func openFile(ctx context.Context, api OpenFileAPI, buck string, name string) (f
 		}
 		return nil, pathErr("open", name, err)
 	}
+	// A store may omit ContentLength (or LastModified) on a HEAD response;
+	// refusing here is better than a File whose Stat/Read/Seek nil-deref the
+	// first time they need the size.
+	if headOut.ContentLength == nil || headOut.LastModified == nil {
+		return nil, pathErr("open", name, errNoContentLength)
+	}
 	f := &s3File{
 		ctx:    ctx,
 		api:    api,
 		bucket: buck,
 		key:    name,
 		info:   headOut,
+		size:   *headOut.ContentLength,
 	}
 	return f, nil
 }
@@ -189,7 +204,7 @@ func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, opts .
 	// A store may omit ContentLength on a HEAD response; refusing here is
 	// better than carrying an unknown size into a choice that depends on it.
 	if srcHead.ContentLength == nil {
-		return 0, pathErr("copy", src, errors.New("missing content length"))
+		return 0, pathErr("copy", src, errNoContentLength)
 	}
 	srcSize := *srcHead.ContentLength
 	if srcSize > maxCopySize {
@@ -404,13 +419,14 @@ type s3File struct {
 	key    string
 	body   io.ReadCloser
 	info   *s3.HeadObjectOutput
+	size   int64 // f.info.ContentLength, resolved and validated in openFile
 	offset int64 // current position in the file
 }
 
 func (f *s3File) Stat() (fs.FileInfo, error) {
 	return &iofsInfo{
 		name:    path.Base(f.key),
-		size:    *f.info.ContentLength,
+		size:    f.size,
 		mode:    fileMode,
 		modTime: *f.info.LastModified,
 		sys:     f.info,
@@ -418,7 +434,7 @@ func (f *s3File) Stat() (fs.FileInfo, error) {
 }
 
 func (f *s3File) Read(p []byte) (int, error) {
-	size := *f.info.ContentLength
+	size := f.size
 	if f.offset >= size {
 		return 0, io.EOF
 	}
@@ -460,7 +476,7 @@ func (f *s3File) Name() string {
 // Seeking invalidates any existing body reader, causing the next Read to
 // issue a new GetObject request with the appropriate Range header.
 func (f *s3File) Seek(offset int64, whence int) (int64, error) {
-	size := *f.info.ContentLength
+	size := f.size
 	var newOffset int64
 	switch whence {
 	case io.SeekStart:
