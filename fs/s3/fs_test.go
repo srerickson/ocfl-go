@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -754,8 +755,6 @@ func TestRemoveAll_Mock(t *testing.T) {
 
 func TestCopy_Mock(t *testing.T) {
 	ctx := context.Background()
-	srcSize := int64(51 * megabyte)
-	srcBody := mock.RandBytes(srcSize)
 	type testCase struct {
 		desc      string
 		mock      func(t *testing.T) *mock.S3API
@@ -783,30 +782,38 @@ func TestCopy_Mock(t *testing.T) {
 				be.Nonzero(t, state.UpdatedETag("dst-file"))
 				be.Nonzero(t, size)
 				be.Equal(t, 0, state.PartCount())
+				// A source well under the CopyObject limit takes the
+				// single-request path: no doomed CopyObject followed by a
+				// fallback, and no multipart machinery at all.
+				be.Equal(t, 1, state.CallCount("CopyObject"))
+				be.Equal(t, 0, state.CallCount("CreateMultipartUpload"))
 			},
 		}, {
-			desc: "multipart copy",
+			// copy no longer tries CopyObject and inspects the failure text
+			// to decide whether to fall back to MultiCopier -- the strategy
+			// is chosen up front from the HEAD size. This case pins that
+			// removal: even an error worded exactly like the old "copy
+			// source is larger than the maximum allowable size" trigger
+			// must now propagate as-is, on a source well under the 5 GiB
+			// threshold that would otherwise pick MultiCopier on size alone.
+			desc: "CopyObject failure is returned as-is, no error-text fallback",
 			mock: func(t *testing.T) *mock.S3API {
 				api := mock.New(bucket, &mock.Object{
 					Key:  "src-file",
-					Body: srcBody,
+					Body: []byte("some content"),
 				})
-				// override the default CopyObject method to return
-				// the necessary error for initiating multipart copy
 				api.CopyObjectFunc = func(_ context.Context, _ *s3v2.CopyObjectInput, _ ...func(*s3v2.Options)) (*s3v2.CopyObjectOutput, error) {
 					return nil, errors.New("copy source is larger than the maximum allowable size")
 				}
 				return api
 			},
-			bucket:    bucket,
-			src:       "src-file",
-			dst:       "dst-file",
-			copyPSize: partSize,
+			bucket: bucket,
+			src:    "src-file",
+			dst:    "dst-file",
 			expect: func(t *testing.T, state *mock.S3API, size int64, err error) {
-				be.NilErr(t, err)
-				be.Nonzero(t, size)
-				expETag := mock.ETag(srcBody, partSize)
-				be.Equal(t, expETag, state.UpdatedETag("dst-file"))
+				be.Nonzero(t, err)
+				be.Equal(t, int64(0), size)
+				be.Equal(t, 0, state.CallCount("CreateMultipartUpload"))
 			},
 		},
 	}
@@ -826,6 +833,136 @@ func TestCopy_Mock(t *testing.T) {
 			tcase.expect(t, api, size, err)
 		})
 	}
+}
+
+// TestMultiCopier_Mock drives MultiCopier.Copy directly -- range slicing,
+// per-part ETags, CompleteMultipartUpload -- against the mock's real
+// validation. copy no longer reaches MultiCopier through a CopyObject
+// failure text match (that fallback is gone, see TestCopy_Mock); this is
+// where the multipart mechanics stay covered end to end.
+func TestMultiCopier_Mock(t *testing.T) {
+	ctx := context.Background()
+	srcSize := int64(51 * megabyte)
+	srcBody := mock.RandBytes(srcSize)
+	api := mock.New(bucket, &mock.Object{Key: "src-file", Body: srcBody})
+	copier := s3.NewMultiCopier(api, func(mc *s3.MultiCopier) {
+		mc.PartSize = partSize
+	})
+	size, err := copier.Copy(ctx, bucket, "dst-file", "src-file")
+	be.NilErr(t, err)
+	be.Equal(t, srcSize, size)
+	expETag := mock.ETag(srcBody, partSize)
+	be.Equal(t, expETag, api.UpdatedETag("dst-file"))
+	be.Nonzero(t, api.PartCount())
+}
+
+// sizedCopyAPI is the mock with HeadObject's ContentLength overridden, so a
+// test can drive copy's size-based strategy choice for a source far larger
+// than anything actually worth allocating. UploadPartCopy and
+// CompleteMultipartUpload are replaced rather than delegated: the mock's
+// real versions slice the actual (tiny) stored body by the declared range
+// and validate each part's ETag against ones its own UploadPartCopy stored,
+// neither of which holds once the size is faked.
+type sizedCopyAPI struct {
+	*mock.S3API
+	// size replaces HeadObject's ContentLength on the src-file response. A
+	// negative size instead sets ContentLength to nil, so a test can drive
+	// the missing-content-length guard without a store that actually omits
+	// it.
+	size int64
+
+	mu     sync.Mutex
+	ranges []string // CopySourceRange values UploadPartCopy was called with
+}
+
+func (a *sizedCopyAPI) HeadObject(ctx context.Context, in *s3v2.HeadObjectInput,
+	opts ...func(*s3v2.Options)) (*s3v2.HeadObjectOutput, error) {
+	out, err := a.S3API.HeadObject(ctx, in, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if a.size < 0 {
+		out.ContentLength = nil
+	} else {
+		out.ContentLength = aws.Int64(a.size)
+	}
+	return out, nil
+}
+
+func (a *sizedCopyAPI) UploadPartCopy(ctx context.Context, in *s3v2.UploadPartCopyInput,
+	opts ...func(*s3v2.Options)) (*s3v2.UploadPartCopyOutput, error) {
+	a.mu.Lock()
+	a.ranges = append(a.ranges, aws.ToString(in.CopySourceRange))
+	a.mu.Unlock()
+	return &s3v2.UploadPartCopyOutput{
+		CopyPartResult: &types.CopyPartResult{ETag: aws.String(fmt.Sprintf("etag-%d", aws.ToInt32(in.PartNumber)))},
+	}, nil
+}
+
+func (a *sizedCopyAPI) CompleteMultipartUpload(ctx context.Context, in *s3v2.CompleteMultipartUploadInput,
+	opts ...func(*s3v2.Options)) (*s3v2.CompleteMultipartUploadOutput, error) {
+	a.S3API.MPUComplete = true
+	return &s3v2.CompleteMultipartUploadOutput{Bucket: in.Bucket, Key: in.Key}, nil
+}
+
+// TestCopyStrategy_Mock covers the behavior change directly: the strategy is
+// read from the source's HEAD size, not discovered by trying CopyObject and
+// inspecting the failure.
+func TestCopyStrategy_Mock(t *testing.T) {
+	ctx := context.Background()
+	const maxCopySize = 5 * 1024 * int64(megabyte) // CopyObject's own limit
+
+	t.Run("exactly the limit takes the single-request path", func(t *testing.T) {
+		base := mock.New(bucket, &mock.Object{Key: "src-file", Body: []byte("some content")})
+		api := &sizedCopyAPI{S3API: base, size: maxCopySize}
+		fsys := s3.NewBucketFS(api, bucket)
+		size, err := fsys.Copy(ctx, "dst-file", "src-file")
+		be.NilErr(t, err)
+		be.Equal(t, maxCopySize, size)
+		be.Equal(t, 1, api.CallCount("CopyObject"))
+		be.Equal(t, 0, api.CallCount("CreateMultipartUpload"))
+	})
+
+	t.Run("one byte over the limit takes the multipart path", func(t *testing.T) {
+		base := mock.New(bucket, &mock.Object{Key: "src-file", Body: []byte("some content")})
+		api := &sizedCopyAPI{S3API: base, size: maxCopySize + 1}
+		fsys := s3.NewBucketFS(api, bucket)
+		size, err := fsys.Copy(ctx, "dst-file", "src-file")
+		be.NilErr(t, err)
+		be.Equal(t, maxCopySize+1, size)
+		// The point of the change: no CopyObject is attempted at all, let
+		// alone one that is left to fail first.
+		be.Equal(t, 0, api.CallCount("CopyObject"))
+		be.Equal(t, 1, api.CallCount("CreateMultipartUpload"))
+		be.True(t, api.MPUCompleteFlag())
+
+		// The parts must tile [0, size) with no gap or overlap.
+		type span struct{ start, end int64 }
+		spans := make([]span, len(api.ranges))
+		for i, r := range api.ranges {
+			var sp span
+			n, err := fmt.Sscanf(r, "bytes=%d-%d", &sp.start, &sp.end)
+			be.NilErr(t, err)
+			be.Equal(t, 2, n)
+			spans[i] = sp
+		}
+		sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
+		var next int64
+		for _, sp := range spans {
+			be.Equal(t, next, sp.start)
+			next = sp.end + 1
+		}
+		be.Equal(t, maxCopySize+1, next)
+	})
+
+	t.Run("nil ContentLength is refused, not dereferenced", func(t *testing.T) {
+		base := mock.New(bucket, &mock.Object{Key: "src-file", Body: []byte("some content")})
+		api := &sizedCopyAPI{S3API: base, size: -1}
+		fsys := s3.NewBucketFS(api, bucket)
+		_, err := fsys.Copy(ctx, "dst-file", "src-file")
+		be.Nonzero(t, err)
+		be.Equal(t, 0, api.CallCount("CopyObject"))
+	})
 }
 
 func TestSameBackend_Mock(t *testing.T) {

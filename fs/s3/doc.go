@@ -40,6 +40,12 @@
 //     write at PartSize x 10,000 -- about 48 GiB at the SDK's default, which
 //     [WithUploaderOptions] can raise.
 //
+//   - [BucketFS.Copy] decides its strategy from the source's HEAD
+//     ContentLength rather than by trying a copy and inspecting the failure:
+//     a source of 5 GiB or less -- CopyObject's own limit -- is copied with
+//     one request, and a larger one is copied part by part with
+//     [MultiCopier].
+//
 //   - A missing key is reported as an error satisfying errors.Is(err,
 //     fs.ErrNotExist) whatever shape the store's error arrived in -- a typed
 //     SDK error, an API error code, or a bare 404 -- with the original error

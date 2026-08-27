@@ -102,6 +102,14 @@ func (f *BucketFS) WriteWithOptions(ctx context.Context, name string, r io.Reade
 	return write(ctx, f.uploader, f.bucket, name, r, opts...)
 }
 
+// Copy copies the object at src to dst within the bucket, per [ocflfs.CopyFS].
+//
+// The strategy is chosen from src's HEAD ContentLength, not by trying a copy
+// and inspecting the failure: a source of 5 GiB or less is copied with one
+// CopyObject request, and a larger one is copied part by part with
+// [MultiCopier], tunable through [WithMultiPartCopyOption]. A store that
+// enforces a smaller CopyObject limit than 5 GiB returns that store's error
+// rather than falling back to MultiCopier.
 func (f *BucketFS) Copy(ctx context.Context, dst, src string) (int64, error) {
 	f.debugLog(ctx, "s3:copy", "bucket", f.bucket, "dst", dst, "src", src)
 	return copy(ctx, f.client, f.bucket, dst, src, f.multiPartCopyOptions...)

@@ -27,15 +27,19 @@ const (
 	megabyte          int64 = 1024 * 1024
 	partSizeIncrement       = 1 * megabyte
 
-	// error message returned when copy fails because source is too large: used
-	// to trigger multipart upload. (This appears to be the only way to check
-	// this error).
-	copySrcTooLarge = "copy source is larger than the maximum allowable size"
-
 	// modes retured by Stat()
 	fileMode = 0644 | fs.ModeIrregular
 	dirMode  = 0755 | fs.ModeDir
 )
+
+// maxCopySize is the largest source CopyObject accepts. It is a fixed S3 API
+// limit, not a tunable: a source larger than this has to be copied part by
+// part, which is what MultiCopier does. copy compares the source's HEAD
+// ContentLength against it rather than issuing a CopyObject to find out, so a
+// large copy costs no doomed request and the choice does not depend on how a
+// store words its error. A store that enforces a smaller limit than this one
+// fails rather than falling back -- see [BucketFS.Copy].
+const maxCopySize int64 = 5 * 1024 * megabyte
 
 // maxDeleteBatch is the most keys DeleteObjects accepts in one request. It is
 // a fixed S3 API limit, not a tunable: a larger request is rejected outright.
@@ -182,6 +186,18 @@ func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, opts .
 		}
 		return 0, pathErr("copy", src, err)
 	}
+	// The size decides the strategy, and the HEAD above already carries it.
+	// A store may omit ContentLength on a HEAD response; refusing here is
+	// better than carrying an unknown size into a choice that depends on it.
+	if srcHead.ContentLength == nil {
+		return 0, pathErr("copy", src, errors.New("missing content length"))
+	}
+	srcSize := *srcHead.ContentLength
+	if srcSize > maxCopySize {
+		// too large for CopyObject: copy it part by part instead. The HEAD is
+		// handed on so MultiCopier does not repeat it.
+		return NewMultiCopier(api, opts...).Copy(ctx, buck, dst, src, srcHead)
+	}
 	escapedSrc := url.QueryEscape(buck + "/" + src)
 	params := &s3.CopyObjectInput{
 		Bucket:     &buck,
@@ -189,16 +205,9 @@ func copy(ctx context.Context, api CopyAPI, buck string, dst, src string, opts .
 		Key:        &dst,
 	}
 	if _, err := api.CopyObject(ctx, params); err != nil {
-		// if the source is too large, try multipart copy.
-		// this error doesn't seem to have a specific type
-		// associated with it.
-		if strings.Contains(err.Error(), copySrcTooLarge) {
-			// source is too large for basic copy -- try multipart copy
-			return NewMultiCopier(api, opts...).Copy(ctx, buck, dst, src, srcHead)
-		}
 		return 0, pathErr("copy", src, err)
 	}
-	return *srcHead.ContentLength, nil
+	return srcSize, nil
 }
 
 func remove(ctx context.Context, api RemoveAPI, b string, name string) error {
