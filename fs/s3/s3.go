@@ -509,11 +509,8 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string, fsys 
 
 // s3File implements fs.File and io.Seeker.
 //
-// A single s3File is not safe for concurrent use: Read, Seek and Close all
-// mutate the same open body and offset, so calling any two of them at once
-// races. This matches *os.File and the fs.File values the other backends
-// return. Separate files opened from the same [BucketFS] share no state and
-// may be used concurrently.
+// Not safe for concurrent use: Read, Seek and Close share the open body and
+// offset, matching *os.File. Separate files are independent.
 type s3File struct {
 	ctx    context.Context
 	api    OpenFileAPI
@@ -575,17 +572,9 @@ func (f *s3File) Name() string {
 }
 
 // Seek implements io.Seeker. It repositions the file offset for the next Read.
-//
 // A seek that moves the offset drops the open body, so the next Read issues a
-// fresh GetObject with the appropriate Range header. A seek to the position
-// the file is already at keeps it: a sequential reader that seeks to its own
-// offset -- Seek(0, io.SeekCurrent) to ask where it is, or a re-seek to a
-// position it just read up to -- keeps reading down the connection it already
-// has, instead of paying for another round trip and another connection.
-//
-// Seek does not fetch anything itself, so it cannot report that the object
-// has changed or gone; a seek past the end is allowed and the following Read
-// reports io.EOF.
+// fresh GetObject; a seek to the offset the file is already at keeps it, so
+// the next Read continues on the same connection.
 func (f *s3File) Seek(offset int64, whence int) (int64, error) {
 	size := f.size
 	var newOffset int64
@@ -602,9 +591,7 @@ func (f *s3File) Seek(offset int64, whence int) (int64, error) {
 	if newOffset < 0 {
 		return 0, errors.New("s3: negative position")
 	}
-	// Drop the open body only when the offset actually moves: it is
-	// positioned at f.offset, so it is still the right reader to continue
-	// from when the seek does not move. See the doc comment.
+	// only refetch if the position actually moved
 	if f.body != nil && newOffset != f.offset {
 		f.body.Close()
 		f.body = nil
