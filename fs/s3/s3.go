@@ -149,8 +149,21 @@ func dirEntries(ctx context.Context, api ReadDirAPI, buck string, dir string) it
 			numFiles := len(list.Contents)
 			numEntries := numDirs + numFiles
 			if numEntries == 0 {
-				if !prefixHasContent {
-					// treat prefix without objects as a missing directory
+				// "." names the bucket itself, which exists whether or not it
+				// holds any objects: a missing bucket surfaces as a
+				// ListObjectsV2 error above, never as an empty page. So an
+				// empty bucket reads as an existing, empty directory -- the
+				// same answer the local backend gives for an empty root.
+				//
+				// Below the root the answer is the opposite, and deliberately
+				// so rather than by oversight: a prefix exists only for as
+				// long as some key carries it, so S3 has nothing that can
+				// represent an empty directory, and reporting the prefix as
+				// missing is the closest faithful answer. Nothing in OCFL
+				// depends on the local backend's ability to hold an empty
+				// directory -- every version directory carries at least an
+				// inventory.json.
+				if dir != "." && !prefixHasContent {
 					yield(nil, pathErr("readdir", dir, fs.ErrNotExist))
 				}
 				return

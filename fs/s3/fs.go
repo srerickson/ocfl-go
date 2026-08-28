@@ -82,6 +82,13 @@ func (f *BucketFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	return openFile(ctx, f.client, f.bucket, name)
 }
 
+// DirEntries lists the immediate children of dir, per [ocflfs.DirEntriesFS].
+//
+// Directories are reconstructed from key prefixes, so a prefix that matches
+// no object is reported as fs.ErrNotExist: an empty directory is not
+// something S3 can hold. The one exception is dir ".", which names the
+// bucket and exists whether or not it holds any objects -- an empty bucket
+// lists empty, as an empty root directory does on the local backend.
 func (f *BucketFS) DirEntries(ctx context.Context, dir string) iter.Seq2[fs.DirEntry, error] {
 	f.debugLog(ctx, "s3:readdir", "bucket", f.bucket, "name", dir)
 	return dirEntries(ctx, f.client, f.bucket, dir)
