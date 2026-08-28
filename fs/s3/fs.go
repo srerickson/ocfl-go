@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"reflect"
 
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
@@ -19,8 +19,8 @@ type BucketFS struct {
 	client               S3API
 	bucket               string
 	logger               *slog.Logger
-	uploader             *manager.Uploader
-	uploaderOptions      []func(*manager.Uploader)
+	uploader             *transfermanager.Client
+	uploaderOptions      []func(*transfermanager.Options)
 	multiPartCopyOptions []func(*MultiCopier)
 }
 
@@ -35,7 +35,7 @@ func NewBucketFS(client S3API, bucket string, opts ...func(*BucketFS)) *BucketFS
 			o(fsys)
 		}
 	}
-	fsys.uploader = manager.NewUploader(client, fsys.uploaderOptions...)
+	fsys.uploader = transfermanager.New(client, fsys.uploaderOptions...)
 	return fsys
 }
 
@@ -47,9 +47,9 @@ func WithLogger(logger *slog.Logger) func(*BucketFS) {
 	}
 }
 
-// WithUploaderOptions sets options used to create the s3 manager.Uploader used
-// write files.
-func WithUploaderOptions(opts ...func(*manager.Uploader)) func(*BucketFS) {
+// WithUploaderOptions sets options used to create the s3 transfer manager
+// client used to write files.
+func WithUploaderOptions(opts ...func(*transfermanager.Options)) func(*BucketFS) {
 	return func(bf *BucketFS) {
 		bf.uploaderOptions = opts
 	}
@@ -103,18 +103,19 @@ func (f *BucketFS) Write(ctx context.Context, name string, r io.Reader) (int64, 
 }
 
 // WriteWithOptions writes the contents of r to name, applying opts to the
-// PutObjectInput first. It is [BucketFS.Write] with access to the rest of the
-// request: a storage class, server-side encryption, a conditional put.
+// UploadObjectInput first. It is [BucketFS.Write] with access to the rest of
+// the request: a storage class, server-side encryption, a conditional put.
 //
 // Setting a ContentLength through an option is neither necessary nor usually
-// wanted. The upload manager reads r into chunks of its own and the SDK
-// derives each request's Content-Length from the bytes it is actually sending.
-// A value set here overrides that computation rather than enabling it, and
-// must match what r delivers or the request fails.
+// wanted, and does not declare the request's Content-Length: the transfer
+// manager buffers r into chunks of its own, and the SDK derives each request's
+// Content-Length from the bytes it is actually sending. The value serves only
+// as a size hint, used to raise the part size when the object would otherwise
+// need more parts than the upload allows. A wrong one is not an error.
 //
 // Bucket, Key and Body are set after opts run, so an option cannot redirect
 // the write.
-func (f *BucketFS) WriteWithOptions(ctx context.Context, name string, r io.Reader, opts ...func(*s3.PutObjectInput)) (int64, error) {
+func (f *BucketFS) WriteWithOptions(ctx context.Context, name string, r io.Reader, opts ...func(*transfermanager.UploadObjectInput)) (int64, error) {
 	f.debugLog(ctx, "s3:write", "bucket", f.bucket, "name", name)
 	return write(ctx, f.uploader, f.bucket, name, r, opts...)
 }

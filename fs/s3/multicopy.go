@@ -5,7 +5,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"golang.org/x/sync/errgroup"
@@ -14,6 +13,12 @@ import (
 const (
 	defaultCopyPartConcurrency = 6
 	defaultCopyPartSize        = 32 * megabyte
+
+	// minUploadPartSize and maxUploadParts are fixed S3 multipart limits, not
+	// tunables: the smallest part the API accepts for any part but the last,
+	// and the most parts one multipart upload may have.
+	minUploadPartSize int64 = 5 * megabyte
+	maxUploadParts    int32 = 10_000
 
 	// mpCleanupTimeout bounds the deferred AbortMultipartUpload or
 	// CompleteMultipartUpload request that follows a copy. It is not a
@@ -72,14 +77,14 @@ func (c *MultiCopier) Copy(ctx context.Context, buck string, dst, src string, sr
 	}
 	srcSize = *srcHead.ContentLength
 	partSize := c.PartSize
-	if partSize < manager.MinUploadPartSize {
+	if partSize < minUploadPartSize {
 		partSize = defaultCopyPartSize
 	}
 	concurrency := c.Concurrency
 	if concurrency < 1 {
 		concurrency = defaultCopyPartConcurrency
 	}
-	psize, partCount := adjustPartSize(srcSize, partSize, manager.MaxUploadParts)
+	psize, partCount := adjustPartSize(srcSize, partSize, maxUploadParts)
 	completedParts := make([]types.CompletedPart, partCount)
 	uploadParams := &s3.CreateMultipartUploadInput{Bucket: &buck, Key: &dst}
 	newUp, err := c.api.CreateMultipartUpload(ctx, uploadParams)

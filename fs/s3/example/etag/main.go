@@ -8,7 +8,7 @@ import (
 	"log"
 
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/srerickson/ocfl-go/fs/s3"
 	"github.com/srerickson/ocfl-go/fs/s3/internal/mock"
@@ -65,9 +65,9 @@ func backend(ctx context.Context, bucket string) (*s3.BucketFS, error) {
 	if err != nil {
 		return nil, err
 	}
-	uploadOpts := func(u *manager.Uploader) {
-		u.Concurrency = conc
-		u.PartSize = psize
+	uploadOpts := func(o *transfermanager.Options) {
+		o.Concurrency = conc
+		o.PartSizeBytes = psize
 	}
 	return s3.NewBucketFS(s3v2.NewFromConfig(cfg), bucket,
 		s3.WithUploaderOptions(uploadOpts)), nil
