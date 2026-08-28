@@ -593,7 +593,7 @@ func (f *s3File) Seek(offset int64, whence int) (int64, error) {
 	}
 	// only refetch if the position actually moved
 	if f.body != nil && newOffset != f.offset {
-		f.body.Close()
+		_ = f.body.Close()
 		f.body = nil
 	}
 	f.offset = newOffset

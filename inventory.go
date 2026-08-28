@@ -162,7 +162,7 @@ func ReadInventory(ctx context.Context, fsys ocflfs.FS, dir string) (*StoredInve
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return NewStoredInventory(f)
 }
 

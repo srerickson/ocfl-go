@@ -296,7 +296,7 @@ func (r *Root) readLayoutConfig(ctx context.Context) error {
 		}
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	layout := map[string]string{}
 	if err := json.NewDecoder(f).Decode(&layout); err != nil {
 		return fmt.Errorf("storage root layout config is invalid: in %s: %w", layoutPath, err)

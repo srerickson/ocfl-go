@@ -666,7 +666,6 @@ func runSteps(
 				// consecutive async steps returns an error, the context for all
 				// of them is canceled.
 				group, groupCtx = errgroup.WithContext(ctx)
-				group = &errgroup.Group{}
 				group.SetLimit(gos)
 			}
 			group.Go(func() error {
