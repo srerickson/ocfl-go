@@ -65,8 +65,8 @@ func (f FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 		return nil, pathError(op, name, err)
 	}
 	defer func() {
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, pathError(op, name, fs.ErrNotExist)

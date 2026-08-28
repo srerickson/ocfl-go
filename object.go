@@ -448,10 +448,10 @@ func ValidateObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...Obj
 		if versionInv != nil {
 			versionOCFL = mustGetOCFL(versionInv.Type.Spec)
 		}
-		versionOCFL.ValidateObjectVersion(ctx, v, vnum, versionInv, prevInv)
+		_ = versionOCFL.ValidateObjectVersion(ctx, v, vnum, versionInv, prevInv)
 		prevInv = versionInv
 	}
-	impl.ValidateObjectContent(ctx, v)
+	_ = impl.ValidateObjectContent(ctx, v)
 	return v
 }
 
