@@ -53,7 +53,7 @@ func main() {
 	flag.BoolVar(&listOnly, "list", false, "list the tests and exit")
 	flag.BoolVar(&keep, "keep", false, "skip the end-of-run bucket cleanup")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "usage: %s [flags] BUCKET\n\n", os.Args[0])
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "usage: %s [flags] BUCKET\n\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()

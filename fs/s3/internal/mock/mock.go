@@ -518,7 +518,7 @@ func (m *S3API) DeleteObjects(ctx context.Context, in *s3v2.DeleteObjectsInput, 
 		return nil, err
 	}
 	if in.Delete == nil || len(in.Delete.Objects) == 0 {
-		return nil, errors.New("Delete with at least one object is required")
+		return nil, errors.New("delete with at least one object is required")
 	}
 	if len(in.Delete.Objects) > MaxDeleteBatch {
 		return nil, &smithy.GenericAPIError{

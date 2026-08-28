@@ -187,7 +187,7 @@ func TestCopySpecialCharacters(t *testing.T) {
 			be.Equal(t, len(buff), int(size))
 			f, err := fsys.OpenFile(ctx, tcase.dst)
 			be.NilErr(t, err)
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 			got, err := io.ReadAll(f)
 			be.NilErr(t, err)
 			be.True(t, bytes.Equal(buff, got))
@@ -219,7 +219,7 @@ func TestWritePartialReader(t *testing.T) {
 
 	f, err := fsys.OpenFile(ctx, key)
 	be.NilErr(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	got, err := io.ReadAll(f)
 	be.NilErr(t, err)
 	be.True(t, bytes.Equal(buff[offset:], got))
@@ -613,7 +613,7 @@ func TestWrite_Mock(t *testing.T) {
 			if tcase.expectContent != nil {
 				f, err := fsys.OpenFile(ctx, tcase.key)
 				be.NilErr(t, err)
-				defer f.Close()
+				defer func() { _ = f.Close() }()
 				got, err := io.ReadAll(f)
 				be.NilErr(t, err)
 				be.Equal(t, *tcase.expectContent, string(got))
@@ -639,7 +639,7 @@ func TestWriteContentLengthOption_Mock(t *testing.T) {
 		t.Helper()
 		f, err := fsys.OpenFile(ctx, key)
 		be.NilErr(t, err)
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		got, err := io.ReadAll(f)
 		be.NilErr(t, err)
 		return string(got)
@@ -1206,7 +1206,7 @@ func (a *sizedCopyAPI) UploadPartCopy(ctx context.Context, in *s3v2.UploadPartCo
 
 func (a *sizedCopyAPI) CompleteMultipartUpload(ctx context.Context, in *s3v2.CompleteMultipartUploadInput,
 	opts ...func(*s3v2.Options)) (*s3v2.CompleteMultipartUploadOutput, error) {
-	a.S3API.MPUComplete = true
+	a.MPUComplete = true
 	return &s3v2.CompleteMultipartUploadOutput{Bucket: in.Bucket, Key: in.Key}, nil
 }
 
@@ -1644,7 +1644,7 @@ func TestSeek_Mock(t *testing.T) {
 			fsys := s3.NewBucketFS(api, bucket)
 			f, err := fsys.OpenFile(ctx, obj.Key)
 			be.NilErr(t, err)
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 
 			seeker, ok := f.(io.Seeker)
 			be.True(t, ok)
@@ -1668,7 +1668,7 @@ func TestSeekCurrent_Mock(t *testing.T) {
 	fsys := s3.NewBucketFS(api, bucket)
 	f, err := fsys.OpenFile(ctx, obj.Key)
 	be.NilErr(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	seeker := f.(io.Seeker)
 
@@ -1720,7 +1720,7 @@ func TestSeekSamePositionReusesBody_Mock(t *testing.T) {
 	fsys := s3.NewBucketFS(api, bucket)
 	f, err := fsys.OpenFile(ctx, obj.Key)
 	be.NilErr(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	seeker := f.(io.Seeker)
 
 	buf := make([]byte, 5)
@@ -1765,7 +1765,7 @@ func TestSeekMovedDropsBody_Mock(t *testing.T) {
 	fsys := s3.NewBucketFS(api, bucket)
 	f, err := fsys.OpenFile(ctx, obj.Key)
 	be.NilErr(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	seeker := f.(io.Seeker)
 
 	buf := make([]byte, 5)
@@ -1842,13 +1842,13 @@ func TestOpenFileConcurrentHandles_Mock(t *testing.T) {
 				// again, then rewind and read the whole object.
 				if _, err := seeker.Seek(-4, io.SeekEnd); err != nil {
 					t.Error(err)
-					f.Close()
+					_ = f.Close()
 					return
 				}
 				tail := make([]byte, 4)
 				if _, err := io.ReadFull(f, tail); err != nil {
 					t.Error(err)
-					f.Close()
+					_ = f.Close()
 					return
 				}
 				if !bytes.Equal(tail, want[len(want)-4:]) {
@@ -1856,13 +1856,13 @@ func TestOpenFileConcurrentHandles_Mock(t *testing.T) {
 				}
 				if _, err := seeker.Seek(0, io.SeekStart); err != nil {
 					t.Error(err)
-					f.Close()
+					_ = f.Close()
 					return
 				}
 				all, err := io.ReadAll(f)
 				if err != nil {
 					t.Error(err)
-					f.Close()
+					_ = f.Close()
 					return
 				}
 				if !bytes.Equal(all, want) {
@@ -1909,7 +1909,7 @@ func TestSeekWithZip(t *testing.T) {
 	// Open the zip file from S3
 	f, err := fsys.OpenFile(ctx, "archive.zip")
 	be.NilErr(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Get file info for size
 	info, err := f.Stat()
@@ -1935,7 +1935,7 @@ func TestSeekWithZip(t *testing.T) {
 
 		content, err := io.ReadAll(rc)
 		be.NilErr(t, err)
-		rc.Close()
+		be.NilErr(t, rc.Close())
 
 		be.Equal(t, expectedContent, string(content))
 	}
