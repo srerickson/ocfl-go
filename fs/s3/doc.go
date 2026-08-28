@@ -52,6 +52,13 @@
 //     refuses with an error rather than carrying an unknown size into Stat,
 //     Read, Seek, or the copy strategy choice.
 //
+//   - A file from [BucketFS.OpenFile] reads through one GetObject body at a
+//     time. Seeking to a new offset costs another ranged GetObject on the
+//     next Read; seeking to the offset the file is already at costs nothing,
+//     so a sequential reader that asks where it is keeps its connection. The
+//     file is not safe for concurrent use -- Read, Seek and Close share that
+//     body -- though separately opened files are independent.
+//
 //   - A missing key is reported as an error satisfying errors.Is(err,
 //     fs.ErrNotExist) whatever shape the store's error arrived in -- a typed
 //     SDK error, an API error code, or a bare 404 -- with the original error
