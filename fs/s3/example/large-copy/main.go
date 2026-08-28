@@ -104,7 +104,7 @@ func createSrcFile(ctx context.Context, bucket string, size int64) (string, erro
 		if err != nil {
 			return "", err
 		}
-		f.Close()
+		_ = f.Close()
 		if info.Size() == size {
 			return key, nil
 		}

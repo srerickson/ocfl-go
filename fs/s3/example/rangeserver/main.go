@@ -106,7 +106,7 @@ func (h *s3Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Get file info for size and modtime
 	info, err := f.Stat()
@@ -130,7 +130,9 @@ func (h *s3Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {
-			io.Copy(w, seeker)
+			if _, err := io.Copy(w, seeker); err != nil {
+				log.Printf("error copying %s: %v", key, err)
+			}
 		}
 		return
 	}
@@ -162,7 +164,9 @@ func (h *s3Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodHead {
 		// Copy only the requested range
-		io.CopyN(w, seeker, contentLength)
+		if _, err := io.CopyN(w, seeker, contentLength); err != nil {
+			log.Printf("error copying %s: %v", key, err)
+		}
 	}
 }
 
