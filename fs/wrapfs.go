@@ -16,9 +16,8 @@ func DirFS(dir string) *WrapFS { return NewWrapFS(os.DirFS(dir)) }
 
 // WrapFS wraps an [io/fs.FS] and implements [DirEntriesFS].
 //
-// DirEntries follows [DirEntriesFS]: a listing that fails partway yields the
-// entries it read and then the error, since fs.ReadDir(fsys.FS, name) already
-// carries that shape from the wrapped FS.
+// A listing that fails partway yields the entries it read and then the
+// error, matching [io/fs.ReadDir] in the standard library.
 type WrapFS struct {
 	fs.FS
 }

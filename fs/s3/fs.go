@@ -90,11 +90,9 @@ func (f *BucketFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 // bucket and exists whether or not it holds any objects -- an empty bucket
 // lists empty, as an empty root directory does on the local backend.
 //
-// The listing is delivered a ListObjectsV2 page at a time (maxKeys per page),
-// so a directory of more than one page whose listing fails partway yields the
-// entries from the pages already fetched and then the error -- the same
-// entries-then-error shape [ocflfs.DirEntriesFS] documents, arrived at by
-// pagination rather than a single partial read.
+// The listing is paged (ListObjectsV2, maxKeys per page); a listing that
+// fails partway yields the entries already fetched and then the error,
+// matching [ocflfs.DirEntriesFS].
 func (f *BucketFS) DirEntries(ctx context.Context, dir string) iter.Seq2[fs.DirEntry, error] {
 	f.debugLog(ctx, "s3:readdir", "bucket", f.bucket, "name", dir)
 	return dirEntries(ctx, f.client, f.bucket, dir)
