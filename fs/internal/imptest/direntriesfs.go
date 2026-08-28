@@ -29,10 +29,17 @@ import (
 //     entry, not enumerated.
 //   - entries are sorted, as [ocflfs.DirEntriesFS] documents, so callers may
 //     rely on the order without sorting defensively.
+//   - the root always exists. A prefix that matches nothing is a missing
+//     directory, but "." names the backend's root -- the bucket itself, on
+//     S3 -- which is empty rather than absent before anything is written.
 //
 // Unlike Remove and RemoveAll this entry point takes no knobs: the two
 // backends agree on every case here, including a missing directory, which S3
 // reports as fs.ErrNotExist rather than as an empty listing.
+//
+// fsys must be empty when the suite starts: the first subtest reads the root
+// before anything is seeded, which is what pins the empty-root case without
+// a fixture knob.
 func TestDirEntries(t *testing.T, fsys ocflfs.WriteFS) {
 	t.Helper()
 	ctx := context.Background()
@@ -40,20 +47,6 @@ func TestDirEntries(t *testing.T, fsys ocflfs.WriteFS) {
 	dirFS, ok := fsys.(ocflfs.DirEntriesFS)
 	if !ok {
 		t.Fatal("backend does not implement ocflfs.DirEntriesFS")
-	}
-
-	// A deliberately unsorted creation order, so a backend that happens to
-	// return insertion order fails the sorted-order assertion.
-	const base = "imptest-direntries"
-	for _, name := range []string{
-		base + "/zeta.txt",
-		base + "/alpha.txt",
-		base + "/sub/child.txt",
-		base + "/sub/deeper/grandchild.txt",
-		base + "/middle.txt",
-	} {
-		_, err := fsys.Write(ctx, name, strings.NewReader("x"))
-		be.NilErr(t, err)
 	}
 
 	collect := func(t *testing.T, dir string) ([]fs.DirEntry, error) {
@@ -78,6 +71,34 @@ func TestDirEntries(t *testing.T, fsys ocflfs.WriteFS) {
 			out = append(out, e.Name())
 		}
 		return out
+	}
+
+	// Runs before the fixture below is written, so it sees a genuinely empty
+	// backend. Both callers hand this suite a freshly-created FS, so the
+	// ordering is all it takes -- no fixture knob, unlike WalkFiles.ErrWalk.
+	t.Run("empty root yields an empty listing", func(t *testing.T) {
+		// The counterpart to the missing-directory case below, and the one
+		// place the flat backend must not apply that rule: a fresh bucket
+		// lists nothing, but "." names the bucket, which exists. A backend
+		// that reads its own empty root as fs.ErrNotExist reports a
+		// difference the interface does not document.
+		entries, err := collect(t, ".")
+		be.NilErr(t, err)
+		be.Equal(t, 0, len(entries))
+	})
+
+	// A deliberately unsorted creation order, so a backend that happens to
+	// return insertion order fails the sorted-order assertion.
+	const base = "imptest-direntries"
+	for _, name := range []string{
+		base + "/zeta.txt",
+		base + "/alpha.txt",
+		base + "/sub/child.txt",
+		base + "/sub/deeper/grandchild.txt",
+		base + "/middle.txt",
+	} {
+		_, err := fsys.Write(ctx, name, strings.NewReader("x"))
+		be.NilErr(t, err)
 	}
 
 	t.Run("yields base names one level deep, sorted", func(t *testing.T) {
