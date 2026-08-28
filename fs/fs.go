@@ -30,9 +30,23 @@ type FS interface {
 // directory.
 type DirEntriesFS interface {
 	FS
-	// DirEntries returns an iterator that will yield an fs.DirEntry from the named
-	// directory or an error (not both). The entries should be yielded in sorted
-	// order. If an error is yielded, iteration terminates.
+	// DirEntries returns an iterator over the entries in the named directory.
+	// Each yielded pair carries an fs.DirEntry or an error, never both, and
+	// entries are yielded in sorted order.
+	//
+	// An error terminates iteration: nothing follows it. It does not
+	// invalidate the entries that came before it, however -- a listing that
+	// fails partway yields the entries it managed to read and then the
+	// error, so one sequence may hold both. This follows io/fs rather than
+	// departing from it: [io/fs.ReadDirFile] documents the same rule for
+	// ReadDir(-1) ("returns the DirEntry list read until that point and a
+	// non-nil error"), [os.ReadDir] repeats it, and [io/fs.WalkDir] walks
+	// the partial listing when its callback lets it.
+	//
+	// So the entries are real, but the listing they came from is incomplete,
+	// and only the caller knows whether an incomplete one is usable: a
+	// caller that needs the whole directory must discard what it received
+	// once an error arrives.
 	DirEntries(ctx context.Context, name string) iter.Seq2[fs.DirEntry, error]
 }
 
@@ -165,8 +179,9 @@ func DirEntries(ctx context.Context, fsys FS, name string) iter.Seq2[fs.DirEntry
 }
 
 // ReadDir calls DirEntries and collects all yielded directory entries in a
-// slice. If an error is encountered, the slice will included all entries read
-// up the point of the error.
+// slice. If an error is encountered, the slice includes all entries read up to
+// the point of the error, matching [os.ReadDir]: those entries are real, but
+// the listing is incomplete. See [DirEntriesFS].
 func ReadDir(ctx context.Context, fsys FS, name string) ([]fs.DirEntry, error) {
 	var entries []fs.DirEntry
 	for entry, err := range DirEntries(ctx, fsys, name) {
@@ -238,6 +253,15 @@ func StatFile(ctx context.Context, fsys FS, name string) (fs.FileInfo, error) {
 
 // WalkFiles checks if fsys is a FileWalker and calls its WalkFiles if it is. If
 // fsys isn't a FileWalker, dir is walked using [DirEntries].
+//
+// Errors are yielded as they are encountered, and a yielded error means the
+// walk is incomplete: some directory could not be listed, and a listing that
+// failed partway may have yielded files before its error (see [DirEntriesFS]).
+// Where iteration goes after an error is left to the implementation -- the
+// generic walk continues with the directories it can still read, as
+// [io/fs.WalkDir] does, while a backend's own WalkFiles may stop at the first
+// failure -- so a caller that needs a complete walk must treat any error as
+// invalidating the whole sequence rather than only the entry it arrived with.
 func WalkFiles(ctx context.Context, fsys FS, dir string) iter.Seq2[*FileRef, error] {
 	if walkFS, ok := fsys.(FileWalker); ok {
 		return walkFS.WalkFiles(ctx, dir)

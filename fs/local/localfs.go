@@ -167,15 +167,38 @@ func (fsys *FS) DirEntries(ctx context.Context, name string) iter.Seq2[fs.DirEnt
 		// not implement ReadDirFS -- and os.DirFS does, sorting internally.
 		// Reading the handle directly skips both, so it is done explicitly.
 		entries, err := dir.ReadDir(-1)
+		// A partial read yields what it got and then the error, matching
+		// fs.ReadDir. Unlike root.Open's error above, the handle's ReadDir
+		// error carries the OS-level path (e.g. reading a regular file as a
+		// directory yields "readdirent <tmpdir>/blocked: not a directory"),
+		// so both Op and Path need rewriting to keep the storage root out of
+		// the error and match the name the caller passed in. Rewritten here,
+		// before the entries are yielded, so the ctx.Err() branch below can
+		// report it without re-doing the rewrite.
+		if err != nil {
+			var pathErr *fs.PathError
+			if errors.As(err, &pathErr) {
+				pathErr.Op = "readdir"
+				pathErr.Path = name
+			}
+		}
 		slices.SortFunc(entries, func(a, b fs.DirEntry) int {
 			return strings.Compare(a.Name(), b.Name())
 		})
 		for _, entry := range entries {
-			if err := ctx.Err(); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				// A pending ReadDir error must not be dropped just because
+				// cancellation is noticed first: join them so a caller
+				// matching either context.Canceled or the read failure with
+				// errors.Is still finds it.
+				cause := ctxErr
+				if err != nil {
+					cause = errors.Join(ctxErr, err)
+				}
 				yield(nil, &fs.PathError{
 					Op:   "readdir",
 					Path: name,
-					Err:  err,
+					Err:  cause,
 				})
 				return
 			}
@@ -183,18 +206,7 @@ func (fsys *FS) DirEntries(ctx context.Context, name string) iter.Seq2[fs.DirEnt
 				return
 			}
 		}
-		// A partial read yields what it got and then the error, matching
-		// fs.ReadDir. Unlike root.Open's error above, the handle's ReadDir
-		// error carries the OS-level path (e.g. reading a regular file as a
-		// directory yields "readdirent <tmpdir>/blocked: not a directory"),
-		// so both Op and Path need rewriting to keep the storage root out of
-		// the error and match the name the caller passed in.
 		if err != nil {
-			var pathErr *fs.PathError
-			if errors.As(err, &pathErr) {
-				pathErr.Op = "readdir"
-				pathErr.Path = name
-			}
 			yield(nil, err)
 		}
 	}
