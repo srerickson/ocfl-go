@@ -32,19 +32,12 @@
 //     reports are joined into the returned error rather than being lost
 //     behind a successful HTTP status.
 //
-//   - [BucketFS.Write] streams through the SDK's transfer manager, which reads
-//     up to MultipartUploadThreshold bytes before sending anything: a body
-//     that ends inside that first read goes out as a single PutObject, and
-//     anything longer as a multipart upload. A small write allocates roughly
-//     its own size, but a large one holds up to Concurrency+1 buffers of
-//     PartSizeBytes at once. PartSizeBytes also caps a single write at
-//     PartSizeBytes x MaxUploadParts -- about 78 GiB at the SDK's defaults,
-//     which [WithUploaderOptions] can raise. The transfer manager would size
-//     parts to fit a larger object on its own, but only from a size it knows
-//     before reading, and Write hands it a reader it cannot ask; a caller
-//     writing an object that big can supply the size as a ContentLength
-//     through [BucketFS.WriteWithOptions], which serves as that hint and not
-//     as a declared Content-Length.
+//   - [BucketFS.Write] streams through the SDK's transfer manager, which picks
+//     a single PutObject or a multipart upload automatically depending on how
+//     much of r there turns out to be. Concurrency and part size are tunable
+//     through [WithUploaderOptions]; an unusually large write may need its
+//     size given as a ContentLength through [BucketFS.WriteWithOptions], so
+//     the part size can be chosen to fit the upload's part-count limit.
 //
 //   - [BucketFS.Copy] decides its strategy from the source's HEAD
 //     ContentLength rather than by trying a copy and inspecting the failure:
@@ -83,16 +76,4 @@
 //   - RemoveAllAPI now requires DeleteObjects in place of DeleteObject, for
 //     the batching described above. An implementer of the whole S3API must
 //     add the method; DeleteObject is still required, by RemoveAPI.
-//
-//   - Writes moved off the SDK's deprecated feature/s3/manager onto
-//     feature/s3/transfermanager, so [WithUploaderOptions] and
-//     [BucketFS.WriteWithOptions] both changed parameter type: they configure
-//     a transfermanager.Options and a transfermanager.UploadObjectInput rather
-//     than a manager.Uploader and an s3.PutObjectInput. Option fields are
-//     renamed rather than dropped -- PartSize is PartSizeBytes -- with one
-//     change in meaning: a ContentLength set through a write option is a size
-//     hint, described above, and no longer reaches the request as a declared
-//     Content-Length, so a wrong one no longer fails the write. The
-//     transfermanager module is pre-1.0, and this package is where a caller
-//     inherits it from.
 package s3

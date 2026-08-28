@@ -106,12 +106,9 @@ func (f *BucketFS) Write(ctx context.Context, name string, r io.Reader) (int64, 
 // UploadObjectInput first. It is [BucketFS.Write] with access to the rest of
 // the request: a storage class, server-side encryption, a conditional put.
 //
-// Setting a ContentLength through an option is neither necessary nor usually
-// wanted, and does not declare the request's Content-Length: the transfer
-// manager buffers r into chunks of its own, and the SDK derives each request's
-// Content-Length from the bytes it is actually sending. The value serves only
-// as a size hint, used to raise the part size when the object would otherwise
-// need more parts than the upload allows. A wrong one is not an error.
+// A ContentLength set through an option is a size hint, not a declared
+// Content-Length: it is used only to help choose a part size, and a wrong
+// value is not an error.
 //
 // Bucket, Key and Body are set after opts run, so an option cannot redirect
 // the write.
