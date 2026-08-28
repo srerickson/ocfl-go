@@ -77,6 +77,13 @@ func (f *BucketFS) Bucket() string {
 // Read and Seek never need another round trip to answer with them. A store
 // that omits ContentLength or LastModified from its HEAD response is
 // refused here rather than producing a File whose methods can't answer.
+//
+// The returned file also implements io.Seeker. It belongs to one goroutine:
+// Read, Seek and Close share an open response body, so a single file must not
+// be used from two at once, as with *os.File. Files opened separately are
+// independent. A seek that moves the offset drops the open body and the next
+// Read re-fetches from the new position; a seek to the offset the file is
+// already at keeps reading down the connection it has.
 func (f *BucketFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 	f.debugLog(ctx, "s3:openfile", "bucket", f.bucket, "name", name)
 	return openFile(ctx, f.client, f.bucket, name)

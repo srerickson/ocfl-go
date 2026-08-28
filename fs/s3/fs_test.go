@@ -1690,6 +1690,182 @@ func TestSeekCurrent_Mock(t *testing.T) {
 	be.Equal(t, "FGHIJ", string(buf))
 }
 
+// TestSeekSamePositionReusesBody_Mock pins the half of s3File.Seek's contract
+// that costs nothing: a seek to the offset the file is already at keeps the
+// open GetObject body, so the next Read continues down the connection it
+// already has. The GetObject count is the assertion -- the bytes alone would
+// pass either way, since a re-fetch from the same offset returns the same
+// data at the price of a second round trip.
+func TestSeekSamePositionReusesBody_Mock(t *testing.T) {
+	ctx := context.Background()
+	content := []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	obj := &mock.Object{
+		Key:          "alphabet.txt",
+		Body:         content,
+		LastModified: time.Now(),
+	}
+	api := mock.New(bucket, obj)
+	fsys := s3.NewBucketFS(api, bucket)
+	f, err := fsys.OpenFile(ctx, obj.Key)
+	be.NilErr(t, err)
+	defer f.Close()
+	seeker := f.(io.Seeker)
+
+	buf := make([]byte, 5)
+	n, err := f.Read(buf)
+	be.NilErr(t, err)
+	be.Equal(t, 5, n)
+	be.Equal(t, "ABCDE", string(buf))
+	be.Equal(t, 1, api.CallCount("GetObject"))
+
+	// Seek(0, io.SeekCurrent): the idiomatic way to ask where the file is.
+	pos, err := seeker.Seek(0, io.SeekCurrent)
+	be.NilErr(t, err)
+	be.Equal(t, int64(5), pos)
+
+	// The same position again, named absolutely this time.
+	pos, err = seeker.Seek(5, io.SeekStart)
+	be.NilErr(t, err)
+	be.Equal(t, int64(5), pos)
+
+	n, err = f.Read(buf)
+	be.NilErr(t, err)
+	be.Equal(t, 5, n)
+	be.Equal(t, "FGHIJ", string(buf))
+	// Neither seek moved the offset, so neither refetched.
+	be.Equal(t, 1, api.CallCount("GetObject"))
+}
+
+// TestSeekMovedDropsBody_Mock pins the other half: a seek that moves the
+// offset drops the body, and the next Read refetches with a Range header
+// starting at the new position. Without this, a change that simply never
+// dropped the body would still satisfy the reuse test above while reading
+// from the wrong offset.
+func TestSeekMovedDropsBody_Mock(t *testing.T) {
+	ctx := context.Background()
+	content := []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	obj := &mock.Object{
+		Key:          "alphabet.txt",
+		Body:         content,
+		LastModified: time.Now(),
+	}
+	api := mock.New(bucket, obj)
+	fsys := s3.NewBucketFS(api, bucket)
+	f, err := fsys.OpenFile(ctx, obj.Key)
+	be.NilErr(t, err)
+	defer f.Close()
+	seeker := f.(io.Seeker)
+
+	buf := make([]byte, 5)
+	n, err := f.Read(buf)
+	be.NilErr(t, err)
+	be.Equal(t, 5, n)
+	be.Equal(t, "ABCDE", string(buf))
+	be.Equal(t, 1, api.CallCount("GetObject"))
+
+	pos, err := seeker.Seek(10, io.SeekStart)
+	be.NilErr(t, err)
+	be.Equal(t, int64(10), pos)
+
+	n, err = f.Read(buf)
+	be.NilErr(t, err)
+	be.Equal(t, 5, n)
+	be.Equal(t, "KLMNO", string(buf))
+	be.Equal(t, 2, api.CallCount("GetObject"))
+
+	// Seeking backwards drops the body too: the open one cannot rewind.
+	pos, err = seeker.Seek(-15, io.SeekCurrent)
+	be.NilErr(t, err)
+	be.Equal(t, int64(0), pos)
+
+	n, err = f.Read(buf)
+	be.NilErr(t, err)
+	be.Equal(t, 5, n)
+	be.Equal(t, "ABCDE", string(buf))
+	be.Equal(t, 3, api.CallCount("GetObject"))
+}
+
+// TestOpenFileConcurrentHandles_Mock drives many s3Files at once from one
+// BucketFS, each goroutine reading and seeking its own handle. Run under
+// -race it pins that separately opened files share no state, which is the
+// guarantee s3File's doc comment makes alongside its warning that a single
+// file is not safe for concurrent use. It deliberately does not share a
+// handle across goroutines: doing so is documented as unsupported -- Read,
+// Seek and Close all mutate the same body and offset -- so a test that did
+// would be asserting a race rather than catching one.
+func TestOpenFileConcurrentHandles_Mock(t *testing.T) {
+	ctx := context.Background()
+	const keys = 4
+	objs := make([]*mock.Object, keys)
+	bodies := make([][]byte, keys)
+	for i := range objs {
+		bodies[i] = []byte(strings.Repeat(string(rune('a'+i)), 8) + "0123456789")
+		objs[i] = &mock.Object{
+			Key:          fmt.Sprintf("obj-%d.txt", i),
+			Body:         bodies[i],
+			LastModified: time.Now(),
+		}
+	}
+	fsys := s3.NewBucketFS(mock.New(bucket, objs...), bucket)
+
+	const workers = 8
+	const iterations = 10
+	var wg sync.WaitGroup
+	for w := range workers {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			// Overlapping keys across workers: two goroutines reading the
+			// same object still hold separate handles.
+			i := w % keys
+			want := bodies[i]
+			for range iterations {
+				f, err := fsys.OpenFile(ctx, objs[i].Key)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				seeker := f.(io.Seeker)
+				// Read the tail, seek back to it without moving, read it
+				// again, then rewind and read the whole object.
+				if _, err := seeker.Seek(-4, io.SeekEnd); err != nil {
+					t.Error(err)
+					f.Close()
+					return
+				}
+				tail := make([]byte, 4)
+				if _, err := io.ReadFull(f, tail); err != nil {
+					t.Error(err)
+					f.Close()
+					return
+				}
+				if !bytes.Equal(tail, want[len(want)-4:]) {
+					t.Errorf("worker %d: tail = %q, want %q", w, tail, want[len(want)-4:])
+				}
+				if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+					t.Error(err)
+					f.Close()
+					return
+				}
+				all, err := io.ReadAll(f)
+				if err != nil {
+					t.Error(err)
+					f.Close()
+					return
+				}
+				if !bytes.Equal(all, want) {
+					t.Errorf("worker %d: read %q, want %q", w, all, want)
+				}
+				if err := f.Close(); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+}
+
 func TestSeekWithZip(t *testing.T) {
 	if !testutil.S3Enabled() {
 		t.Skip("s3 test service is not running")
