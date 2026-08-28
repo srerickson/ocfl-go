@@ -15,6 +15,10 @@ func NewWrapFS(fsys fs.FS) *WrapFS { return &WrapFS{FS: fsys} }
 func DirFS(dir string) *WrapFS { return NewWrapFS(os.DirFS(dir)) }
 
 // WrapFS wraps an [io/fs.FS] and implements [DirEntriesFS].
+//
+// DirEntries follows [DirEntriesFS]: a listing that fails partway yields the
+// entries it read and then the error, since fs.ReadDir(fsys.FS, name) already
+// carries that shape from the wrapped FS.
 type WrapFS struct {
 	fs.FS
 }
@@ -60,11 +64,19 @@ func (fsys *WrapFS) DirEntries(ctx context.Context, name string) iter.Seq2[fs.Di
 		}
 		entries, err := fs.ReadDir(fsys.FS, name)
 		for _, entry := range entries {
-			if err := ctx.Err(); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				// A pending ReadDir error must not be dropped just because
+				// cancellation is noticed first: join them so a caller
+				// matching either context.Canceled or the read failure with
+				// errors.Is still finds it.
+				cause := ctxErr
+				if err != nil {
+					cause = errors.Join(ctxErr, err)
+				}
 				yield(nil, &fs.PathError{
 					Op:   "readdir",
 					Path: name,
-					Err:  err,
+					Err:  cause,
 				})
 				return
 			}
