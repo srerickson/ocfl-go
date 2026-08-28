@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
@@ -230,25 +230,25 @@ func dirEntries(ctx context.Context, api ReadDirAPI, buck string, dir string) it
 
 }
 
-func write(ctx context.Context, uploader *manager.Uploader, buck string, key string, r io.Reader, opts ...func(*s3.PutObjectInput)) (int64, error) {
+func write(ctx context.Context, uploader *transfermanager.Client, buck string, key string, r io.Reader, opts ...func(*transfermanager.UploadObjectInput)) (int64, error) {
 	if !fs.ValidPath(key) || key == "." {
 		return 0, pathErr("write", key, fs.ErrInvalid)
 	}
 	countReader := &countReader{Reader: r}
-	var putInput s3.PutObjectInput
+	var uploadInput transfermanager.UploadObjectInput
 	for _, o := range opts {
 		if o != nil {
-			o(&putInput)
+			o(&uploadInput)
 		}
 	}
-	putInput.Bucket = &buck
-	putInput.Key = &key
-	putInput.Body = countReader
-	// ContentLength is left unset. The uploader sends its own buffered chunks,
-	// and the SDK sets each request's Content-Length from the bytes it is
-	// actually sending, so a value set here overrides that rather than
-	// enabling it. An explicit one from an option is passed through as given.
-	if _, err := uploader.Upload(ctx, &putInput); err != nil {
+	uploadInput.Bucket = &buck
+	uploadInput.Key = &key
+	uploadInput.Body = countReader
+	// ContentLength is left unset. The transfer manager sends its own buffered
+	// chunks and never forwards this field to a request, so setting it would
+	// declare nothing; it serves only as a size hint for part sizing. An
+	// explicit one from an option is kept, as that hint.
+	if _, err := uploader.UploadObject(ctx, &uploadInput); err != nil {
 		return 0, &fs.PathError{Op: "write", Path: key, Err: err}
 	}
 	return countReader.size, nil
@@ -622,9 +622,11 @@ func (i iofsInfo) Info() (fs.FileInfo, error) { return i, nil }
 func (i iofsInfo) Type() fs.FileMode          { return i.mode.Type() }
 
 // countReader is a reader that updates a size counter with each read. It is
-// what write returns a byte count from. It must not grow an io.ReaderAt: the
-// upload manager has a fast path for one that reads each part from absolute
-// offset zero rather than from where the reader is.
+// what write returns a byte count from. It should stay a plain io.Reader: an
+// io.Seeker here would let the transfer manager size the body by seeking the
+// caller's reader, which write would rather not do to a reader it was handed.
+// The size stays unknown instead, and a caller who needs it known hints it
+// through a ContentLength option -- see [BucketFS.WriteWithOptions].
 type countReader struct {
 	io.Reader
 	size int64

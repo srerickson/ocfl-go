@@ -21,7 +21,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
@@ -233,7 +233,7 @@ func TestWriteWithOptions(t *testing.T) {
 	ctx := t.Context()
 	fsys := testutil.TmpS3FS(t, nil)
 	// option to require key to not exist
-	opt := func(input *s3v2.PutObjectInput) {
+	opt := func(input *transfermanager.UploadObjectInput) {
 		match := "*"
 		input.IfNoneMatch = &match
 	}
@@ -603,9 +603,9 @@ func TestWrite_Mock(t *testing.T) {
 			if tcase.mock != nil {
 				api = tcase.mock(t)
 			}
-			uploaderOpt := func(u *manager.Uploader) {
-				u.Concurrency = tcase.uploadConc
-				u.PartSize = tcase.uploadPSize
+			uploaderOpt := func(o *transfermanager.Options) {
+				o.Concurrency = tcase.uploadConc
+				o.PartSizeBytes = tcase.uploadPSize
 			}
 			fsys := s3.NewBucketFS(api, tcase.bucket, s3.WithUploaderOptions(uploaderOpt))
 			val, err := fsys.Write(ctx, tcase.key, tcase.body)
@@ -622,15 +622,27 @@ func TestWrite_Mock(t *testing.T) {
 	}
 }
 
-// TestWriteContentLengthOption_Mock pins what Write does with the request's
-// ContentLength: it sets none of its own, and forwards a caller's untouched,
-// including when it is wrong.
+// TestWriteContentLengthOption_Mock pins what Write does with a caller's
+// ContentLength: it declares none of its own, and the transfer manager never
+// forwards the field to a request. It is a size hint used for part sizing, so
+// a wrong one neither fails the write nor changes the bytes that land.
 func TestWriteContentLengthOption_Mock(t *testing.T) {
 	ctx := context.Background()
 	const key, body = "tmp", "some content"
 
-	withLength := func(n int64) func(*s3v2.PutObjectInput) {
-		return func(in *s3v2.PutObjectInput) { in.ContentLength = &n }
+	withLength := func(n int64) func(*transfermanager.UploadObjectInput) {
+		return func(in *transfermanager.UploadObjectInput) { in.ContentLength = &n }
+	}
+	// readBack reports what the bucket now holds under key. The mock
+	// materializes objects, so this is the bytes that landed.
+	readBack := func(t *testing.T, fsys *s3.BucketFS) string {
+		t.Helper()
+		f, err := fsys.OpenFile(ctx, key)
+		be.NilErr(t, err)
+		defer f.Close()
+		got, err := io.ReadAll(f)
+		be.NilErr(t, err)
+		return string(got)
 	}
 
 	t.Run("write declares no length of its own", func(t *testing.T) {
@@ -644,6 +656,7 @@ func TestWriteContentLengthOption_Mock(t *testing.T) {
 		n, err := fsys.Write(ctx, key, r)
 		be.NilErr(t, err)
 		be.Equal(t, int64(len(body)-5), n)
+		be.Equal(t, body[5:], readBack(t, fsys))
 	})
 
 	t.Run("matching option is honored", func(t *testing.T) {
@@ -652,17 +665,16 @@ func TestWriteContentLengthOption_Mock(t *testing.T) {
 		n, err := fsys.WriteWithOptions(ctx, key, strings.NewReader(body), withLength(int64(len(body))))
 		be.NilErr(t, err)
 		be.Equal(t, int64(len(body)), n)
+		be.Equal(t, body, readBack(t, fsys))
 	})
 
-	t.Run("wrong option is passed through, not corrected", func(t *testing.T) {
+	t.Run("wrong option is a hint, not a declaration", func(t *testing.T) {
 		api := mock.New(bucket)
 		fsys := s3.NewBucketFS(api, bucket)
-		_, err := fsys.WriteWithOptions(ctx, key, strings.NewReader(body), withLength(int64(len(body))+10))
-		be.Nonzero(t, err)
-		isPathError(t, err)
-		var apiErr smithy.APIError
-		be.True(t, errors.As(err, &apiErr))
-		be.Equal(t, "IncompleteBody", apiErr.ErrorCode())
+		n, err := fsys.WriteWithOptions(ctx, key, strings.NewReader(body), withLength(int64(len(body))+10))
+		be.NilErr(t, err)
+		be.Equal(t, int64(len(body)), n)
+		be.Equal(t, body, readBack(t, fsys))
 	})
 }
 
