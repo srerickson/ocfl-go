@@ -1,0 +1,6 @@
+See [AGENTS.md](AGENTS.md) for module structure, Go conventions, and
+architecture notes for this repository.
+
+For OCFL domain rules (inventory format, versioning invariants, storage
+layouts, validation codes), see the `ocfl` skill at
+`.claude/skills/ocfl/SKILL.md`.
