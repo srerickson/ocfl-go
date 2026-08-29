@@ -131,11 +131,59 @@ Package boundaries to respect:
   - S3 tests require a running MinIO instance; use `make s3-up` /
     `make s3-test` / `make s3-down`, or `make test-all` to run everything
     including S3. Plain `go test ./...` skips the S3-backed tests.
-  - CI (`.github/workflows/go.yml`) also runs `go mod tidy` (failing if it
-    changes anything), `GOOS=windows go vet ./...` (the local backend's
-    atomic write relies on Windows-compatible rename semantics, so
-    Windows-only build breaks are caught even though tests only run on
-    Linux), and `go test ./... -count=5 -race`.
+
+## Running tests
+
+```sh
+go test ./...                    # everything except S3-backed tests
+go test ./... -race              # race detector — CI runs this, so should you
+                                  # before pushing anything touching fs/,
+                                  # internal/pipeline, or other concurrent code
+go test ./path/to/pkg/...        # scope to a package while iterating
+```
+
+S3-backed tests (`fs/s3/...`) need a MinIO instance:
+
+```sh
+make s3-up      # start MinIO via docker-compose
+make s3-test    # run fs/s3/... against it (OCFL_TEST_S3=http://localhost:9000)
+make s3-down    # stop MinIO
+make test-all   # s3-up, full `go test ./...`, s3-down — closest to full CI
+```
+
+## Checks to run before committing / on every commit
+
+Mirror what `.github/workflows/go.yml` runs on every push and PR — run these
+locally before committing so CI doesn't catch something avoidable:
+
+1. **`go mod tidy`** — then check `git diff go.mod go.sum` is empty. CI fails
+   the build if `go mod tidy` would change anything, so run it any time an
+   import is added or removed and commit the result.
+2. **`gofmt -l .`** (or just save with a `gofmt`-integrated editor/`goimports`)
+   — should report no files. Not a separate CI step, but unformatted code is
+   an easy, avoidable review nit.
+3. **`go vet ./...`** — standard vet checks.
+4. **`GOOS=windows go vet ./...`** — the module builds on Windows too (the
+   local backend's atomic `Write` relies on `os.Root.Rename` being a
+   replacing rename there), so cross-compile vet catches Windows-only
+   breakage even though tests only run on Linux in CI.
+5. **`go test ./... -count=5 -race`** — CI's exact test invocation.
+   `-count=5` reruns each test 5 times to surface flakiness (especially
+   relevant for `internal/pipeline` and other concurrent code) and defeats
+   Go's test result cache; `-race` catches data races. Add `-run
+   TestName -count=5` to repeat-check a single test under development
+   instead of the whole suite.
+6. If a change touches `fs/`, also run the S3 suite (`make s3-test`) — it's
+   not part of the default `go test ./...` run and is easy to forget.
+
+A useful one-liner before pushing:
+
+```sh
+go mod tidy && git diff --exit-code go.mod go.sum && \
+gofmt -l . && \
+go vet ./... && GOOS=windows go vet ./... && \
+go test ./... -count=5 -race
+```
 
 ## Architecture notes
 
