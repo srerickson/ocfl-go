@@ -2,7 +2,8 @@
 
 Go implementation of [OCFL](https://ocfl.io/). Library, not an app — breaking
 changes are frequent. OCFL domain rules live in the `ocfl` skill
-(`.claude/skills/ocfl/SKILL.md`), not here.
+(`.claude/skills/ocfl/SKILL.md`), not here. Use the `use-modern-go` skill
+(`.claude/skills/use-modern-go/SKILL.md`) when writing or editing Go code.
 
 ## Structure
 
