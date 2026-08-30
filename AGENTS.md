@@ -120,5 +120,4 @@ Also run `gofmt -l .` (must be empty) and plain `go vet ./...`. Touching
   `inventory.go`.
 - Storage: `fs/fs.go`.
 - OCFL domain rules: `.claude/skills/ocfl/SKILL.md`.
-- Modern Go idioms: `.claude/skills/use-modern-go/SKILL.md`.
 - Examples: `examples/listobjects`, `examples/update`, `examples/validate`.
