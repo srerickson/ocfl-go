@@ -13,6 +13,16 @@
 // what is left over. Only s3 has a leftover, because a bucket FS is scoped to
 // the whole bucket: for the other backends the path becomes part of the FS
 // itself and Path is ".".
+//
+// An s3 string builds its client from the default AWS configuration, with the
+// region, endpoint and path-style query parameters applied on top. Clients are
+// reused: strings with the same s3 settings share one, which is what lets
+// [ocflfs.Copy] see two bucket file systems as one backend and copy within the
+// bucket instead of moving every byte through this process. A file system
+// holding a client of your own -- from [WithS3Client] or [s3.NewBucketFS] --
+// shares a backend only with file systems holding that same client. The
+// ambient AWS configuration is read once per distinct set of settings, so
+// later changes to the environment are not picked up.
 package config
 
 import (
@@ -25,6 +35,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -60,8 +71,9 @@ type options struct {
 }
 
 // WithS3Client sets the client used for an "s3" configuration string. It is
-// used as-is, so no AWS configuration is loaded and the region, endpoint and
-// path-style query parameters are ignored.
+// used as-is, so no AWS configuration is loaded, the region, endpoint and
+// path-style query parameters are ignored, and the client [New] would
+// otherwise share is neither built nor used.
 func WithS3Client(cli s3.S3API) Option {
 	return func(o *options) { o.s3Client = cli }
 }
@@ -167,7 +179,7 @@ func newS3(ctx context.Context, u *url.URL, getopts *options) (*FSConfig, error)
 	}
 	client := getopts.s3Client
 	if client == nil {
-		if client, err = newS3Client(ctx, settings); err != nil {
+		if client, err = s3Client(ctx, settings); err != nil {
 			return nil, fmt.Errorf("fs configuration %q: %w", u, err)
 		}
 	}
@@ -208,6 +220,48 @@ func parseS3Query(query url.Values) (s3Settings, error) {
 		return settings, fmt.Errorf("invalid value for 'path-style': %q", value)
 	}
 	return settings, nil
+}
+
+// s3Clients holds the clients [New] has built, keyed by the settings that
+// produced them.
+var s3Clients struct {
+	sync.Mutex
+	clients map[s3Settings]*awss3.Client
+}
+
+// s3Client returns the client for settings, building it the first time it is
+// asked for and reusing it after that.
+//
+// The reuse is deliberate. [s3.BucketFS] compares clients by identity to
+// decide whether two file systems share a backend, so a client built fresh
+// for every call would make two bucket file systems built from equivalent
+// configuration strings look like different backends -- and a copy between
+// them would move every byte through this process instead of using the
+// bucket's own copy operation.
+func s3Client(ctx context.Context, settings s3Settings) (*awss3.Client, error) {
+	s3Clients.Lock()
+	cli := s3Clients.clients[settings]
+	s3Clients.Unlock()
+	if cli != nil {
+		return cli, nil
+	}
+	cli, err := newS3Client(ctx, settings)
+	if err != nil {
+		return nil, err
+	}
+	s3Clients.Lock()
+	defer s3Clients.Unlock()
+	// another caller may have built a client for these settings while this
+	// one was loading aws configuration. Keep the one already handed out, so
+	// that every file system with these settings shares a single client.
+	if existing := s3Clients.clients[settings]; existing != nil {
+		return existing, nil
+	}
+	if s3Clients.clients == nil {
+		s3Clients.clients = map[s3Settings]*awss3.Client{}
+	}
+	s3Clients.clients[settings] = cli
+	return cli, nil
 }
 
 // newS3Client builds an s3 client from the default AWS configuration, with
