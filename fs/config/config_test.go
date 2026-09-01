@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -201,6 +202,132 @@ func TestNewErrors(t *testing.T) {
 			be.True(t, cnf == nil)
 		})
 	}
+}
+
+// sameBackend reports whether the two configurations name the same storage
+// backend, per [ocflfs.SameBackend].
+func sameBackend(t *testing.T, a, b *config.FSConfig) bool {
+	t.Helper()
+	sb, ok := a.FS.(ocflfs.SameBackend)
+	be.True(t, ok)
+	return sb.SameBackend(b.FS)
+}
+
+func TestSameBackend(t *testing.T) {
+	noIMDS(t)
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	t.Run("s3 settings decide, not the string", func(t *testing.T) {
+		testCases := []struct {
+			name   string
+			a, b   string
+			expect bool
+		}{
+			{
+				name:   "identical strings",
+				a:      "s3://bucket/prefix?region=us-east-1",
+				b:      "s3://bucket/prefix?region=us-east-1",
+				expect: true,
+			},
+			{
+				name:   "same bucket, different prefix",
+				a:      "s3://bucket?region=us-east-1",
+				b:      "s3://bucket/prefix/dir?region=us-east-1",
+				expect: true,
+			},
+			{
+				name:   "same settings written in a different order",
+				a:      "s3://bucket?region=us-west-2&endpoint=http://localhost:9000&path-style=true",
+				b:      "s3://bucket?path-style=true&endpoint=http://localhost:9000&region=us-west-2",
+				expect: true,
+			},
+			{
+				name:   "different bucket",
+				a:      "s3://bucket?region=us-east-1",
+				b:      "s3://other?region=us-east-1",
+				expect: false,
+			},
+			{
+				name:   "different region",
+				a:      "s3://bucket?region=us-east-1",
+				b:      "s3://bucket?region=us-west-2",
+				expect: false,
+			},
+			{
+				name:   "different endpoint",
+				a:      "s3://bucket?region=us-east-1",
+				b:      "s3://bucket?region=us-east-1&endpoint=http://localhost:9000",
+				expect: false,
+			},
+		}
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				a, err := config.New(ctx, tc.a)
+				be.NilErr(t, err)
+				b, err := config.New(ctx, tc.b)
+				be.NilErr(t, err)
+				be.Equal(t, tc.expect, sameBackend(t, a, b))
+				be.Equal(t, tc.expect, sameBackend(t, b, a))
+			})
+		}
+	})
+
+	t.Run("s3 clients are reused", func(t *testing.T) {
+		conf := "s3://bucket/prefix?region=eu-central-1"
+		a, err := config.New(ctx, conf)
+		be.NilErr(t, err)
+		b, err := config.New(ctx, conf)
+		be.NilErr(t, err)
+		be.Equal(t, a.FS.(*s3.BucketFS).Client(), b.FS.(*s3.BucketFS).Client())
+	})
+
+	t.Run("s3 clients are reused across concurrent calls", func(t *testing.T) {
+		conf := "s3://bucket?region=ap-south-1"
+		clients := make([]s3.S3API, 8)
+		var wg sync.WaitGroup
+		for i := range clients {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				cnf, err := config.New(ctx, conf)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				clients[i] = cnf.FS.(*s3.BucketFS).Client()
+			}()
+		}
+		wg.Wait()
+		for _, client := range clients {
+			be.Equal(t, clients[0], client)
+		}
+	})
+
+	t.Run("s3 with a shared client", func(t *testing.T) {
+		client := awss3.NewFromConfig(aws.Config{Region: "us-east-1"})
+		cnf, err := config.New(ctx, "s3://bucket/prefix", config.WithS3Client(client))
+		be.NilErr(t, err)
+		// a bucket fs built by hand shares the backend when it shares the
+		// client, and not otherwise: the client New would have built is a
+		// different one.
+		shared := &config.FSConfig{FS: s3.NewBucketFS(client, "bucket"), Path: "."}
+		be.True(t, sameBackend(t, cnf, shared))
+		own, err := config.New(ctx, "s3://bucket/prefix?region=us-east-1")
+		be.NilErr(t, err)
+		be.False(t, sameBackend(t, cnf, own))
+	})
+
+	t.Run("local paths", func(t *testing.T) {
+		a, err := config.New(ctx, tmpDir)
+		be.NilErr(t, err)
+		b, err := config.New(ctx, fileURL(tmpDir))
+		be.NilErr(t, err)
+		be.True(t, sameBackend(t, a, b))
+		other, err := config.New(ctx, t.TempDir())
+		be.NilErr(t, err)
+		be.False(t, sameBackend(t, a, other))
+	})
 }
 
 func TestFSConfigRoundTrip(t *testing.T) {
