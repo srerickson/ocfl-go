@@ -2,12 +2,14 @@ package local
 
 import (
 	"context"
+	"encoding"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"iter"
 	"math/rand/v2"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -51,6 +53,7 @@ type FS struct {
 var _ ocflfs.WriteFS = (*FS)(nil)
 var _ ocflfs.DirEntriesFS = (*FS)(nil)
 var _ ocflfs.SameBackend = (*FS)(nil)
+var _ encoding.TextMarshaler = (*FS)(nil)
 
 // NewFS returns an FS for the directory at path, which must exist and be a
 // directory: the [os.Root] opened here holds a descriptor on it, so a missing
@@ -89,6 +92,19 @@ func (fsys *FS) Close() error {
 
 func (fsys *FS) Root() string {
 	return fsys.path
+}
+
+// MarshalText implements [encoding.TextMarshaler] for fsys. It returns a file
+// URL for the storage root, which is always absolute because [NewFS]
+// absolutizes the path it is given.
+func (fsys *FS) MarshalText() ([]byte, error) {
+	p := filepath.ToSlash(fsys.path)
+	if !strings.HasPrefix(p, "/") {
+		// windows: "C:/dir" is the path component "/C:/dir" in a file URL.
+		p = "/" + p
+	}
+	u := url.URL{Scheme: "file", Path: p}
+	return []byte(u.String()), nil
 }
 
 // SameBackend implements [ocflfs.SameBackend] for fsys. It reports true if

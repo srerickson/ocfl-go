@@ -2664,3 +2664,21 @@ func TestReadDirNilListField_Mock(t *testing.T) {
 		be.AllEqual(t, []string{"a.txt", "sub", "z.txt"}, names)
 	})
 }
+
+func TestMarshalText(t *testing.T) {
+	t.Run("client without settings", func(t *testing.T) {
+		text, err := s3.NewBucketFS(mock.New(bucket), bucket).MarshalText()
+		be.NilErr(t, err)
+		be.Equal(t, "s3://"+bucket, string(text))
+	})
+	t.Run("client with settings", func(t *testing.T) {
+		client := s3v2.NewFromConfig(aws.Config{Region: "us-west-2"}, func(o *s3v2.Options) {
+			o.BaseEndpoint = aws.String("http://localhost:9000")
+			o.UsePathStyle = true
+		})
+		text, err := s3.NewBucketFS(client, bucket).MarshalText()
+		be.NilErr(t, err)
+		want := "s3://" + bucket + "?endpoint=http%3A%2F%2Flocalhost%3A9000&path-style=true&region=us-west-2"
+		be.Equal(t, want, string(text))
+	})
+}

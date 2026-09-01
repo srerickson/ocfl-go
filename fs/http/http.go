@@ -4,6 +4,7 @@ package http
 
 import (
 	"context"
+	"encoding"
 	"fmt"
 	"io"
 	"io/fs"
@@ -41,6 +42,21 @@ func (f FS) BaseURL() string { return f.baseURL }
 
 // Client returns f's http client
 func (f FS) Client() *http.Client { return f.client }
+
+var _ encoding.TextMarshaler = FS{}
+
+// MarshalText implements [encoding.TextMarshaler] for f. It returns f's base
+// URL, and an error if that URL is not a valid http or https URL.
+func (f FS) MarshalText() ([]byte, error) {
+	u, err := url.Parse(f.baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling http backend: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("marshaling http backend: base url scheme is %q, expected http or https", u.Scheme)
+	}
+	return []byte(f.baseURL), nil
+}
 
 // OpenFile implements the ocfl/fs.FS interface for FS
 func (f FS) OpenFile(ctx context.Context, name string) (fs.File, error) {

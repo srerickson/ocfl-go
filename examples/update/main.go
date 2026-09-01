@@ -6,19 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/config"
-	awsS3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
-	"github.com/srerickson/ocfl-go/fs/local"
-	"github.com/srerickson/ocfl-go/fs/s3"
-	"github.com/srerickson/ocfl-go/logging"
+	"github.com/srerickson/ocfl-go/fs/config"
 )
 
 type cmdFlags struct {
@@ -48,13 +43,13 @@ func runUpdate(ctx context.Context, args []string) error {
 		}
 		return err
 	}
-	writeFS, dir, err := parseStoreConn(ctx, f.objPath)
+	objCnf, err := config.New(ctx, f.objPath, config.WithLogger(logger))
 	if err != nil {
 		return err
 	}
-	obj, err := ocfl.NewObject(ctx, writeFS, dir, ocfl.ObjectWithID(f.newID))
+	obj, err := ocfl.NewObject(ctx, objCnf.FS, objCnf.Path, ocfl.ObjectWithID(f.newID))
 	if err != nil {
-		return fmt.Errorf("%s: %w", dir, err)
+		return fmt.Errorf("%s: %w", objCnf.Path, err)
 	}
 	if !obj.Exists() && f.newID == "" {
 		return errors.New("'id' flag is required for to a create new objects (object does not exist)")
@@ -113,28 +108,4 @@ func parseArgs(args []string) (*cmdFlags, error) {
 		return nil, errors.New("missing required flags: " + strings.Join(missing, ", "))
 	}
 	return &f, nil
-}
-
-func parseStoreConn(ctx context.Context, name string) (ocflfs.FS, string, error) {
-	//if we were using s3-based backend:
-	rl, err := url.Parse(name)
-	if err != nil {
-		return nil, "", err
-	}
-	switch rl.Scheme {
-	case "s3":
-		cfg, err := config.LoadDefaultConfig(ctx)
-		if err != nil {
-			return nil, "", err
-		}
-		fsys := s3.NewBucketFS(awsS3.NewFromConfig(cfg), rl.Host,
-			s3.WithLogger(logging.DefaultLogger()))
-		return fsys, strings.TrimPrefix(rl.Path, "/"), nil
-	default:
-		fsys, err := local.NewFS(name)
-		if err != nil {
-			return nil, "", err
-		}
-		return fsys, ".", nil
-	}
 }

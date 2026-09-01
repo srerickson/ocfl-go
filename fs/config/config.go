@@ -1,0 +1,243 @@
+// Package config builds ocfl-go storage backends from URL-style configuration
+// strings, and renders them back into those strings.
+//
+// A configuration string names a backend with its scheme and carries whatever
+// that backend needs to be constructed:
+//
+//	file:///srv/ocfl                        a local directory
+//	/srv/ocfl                               the same, without the scheme
+//	s3://bucket/prefix?region=us-west-2     an s3 bucket, with "prefix" as the path
+//	https://example.org/ocfl                files read over http
+//
+// The FS is rooted as deeply as the backend allows and [FSConfig.Path] carries
+// what is left over. Only s3 has a leftover, because a bucket FS is scoped to
+// the whole bucket: for the other backends the path becomes part of the FS
+// itself and Path is ".".
+package config
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"path/filepath"
+	"strings"
+
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
+	ocflhttp "github.com/srerickson/ocfl-go/fs/http"
+	"github.com/srerickson/ocfl-go/fs/local"
+	"github.com/srerickson/ocfl-go/fs/s3"
+)
+
+// FSConfig is an [ocflfs.FS] together with a path inside it. It is built from
+// a configuration string with [New] and rendered back to one with
+// [FSConfig.MarshalText].
+//
+// FSConfig embeds the FS interface, so an FSConfig is itself an [ocflfs.FS]
+// and can be passed anywhere one is expected. Only OpenFile is promoted,
+// however: a caller that needs [ocflfs.WriteFS], [ocflfs.DirEntriesFS] or
+// [ocflfs.CopyFS] should type-assert the FS field.
+type FSConfig struct {
+	ocflfs.FS
+
+	// Path is the directory within FS that the configuration string referred
+	// to. It is "." when the string named no subdirectory.
+	Path string
+}
+
+// Option is a configuration option for [New].
+type Option func(*options)
+
+type options struct {
+	s3Client   s3.S3API
+	httpClient *http.Client
+	logger     *slog.Logger
+}
+
+// WithS3Client sets the client used for an "s3" configuration string. It is
+// used as-is, so no AWS configuration is loaded and the region, endpoint and
+// path-style query parameters are ignored.
+func WithS3Client(cli s3.S3API) Option {
+	return func(o *options) { o.s3Client = cli }
+}
+
+// WithHTTPClient sets the client used for an "http" or "https" configuration
+// string. It is ignored for other backends.
+func WithHTTPClient(cli *http.Client) Option {
+	return func(o *options) { o.httpClient = cli }
+}
+
+// WithLogger sets a logger used for debug-level messages by backends that
+// support one. Only the s3 backend does.
+func WithLogger(logger *slog.Logger) Option {
+	return func(o *options) { o.logger = logger }
+}
+
+// New returns the [FSConfig] described by conf. It returns an error if conf
+// cannot be parsed, if its scheme names an unknown backend, or if the backend
+// cannot be constructed -- a local directory that does not exist, for example.
+func New(ctx context.Context, conf string, opts ...Option) (*FSConfig, error) {
+	getopts := &options{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(getopts)
+		}
+	}
+	if conf == "" {
+		return nil, errors.New("empty fs configuration string")
+	}
+	u, err := url.Parse(conf)
+	if err != nil {
+		return nil, fmt.Errorf("parsing fs configuration %q: %w", conf, err)
+	}
+	// A one-letter scheme is a windows drive letter, not a backend: "C:\dir"
+	// parses as the scheme "c". Treat it, and anything with no scheme at all,
+	// as a path on the local file system.
+	if len(u.Scheme) < 2 {
+		return newLocal(conf)
+	}
+	switch u.Scheme {
+	case "file":
+		return newFile(u)
+	case "s3":
+		return newS3(ctx, u, getopts)
+	case "http", "https":
+		return newHTTP(conf, u, getopts)
+	}
+	return nil, fmt.Errorf("fs configuration %q: unsupported scheme %q", conf, u.Scheme)
+}
+
+// newLocal returns an FSConfig for a path on the local file system.
+func newLocal(name string) (*FSConfig, error) {
+	fsys, err := local.NewFS(name)
+	if err != nil {
+		return nil, fmt.Errorf("fs configuration %q: %w", name, err)
+	}
+	return &FSConfig{FS: fsys, Path: "."}, nil
+}
+
+// newFile returns an FSConfig for a file:// url. The url's path is the storage
+// root, so the returned Path is always ".".
+func newFile(u *url.URL) (*FSConfig, error) {
+	if u.Host != "" && u.Host != "localhost" {
+		return nil, fmt.Errorf("fs configuration %q: a file url's host must be empty or 'localhost'", u)
+	}
+	if u.RawQuery != "" {
+		return nil, fmt.Errorf("fs configuration %q: a file url takes no query parameters", u)
+	}
+	if u.Opaque != "" || u.Path == "" {
+		return nil, fmt.Errorf("fs configuration %q: a file url must have an absolute path, as in 'file:///srv/ocfl'", u)
+	}
+	return newLocal(urlPathToFilePath(u.Path))
+}
+
+// urlPathToFilePath converts the path component of a file url to a path in the
+// local file system's syntax.
+func urlPathToFilePath(p string) string {
+	// windows: the path component of "file:///C:/dir" is "/C:/dir"; the
+	// leading separator is not part of the path.
+	if len(p) > 2 && p[0] == '/' && p[2] == ':' {
+		p = p[1:]
+	}
+	return filepath.FromSlash(p)
+}
+
+// newS3 returns an FSConfig for an s3:// url. The url's host is the bucket and
+// its path is the returned Path, since the bucket FS spans the whole bucket.
+func newS3(ctx context.Context, u *url.URL, getopts *options) (*FSConfig, error) {
+	bucket := u.Host
+	if bucket == "" {
+		return nil, fmt.Errorf("fs configuration %q: missing bucket name, as in 's3://bucket'", u)
+	}
+	dir := strings.Trim(u.Path, "/")
+	if dir == "" {
+		dir = "."
+	}
+	if !fs.ValidPath(dir) {
+		return nil, fmt.Errorf("fs configuration %q: invalid path %q", u, dir)
+	}
+	settings, err := parseS3Query(u.Query())
+	if err != nil {
+		return nil, fmt.Errorf("fs configuration %q: %w", u, err)
+	}
+	client := getopts.s3Client
+	if client == nil {
+		if client, err = newS3Client(ctx, settings); err != nil {
+			return nil, fmt.Errorf("fs configuration %q: %w", u, err)
+		}
+	}
+	var bucketOpts []func(*s3.BucketFS)
+	if getopts.logger != nil {
+		bucketOpts = append(bucketOpts, s3.WithLogger(getopts.logger))
+	}
+	return &FSConfig{FS: s3.NewBucketFS(client, bucket, bucketOpts...), Path: dir}, nil
+}
+
+// s3Settings holds the parts of an s3 client's configuration that an s3:// url
+// can carry.
+type s3Settings struct {
+	region    string
+	endpoint  string
+	pathStyle bool
+}
+
+// parseS3Query reads the query parameters of an s3:// url. Unrecognized
+// parameters are an error, so that a misspelled one is not silently ignored.
+func parseS3Query(query url.Values) (s3Settings, error) {
+	settings := s3Settings{
+		region:   query.Get("region"),
+		endpoint: query.Get("endpoint"),
+	}
+	for key := range query {
+		switch key {
+		case "region", "endpoint", "path-style":
+		default:
+			return settings, fmt.Errorf("unknown query parameter %q: expected 'region', 'endpoint' or 'path-style'", key)
+		}
+	}
+	switch value := query.Get("path-style"); value {
+	case "", "false", "0":
+	case "true", "1":
+		settings.pathStyle = true
+	default:
+		return settings, fmt.Errorf("invalid value for 'path-style': %q", value)
+	}
+	return settings, nil
+}
+
+// newS3Client builds an s3 client from the default AWS configuration, with
+// settings applied on top of it.
+func newS3Client(ctx context.Context, settings s3Settings) (*awss3.Client, error) {
+	var awsOpts []func(*awsconfig.LoadOptions) error
+	if settings.region != "" {
+		awsOpts = append(awsOpts, awsconfig.WithRegion(settings.region))
+	}
+	cnf, err := awsconfig.LoadDefaultConfig(ctx, awsOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return awss3.NewFromConfig(cnf, func(o *awss3.Options) {
+		if settings.endpoint != "" {
+			o.BaseEndpoint = &settings.endpoint
+		}
+		o.UsePathStyle = settings.pathStyle
+	}), nil
+}
+
+// newHTTP returns an FSConfig for an http:// or https:// url. The whole url is
+// the FS's base url, so the returned Path is always ".".
+func newHTTP(conf string, u *url.URL, getopts *options) (*FSConfig, error) {
+	if u.RawQuery != "" {
+		return nil, fmt.Errorf("fs configuration %q: an http url takes no query parameters", u)
+	}
+	var httpOpts []ocflhttp.Option
+	if getopts.httpClient != nil {
+		httpOpts = append(httpOpts, ocflhttp.WithClient(getopts.httpClient))
+	}
+	return &FSConfig{FS: ocflhttp.New(conf, httpOpts...), Path: "."}, nil
+}
