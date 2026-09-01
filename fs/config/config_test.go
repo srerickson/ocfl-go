@@ -304,6 +304,53 @@ func TestSameBackend(t *testing.T) {
 		}
 	})
 
+	t.Run("s3 round trip through ambient aws configuration", func(t *testing.T) {
+		t.Setenv("AWS_REGION", "us-gov-west-1")
+		t.Setenv("AWS_ENDPOINT_URL_S3", "http://ambient.example:9000")
+
+		// This configuration string names only the bucket: its region and
+		// endpoint come from the environment. It is the only such string in
+		// these tests, which matters because the client it resolves to is
+		// cached for the life of the process.
+		ambient, err := config.New(ctx, "s3://bucket/prefix")
+		be.NilErr(t, err)
+		text, err := ambient.MarshalText()
+		be.NilErr(t, err)
+		// marshaling writes out what the environment resolved to.
+		be.Equal(t, "s3://bucket/prefix?endpoint=http%3A%2F%2Fambient.example%3A9000&region=us-gov-west-1", string(text))
+
+		var back config.FSConfig
+		be.NilErr(t, back.UnmarshalText(text))
+		be.Equal(t, ambient.Path, back.Path)
+		be.True(t, sameBackend(t, ambient, &back))
+
+		// the settings are all spelled out now, so marshaling again is a
+		// no-op.
+		again, err := back.MarshalText()
+		be.NilErr(t, err)
+		be.Equal(t, string(text), string(again))
+	})
+
+	t.Run("s3 ambient settings join a client already built", func(t *testing.T) {
+		t.Setenv("AWS_REGION", "us-gov-east-1")
+		t.Setenv("AWS_ENDPOINT_URL_S3", "http://joined.example:9000")
+
+		// the same two settings, once spelled out and once left to the
+		// environment, in that order. path-style keeps this pair's cache
+		// entries to itself.
+		explicit, err := config.New(ctx, "s3://bucket?path-style=true&region=us-gov-east-1&endpoint=http://joined.example:9000")
+		be.NilErr(t, err)
+		ambient, err := config.New(ctx, "s3://bucket?path-style=true")
+		be.NilErr(t, err)
+		be.True(t, sameBackend(t, explicit, ambient))
+
+		explicitText, err := explicit.MarshalText()
+		be.NilErr(t, err)
+		ambientText, err := ambient.MarshalText()
+		be.NilErr(t, err)
+		be.Equal(t, string(explicitText), string(ambientText))
+	})
+
 	t.Run("s3 with a shared client", func(t *testing.T) {
 		client := awss3.NewFromConfig(aws.Config{Region: "us-east-1"})
 		cnf, err := config.New(ctx, "s3://bucket/prefix", config.WithS3Client(client))

@@ -238,30 +238,55 @@ var s3Clients struct {
 // configuration strings look like different backends -- and a copy between
 // them would move every byte through this process instead of using the
 // bucket's own copy operation.
+//
+// A client is cached under the settings that asked for it and under the
+// settings it resolved to, which are not the same when the configuration
+// string leaves a region or an endpoint to the environment. That is what
+// makes a string like "s3://bucket" share its client with the fully
+// spelled-out string it marshals to.
 func s3Client(ctx context.Context, settings s3Settings) (*awss3.Client, error) {
-	s3Clients.Lock()
-	cli := s3Clients.clients[settings]
-	s3Clients.Unlock()
-	if cli != nil {
+	if cli := cachedS3Client(settings); cli != nil {
 		return cli, nil
 	}
 	cli, err := newS3Client(ctx, settings)
 	if err != nil {
 		return nil, err
 	}
+	resolved := resolvedS3Settings(cli)
 	s3Clients.Lock()
 	defer s3Clients.Unlock()
-	// another caller may have built a client for these settings while this
-	// one was loading aws configuration. Keep the one already handed out, so
-	// that every file system with these settings shares a single client.
+	// a client for either key may have appeared while this one was loading
+	// aws configuration. Keep whichever was already handed out, so that every
+	// file system with these settings shares a single client.
 	if existing := s3Clients.clients[settings]; existing != nil {
-		return existing, nil
+		cli = existing
+	} else if existing := s3Clients.clients[resolved]; existing != nil {
+		cli = existing
 	}
 	if s3Clients.clients == nil {
 		s3Clients.clients = map[s3Settings]*awss3.Client{}
 	}
 	s3Clients.clients[settings] = cli
+	s3Clients.clients[resolved] = cli
 	return cli, nil
+}
+
+// cachedS3Client returns the client cached for settings, or nil.
+func cachedS3Client(settings s3Settings) *awss3.Client {
+	s3Clients.Lock()
+	defer s3Clients.Unlock()
+	return s3Clients.clients[settings]
+}
+
+// resolvedS3Settings returns the settings cli ended up with, which include
+// whatever the ambient AWS configuration supplied.
+func resolvedS3Settings(cli *awss3.Client) s3Settings {
+	opts := cli.Options()
+	settings := s3Settings{region: opts.Region, pathStyle: opts.UsePathStyle}
+	if opts.BaseEndpoint != nil {
+		settings.endpoint = *opts.BaseEndpoint
+	}
+	return settings
 }
 
 // newS3Client builds an s3 client from the default AWS configuration, with
