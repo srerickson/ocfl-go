@@ -652,3 +652,17 @@ func TestMustNewFS(t *testing.T) {
 		MustNewFS(filepath.Join(t.TempDir(), "no-such-dir"))
 	})
 }
+
+func TestMarshalText(t *testing.T) {
+	tmpDir := t.TempDir()
+	abs, err := filepath.Abs(tmpDir)
+	be.NilErr(t, err)
+	text, err := MustNewFS(tmpDir).MarshalText()
+	be.NilErr(t, err)
+	slashed := filepath.ToSlash(abs)
+	if !strings.HasPrefix(slashed, "/") {
+		// windows: the drive letter follows the url's path separator.
+		slashed = "/" + slashed
+	}
+	be.Equal(t, "file://"+slashed, string(text))
+}

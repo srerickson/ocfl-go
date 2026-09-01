@@ -75,3 +75,15 @@ func TestEmbedFS(t *testing.T) {
 	be.Zero(t, info.ModTime())
 	defer srv.Close()
 }
+
+func TestMarshalText(t *testing.T) {
+	t.Run("https url", func(t *testing.T) {
+		text, err := ocflhttp.New("https://example.org/ocfl").MarshalText()
+		be.NilErr(t, err)
+		be.Equal(t, "https://example.org/ocfl", string(text))
+	})
+	t.Run("base url without a scheme", func(t *testing.T) {
+		_, err := ocflhttp.New("example.org/ocfl").MarshalText()
+		be.True(t, err != nil)
+	})
+}

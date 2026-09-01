@@ -2,10 +2,12 @@ package s3
 
 import (
 	"context"
+	"encoding"
 	"io"
 	"io/fs"
 	"iter"
 	"log/slog"
+	"net/url"
 	"reflect"
 
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
@@ -69,6 +71,34 @@ func (f *BucketFS) Client() S3API {
 // Bucket returns the bucket used to create f.
 func (f *BucketFS) Bucket() string {
 	return f.bucket
+}
+
+var _ encoding.TextMarshaler = (*BucketFS)(nil)
+
+// MarshalText implements [encoding.TextMarshaler] for f. It returns an s3 URL
+// whose host is f's bucket. When f's client is an [s3.Client], the settings
+// needed to reconstruct it that are not part of the default AWS configuration
+// -- region, endpoint and path-style addressing -- are added as query
+// parameters. A client of any other type contributes nothing beyond the
+// bucket.
+func (f *BucketFS) MarshalText() ([]byte, error) {
+	u := url.URL{Scheme: "s3", Host: f.bucket}
+	if cli, ok := f.client.(interface{ Options() s3.Options }); ok {
+		opts := cli.Options()
+		query := url.Values{}
+		if opts.Region != "" {
+			query.Set("region", opts.Region)
+		}
+		if opts.BaseEndpoint != nil && *opts.BaseEndpoint != "" {
+			query.Set("endpoint", *opts.BaseEndpoint)
+		}
+		if opts.UsePathStyle {
+			query.Set("path-style", "true")
+		}
+		// Encode() sorts by key, so the result is stable.
+		u.RawQuery = query.Encode()
+	}
+	return []byte(u.String()), nil
 }
 
 // OpenFile opens the object at name for reading, per [ocflfs.FS].

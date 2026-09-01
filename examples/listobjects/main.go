@@ -6,16 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"runtime"
-	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/config"
-	awsS3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/srerickson/ocfl-go"
-	ocflfs "github.com/srerickson/ocfl-go/fs"
-	"github.com/srerickson/ocfl-go/fs/s3"
+	"github.com/srerickson/ocfl-go/fs/config"
 	"github.com/srerickson/ocfl-go/logging"
 )
 
@@ -39,11 +34,11 @@ func main() {
 }
 
 func listObjects(ctx context.Context, storeConn string, numgos int, log *slog.Logger) (err error) {
-	fsys, dir, err := parseStoreConn(ctx, storeConn)
+	storeCnf, err := config.New(ctx, storeConn, config.WithLogger(log))
 	if err != nil {
 		return fmt.Errorf("can't parse storage root argument: %w", err)
 	}
-	root, err := ocfl.NewRoot(ctx, fsys, dir)
+	root, err := ocfl.NewRoot(ctx, storeCnf.FS, storeCnf.Path)
 	if err != nil {
 		return nil
 	}
@@ -55,23 +50,4 @@ func listObjects(ctx context.Context, storeConn string, numgos int, log *slog.Lo
 		fmt.Println(obj.ID())
 	}
 	return nil
-}
-
-func parseStoreConn(ctx context.Context, name string) (ocflfs.FS, string, error) {
-	//if we were using s3-based backend:
-	rl, err := url.Parse(name)
-	if err != nil {
-		return nil, "", err
-	}
-	switch rl.Scheme {
-	case "s3":
-		cfg, err := config.LoadDefaultConfig(ctx)
-		if err != nil {
-			return nil, "", err
-		}
-		fsys := s3.NewBucketFS(awsS3.NewFromConfig(cfg), rl.Host, s3.WithLogger(logging.DefaultLogger()))
-		return fsys, strings.TrimPrefix(rl.Path, "/"), nil
-	default:
-		return ocflfs.DirFS(name), ".", nil
-	}
 }
