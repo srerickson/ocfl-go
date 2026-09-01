@@ -170,8 +170,6 @@ func TestNew(t *testing.T) {
 			cnf, err := config.New(ctx, tc.conf, tc.opts...)
 			be.NilErr(t, err)
 			tc.check(t, cnf)
-			// the embedded FS makes the config itself usable as an FS.
-			var _ ocflfs.FS = cnf
 		})
 	}
 }
@@ -190,10 +188,16 @@ func TestNewErrors(t *testing.T) {
 		{name: "file url with host", conf: "file://example.org/srv/ocfl"},
 		{name: "file url with query", conf: "file:///srv/ocfl?region=us-east-1"},
 		{name: "relative file url", conf: "file:srv/ocfl"},
+		{name: "file url with fragment", conf: "file:///srv/ocfl#section"},
+		{name: "file url with user information", conf: "file://user@/srv/ocfl"},
 		{name: "s3 url without bucket", conf: "s3:///prefix"},
 		{name: "s3 url with unknown parameter", conf: "s3://bucket?path_style=true"},
 		{name: "s3 url with invalid path-style", conf: "s3://bucket?path-style=maybe"},
+		{name: "s3 url with fragment", conf: "s3://bucket/prefix#section"},
+		{name: "s3 url with user information", conf: "s3://key:secret@bucket/prefix"},
+		{name: "s3 url with a port in the bucket", conf: "s3://bucket:9000/prefix"},
 		{name: "http url with query", conf: "https://example.org/ocfl?region=us-east-1"},
+		{name: "http url with fragment", conf: "https://example.org/ocfl#section"},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -496,4 +500,49 @@ func TestFSConfigUnmarshalTextError(t *testing.T) {
 	var cnf config.FSConfig
 	be.True(t, cnf.UnmarshalText([]byte("ftp://example.org/ocfl")) != nil)
 	be.True(t, cnf.FS == nil)
+}
+
+// TestErrorsDontLeakSecrets checks that a configuration string carrying a
+// password does not put it in the error it produces: the url's own String
+// method writes the password out in full, so errors must use Redacted.
+func TestErrorsDontLeakSecrets(t *testing.T) {
+	noIMDS(t)
+	ctx := context.Background()
+	for _, conf := range []string{
+		"s3://key:seCr3t@bucket/prefix",
+		"ftp://key:seCr3t@example.org/ocfl",
+		"https://key:seCr3t@example.org/ocfl?region=us-east-1",
+		"file://key:seCr3t@localhost/srv/ocfl",
+	} {
+		t.Run(conf, func(t *testing.T) {
+			_, err := config.New(ctx, conf)
+			be.True(t, err != nil)
+			be.True(t, !strings.Contains(err.Error(), "seCr3t"))
+		})
+	}
+}
+
+// TestResetS3Clients comes last in this file: it empties a cache the other
+// tests fill, and go test runs a package's tests in the order they are
+// declared.
+func TestResetS3Clients(t *testing.T) {
+	noIMDS(t)
+	ctx := context.Background()
+	const conf = "s3://bucket?region=us-east-1&endpoint=http://reset.example:9000"
+	before, err := config.New(ctx, conf)
+	be.NilErr(t, err)
+	same, err := config.New(ctx, conf)
+	be.NilErr(t, err)
+	be.True(t, sameBackend(t, before, same))
+
+	config.ResetS3Clients()
+	after, err := config.New(ctx, conf)
+	be.NilErr(t, err)
+	// the same string, but a client built from the AWS configuration as it is
+	// now -- so the file systems no longer share a backend.
+	be.True(t, !sameBackend(t, before, after))
+	// and the clients built after the reset are shared again.
+	again, err := config.New(ctx, conf)
+	be.NilErr(t, err)
+	be.True(t, sameBackend(t, after, again))
 }

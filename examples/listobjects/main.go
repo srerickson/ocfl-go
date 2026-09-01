@@ -40,7 +40,7 @@ func listObjects(ctx context.Context, storeConn string, numgos int, log *slog.Lo
 	}
 	root, err := ocfl.NewRoot(ctx, storeCnf.FS, storeCnf.Path)
 	if err != nil {
-		return nil
+		return err
 	}
 	for obj, err := range root.ObjectsBatch(ctx, numgos) {
 		if err != nil {

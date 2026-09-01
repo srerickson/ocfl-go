@@ -22,7 +22,11 @@
 // holding a client of your own -- from [WithS3Client] or [s3.NewBucketFS] --
 // shares a backend only with file systems holding that same client. The
 // ambient AWS configuration is read once per distinct set of settings, so
-// later changes to the environment are not picked up.
+// later changes to the environment are not picked up. Credentials are not part
+// of those settings: a shared client keeps the credential provider it was
+// built with, which refreshes on its own for a role or a profile but not when
+// the process's own environment variables change. [ResetS3Clients] drops the
+// clients so that later strings build new ones.
 package config
 
 import (
@@ -49,12 +53,15 @@ import (
 // a configuration string with [New] and rendered back to one with
 // [FSConfig.MarshalText].
 //
-// FSConfig embeds the FS interface, so an FSConfig is itself an [ocflfs.FS]
-// and can be passed anywhere one is expected. Only OpenFile is promoted,
-// however: a caller that needs [ocflfs.WriteFS], [ocflfs.DirEntriesFS] or
-// [ocflfs.CopyFS] should type-assert the FS field.
+// An FSConfig is not itself an [ocflfs.FS]: pass the FS field to functions
+// that want one. The file system package decides what a backend can do by
+// asking the value it is given -- [ocflfs.ReadDir] for [ocflfs.DirEntriesFS],
+// [ocflfs.Copy] for [ocflfs.CopyFS] -- and a wrapper only answers for the
+// methods it carries. Handing on the FS itself keeps those questions
+// answerable.
 type FSConfig struct {
-	ocflfs.FS
+	// FS is the storage backend the configuration string named.
+	FS ocflfs.FS
 
 	// Path is the directory within FS that the configuration string referred
 	// to. It is "." when the string named no subdirectory.
@@ -105,7 +112,7 @@ func New(ctx context.Context, conf string, opts ...Option) (*FSConfig, error) {
 	}
 	u, err := url.Parse(conf)
 	if err != nil {
-		return nil, fmt.Errorf("parsing fs configuration %q: %w", conf, err)
+		return nil, fmt.Errorf("parsing fs configuration: %w", err)
 	}
 	// A one-letter scheme is a windows drive letter, not a backend: "C:\dir"
 	// parses as the scheme "c". Treat it, and anything with no scheme at all,
@@ -121,7 +128,7 @@ func New(ctx context.Context, conf string, opts ...Option) (*FSConfig, error) {
 	case "http", "https":
 		return newHTTP(conf, u, getopts)
 	}
-	return nil, fmt.Errorf("fs configuration %q: unsupported scheme %q", conf, u.Scheme)
+	return nil, fmt.Errorf("fs configuration %q: unsupported scheme %q", u.Redacted(), u.Scheme)
 }
 
 // newLocal returns an FSConfig for a path on the local file system.
@@ -136,14 +143,20 @@ func newLocal(name string) (*FSConfig, error) {
 // newFile returns an FSConfig for a file:// url. The url's path is the storage
 // root, so the returned Path is always ".".
 func newFile(u *url.URL) (*FSConfig, error) {
+	if u.User != nil {
+		return nil, fmt.Errorf("fs configuration %q: a file url takes no user information", u.Redacted())
+	}
 	if u.Host != "" && u.Host != "localhost" {
-		return nil, fmt.Errorf("fs configuration %q: a file url's host must be empty or 'localhost'", u)
+		return nil, fmt.Errorf("fs configuration %q: a file url's host must be empty or 'localhost'", u.Redacted())
 	}
 	if u.RawQuery != "" {
-		return nil, fmt.Errorf("fs configuration %q: a file url takes no query parameters", u)
+		return nil, fmt.Errorf("fs configuration %q: a file url takes no query parameters", u.Redacted())
+	}
+	if u.Fragment != "" {
+		return nil, fmt.Errorf("fs configuration %q: a file url takes no fragment", u.Redacted())
 	}
 	if u.Opaque != "" || u.Path == "" {
-		return nil, fmt.Errorf("fs configuration %q: a file url must have an absolute path, as in 'file:///srv/ocfl'", u)
+		return nil, fmt.Errorf("fs configuration %q: a file url must have an absolute path, as in 'file:///srv/ocfl'", u.Redacted())
 	}
 	return newLocal(urlPathToFilePath(u.Path))
 }
@@ -162,25 +175,37 @@ func urlPathToFilePath(p string) string {
 // newS3 returns an FSConfig for an s3:// url. The url's host is the bucket and
 // its path is the returned Path, since the bucket FS spans the whole bucket.
 func newS3(ctx context.Context, u *url.URL, getopts *options) (*FSConfig, error) {
+	// credentials belong to the AWS configuration, not to the url: an s3
+	// string that carries them would have them silently ignored, and would put
+	// a secret in every error message that quoted it.
+	if u.User != nil {
+		return nil, fmt.Errorf("fs configuration %q: an s3 url takes no user information; credentials come from the AWS configuration", u.Redacted())
+	}
+	if u.Fragment != "" {
+		return nil, fmt.Errorf("fs configuration %q: an s3 url takes no fragment", u.Redacted())
+	}
 	bucket := u.Host
 	if bucket == "" {
-		return nil, fmt.Errorf("fs configuration %q: missing bucket name, as in 's3://bucket'", u)
+		return nil, fmt.Errorf("fs configuration %q: missing bucket name, as in 's3://bucket'", u.Redacted())
+	}
+	if u.Port() != "" {
+		return nil, fmt.Errorf("fs configuration %q: %q is not a bucket name; an alternate host goes in the 'endpoint' query parameter", u.Redacted(), bucket)
 	}
 	dir := strings.Trim(u.Path, "/")
 	if dir == "" {
 		dir = "."
 	}
 	if !fs.ValidPath(dir) {
-		return nil, fmt.Errorf("fs configuration %q: invalid path %q", u, dir)
+		return nil, fmt.Errorf("fs configuration %q: invalid path %q", u.Redacted(), dir)
 	}
 	settings, err := parseS3Query(u.Query())
 	if err != nil {
-		return nil, fmt.Errorf("fs configuration %q: %w", u, err)
+		return nil, fmt.Errorf("fs configuration %q: %w", u.Redacted(), err)
 	}
 	client := getopts.s3Client
 	if client == nil {
 		if client, err = s3Client(ctx, settings); err != nil {
-			return nil, fmt.Errorf("fs configuration %q: %w", u, err)
+			return nil, fmt.Errorf("fs configuration %q: %w", u.Redacted(), err)
 		}
 	}
 	var bucketOpts []func(*s3.BucketFS)
@@ -271,6 +296,19 @@ func s3Client(ctx context.Context, settings s3Settings) (*awss3.Client, error) {
 	return cli, nil
 }
 
+// ResetS3Clients drops the s3 clients [New] has built, so that later
+// configuration strings build new ones. Use it when the process's AWS
+// configuration has changed -- new credentials in the environment, a different
+// profile -- since the clients are otherwise kept for the life of the process.
+//
+// File systems already built keep the clients they hold, so one built before a
+// reset and one built after do not share a backend.
+func ResetS3Clients() {
+	s3Clients.Lock()
+	defer s3Clients.Unlock()
+	s3Clients.clients = nil
+}
+
 // cachedS3Client returns the client cached for settings, or nil.
 func cachedS3Client(settings s3Settings) *awss3.Client {
 	s3Clients.Lock()
@@ -312,7 +350,10 @@ func newS3Client(ctx context.Context, settings s3Settings) (*awss3.Client, error
 // the FS's base url, so the returned Path is always ".".
 func newHTTP(conf string, u *url.URL, getopts *options) (*FSConfig, error) {
 	if u.RawQuery != "" {
-		return nil, fmt.Errorf("fs configuration %q: an http url takes no query parameters", u)
+		return nil, fmt.Errorf("fs configuration %q: an http url takes no query parameters", u.Redacted())
+	}
+	if u.Fragment != "" {
+		return nil, fmt.Errorf("fs configuration %q: an http url takes no fragment", u.Redacted())
 	}
 	var httpOpts []ocflhttp.Option
 	if getopts.httpClient != nil {
