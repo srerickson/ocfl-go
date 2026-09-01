@@ -9,11 +9,8 @@ import (
 	"net/url"
 	"path"
 	"strings"
-
-	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
-var _ ocflfs.FS = FSConfig{}
 var _ encoding.TextMarshaler = FSConfig{}
 var _ encoding.TextUnmarshaler = (*FSConfig)(nil)
 
