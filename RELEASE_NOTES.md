@@ -35,4 +35,4 @@ Changes since **v0.11.2** (July 17, 2026).
 
 ## Dependencies
 
-- AWS SDK v2 packages updated (`aws-sdk-go-v2` v1.42.1 → v1.45.1, `service/s3` v1.104.2 → v1.109.1, `smithy-go` v1.27.3 → v1.28.1), `feature/s3/manager` replaced with `feature/s3/transfermanager` v0.4.1. Go 1.25 is still the minimum.
+- AWS SDK v2 packages updated (`aws-sdk-go-v2` v1.42.1 → v1.47.0, `service/s3` v1.104.2 → v1.113.1, `smithy-go` v1.27.3 → v1.28.1), `feature/s3/manager` replaced with `feature/s3/transfermanager` v0.4.7. `golang.org/x/crypto` and `golang.org/x/sync` were updated as well, and the minimum Go version moved from 1.25 to 1.26.
