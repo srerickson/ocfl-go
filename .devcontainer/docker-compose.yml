@@ -15,7 +15,7 @@ services:
       OCFL_TEST_S3: "http://minio:9000"
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2024-09-22T00-33-43Z
+    image: docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
     restart: unless-stopped
     volumes:
       - minio-data:/data
