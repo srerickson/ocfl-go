@@ -212,6 +212,7 @@ func (r *Root) ValidateObject(ctx context.Context, id string, opts ...ObjectVali
 
 // ValidateObjectDir validates the object at a path relative to the root.
 func (r *Root) ValidateObjectDir(ctx context.Context, dir string, opts ...ObjectValidationOption) *ObjectValidation {
+	opts = append(opts, validationWithRoot(r))
 	return ValidateObject(ctx, r.fs, path.Join(r.dir, dir), opts...)
 }
 

@@ -311,6 +311,14 @@ func ValidationSkipDigest() ObjectValidationOption {
 	}
 }
 
+// validationWithRoot associates the validated object with its storage root,
+// enabling root-dependent checks (e.g., E081).
+func validationWithRoot(root *Root) ObjectValidationOption {
+	return func(v *ObjectValidation) {
+		v.objOptions = append(v.objOptions, objectWithRoot(root))
+	}
+}
+
 // ValidationLogger sets the *slog.Logger that should be used for logging
 // validation errors and warnings.
 func ValidationLogger(logger *slog.Logger) ObjectValidationOption {

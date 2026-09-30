@@ -15,6 +15,7 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/internal/logical-fs"
 	"github.com/srerickson/ocfl-go/logging"
+	"github.com/srerickson/ocfl-go/validation/code"
 )
 
 var ErrObjectReadOnly = errors.New("object is read-only")
@@ -24,6 +25,11 @@ var ErrNoObjectID = errors.New("object does not exist: an explicit ID is require
 // [Object.Update]) when the version number of the new object version does not
 // match the number expected by [UpdateWithNewHead].
 var ErrUnexpectedHead = errors.New("unexpected object version number")
+
+// ErrObjectSpecExceedsRoot is returned when an update would give an object an
+// OCFL specification version that is newer than the specification version of
+// the storage root that contains it (OCFL E081).
+var ErrObjectSpecExceedsRoot = errors.New("object's OCFL spec cannot be newer than the storage root's OCFL spec")
 
 // Object represents and OCFL Object, typically part of a [Root].
 type Object struct {
@@ -145,10 +151,21 @@ func (obj *Object) InventoryBuilder() *InventoryBuilder {
 // update plan.
 func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
 	updateOpts := newObjectUpdateOptions(opts...)
+	// If the object is part of a storage root, the root's spec is the ceiling
+	// for the object's spec (E081). New objects default to the root's spec
+	// rather than the library default; existing objects keep their spec.
+	var rootSpec Spec
+	if obj.root != nil {
+		rootSpec = obj.root.Spec()
+	}
+	newSpec := updateOpts.spec
+	if newSpec.Empty() && obj.inventory == nil {
+		newSpec = rootSpec
+	}
 	newInv, err := obj.InventoryBuilder().
 		FixitySource(stage.FixitySource).
 		ContentPathFunc(updateOpts.contentPathFunc).
-		Spec(updateOpts.spec).
+		Spec(newSpec).
 		AddVersion(
 			stage.State,
 			stage.DigestAlgorithm,
@@ -158,6 +175,10 @@ func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...Ob
 		).Finalize()
 	if err != nil {
 		return nil, fmt.Errorf("building new inventory for update: %w", err)
+	}
+	if !rootSpec.Empty() && newInv.Type.Spec.Cmp(rootSpec) > 0 {
+		return nil, fmt.Errorf("%w: object spec is OCFL v%s, storage root spec is OCFL v%s",
+			ErrObjectSpecExceedsRoot, newInv.Type.Spec, rootSpec)
 	}
 	if expect := updateOpts.newHead; expect > 0 && newInv.Head.Num() != expect {
 		return nil, fmt.Errorf("%w: expected update to create version %d, but it would create version %d",
@@ -440,6 +461,14 @@ func ValidateObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...Obj
 		// unknown OCFL version
 		v.AddFatal(err)
 		return v
+	}
+	// E081: if the object is validated as part of a storage root, its declared
+	// spec must not be newer than the root's spec.
+	if root := v.obj.root; root != nil && !root.Spec().Empty() && !state.Spec.Empty() {
+		if rootSpec := root.Spec(); state.Spec.Cmp(rootSpec) > 0 {
+			err := fmt.Errorf("object declares OCFL v%s but its storage root declares OCFL v%s", state.Spec, rootSpec)
+			v.AddFatal(verr(err, code.E081(string(rootSpec))))
+		}
 	}
 	if err := impl.ValidateObjectRoot(ctx, v, state); err != nil {
 		return v
