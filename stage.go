@@ -64,8 +64,8 @@ func StageDir(ctx context.Context, fsys fs.FS, dir string, alg digest.Algorithm,
 // given digest algorithms and added to the stage. The alg argument must be
 // sha512 or sha256.
 func StageFiles(ctx context.Context, files iter.Seq[*fs.FileRef], alg digest.Algorithm, fixity ...digest.Algorithm) (*Stage, error) {
-	if alg.ID() != digest.SHA512.ID() && alg.ID() != digest.SHA256.ID() {
-		return nil, fmt.Errorf("at least one algorithm (sha512 or sha256) must be provided")
+	if err := validStageAlgorithm(alg); err != nil {
+		return nil, err
 	}
 	validFiles, fileTypeErr := fs.UntilErr(fs.CheckFileTypes(ctx, files))
 	digests, digestErr := fs.UntilErr(digest.DigestFiles(ctx, validFiles, alg, fixity...))
@@ -142,8 +142,8 @@ func (s *Stage) Overlay(stages ...*Stage) error {
 	if s.State == nil {
 		s.State = DigestMap{}
 	}
-	if al := s.DigestAlgorithm; al == nil || (al.ID() != digest.SHA512.ID() && al.ID() != digest.SHA256.ID()) {
-		return errors.New("stage's digest algorithm must be 'sha512' or 'sha256'")
+	if err := s.validAlgorithm(); err != nil {
+		return err
 	}
 	var err error
 	for _, over := range stages {
@@ -159,6 +159,26 @@ func (s *Stage) Overlay(stages ...*Stage) error {
 	}
 	if err := s.State.Valid(); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validAlgorithm returns an error if s is nil or s.DigestAlgorithm is not
+// sha512 or sha256.
+func (s *Stage) validAlgorithm() error {
+	if s == nil {
+		return errors.New("stage is nil")
+	}
+	return validStageAlgorithm(s.DigestAlgorithm)
+}
+
+// validStageAlgorithm returns an error unless alg is sha512 or sha256.
+func validStageAlgorithm(alg digest.Algorithm) error {
+	if alg == nil {
+		return errors.New("stage's digest algorithm is not set: must be 'sha512' or 'sha256'")
+	}
+	if id := alg.ID(); id != digest.SHA512.ID() && id != digest.SHA256.ID() {
+		return fmt.Errorf("stage's digest algorithm must be 'sha512' or 'sha256', not %q", id)
 	}
 	return nil
 }

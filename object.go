@@ -144,6 +144,11 @@ func (obj *Object) InventoryBuilder() *InventoryBuilder {
 // an *[UpdatePlan] that can be used to apply the changes. It does not apply the
 // update plan.
 func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
+	// validate stage up-front: a nil stage or missing digest algorithm would
+	// otherwise panic in the inventory builder.
+	if err := stage.validAlgorithm(); err != nil {
+		return nil, fmt.Errorf("in object update plan: %w", err)
+	}
 	updateOpts := newObjectUpdateOptions(opts...)
 	newInv, err := obj.InventoryBuilder().
 		FixitySource(stage.FixitySource).

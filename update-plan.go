@@ -13,6 +13,7 @@ import (
 	"path"
 	"runtime"
 	"slices"
+	"strings"
 
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"golang.org/x/sync/errgroup"
@@ -20,6 +21,13 @@ import (
 
 // ErrRevertUpdate: can't revert an update because the update ran to completion
 var ErrRevertUpdate = errors.New("the update has completed and cannot be reverted")
+
+// ErrMissingContent: the update can't be applied because the [ContentSource]
+// doesn't provide content for one or more digests required by the update plan.
+var ErrMissingContent = errors.New("content source is missing required content")
+
+// maximum number of missing digests listed in an ErrMissingContent error message
+const maxMissingContentListed = 5
 
 // UpdatePlan is a sequence of steps ([PlanStep]) for updating an OCFL object.
 // It allows updates to be interrupted, resumed, retried or reverted. To update
@@ -62,11 +70,49 @@ func newUpdatePlan(newInv *Inventory, oldInv *StoredInventory) (*UpdatePlan, err
 // the plan may run concurrently. Use SetGoLimit to set number of goroutines
 // used to run concurrent steps.
 func (u *UpdatePlan) Apply(ctx context.Context, objFS ocflfs.FS, objDir string, src ContentSource) (*StoredInventory, error) {
+	// Before running any step (and mutating the object), check that src
+	// provides all content needed by the incomplete steps.
+	if err := u.checkContentSource(src); err != nil {
+		return nil, err
+	}
 	err := runSteps(ctx, u.IncompleteSteps(), objFS, objDir, src, u.goLimit, u.logger, false)
 	if err != nil {
 		return nil, err
 	}
 	return u.newInv, nil
+}
+
+// checkContentSource returns an error wrapping ErrMissingContent if src
+// doesn't provide content for every incomplete step that copies content into
+// the object. If no incomplete step requires content, src may be nil.
+func (u *UpdatePlan) checkContentSource(src ContentSource) error {
+	var missing []string
+	seen := map[string]bool{}
+	for step := range u.IncompleteSteps() {
+		dig := step.ContentDigest()
+		if dig == "" || seen[dig] {
+			continue
+		}
+		seen[dig] = true
+		if src == nil {
+			missing = append(missing, dig)
+			continue
+		}
+		if srcFS, srcPath := src.GetContent(dig); srcFS == nil || srcPath == "" {
+			missing = append(missing, dig)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	listed := missing
+	var more string
+	if len(missing) > maxMissingContentListed {
+		listed = missing[:maxMissingContentListed]
+		more = fmt.Sprintf(" and %d more", len(missing)-maxMissingContentListed)
+	}
+	return fmt.Errorf("%w: %d missing digest(s): %s%s", ErrMissingContent,
+		len(missing), strings.Join(listed, ", "), more)
 }
 
 // BaseInventoryDigest returns the digest of the object's existing inventory.json.
@@ -511,9 +557,12 @@ func updateVersionContentsSteps(newContent PathMap) []PlanStep {
 			async: true,
 			run: func(ctx context.Context, objFS ocflfs.FS, objDir string, src ContentSource) (int64, error) {
 				dstPath := path.Join(objDir, dstName)
+				if src == nil {
+					return 0, fmt.Errorf("%w: %q", ErrMissingContent, dig)
+				}
 				srcFS, srcPath := src.GetContent(dig)
-				if srcFS == nil {
-					return 0, fmt.Errorf("content source doesn't provide %q", dig)
+				if srcFS == nil || srcPath == "" {
+					return 0, fmt.Errorf("%w: %q", ErrMissingContent, dig)
 				}
 				return ocflfs.Copy(ctx, objFS, dstPath, srcFS, srcPath)
 			},
