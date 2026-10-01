@@ -409,14 +409,17 @@ func (obj *Object) VersionFS(ctx context.Context, v int) (fs.FS, error) {
 }
 
 // VersionStage returns a *Stage matching the content of the version with the
-// given number (1...HEAD). If ther version does not exist, nil is returned.
+// given number (1...HEAD). If v < 1, the most recent version is used. If the
+// version does not exist, nil is returned. The stage's State is a copy of the
+// version state, so it can be modified (e.g., with [DigestMap.Mutate]) to
+// build a new version without affecting obj.
 func (obj *Object) VersionStage(v int) *Stage {
 	ver := obj.version(v)
 	if ver == nil {
 		return nil
 	}
 	return &Stage{
-		State:           ver.State,
+		State:           ver.State.Clone(),
 		DigestAlgorithm: obj.DigestAlgorithm(),
 		ContentSource:   obj,
 		FixitySource:    obj,
