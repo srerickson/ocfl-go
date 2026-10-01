@@ -636,6 +636,58 @@ func TestObject_VersionFS(t *testing.T) {
 	}
 }
 
+// Modifying the state of the stage returned by VersionStage must not change
+// the object's own version state: the stage is the starting point for a new
+// version, and an aliased state would rewrite earlier versions in the next
+// inventory.
+func TestObject_VersionStage(t *testing.T) {
+	ctx := context.Background()
+	newObj := func(t *testing.T) (ocflfs.FS, *ocfl.Object) {
+		t.Helper()
+		fsys, err := local.NewFS(t.TempDir())
+		be.NilErr(t, err)
+		obj, err := ocfl.NewObject(ctx, fsys, "obj", ocfl.ObjectWithID("obj"))
+		be.NilErr(t, err)
+		stage, err := ocfl.StageBytes(map[string][]byte{
+			"a.txt": []byte("a"),
+			"b.txt": []byte("b"),
+		}, digest.SHA256)
+		be.NilErr(t, err)
+		_, err = obj.Update(ctx, stage, "v1", ocfl.User{Name: "Anna"})
+		be.NilErr(t, err)
+		return fsys, obj
+	}
+	user := ocfl.User{Name: "Anna"}
+
+	t.Run("remove a file", func(t *testing.T) {
+		fsys, obj := newObj(t)
+		v1State := obj.Version(1).State()
+		stage := obj.VersionStage(0)
+		be.Nonzero(t, stage)
+		stage.State.Mutate(ocfl.RemovePath("a.txt"))
+		be.True(t, v1State.Eq(obj.Version(1).State()))
+		_, err := obj.Update(ctx, stage, "v2", user)
+		be.NilErr(t, err)
+		be.True(t, v1State.Eq(obj.Version(1).State()))
+		be.DeepEqual(t, []string{"b.txt"}, obj.Version(2).State().AllPaths())
+		be.NilErr(t, ocfl.ValidateObject(ctx, fsys, obj.Path()).Err())
+	})
+
+	t.Run("rename a file", func(t *testing.T) {
+		fsys, obj := newObj(t)
+		v1State := obj.Version(1).State()
+		stage := obj.VersionStage(1)
+		be.Nonzero(t, stage)
+		stage.State.Mutate(ocfl.RenamePaths("a.txt", "c.txt"))
+		be.True(t, v1State.Eq(obj.Version(1).State()))
+		_, err := obj.Update(ctx, stage, "v2", user)
+		be.NilErr(t, err)
+		be.True(t, v1State.Eq(obj.Version(1).State()))
+		be.DeepEqual(t, []string{"b.txt", "c.txt"}, obj.Version(2).State().AllPaths())
+		be.NilErr(t, ocfl.ValidateObject(ctx, fsys, obj.Path()).Err())
+	})
+}
+
 func TestValidateObject(t *testing.T) {
 	ctx := context.Background()
 	fixturePath := filepath.Join(`testdata`, `object-fixtures`, `1.1`)
