@@ -382,6 +382,61 @@ func TestObject_Update(t *testing.T) {
 		be.Nonzero(t, err)
 		be.True(t, errors.Is(err, ocfl.ErrObjectReadOnly))
 	})
+	t.Run("with new head", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		fsys, err := local.NewFS(tmpDir)
+		be.NilErr(t, err)
+		obj, err := ocfl.NewObject(ctx, fsys, ".", ocfl.ObjectWithID("new-object"))
+		be.NilErr(t, err)
+		be.False(t, obj.Exists())
+		stage1, err := ocfl.StageBytes(map[string][]byte{"a.txt": []byte("a")}, digest.SHA512)
+		be.NilErr(t, err)
+		stage2, err := ocfl.StageBytes(map[string][]byte{"b.txt": []byte("b")}, digest.SHA512)
+		be.NilErr(t, err)
+		stage3, err := ocfl.StageBytes(map[string][]byte{"c.txt": []byte("c")}, digest.SHA512)
+		be.NilErr(t, err)
+		user := ocfl.User{Name: "Anna Karenina"}
+
+		// new object: expecting v2 fails and writes nothing
+		plan, err := obj.Update(ctx, stage1, "v1", user, ocfl.UpdateWithNewHead(2))
+		be.Nonzero(t, err)
+		be.True(t, errors.Is(err, ocfl.ErrUnexpectedHead))
+		be.In(t, "expected update to create version 2", err.Error())
+		be.In(t, "would create version 1", err.Error())
+		be.Zero(t, plan)
+		be.False(t, obj.Exists())
+		entries, err := os.ReadDir(tmpDir)
+		be.NilErr(t, err)
+		be.Equal(t, 0, len(entries))
+
+		// new object: expecting v1 succeeds
+		_, err = obj.Update(ctx, stage1, "v1", user, ocfl.UpdateWithNewHead(1))
+		be.NilErr(t, err)
+		be.Equal(t, ocfl.V(1), obj.Head())
+
+		// existing object (v1): expecting v3 fails, object is unchanged
+		_, err = obj.Update(ctx, stage2, "v2", user, ocfl.UpdateWithNewHead(3))
+		be.Nonzero(t, err)
+		be.True(t, errors.Is(err, ocfl.ErrUnexpectedHead))
+		be.Equal(t, ocfl.V(1), obj.Head())
+
+		// existing object (v1): expecting v2 succeeds
+		_, err = obj.Update(ctx, stage2, "v2", user, ocfl.UpdateWithNewHead(2))
+		be.NilErr(t, err)
+		be.Equal(t, ocfl.V(2), obj.Head())
+
+		// existing object (v2): expecting v2 again fails (stale expectation)
+		_, err = obj.Update(ctx, stage3, "v3", user, ocfl.UpdateWithNewHead(2))
+		be.Nonzero(t, err)
+		be.True(t, errors.Is(err, ocfl.ErrUnexpectedHead))
+		be.Equal(t, ocfl.V(2), obj.Head())
+
+		// values < 1 are ignored
+		_, err = obj.Update(ctx, stage3, "v3", user, ocfl.UpdateWithNewHead(0))
+		be.NilErr(t, err)
+		be.Equal(t, ocfl.V(3), obj.Head())
+		be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
+	})
 }
 
 func TestObject_UpdateFixtures(t *testing.T) {

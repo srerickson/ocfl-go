@@ -20,6 +20,11 @@ import (
 var ErrObjectReadOnly = errors.New("object is read-only")
 var ErrNoObjectID = errors.New("object does not exist: an explicit ID is required but was not provided")
 
+// ErrUnexpectedHead is returned by [Object.NewUpdatePlan] (and
+// [Object.Update]) when the version number of the new object version does not
+// match the number expected by [UpdateWithNewHead].
+var ErrUnexpectedHead = errors.New("unexpected object version number")
+
 // Object represents and OCFL Object, typically part of a [Root].
 type Object struct {
 	// object's storage backend. Must implement WriteFS to update.
@@ -153,6 +158,10 @@ func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...Ob
 		).Finalize()
 	if err != nil {
 		return nil, fmt.Errorf("building new inventory for update: %w", err)
+	}
+	if expect := updateOpts.newHead; expect > 0 && newInv.Head.Num() != expect {
+		return nil, fmt.Errorf("%w: expected update to create version %d, but it would create version %d",
+			ErrUnexpectedHead, expect, newInv.Head.Num())
 	}
 	currentInv := obj.inventory
 	if !updateOpts.allowUnchanged && currentInv != nil {
@@ -605,8 +614,12 @@ func UpdateWithOCFLSpec(s Spec) ObjectUpdateOption {
 }
 
 // UpdateWithNewHead is used to enforce the expected version number (without
-// padding) for the version created with the update. Without this, the
-// new version increments the existing version number, whatever it may be.
+// padding) for the version created with the update. If the update would create
+// a version with a different number, [Object.NewUpdatePlan] (and therefore
+// [Object.Update]) returns an error wrapping [ErrUnexpectedHead] and nothing is
+// written to the object. For a new object, the expected version number is 1.
+// Values of v less than 1 are ignored; without this option, the new version
+// increments the existing version number, whatever it may be.
 func UpdateWithNewHead(v int) ObjectUpdateOption {
 	return func(o *objectUpdateOptions) {
 		o.newHead = v
