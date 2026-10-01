@@ -148,8 +148,13 @@ func (obj *Object) InventoryBuilder() *InventoryBuilder {
 
 // NewUpdatePlan builds a new object inventory using stage's state and returns
 // an *[UpdatePlan] that can be used to apply the changes. It does not apply the
-// update plan.
+// update plan. The stage is required: NewUpdatePlan panics if it is nil.
 func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
+	// validate the stage's digest algorithm up-front: if it's missing, the
+	// inventory builder would panic. stage must not be nil.
+	if err := validStageAlgorithm(stage.DigestAlgorithm); err != nil {
+		return nil, fmt.Errorf("in object update plan: %w", err)
+	}
 	updateOpts := newObjectUpdateOptions(opts...)
 	// If the object is part of a storage root, the root's spec is the ceiling
 	// for the object's spec (E081). New objects default to the root's spec

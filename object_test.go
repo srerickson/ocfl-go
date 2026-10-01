@@ -437,6 +437,141 @@ func TestObject_Update(t *testing.T) {
 		be.Equal(t, ocfl.V(3), obj.Head())
 		be.NilErr(t, ocfl.ValidateObject(ctx, obj.FS(), obj.Path()).Err())
 	})
+	t.Run("stage without digest algorithm", func(t *testing.T) {
+		// regression: used to panic with a nil pointer dereference
+		fsys, err := local.NewFS(t.TempDir())
+		be.NilErr(t, err)
+		obj, err := ocfl.NewObject(ctx, fsys, ".", ocfl.ObjectWithID("new-object"))
+		be.NilErr(t, err)
+		_, err = obj.Update(ctx, &ocfl.Stage{State: ocfl.DigestMap{}}, "new object", ocfl.User{Name: "Anna Karenina"})
+		be.Nonzero(t, err)
+		be.In(t, "digest algorithm", err.Error())
+		be.False(t, obj.Exists())
+		// nothing written
+		entries, err := ocflfs.ReadDir(ctx, fsys, ".")
+		be.NilErr(t, err)
+		be.Zero(t, len(entries))
+	})
+	t.Run("stage with unsupported digest algorithm", func(t *testing.T) {
+		fsys, err := local.NewFS(t.TempDir())
+		be.NilErr(t, err)
+		obj, err := ocfl.NewObject(ctx, fsys, ".", ocfl.ObjectWithID("new-object"))
+		be.NilErr(t, err)
+		_, err = obj.Update(ctx, &ocfl.Stage{State: ocfl.DigestMap{}, DigestAlgorithm: digest.MD5}, "new object", ocfl.User{Name: "Anna Karenina"})
+		be.Nonzero(t, err)
+		be.In(t, "md5", err.Error())
+		be.False(t, obj.Exists())
+	})
+	t.Run("missing content: new object", func(t *testing.T) {
+		// The stage's state references a digest that its content source
+		// doesn't provide. The update must fail before anything is written.
+		fsys, err := local.NewFS(t.TempDir())
+		be.NilErr(t, err)
+		obj, err := ocfl.NewObject(ctx, fsys, "obj", ocfl.ObjectWithID("new-object"))
+		be.NilErr(t, err)
+		stage, err := ocfl.StageBytes(map[string][]byte{"a.txt": []byte("content")}, digest.SHA512)
+		be.NilErr(t, err)
+		fakeDigest := strings.Repeat("a", 128)
+		stage.State[fakeDigest] = []string{"missing.txt"}
+		be.True(t, stage.HasContent(stage.State.DigestFor("a.txt")))
+		be.False(t, stage.HasContent(fakeDigest))
+		plan, err := obj.Update(ctx, stage, "new object", ocfl.User{Name: "Anna Karenina"})
+		be.Nonzero(t, err)
+		be.True(t, errors.Is(err, ocfl.ErrMissingContent))
+		be.In(t, fakeDigest, err.Error())
+		be.False(t, obj.Exists())
+		// no steps ran
+		be.Nonzero(t, plan)
+		for step := range plan.Steps() {
+			be.False(t, step.Completed())
+			be.Zero(t, step.ErrMsg())
+		}
+		// object directory was not created: no namaste, no partial object
+		_, err = ocflfs.ReadDir(ctx, fsys, "obj")
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+		// object can still be opened as a non-existing object
+		obj2, err := ocfl.NewObject(ctx, fsys, "obj", ocfl.ObjectWithID("new-object"))
+		be.NilErr(t, err)
+		be.False(t, obj2.Exists())
+		// the same plan can be applied once the missing content is available
+		missingFS := ocflfs.NewWrapFS(fstest.MapFS{"fixed.txt": &fstest.MapFile{Data: []byte("fixed")}})
+		be.NilErr(t, stage.Overlay(&ocfl.Stage{
+			DigestAlgorithm: digest.SHA512,
+			ContentSource:   fixedContentSource{fakeDigest: missingFS},
+		}))
+		be.True(t, stage.HasContent(fakeDigest))
+		be.NilErr(t, obj.ApplyUpdatePlan(ctx, plan, stage.ContentSource))
+		be.True(t, obj.Exists())
+		be.True(t, plan.Completed())
+	})
+	t.Run("missing content: existing object", func(t *testing.T) {
+		fixture := filepath.Join(`testdata`, `object-fixtures`, `1.1`, `good-objects`, `minimal_one_version_one_file`)
+		fsys := testutil.TmpLocalFS(t, fixture)
+		obj, err := ocfl.NewObject(ctx, fsys, "minimal_one_version_one_file")
+		be.NilErr(t, err)
+		be.True(t, obj.Exists())
+		prevDigest := obj.InventoryDigest()
+		stage := &ocfl.Stage{
+			State:           ocfl.DigestMap{strings.Repeat("b", 128): []string{"new.txt"}},
+			DigestAlgorithm: digest.SHA512,
+			ContentSource:   nil, // no content source at all
+		}
+		_, err = obj.Update(ctx, stage, "update", ocfl.User{Name: "Anna Karenina"})
+		be.True(t, errors.Is(err, ocfl.ErrMissingContent))
+		be.Equal(t, prevDigest, obj.InventoryDigest())
+		// no partial version directory
+		_, err = ocflfs.ReadDir(ctx, fsys, "minimal_one_version_one_file/v2")
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+		be.NilErr(t, ocfl.ValidateObject(ctx, fsys, "minimal_one_version_one_file").Err())
+	})
+	t.Run("missing content: error lists a limited number of digests", func(t *testing.T) {
+		fsys, err := local.NewFS(t.TempDir())
+		be.NilErr(t, err)
+		obj, err := ocfl.NewObject(ctx, fsys, ".", ocfl.ObjectWithID("new-object"))
+		be.NilErr(t, err)
+		state := ocfl.DigestMap{}
+		for i := range 8 {
+			state[fmt.Sprintf("%0128d", i)] = []string{fmt.Sprintf("file-%d.txt", i)}
+		}
+		stage := &ocfl.Stage{State: state, DigestAlgorithm: digest.SHA512}
+		_, err = obj.Update(ctx, stage, "update", ocfl.User{Name: "Anna Karenina"})
+		be.True(t, errors.Is(err, ocfl.ErrMissingContent))
+		be.In(t, "8 missing digest(s)", err.Error())
+		be.In(t, "and 3 more", err.Error())
+	})
+	t.Run("rename-only update without content source", func(t *testing.T) {
+		fsys, err := local.NewFS(t.TempDir())
+		be.NilErr(t, err)
+		obj, err := ocfl.NewObject(ctx, fsys, ".", ocfl.ObjectWithID("new-object"))
+		be.NilErr(t, err)
+		stage, err := ocfl.StageBytes(map[string][]byte{"a.txt": []byte("content")}, digest.SHA512)
+		be.NilErr(t, err)
+		_, err = obj.Update(ctx, stage, "v1", ocfl.User{Name: "Anna Karenina"})
+		be.NilErr(t, err)
+		// v2: same digests, new logical paths, and no content source
+		dig := stage.State.DigestFor("a.txt")
+		be.Nonzero(t, dig)
+		renamed := &ocfl.Stage{
+			State:           ocfl.DigestMap{dig: []string{"renamed.txt", "dir/copy.txt"}},
+			DigestAlgorithm: digest.SHA512,
+		}
+		_, err = obj.Update(ctx, renamed, "v2", ocfl.User{Name: "Anna Karenina"})
+		be.NilErr(t, err)
+		be.Equal(t, 2, obj.Head().Num())
+		be.NilErr(t, ocfl.ValidateObject(ctx, fsys, ".").Err())
+		be.DeepEqual(t, []string{"dir/copy.txt", "renamed.txt"}, slices.Sorted(maps.Keys(obj.Version(0).State().PathMap())))
+	})
+}
+
+// fixedContentSource is a ContentSource that resolves digests to a fixed FS
+// and path (used to test content-source checks)
+type fixedContentSource map[string]ocflfs.FS
+
+func (c fixedContentSource) GetContent(dig string) (ocflfs.FS, string) {
+	if fsys, ok := c[dig]; ok {
+		return fsys, "fixed.txt"
+	}
+	return nil, ""
 }
 
 func TestObject_UpdateFixtures(t *testing.T) {
