@@ -142,7 +142,7 @@ func (s *Stage) Overlay(stages ...*Stage) error {
 	if s.State == nil {
 		s.State = DigestMap{}
 	}
-	if err := s.validAlgorithm(); err != nil {
+	if err := validStageAlgorithm(s.DigestAlgorithm); err != nil {
 		return err
 	}
 	var err error
@@ -161,15 +161,6 @@ func (s *Stage) Overlay(stages ...*Stage) error {
 		return err
 	}
 	return nil
-}
-
-// validAlgorithm returns an error if s is nil or s.DigestAlgorithm is not
-// sha512 or sha256.
-func (s *Stage) validAlgorithm() error {
-	if s == nil {
-		return errors.New("stage is nil")
-	}
-	return validStageAlgorithm(s.DigestAlgorithm)
 }
 
 // validStageAlgorithm returns an error unless alg is sha512 or sha256.

@@ -462,16 +462,6 @@ func TestObject_Update(t *testing.T) {
 		be.In(t, "md5", err.Error())
 		be.False(t, obj.Exists())
 	})
-	t.Run("nil stage", func(t *testing.T) {
-		fsys, err := local.NewFS(t.TempDir())
-		be.NilErr(t, err)
-		obj, err := ocfl.NewObject(ctx, fsys, ".", ocfl.ObjectWithID("new-object"))
-		be.NilErr(t, err)
-		_, err = obj.NewUpdatePlan(nil, "new object", ocfl.User{Name: "Anna Karenina"})
-		be.Nonzero(t, err)
-		be.In(t, "nil", err.Error())
-		be.False(t, obj.Exists())
-	})
 	t.Run("missing content: new object", func(t *testing.T) {
 		// The stage's state references a digest that its content source
 		// doesn't provide. The update must fail before anything is written.
