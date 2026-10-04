@@ -3,6 +3,7 @@ package config_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -217,12 +218,13 @@ func sameBackend(t *testing.T, a, b *config.FSConfig) bool {
 	return sb.SameBackend(b.FS)
 }
 
-func TestOpener(t *testing.T) {
+func TestRegistry(t *testing.T) {
 	ctx := context.Background()
-	open := config.Opener(config.WithS3Client(stubS3API{}))
+	reg := config.Registry(config.WithS3Client(stubS3API{}))
+	be.DeepEqual(t, []string{"file", "http", "https", "s3"}, reg.Schemes())
 	t.Run("local", func(t *testing.T) {
 		dir := t.TempDir()
-		fsys, err := open(ctx, fileURL(dir))
+		fsys, err := reg.Open(ctx, fileURL(dir))
 		be.NilErr(t, err)
 		localFS, ok := fsys.(*local.FS)
 		be.True(t, ok)
@@ -231,18 +233,32 @@ func TestOpener(t *testing.T) {
 		be.Equal(t, fileURL(dir), string(text))
 	})
 	t.Run("s3 bucket", func(t *testing.T) {
-		fsys, err := open(ctx, "s3://bucket")
+		fsys, err := reg.Open(ctx, "s3://bucket")
 		be.NilErr(t, err)
-		_, ok := fsys.(*s3.BucketFS)
+		bucketFS, ok := fsys.(*s3.BucketFS)
+		be.True(t, ok)
+		_, ok = bucketFS.Client().(stubS3API)
 		be.True(t, ok)
 	})
 	t.Run("s3 bucket with prefix", func(t *testing.T) {
-		_, err := open(ctx, "s3://bucket/prefix")
+		_, err := reg.Open(ctx, "s3://bucket/prefix")
 		be.Nonzero(t, err)
 	})
-	t.Run("invalid", func(t *testing.T) {
-		_, err := open(ctx, "ftp://example.org/ocfl")
-		be.Nonzero(t, err)
+	t.Run("http", func(t *testing.T) {
+		for _, conf := range []string{"http://example.org/ocfl", "https://example.org/ocfl"} {
+			fsys, err := reg.Open(ctx, conf)
+			be.NilErr(t, err)
+			_, ok := fsys.(*ocflhttp.FS)
+			be.True(t, ok)
+		}
+	})
+	t.Run("unknown scheme", func(t *testing.T) {
+		_, err := reg.Open(ctx, "ftp://example.org/ocfl")
+		be.True(t, errors.Is(err, ocflfs.ErrUnknownScheme))
+	})
+	t.Run("local path without a scheme", func(t *testing.T) {
+		_, err := reg.Open(ctx, t.TempDir())
+		be.True(t, errors.Is(err, ocflfs.ErrUnknownScheme))
 	})
 }
 

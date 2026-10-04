@@ -125,27 +125,35 @@ func (c *FSConfig) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// Opener returns a function that opens the FS described by a configuration
-// string, using opts. The string must name the root of a backend, as the
-// MarshalText methods of the backends in this module do: a string that
-// leaves a path within the FS, such as an s3 bucket with a prefix, is an
-// error. The returned function can be used as an [ocfl.FSOpener] to load a
-// saved [ocfl.ContentMap] or [ocfl.Stage].
+// Registry returns an [ocflfs.Registry] that opens the "file", "s3", "http"
+// and "https" configuration strings that [New] accepts, using opts. A string
+// must name the root of a backend, as the MarshalText methods of the backends
+// in this module do: a string that leaves a path within the FS, such as an s3
+// bucket with a prefix, is an error. Use it to open the sources of a saved
+// [ocfl.ContentMap] with [ocfl.ContentMap.Open].
 //
-// [ocfl.FSOpener]: https://pkg.go.dev/github.com/srerickson/ocfl-go#FSOpener
+// It is the default registry for this module's backends, which the
+// [ocflfs] package can't provide because the backends import it.
+//
 // [ocfl.ContentMap]: https://pkg.go.dev/github.com/srerickson/ocfl-go#ContentMap
-// [ocfl.Stage]: https://pkg.go.dev/github.com/srerickson/ocfl-go#Stage
-func Opener(opts ...Option) func(ctx context.Context, text string) (ocflfs.FS, error) {
-	return func(ctx context.Context, text string) (ocflfs.FS, error) {
-		cnf, err := New(ctx, text, opts...)
+// [ocfl.ContentMap.Open]: https://pkg.go.dev/github.com/srerickson/ocfl-go#ContentMap.Open
+func Registry(opts ...Option) ocflfs.Registry {
+	open := func(ctx context.Context, conf string) (ocflfs.FS, error) {
+		cnf, err := New(ctx, conf, opts...)
 		if err != nil {
 			return nil, err
 		}
 		if cnf.Path != "." {
-			return nil, fmt.Errorf("fs configuration %q: names a path within a file system, not a file system", text)
+			return nil, fmt.Errorf("fs configuration %q: names a path within a file system, not a file system", conf)
 		}
 		return cnf.FS, nil
 	}
+	return ocflfs.NewRegistry(map[string]ocflfs.OpenFunc{
+		"file":  open,
+		"s3":    open,
+		"http":  open,
+		"https": open,
+	})
 }
 
 // Option is a configuration option for [New].
