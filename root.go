@@ -124,6 +124,47 @@ func (r *Root) NewObjectDir(ctx context.Context, dir string, opts ...ObjectOptio
 	return NewObject(ctx, r.fs, objPath, opts...)
 }
 
+// NewUpdate returns a new draft *[ObjectUpdate] for the object with the given
+// ID in the root, as with [NewUpdate]. The root's OCFL spec is recorded in the
+// update, so the update can't give the object a newer spec than the root's
+// (E081). A new object uses the root's spec unless [UpdateWithOCFLSpec] is
+// used. If the Root has no storage layout for resolving object IDs, the
+// returned error is ErrLayoutUndefined.
+func (r *Root) NewUpdate(ctx context.Context, id string, opts ...UpdateOption) (*ObjectUpdate, error) {
+	objPath, err := r.ResolveID(id)
+	if err != nil {
+		return nil, err
+	}
+	opts = append(opts, updateWithRootSpec(r.spec))
+	return NewUpdate(ctx, r.fs, path.Join(r.dir, objPath), id, opts...)
+}
+
+// Apply applies the finalized update u to the object in the root with u's
+// ID, using src for new content, and returns the updated object. See
+// [ObjectUpdate.Apply].
+func (r *Root) Apply(ctx context.Context, u *ObjectUpdate, src ContentSource, opts ...UpdateOption) (*Object, error) {
+	objPath, err := r.ResolveID(u.ID())
+	if err != nil {
+		return nil, err
+	}
+	obj, err := u.Apply(ctx, r.fs, path.Join(r.dir, objPath), src, opts...)
+	if err != nil {
+		return nil, err
+	}
+	obj.root = r
+	return obj, nil
+}
+
+// Revert reverts the interrupted update u to the object in the root with u's
+// ID. See [ObjectUpdate.Revert].
+func (r *Root) Revert(ctx context.Context, u *ObjectUpdate, opts ...UpdateOption) error {
+	objPath, err := r.ResolveID(u.ID())
+	if err != nil {
+		return err
+	}
+	return u.Revert(ctx, r.fs, path.Join(r.dir, objPath), opts...)
+}
+
 // ResolveID resolves the object id to a path relative to the root. If
 // the root has no layout, the returned error is ErrLayoutUndefined.
 func (r *Root) ResolveID(id string) (string, error) {

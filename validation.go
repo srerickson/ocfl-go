@@ -240,7 +240,6 @@ func (v *ObjectValidation) addInventory(inv *StoredInventory, isRoot bool) error
 	}
 	if isRoot {
 		v.obj.inventory = inv
-		v.obj.inventoryIsRoot = true
 	}
 	return nil
 }
