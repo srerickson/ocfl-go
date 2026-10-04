@@ -100,10 +100,7 @@ func (r *pacedReader) Read(p []byte) (int, error) {
 	if r.pos > 0 {
 		time.Sleep(r.pause)
 	}
-	end := r.pos + r.step
-	if end > len(r.data) {
-		end = len(r.data)
-	}
+	end := min(r.pos+r.step, len(r.data))
 	n := copy(p, r.data[r.pos:end])
 	r.pos += n
 	return n, nil
@@ -148,11 +145,9 @@ func TestFS_WriteAtomic(t *testing.T) {
 
 		var werr error
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, werr = fsys.Write(ctx, "test.bin", r)
-		}()
+		})
 		<-r.first
 		cancel()
 		close(r.release)
@@ -185,11 +180,9 @@ func TestFS_WriteAtomic(t *testing.T) {
 
 		var werr error
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, werr = fsys.Write(ctx, "test.bin", r)
-		}()
+		})
 		<-r.first
 		cancel()
 		close(r.release)
@@ -221,11 +214,9 @@ func TestFS_WriteAtomic(t *testing.T) {
 
 		var werr error
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, werr = fsys.Write(ctx, "test.bin", r)
-		}()
+		})
 		<-r.first
 		close(r.release)
 		wg.Wait()
@@ -260,13 +251,11 @@ func TestFS_WriteAtomic(t *testing.T) {
 		const readers = 3
 		readyWG.Add(readers)
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			defer close(writeDone)
 			<-startWrite
 			_, _ = fsys.Write(ctx, target, &pacedReader{data: newContent, step: 8 * 1024, pause: 250 * time.Microsecond})
-		}()
+		})
 
 		readErrs := make(chan string, readers)
 		var rwg sync.WaitGroup
@@ -275,7 +264,7 @@ func TestFS_WriteAtomic(t *testing.T) {
 			go func() {
 				defer rwg.Done()
 				readyWG.Done()
-				for i := 0; i < 300; i++ {
+				for range 300 {
 					done := false
 					select {
 					case <-writeDone:
@@ -329,11 +318,9 @@ func TestFS_WriteAtomic(t *testing.T) {
 		var n int64
 		var werr error
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			n, werr = fsys.Write(context.Background(), "test.bin", r)
-		}()
+		})
 		<-r.first
 
 		// The write is blocked mid-copy with bytes already in the temp file.
@@ -368,11 +355,9 @@ func TestFS_WriteAtomic(t *testing.T) {
 
 		var werr error
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, werr = fsys.Write(context.Background(), "test.bin", r)
-		}()
+		})
 		<-r.first
 
 		temps := atomicTempFiles(t, tmpDir)
@@ -472,11 +457,9 @@ func TestFS_WriteFailureReportsZeroBytes(t *testing.T) {
 	var n int64
 	var werr error
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		n, werr = fsys.Write(context.Background(), "test.bin", r)
-	}()
+	})
 	<-r.first
 	close(r.release)
 	wg.Wait()

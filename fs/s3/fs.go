@@ -214,7 +214,7 @@ func sameClient(a, b S3API) bool {
 		return false
 	}
 	switch va.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
 		return va.Pointer() == vb.Pointer()
 	}
 	if va.Comparable() {
