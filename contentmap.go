@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"net/url"
 	"reflect"
 	"slices"
 	"testing/fstest"
@@ -24,11 +25,6 @@ type ContentSource interface {
 	GetContent(digest string) (fsys ocflfs.FS, path string)
 }
 
-// FSOpener opens an FS from text returned by the FS's MarshalText method (see
-// [encoding.TextMarshaler]). The fs/config package provides one for the
-// storage backends in this module.
-type FSOpener func(ctx context.Context, text string) (ocflfs.FS, error)
-
 // ContentMap maps digests to the location of content with the digest: a file
 // in an FS or bytes in memory. It implements [ContentSource]. The zero value is
 // an empty ContentMap, ready to use.
@@ -36,54 +32,27 @@ type FSOpener func(ctx context.Context, text string) (ocflfs.FS, error)
 // A ContentMap can be saved as JSON if all of its content is in files and each
 // file's FS implements [encoding.TextMarshaler], as the storage backends in
 // this module do. Each FS is saved as the text from its MarshalText method,
-// and file paths are saved relative to their FS. Use [UnmarshalContentMap] to
-// load a saved ContentMap.
+// and file paths are saved relative to their FS.
+//
+// A ContentMap loaded from JSON keeps each FS as its saved text: decoding
+// does no I/O, so a ContentMap whose content is no longer available can still
+// be loaded, changed and saved. Call [ContentMap.Open] to open the FSs before
+// using the ContentMap as a [ContentSource]: until then, GetContent finds no
+// content in them.
 type ContentMap struct {
-	sources []ocflfs.FS
+	sources []contentMapSource
 	files   map[string]contentMapFile // digest -> file
 	bytes   map[string][]byte         // digest -> content
-}
-
-// UnmarshalContentMap loads a ContentMap saved with [ContentMap.MarshalJSON],
-// using open to open each FS that content is stored in. open is required.
-func UnmarshalContentMap(ctx context.Context, data []byte, open FSOpener) (*ContentMap, error) {
-	var j contentMapJSON
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&j); err != nil {
-		return nil, fmt.Errorf("decoding content map: %w", err)
-	}
-	c := &ContentMap{
-		sources: make([]ocflfs.FS, len(j.Sources)),
-		files:   make(map[string]contentMapFile, len(j.Content)),
-	}
-	for i, text := range j.Sources {
-		fsys, err := open(ctx, text)
-		if err != nil {
-			return nil, fmt.Errorf("opening content map source %q: %w", text, err)
-		}
-		c.sources[i] = fsys
-	}
-	for dig, file := range j.Content {
-		if file.src < 0 || file.src >= len(c.sources) {
-			return nil, fmt.Errorf("content map entry for %q has an invalid source index: %d", dig, file.src)
-		}
-		if !fs.ValidPath(file.name) || file.name == "." {
-			return nil, fmt.Errorf("content map entry for %q has an invalid path: %q", dig, file.name)
-		}
-		c.files[normalizeDigest(dig)] = file
-	}
-	return c, nil
 }
 
 // AddFile sets the location of content with the digest dig to the file name
 // in fsys. fsys must not be nil.
 func (c *ContentMap) AddFile(dig string, fsys ocflfs.FS, name string) {
 	dig = normalizeDigest(dig)
-	src := slices.IndexFunc(c.sources, func(s ocflfs.FS) bool { return sameFS(s, fsys) })
+	src := slices.IndexFunc(c.sources, func(s contentMapSource) bool { return sameFS(s.fs, fsys) })
 	if src < 0 {
 		src = len(c.sources)
-		c.sources = append(c.sources, fsys)
+		c.sources = append(c.sources, contentMapSource{fs: fsys})
 	}
 	if c.files == nil {
 		c.files = map[string]contentMapFile{}
@@ -118,11 +87,16 @@ func (c *ContentMap) Digests() []string {
 	return digests
 }
 
-// GetContent implements [ContentSource] for *ContentMap.
+// GetContent implements [ContentSource] for *ContentMap. Content in an FS
+// that was loaded from JSON and hasn't been opened with [ContentMap.Open] is
+// not found.
 func (c *ContentMap) GetContent(dig string) (ocflfs.FS, string) {
 	dig = normalizeDigest(dig)
 	if file, ok := c.files[dig]; ok {
-		return c.sources[file.src], file.name
+		if fsys := c.sources[file.src].fs; fsys != nil {
+			return fsys, file.name
+		}
+		return nil, ""
 	}
 	if b, ok := c.bytes[dig]; ok {
 		const name = "content"
@@ -131,8 +105,36 @@ func (c *ContentMap) GetContent(dig string) (ocflfs.FS, string) {
 	return nil, ""
 }
 
+// Open opens the FSs loaded from JSON that c's content is in, using reg to
+// open each FS from its saved text. It must be called before c is used as a
+// [ContentSource] (for example, by [ObjectUpdate.Apply]). FSs that are already
+// open and FSs that no content is in are skipped, so calling Open again is
+// safe. If any FS can't be opened, Open returns all of the errors joined, each
+// naming the FS's saved text, and keeps the FSs that did open.
+func (c *ContentMap) Open(ctx context.Context, reg ocflfs.Registry) error {
+	used := map[int]bool{}
+	for _, file := range c.files {
+		used[file.src] = true
+	}
+	var errs []error
+	for i := range c.sources {
+		src := &c.sources[i]
+		if !used[i] || src.fs != nil {
+			continue
+		}
+		fsys, err := reg.Open(ctx, src.text)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("opening content source %q: %w", redactURL(src.text), err))
+			continue
+		}
+		src.fs = fsys
+	}
+	return errors.Join(errs...)
+}
+
 // MarshalJSON implements [json.Marshaler] for ContentMap. It returns an error
-// if any content is in memory or if any FS can't be marshaled as text.
+// if any content is in memory or if any FS can't be marshaled as text. An FS
+// loaded from JSON is saved as the same text, whether or not it was opened.
 func (c ContentMap) MarshalJSON() ([]byte, error) {
 	if len(c.bytes) > 0 {
 		return nil, errors.New("content map has content in memory, which can't be saved: write it to a file first")
@@ -148,7 +150,7 @@ func (c ContentMap) MarshalJSON() ([]byte, error) {
 		file := c.files[dig]
 		idx, ok := srcIndex[file.src]
 		if !ok {
-			text, err := marshalFS(c.sources[file.src])
+			text, err := c.sources[file.src].marshal()
 			if err != nil {
 				return nil, err
 			}
@@ -162,6 +164,63 @@ func (c ContentMap) MarshalJSON() ([]byte, error) {
 		j.Content[dig] = contentMapFile{src: idx, name: file.name}
 	}
 	return json.Marshal(j)
+}
+
+// UnmarshalJSON implements [json.Unmarshaler] for *ContentMap. It replaces c
+// with the ContentMap saved in data. It does no I/O: each FS is kept as its
+// saved text until [ContentMap.Open] is called.
+func (c *ContentMap) UnmarshalJSON(data []byte) error {
+	var j contentMapJSON
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&j); err != nil {
+		return fmt.Errorf("decoding content map: %w", err)
+	}
+	loaded := ContentMap{
+		sources: make([]contentMapSource, len(j.Sources)),
+		files:   make(map[string]contentMapFile, len(j.Content)),
+	}
+	for i, text := range j.Sources {
+		if text == "" {
+			return fmt.Errorf("content map source %d is empty", i)
+		}
+		loaded.sources[i] = contentMapSource{text: text}
+	}
+	for dig, file := range j.Content {
+		if file.src < 0 || file.src >= len(loaded.sources) {
+			return fmt.Errorf("content map entry for %q has an invalid source index: %d", dig, file.src)
+		}
+		if !fs.ValidPath(file.name) || file.name == "." {
+			return fmt.Errorf("content map entry for %q has an invalid path: %q", dig, file.name)
+		}
+		loaded.files[normalizeDigest(dig)] = file
+	}
+	*c = loaded
+	return nil
+}
+
+// contentMapSource is an FS in a ContentMap. A source loaded from JSON has the
+// saved text, and fs is nil until it is opened. A source added with
+// [ContentMap.AddFile] has fs and no text.
+type contentMapSource struct {
+	text string
+	fs   ocflfs.FS
+}
+
+// marshal returns the text that src is saved as.
+func (src contentMapSource) marshal() (string, error) {
+	if src.text != "" {
+		return src.text, nil
+	}
+	marshaler, ok := src.fs.(encoding.TextMarshaler)
+	if !ok {
+		return "", fmt.Errorf("content map source %T can't be saved: it doesn't implement encoding.TextMarshaler", src.fs)
+	}
+	text, err := marshaler.MarshalText()
+	if err != nil {
+		return "", fmt.Errorf("saving content map source: %w", err)
+	}
+	return string(text), nil
 }
 
 // contentMapFile is the location of a file in a ContentMap
@@ -199,16 +258,14 @@ type contentMapJSON struct {
 	Content map[string]contentMapFile `json:"content"`
 }
 
-func marshalFS(fsys ocflfs.FS) (string, error) {
-	marshaler, ok := fsys.(encoding.TextMarshaler)
-	if !ok {
-		return "", fmt.Errorf("content map source %T can't be saved: it doesn't implement encoding.TextMarshaler", fsys)
-	}
-	text, err := marshaler.MarshalText()
+// redactURL returns text with any password replaced by "xxxxx", if text is a
+// URL. Otherwise it returns text unchanged.
+func redactURL(text string) string {
+	u, err := url.Parse(text)
 	if err != nil {
-		return "", fmt.Errorf("saving content map source: %w", err)
+		return text
 	}
-	return string(text), nil
+	return u.Redacted()
 }
 
 // sameFS returns true if a and b are the same FS value. Values of types that

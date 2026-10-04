@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -136,7 +137,7 @@ func TestStage_Edits(t *testing.T) {
 
 func TestStage_JSON(t *testing.T) {
 	ctx := context.Background()
-	open := config.Opener()
+	reg := config.Registry()
 	contentFS, err := local.NewFS(filepath.Join(`testdata`, `content-fixture`))
 	be.NilErr(t, err)
 	objFS := testutil.TmpLocalFS(t)
@@ -148,16 +149,18 @@ func TestStage_JSON(t *testing.T) {
 
 	saved, err := json.Marshal(stage)
 	be.NilErr(t, err)
-	loaded, err := ocfl.UnmarshalStage(ctx, saved, open)
-	be.NilErr(t, err)
+	var loaded ocfl.Stage
+	be.NilErr(t, json.Unmarshal(saved, &loaded))
 	be.True(t, stage.Update.State().Eq(loaded.Update.State()))
 	be.DeepEqual(t, stage.Content.Digests(), loaded.Content.Digests())
 	resaved, err := json.Marshal(loaded)
 	be.NilErr(t, err)
 	be.Equal(t, string(saved), string(resaved))
 
-	// the loaded stage can be used to create the object
+	// the loaded stage can be used to create the object once its content is
+	// opened
 	be.NilErr(t, loaded.Update.Finalize("v1", ocfl.User{Name: "Tester"}))
+	be.NilErr(t, loaded.Content.Open(ctx, reg))
 	obj, err := loaded.Update.Apply(ctx, objFS, "obj", loaded.Content)
 	be.NilErr(t, err)
 	be.NilErr(t, ocfl.ValidateObject(ctx, objFS, obj.Path()).Err())
@@ -171,8 +174,59 @@ func TestStage_JSON(t *testing.T) {
 		_, err = json.Marshal(stage)
 		be.Nonzero(t, err)
 	})
-	t.Run("missing fields", func(t *testing.T) {
-		_, err := ocfl.UnmarshalStage(ctx, []byte(`{"update":{}}`), open)
-		be.Nonzero(t, err)
+	t.Run("invalid saved values", func(t *testing.T) {
+		for name, data := range map[string]string{
+			"missing content": `{"update":` + string(mustMarshal(t, upd)) + `}`,
+			"missing update":  `{"content":{"sources":[],"content":{}}}`,
+			"unknown field":   string(saved[:len(saved)-1]) + `,"extra":1}`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				var stage ocfl.Stage
+				be.Nonzero(t, json.Unmarshal([]byte(data), &stage))
+			})
+		}
 	})
+}
+
+func TestStage_JSON_missingContent(t *testing.T) {
+	// a stage whose content directory has been removed can be loaded, changed,
+	// saved and reverted: only opening its content fails.
+	ctx := context.Background()
+	contentFS := testutil.TmpLocalFS(t, filepath.Join(`testdata`, `content-fixture`))
+	objFS := testutil.TmpLocalFS(t)
+	upd, err := ocfl.NewUpdate(ctx, objFS, "obj", "obj")
+	be.NilErr(t, err)
+	stage := ocfl.NewStage(upd)
+	be.NilErr(t, stage.AddFS(ctx, contentFS, "content-fixture", "."))
+	be.NilErr(t, upd.Finalize("v1", ocfl.User{Name: "Tester"}))
+	saved, err := json.Marshal(stage)
+	be.NilErr(t, err)
+	contentText, err := contentFS.MarshalText()
+	be.NilErr(t, err)
+	be.NilErr(t, contentFS.Close())
+	be.NilErr(t, os.RemoveAll(contentFS.Root()))
+
+	var loaded ocfl.Stage
+	be.NilErr(t, json.Unmarshal(saved, &loaded))
+	be.True(t, upd.State().Eq(loaded.Update.State()))
+	be.True(t, loaded.Update.Finalized())
+	resaved, err := json.Marshal(loaded)
+	be.NilErr(t, err)
+	be.Equal(t, string(saved), string(resaved))
+
+	// content that was never opened is missing, so nothing is written
+	_, err = loaded.Update.Apply(ctx, objFS, "obj", loaded.Content)
+	be.True(t, errors.Is(err, ocfl.ErrMissingContent))
+	_, err = ocflfs.ReadDir(ctx, objFS, "obj")
+	be.True(t, errors.Is(err, fs.ErrNotExist))
+
+	err = loaded.Content.Open(ctx, config.Registry())
+	be.True(t, errors.Is(err, fs.ErrNotExist))
+	be.In(t, string(contentText), err.Error())
+
+	be.NilErr(t, loaded.Update.Revert(ctx, objFS, "obj"))
+	be.False(t, loaded.Update.Finalized())
+	be.NilErr(t, loaded.Remove("hello.csv"))
+	_, err = json.Marshal(loaded)
+	be.NilErr(t, err)
 }

@@ -328,8 +328,9 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) err
 //
 // Apply returns an error wrapping [ErrMissingContent], without writing
 // anything, if src doesn't provide content for every digest that is new in
-// the update. src may be nil if the update doesn't add new content. Apply
-// uses the options [UpdateWithLogger] and [UpdateWithGoLimit].
+// the update. src may be nil if the update doesn't add new content. A
+// [ContentMap] loaded from JSON must be opened with [ContentMap.Open] first.
+// Apply uses the options [UpdateWithLogger] and [UpdateWithGoLimit].
 func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, src ContentSource, opts ...UpdateOption) (*Object, error) {
 	if u.final == nil {
 		return nil, ErrNotFinalized

@@ -2,6 +2,7 @@ package ocfl_test
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -42,4 +43,12 @@ func commit(t *testing.T, obj *ocfl.Object, stage *ocfl.Stage, msg string, opts 
 // sortedKeys returns the sorted keys in m.
 func sortedKeys[V any](m map[string]V) []string {
 	return slices.Sorted(maps.Keys(m))
+}
+
+// mustMarshal returns v encoded as JSON.
+func mustMarshal(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	be.NilErr(t, err)
+	return b
 }

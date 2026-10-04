@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"iter"
@@ -18,39 +19,17 @@ import (
 // recorded in both, and content that is no longer needed is dropped from both.
 //
 // A Stage can be saved as JSON (see [ContentMap] for restrictions) and loaded
-// with [UnmarshalStage].
+// with [json.Unmarshal], which does no I/O. Call [ContentMap.Open] on a loaded
+// stage's Content before applying its Update.
 type Stage struct {
-	Update  *ObjectUpdate
-	Content *ContentMap
+	Update  *ObjectUpdate `json:"update"`
+	Content *ContentMap   `json:"content"`
 }
 
 // NewStage returns a new *Stage for the update u, with an empty ContentMap. u
 // must not be nil.
 func NewStage(u *ObjectUpdate) *Stage {
 	return &Stage{Update: u, Content: &ContentMap{}}
-}
-
-// UnmarshalStage loads a Stage saved with [Stage.MarshalJSON], using open to
-// open each FS that content is stored in. open is required.
-func UnmarshalStage(ctx context.Context, data []byte, open FSOpener) (*Stage, error) {
-	var j stageJSON
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&j); err != nil {
-		return nil, fmt.Errorf("decoding stage: %w", err)
-	}
-	if j.Update == nil || j.Content == nil {
-		return nil, fmt.Errorf("decoding stage: missing 'update' or 'content'")
-	}
-	u := &ObjectUpdate{}
-	if err := u.UnmarshalJSON(j.Update); err != nil {
-		return nil, err
-	}
-	content, err := UnmarshalContentMap(ctx, j.Content, open)
-	if err != nil {
-		return nil, err
-	}
-	return &Stage{Update: u, Content: content}, nil
 }
 
 // AddFS adds all files in the directory dir in fsys to the stage, in the
@@ -120,17 +99,22 @@ func (s *Stage) Rename(src, dst string) error {
 	return s.Update.Rename(src, dst)
 }
 
-// MarshalJSON implements [json.Marshaler] for Stage.
-func (s Stage) MarshalJSON() ([]byte, error) {
-	update, err := json.Marshal(s.Update)
-	if err != nil {
-		return nil, err
+// UnmarshalJSON implements [json.Unmarshaler] for *Stage. It returns an
+// error if data has fields other than "update" and "content", or is missing
+// either of them.
+func (s *Stage) UnmarshalJSON(data []byte) error {
+	type stageFields Stage // without the UnmarshalJSON method
+	var loaded stageFields
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&loaded); err != nil {
+		return fmt.Errorf("decoding stage: %w", err)
 	}
-	content, err := json.Marshal(s.Content)
-	if err != nil {
-		return nil, err
+	if loaded.Update == nil || loaded.Content == nil {
+		return errors.New("decoding stage: missing 'update' or 'content'")
 	}
-	return json.Marshal(stageJSON{Update: update, Content: content})
+	*s = Stage(loaded)
+	return nil
 }
 
 // addFiles digests files and adds them to the stage with names from
@@ -174,10 +158,4 @@ func (s *Stage) pruneContent() {
 			s.Content.Remove(dig)
 		}
 	}
-}
-
-// stageJSON is the saved form of a Stage
-type stageJSON struct {
-	Update  json.RawMessage `json:"update"`
-	Content json.RawMessage `json:"content"`
 }
