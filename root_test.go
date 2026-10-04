@@ -2,6 +2,7 @@ package ocfl_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"path/filepath"
@@ -52,17 +53,17 @@ func TestRoot_Example(t *testing.T) {
 	be.Equal(t, layout.Name(), newRoot.Layout().Name())
 	be.Equal(t, ocfl.Spec1_1, newRoot.Spec())
 	be.Equal(t, desc, newRoot.Description())
-	// update an object
+	// create an object
 	objID := "object-1"
-	obj, err := newRoot.NewObject(ctx, objID)
+	upd, err := newRoot.NewUpdate(ctx, objID, ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
 	be.NilErr(t, err)
-	be.Equal(t, obj.ID(), objID)
-	stage, err := ocfl.StageBytes(map[string][]byte{
-		"file.txt": []byte("readme readme readme"),
-	}, digest.SHA256)
+	be.Equal(t, upd.ID(), objID)
+	stage := ocfl.NewStage(upd)
+	be.NilErr(t, stage.AddBytes("file.txt", []byte("readme readme readme")))
+	be.NilErr(t, upd.Finalize("first version", ocfl.User{Name: "Stinky & Dirty"}))
+	obj, err := newRoot.Apply(ctx, upd, stage.Content)
 	be.NilErr(t, err)
-	_, err = obj.Update(ctx, stage, "first version", ocfl.User{Name: "Stinky & Dirty"})
-	be.NilErr(t, err)
+	be.Equal(t, newRoot, obj.Root())
 	// re-open and validate object
 	sameRoot, err := ocfl.NewRoot(ctx, fsys, dir)
 	be.NilErr(t, err)
@@ -297,13 +298,9 @@ func TestNewRoot_InvalidConfig(t *testing.T) {
 // Objects created through a Root must not declare a newer OCFL spec than the
 // root (E081): new objects default to the root's spec, and explicit specs newer
 // than the root's are rejected.
-func TestRoot_NewObject_Spec(t *testing.T) {
+func TestRoot_NewUpdate_Spec(t *testing.T) {
 	ctx := context.Background()
-	newStage := func(t *testing.T) *ocfl.Stage {
-		stage, err := ocfl.StageBytes(map[string][]byte{"a.txt": []byte("hi")}, digest.SHA512)
-		be.NilErr(t, err)
-		return stage
-	}
+	user := ocfl.User{Name: "n"}
 	newRoot := func(t *testing.T, spec ocfl.Spec) (*ocfl.Root, ocflfs.FS) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
@@ -312,11 +309,21 @@ func TestRoot_NewObject_Spec(t *testing.T) {
 		be.Equal(t, spec, root.Spec())
 		return root, fsys
 	}
+	// update creates a version of "obj1" in root with one file
+	update := func(t *testing.T, root *ocfl.Root, name string, opts ...ocfl.UpdateOption) (*ocfl.Object, error) {
+		t.Helper()
+		upd, err := root.NewUpdate(ctx, "obj1")
+		be.NilErr(t, err)
+		stage := ocfl.NewStage(upd)
+		be.NilErr(t, stage.AddBytes(name, []byte(name)))
+		if err := upd.Finalize("msg", user, opts...); err != nil {
+			return nil, err
+		}
+		return root.Apply(ctx, upd, stage.Content)
+	}
 	t.Run("new object in 1.0 root defaults to 1.0", func(t *testing.T) {
 		root, _ := newRoot(t, ocfl.Spec1_0)
-		obj, err := root.NewObject(ctx, "obj1")
-		be.NilErr(t, err)
-		_, err = obj.Update(ctx, newStage(t), "msg", ocfl.User{Name: "n"})
+		obj, err := update(t, root, "a.txt")
 		be.NilErr(t, err)
 		be.Equal(t, ocfl.Spec1_0, obj.Spec())
 		be.NilErr(t, root.ValidateObject(ctx, "obj1").Err())
@@ -327,63 +334,69 @@ func TestRoot_NewObject_Spec(t *testing.T) {
 	})
 	t.Run("new object in 1.1 root defaults to 1.1", func(t *testing.T) {
 		root, _ := newRoot(t, ocfl.Spec1_1)
-		obj, err := root.NewObject(ctx, "obj1")
-		be.NilErr(t, err)
-		_, err = obj.Update(ctx, newStage(t), "msg", ocfl.User{Name: "n"})
+		obj, err := update(t, root, "a.txt")
 		be.NilErr(t, err)
 		be.Equal(t, ocfl.Spec1_1, obj.Spec())
 		be.NilErr(t, root.ValidateObject(ctx, "obj1").Err())
 	})
 	t.Run("explicit 1.1 in 1.0 root is rejected", func(t *testing.T) {
 		root, fsys := newRoot(t, ocfl.Spec1_0)
-		obj, err := root.NewObject(ctx, "obj1")
-		be.NilErr(t, err)
-		objPath := obj.Path()
-		_, err = obj.Update(ctx, newStage(t), "msg", ocfl.User{Name: "n"}, ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1))
+		_, err := update(t, root, "a.txt", ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1))
 		be.True(t, errors.Is(err, ocfl.ErrObjectSpecExceedsRoot))
 		be.In(t, "1.1", err.Error())
 		be.In(t, "1.0", err.Error())
-		be.False(t, obj.Exists())
 		// nothing written to the object directory
+		objPath, err := root.ResolveID("obj1")
+		be.NilErr(t, err)
 		_, err = ocflfs.ReadDir(ctx, fsys, objPath)
 		be.True(t, errors.Is(err, fs.ErrNotExist))
-		// NewUpdatePlan fails the same way
-		_, err = obj.NewUpdatePlan(newStage(t), "msg", ocfl.User{Name: "n"}, ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1))
+	})
+	t.Run("the root's spec is checked by objects from the root", func(t *testing.T) {
+		root, _ := newRoot(t, ocfl.Spec1_0)
+		obj, err := root.NewObject(ctx, "obj1")
+		be.NilErr(t, err)
+		stage := ocfl.NewStage(obj.NewUpdate())
+		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
+		err = stage.Update.Finalize("msg", user, ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1))
 		be.True(t, errors.Is(err, ocfl.ErrObjectSpecExceedsRoot))
 	})
 	t.Run("upgrading existing object above 1.0 root is rejected", func(t *testing.T) {
 		root, _ := newRoot(t, ocfl.Spec1_0)
-		obj, err := root.NewObject(ctx, "obj1")
+		_, err := update(t, root, "a.txt")
 		be.NilErr(t, err)
-		_, err = obj.Update(ctx, newStage(t), "msg", ocfl.User{Name: "n"})
-		be.NilErr(t, err)
-		be.Equal(t, ocfl.Spec1_0, obj.Spec())
-		stage2, err := ocfl.StageBytes(map[string][]byte{"b.txt": []byte("bye")}, digest.SHA512)
-		be.NilErr(t, err)
-		_, err = obj.Update(ctx, stage2, "v2", ocfl.User{Name: "n"}, ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1))
+		_, err = update(t, root, "b.txt", ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1))
 		be.True(t, errors.Is(err, ocfl.ErrObjectSpecExceedsRoot))
-		be.Equal(t, ocfl.V(1), obj.Head())
 		// a plain update (no spec option) keeps working at 1.0
-		_, err = obj.Update(ctx, stage2, "v2", ocfl.User{Name: "n"})
+		obj, err := update(t, root, "b.txt")
 		be.NilErr(t, err)
 		be.Equal(t, ocfl.V(2), obj.Head())
 		be.Equal(t, ocfl.Spec1_0, obj.Spec())
 	})
 	t.Run("explicit 1.0 in 1.1 root is allowed", func(t *testing.T) {
 		root, _ := newRoot(t, ocfl.Spec1_1)
-		obj, err := root.NewObject(ctx, "obj1")
-		be.NilErr(t, err)
-		_, err = obj.Update(ctx, newStage(t), "msg", ocfl.User{Name: "n"}, ocfl.UpdateWithOCFLSpec(ocfl.Spec1_0))
+		obj, err := update(t, root, "a.txt", ocfl.UpdateWithOCFLSpec(ocfl.Spec1_0))
 		be.NilErr(t, err)
 		be.Equal(t, ocfl.Spec1_0, obj.Spec())
 		be.NilErr(t, root.ValidateObject(ctx, "obj1").Err())
 	})
+	t.Run("the root's spec is saved with the update", func(t *testing.T) {
+		root, _ := newRoot(t, ocfl.Spec1_0)
+		upd, err := root.NewUpdate(ctx, "obj1")
+		be.NilErr(t, err)
+		saved, err := json.Marshal(upd)
+		be.NilErr(t, err)
+		var loaded ocfl.ObjectUpdate
+		be.NilErr(t, json.Unmarshal(saved, &loaded))
+		err = loaded.Finalize("msg", user, ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1))
+		be.True(t, errors.Is(err, ocfl.ErrObjectSpecExceedsRoot))
+	})
 	t.Run("object without root defaults to latest spec", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
-		obj, err := ocfl.NewObject(ctx, fsys, "obj1", ocfl.ObjectWithID("obj1"))
+		upd, err := ocfl.NewUpdate(ctx, fsys, "obj1", "obj1")
 		be.NilErr(t, err)
-		_, err = obj.Update(ctx, newStage(t), "msg", ocfl.User{Name: "n"})
+		be.NilErr(t, upd.Finalize("msg", user))
+		obj, err := upd.Apply(ctx, fsys, "obj1", nil)
 		be.NilErr(t, err)
 		be.Equal(t, ocfl.Spec1_1, obj.Spec())
 	})
@@ -400,11 +413,12 @@ func TestRoot_ValidateObject_E081(t *testing.T) {
 	objPath, err := root.ResolveID("obj1")
 	be.NilErr(t, err)
 	// create a 1.1 object inside the 1.0 root, bypassing the root
-	obj, err := ocfl.NewObject(ctx, fsys, objPath, ocfl.ObjectWithID("obj1"))
+	upd, err := ocfl.NewUpdate(ctx, fsys, objPath, "obj1")
 	be.NilErr(t, err)
-	stage, err := ocfl.StageBytes(map[string][]byte{"a.txt": []byte("hi")}, digest.SHA512)
-	be.NilErr(t, err)
-	_, err = obj.Update(ctx, stage, "msg", ocfl.User{Name: "n"})
+	stage := ocfl.NewStage(upd)
+	be.NilErr(t, stage.AddBytes("a.txt", []byte("hi")))
+	be.NilErr(t, upd.Finalize("msg", ocfl.User{Name: "n"}))
+	obj, err := upd.Apply(ctx, fsys, objPath, stage.Content)
 	be.NilErr(t, err)
 	be.Equal(t, ocfl.Spec1_1, obj.Spec())
 
@@ -423,9 +437,12 @@ func TestRoot_ValidateObject_E081(t *testing.T) {
 		be.Equal(t, "1.0", vErr.Spec)
 	}
 	// the root-created object is fine, though
-	obj2, err := root.NewObject(ctx, "obj2")
+	upd2, err := root.NewUpdate(ctx, "obj2")
 	be.NilErr(t, err)
-	_, err = obj2.Update(ctx, stage, "msg", ocfl.User{Name: "n"})
+	stage2 := ocfl.NewStage(upd2)
+	be.NilErr(t, stage2.AddBytes("a.txt", []byte("hi")))
+	be.NilErr(t, upd2.Finalize("msg", ocfl.User{Name: "n"}))
+	_, err = root.Apply(ctx, upd2, stage2.Content)
 	be.NilErr(t, err)
 	be.NilErr(t, root.ValidateObject(ctx, "obj2").Err())
 }

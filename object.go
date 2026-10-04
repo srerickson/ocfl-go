@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"maps"
 	"path"
 	"slices"
@@ -14,44 +13,34 @@ import (
 	"github.com/srerickson/ocfl-go/digest"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/internal/logical-fs"
-	"github.com/srerickson/ocfl-go/logging"
 	"github.com/srerickson/ocfl-go/validation/code"
 )
 
-var ErrObjectReadOnly = errors.New("object is read-only")
 var ErrNoObjectID = errors.New("object does not exist: an explicit ID is required but was not provided")
 
-// ErrUnexpectedHead is returned by [Object.NewUpdatePlan] (and
-// [Object.Update]) when the version number of the new object version does not
-// match the number expected by [UpdateWithNewHead].
-var ErrUnexpectedHead = errors.New("unexpected object version number")
-
-// ErrObjectSpecExceedsRoot is returned when an update would give an object an
-// OCFL specification version that is newer than the specification version of
-// the storage root that contains it (OCFL E081).
-var ErrObjectSpecExceedsRoot = errors.New("object's OCFL spec cannot be newer than the storage root's OCFL spec")
-
-// Object represents and OCFL Object, typically part of a [Root].
+// Object is a read-only view of an OCFL Object, typically part of a [Root],
+// as described by one inventory. An Object never changes: to create a new
+// version, use [Object.NewUpdate] and apply the update with
+// [ObjectUpdate.Apply], which returns a new *Object. The previous *Object
+// remains a valid but out-of-date view.
 type Object struct {
-	// object's storage backend. Must implement WriteFS to update.
+	// object's storage backend.
 	fs ocflfs.FS
 	// path in FS for object root directory
 	path string
-	// object's root inventor (unless object is initialized with an explicit
+	// object's root inventory (unless object is initialized with an explicit
 	// inventory!). May be nil if the object hasn't been saved yet.
 	inventory *StoredInventory
-	// inventory has been been validated as the root inventory
-	// either by reading it directly or by comparing the digest
-	// of a given inventory to the inventory sidecar.
-	inventoryIsRoot bool
 	// object's storage root
 	root *Root
 	// expected object ID
 	requiredID string
 }
 
-// NewObject returns an *Object for managing the OCFL object at directory dir in
-// fsys. The object doesn't need to exist when NewObject is called.
+// NewObject returns an *Object for reading the OCFL object at directory dir in
+// fsys. The object doesn't need to exist when NewObject is called if its ID is
+// given with [ObjectWithID]: the returned *Object can be used to create the
+// object with [Object.NewUpdate].
 func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOption) (*Object, error) {
 	if !fs.ValidPath(dir) {
 		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
@@ -71,11 +60,13 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 			return nil, err
 		}
 		if !config.skipRootSidecarValidation {
-			err := inv.ValidateSidecar(ctx, fsys, dir)
-			if err != nil {
+			if err := inv.ValidateSidecar(ctx, fsys, dir); err != nil {
+				var digestErr *digest.DigestError
+				if errors.Is(err, fs.ErrNotExist) || errors.As(err, &digestErr) {
+					return nil, fmt.Errorf("%w: %w", ErrObjectIncomplete, err)
+				}
 				return nil, err
 			}
-			obj.inventoryIsRoot = true
 		}
 		return obj, nil
 	}
@@ -96,36 +87,10 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 	case rootState.Empty():
 		return obj, nil
 	case rootState.HasNamaste():
-		return nil, fmt.Errorf("incomplete OCFL object: %s: %w", inventoryBase, fs.ErrNotExist)
+		return nil, fmt.Errorf("%w: missing %s: %w", ErrObjectIncomplete, inventoryBase, fs.ErrNotExist)
 	default:
 		return nil, errors.New("directory is not empty: non-conforming contents")
 	}
-}
-
-// ApplyUpdatePlan applies an [*UpdatePlan], resulting in a new object version.
-// The *UpdatePlan should be created with [Object.NewUpdatePlan]. The internal
-// state for obj is updated to reflect the new object inventory.
-func (obj *Object) ApplyUpdatePlan(ctx context.Context, update *UpdatePlan, src ContentSource) error {
-	if err := obj.ReadOnly(); err != nil {
-		return fmt.Errorf("%q cannot be updated: %w", obj.ID(), err)
-	}
-	if update.ObjectID() != obj.ID() {
-		return errors.New("update plan is for a different object")
-	}
-	var baseInvDigest string
-	if obj.inventory != nil {
-		baseInvDigest = obj.inventory.digest
-	}
-	if baseInvDigest != update.BaseInventoryDigest() {
-		return errors.New("update plan does not reflect object's current inventory state")
-	}
-	newInv, err := update.Apply(ctx, obj.fs, obj.path, src)
-	if err != nil {
-		return err
-	}
-	obj.inventory = newInv
-	obj.inventoryIsRoot = true
-	return nil
 }
 
 // ContentDirectory return "content" or the value set in the root inventory.
@@ -136,73 +101,22 @@ func (obj Object) ContentDirectory() string {
 	return contentDir
 }
 
-// InventoryBuilder returns an *InventoryBuilder that can be used to generate
-// new inventory's for the object.
-func (obj *Object) InventoryBuilder() *InventoryBuilder {
-	var base *Inventory
-	if obj.inventory != nil {
-		base = &obj.inventory.Inventory
-	}
-	return NewInventoryBuilder(base).ID(obj.ID())
-}
-
-// NewUpdatePlan builds a new object inventory using stage's state and returns
-// an *[UpdatePlan] that can be used to apply the changes. It does not apply the
-// update plan. The stage is required: NewUpdatePlan panics if it is nil.
-func (obj *Object) NewUpdatePlan(stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
-	// validate the stage's digest algorithm up-front: if it's missing, the
-	// inventory builder would panic. stage must not be nil.
-	if err := validStageAlgorithm(stage.DigestAlgorithm); err != nil {
-		return nil, fmt.Errorf("in object update plan: %w", err)
-	}
-	updateOpts := newObjectUpdateOptions(opts...)
-	// If the object is part of a storage root, the root's spec is the ceiling
-	// for the object's spec (E081). New objects default to the root's spec
-	// rather than the library default; existing objects keep their spec.
+// NewUpdate returns a new draft *[ObjectUpdate] for the object's next version.
+// The update starts from the head version state and the object's digest
+// algorithm (sha512 for an object that doesn't exist yet). NewUpdate does no
+// I/O: if the object has changed in storage since obj was created, applying
+// the update fails with an error wrapping [ErrUpdateConflict].
+func (obj *Object) NewUpdate() *ObjectUpdate {
 	var rootSpec Spec
 	if obj.root != nil {
 		rootSpec = obj.root.Spec()
 	}
-	newSpec := updateOpts.spec
-	if newSpec.Empty() && obj.inventory == nil {
-		newSpec = rootSpec
-	}
-	newInv, err := obj.InventoryBuilder().
-		FixitySource(stage.FixitySource).
-		ContentPathFunc(updateOpts.contentPathFunc).
-		Spec(newSpec).
-		AddVersion(
-			stage.State,
-			stage.DigestAlgorithm,
-			updateOpts.created,
-			msg,
-			&user,
-		).Finalize()
+	u, err := newObjectUpdate(obj.ID(), obj.inventory, rootSpec, nil)
 	if err != nil {
-		return nil, fmt.Errorf("building new inventory for update: %w", err)
+		// obj's inventory is valid and, if obj doesn't exist, its ID is set.
+		panic(fmt.Sprintf("ocfl: Object.NewUpdate: %v", err))
 	}
-	if !rootSpec.Empty() && newInv.Type.Spec.Cmp(rootSpec) > 0 {
-		return nil, fmt.Errorf("%w: object spec is OCFL v%s, storage root spec is OCFL v%s",
-			ErrObjectSpecExceedsRoot, newInv.Type.Spec, rootSpec)
-	}
-	if expect := updateOpts.newHead; expect > 0 && newInv.Head.Num() != expect {
-		return nil, fmt.Errorf("%w: expected update to create version %d, but it would create version %d",
-			ErrUnexpectedHead, expect, newInv.Head.Num())
-	}
-	currentInv := obj.inventory
-	if !updateOpts.allowUnchanged && currentInv != nil {
-		lastV := currentInv.Versions[currentInv.Head]
-		if lastV != nil && lastV.State.Eq(stage.State) {
-			return nil, errors.New("update has unchanged version state")
-		}
-	}
-	plan, err := newUpdatePlan(newInv, currentInv)
-	if err != nil {
-		return nil, fmt.Errorf("in object update plan: %w", err)
-	}
-	plan.setGoLimit(updateOpts.goLimit)
-	plan.setLogger(updateOpts.logger)
-	return plan, nil
+	return u
 }
 
 // DigestAlgorithm returns sha512 unless sha256 is set in the root inventory.
@@ -247,26 +161,6 @@ func (obj Object) FixityAlgorithms() []string {
 // FS returns the FS where object is stored.
 func (obj Object) FS() ocflfs.FS {
 	return obj.fs
-}
-
-// GetFixity implements the [FixitySource] interface for Object, for use in a [Stage].
-func (obj Object) GetFixity(dig string) digest.Set {
-	if obj.inventory == nil {
-		return nil
-	}
-	return obj.inventory.GetFixity(dig)
-}
-
-// GetContent implements [ContentSource] for Object, for use in a [Stage].
-func (obj Object) GetContent(dig string) (ocflfs.FS, string) {
-	if obj.inventory == nil {
-		return nil, ""
-	}
-	paths := obj.inventory.Manifest[dig]
-	if len(paths) < 1 {
-		return nil, ""
-	}
-	return obj.fs, path.Join(obj.path, paths[0])
 }
 
 // Head returns the most recent version number. If obj has no root inventory, it
@@ -316,21 +210,6 @@ func (obj Object) Path() string {
 	return obj.path
 }
 
-// ReadOnly returns an error if obj does not support updates. Updates may be
-// prohibited if obj's storage backend does not support writes or if it was
-// initialized using an explicit inventory (using [ObjectWithInventory]) and
-// without root sidecar validation (using [ObjectSkipRootSidecarValidation]).
-func (obj Object) ReadOnly() error {
-	if obj.inventory != nil && !obj.inventoryIsRoot {
-		// if obj's inventory
-		return fmt.Errorf("%w: initialized without latest inventory state", ErrObjectReadOnly)
-	}
-	if _, ok := obj.fs.(ocflfs.WriteFS); !ok {
-		return fmt.Errorf("%w: storage backend does not support writes", ErrObjectReadOnly)
-	}
-	return nil
-}
-
 // Root returns the object's Root, if known. It is nil unless the *Object was
 // created using [Root.NewObject]
 func (o Object) Root() *Root {
@@ -344,20 +223,6 @@ func (o Object) Spec() Spec {
 		return Spec("")
 	}
 	return o.inventory.Type.Spec
-}
-
-// Update creates a new object version with stage's state, the given version
-// message, and the user. To create the new object version, an *UpdatePlan is
-// created with [Object.NewUpdatePlan] and applied with
-// [Object.ApplyUpdatePlan]. The *UpdatePlan is returned even if an error occurs
-// while applying the plan. The *UpdatePlan can be be retried, by calling
-// [Object.ApplyUpdatePlan] again, or reverted, by calling [UpdatePlan.Revert].
-func (obj *Object) Update(ctx context.Context, stage *Stage, msg string, user User, opts ...ObjectUpdateOption) (*UpdatePlan, error) {
-	plan, err := obj.NewUpdatePlan(stage, msg, user, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return plan, obj.ApplyUpdatePlan(ctx, plan, stage.ContentSource)
 }
 
 // Version returns an *ObjectVersion that can be used to access details for the
@@ -408,24 +273,6 @@ func (obj *Object) VersionFS(ctx context.Context, v int) (fs.FS, error) {
 	return fsys, nil
 }
 
-// VersionStage returns a *Stage matching the content of the version with the
-// given number (1...HEAD). If v < 1, the most recent version is used. If the
-// version does not exist, nil is returned. The stage's State is a copy of the
-// version state, so it can be modified (e.g., with [DigestMap.Mutate]) to
-// build a new version without affecting obj.
-func (obj *Object) VersionStage(v int) *Stage {
-	ver := obj.version(v)
-	if ver == nil {
-		return nil
-	}
-	return &Stage{
-		State:           ver.State.Clone(),
-		DigestAlgorithm: obj.DigestAlgorithm(),
-		ContentSource:   obj,
-		FixitySource:    obj,
-	}
-}
-
 func (obj Object) version(v int) *InventoryVersion {
 	if obj.inventory == nil {
 		return nil
@@ -440,7 +287,6 @@ func (obj *Object) sync(ctx context.Context) error {
 		return fmt.Errorf("%q inventory: %w", obj.ID(), err)
 	}
 	obj.inventory = inv
-	obj.inventoryIsRoot = true
 	return nil
 }
 
@@ -607,91 +453,3 @@ func (o ObjectVersion) User() *User {
 
 // VNum returns o's version number
 func (o ObjectVersion) VNum() VNum { return o.vnum }
-
-type objectUpdateOptions struct {
-	created         time.Time // time.Now is used, if not set
-	spec            Spec      // OCFL specification version for the new object version
-	newHead         int       // enforces new object version number
-	allowUnchanged  bool
-	contentPathFunc func(oldPaths []string) (newPaths []string)
-	logger          *slog.Logger
-	goLimit         int
-}
-
-func newObjectUpdateOptions(opts ...ObjectUpdateOption) *objectUpdateOptions {
-	combinedOpts := &objectUpdateOptions{
-		logger: logging.DisabledLogger(),
-	}
-	for _, o := range opts {
-		o(combinedOpts)
-	}
-	if combinedOpts.created.IsZero() {
-		combinedOpts.created = time.Now()
-	}
-	return combinedOpts
-}
-
-// ObjectUpdateOptions are optional function arguments used to configure
-// new an Object's UpdatePlan.
-type ObjectUpdateOption func(*objectUpdateOptions)
-
-// UpdateWithVersionCreated sets the 'created' timestamp for the object version
-// created with the update.
-func UpdateWithVersionCreated(t time.Time) ObjectUpdateOption {
-	return func(o *objectUpdateOptions) {
-		o.created = t
-	}
-}
-
-// UpdateWithOCFLSpec sets the OCFL specification for the new object version
-func UpdateWithOCFLSpec(s Spec) ObjectUpdateOption {
-	return func(o *objectUpdateOptions) {
-		o.spec = s
-	}
-}
-
-// UpdateWithNewHead is used to enforce the expected version number (without
-// padding) for the version created with the update. If the update would create
-// a version with a different number, [Object.NewUpdatePlan] (and therefore
-// [Object.Update]) returns an error wrapping [ErrUnexpectedHead] and nothing is
-// written to the object. For a new object, the expected version number is 1.
-// Values of v less than 1 are ignored; without this option, the new version
-// increments the existing version number, whatever it may be.
-func UpdateWithNewHead(v int) ObjectUpdateOption {
-	return func(o *objectUpdateOptions) {
-		o.newHead = v
-	}
-}
-
-// UpdateWithUnchangedVersionState is used to allow updates that don't change
-// the version state. Without this, updates with the same state will result
-// in an error.
-func UpdateWithUnchangedVersionState() ObjectUpdateOption {
-	return func(o *objectUpdateOptions) {
-		o.allowUnchanged = true
-	}
-}
-
-// UpdateWithContentPathFunc is used to set a function for enforcing
-// naming conventions for content paths in the new inventory.
-func UpdateWithContentPathFunc(mutate PathMutation) ObjectUpdateOption {
-	return func(o *objectUpdateOptions) {
-		o.contentPathFunc = mutate
-	}
-}
-
-// UpdateWithLogger sets the logger used to log message from each
-// step of the UpdatePlan.
-func UpdateWithLogger(logger *slog.Logger) ObjectUpdateOption {
-	return func(o *objectUpdateOptions) {
-		o.logger = logger
-	}
-}
-
-// UpdateWithGoLimit sets the number of goroutines used to run
-// concurrent steps when running the UpdatePlan.
-func UpdateWithGoLimit(gos int) ObjectUpdateOption {
-	return func(o *objectUpdateOptions) {
-		o.goLimit = gos
-	}
-}

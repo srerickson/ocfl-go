@@ -47,32 +47,35 @@ func runUpdate(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	obj, err := ocfl.NewObject(ctx, objCnf.FS, objCnf.Path, ocfl.ObjectWithID(f.newID))
-	if err != nil {
-		return fmt.Errorf("%s: %w", objCnf.Path, err)
-	}
-	if !obj.Exists() && f.newID == "" {
-		return errors.New("'id' flag is required for to a create new objects (object does not exist)")
-	}
 	alg, err := digest.DefaultRegistry().Get(f.algID)
 	if err != nil {
 		return err
 	}
-	stage, err := ocfl.StageDir(ctx, ocflfs.DirFS(f.srcDir), ".", alg)
+	update, err := ocfl.NewUpdate(ctx, objCnf.FS, objCnf.Path, f.newID, ocfl.UpdateWithDigestAlgorithm(alg))
 	if err != nil {
+		if errors.Is(err, ocfl.ErrNoObjectID) {
+			return errors.New("'id' flag is required for to a create new objects (object does not exist)")
+		}
+		return fmt.Errorf("%s: %w", objCnf.Path, err)
+	}
+	// the new version state is the contents of srcDir
+	if err := update.Clear(); err != nil {
 		return err
 	}
-	update, err := obj.NewUpdatePlan(stage, f.msg, f.user, ocfl.UpdateWithLogger(logger))
-	if err != nil {
+	stage := ocfl.NewStage(update)
+	if err := stage.AddFS(ctx, ocflfs.DirFS(f.srcDir), ".", "."); err != nil {
+		return err
+	}
+	if err := update.Finalize(f.msg, f.user); err != nil {
 		return err
 	}
 	applyCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
-	err = obj.ApplyUpdatePlan(applyCtx, update, stage.ContentSource)
+	_, err = update.Apply(applyCtx, objCnf.FS, objCnf.Path, stage.Content, ocfl.UpdateWithLogger(logger))
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			logger.Info("received interupt: reverting changes...")
-			err = update.Revert(ctx, obj.FS(), obj.Path(), stage)
+			err = update.Revert(ctx, objCnf.FS, objCnf.Path, ocfl.UpdateWithLogger(logger))
 		}
 		return err
 	}

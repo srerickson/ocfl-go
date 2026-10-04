@@ -217,6 +217,35 @@ func sameBackend(t *testing.T, a, b *config.FSConfig) bool {
 	return sb.SameBackend(b.FS)
 }
 
+func TestOpener(t *testing.T) {
+	ctx := context.Background()
+	open := config.Opener(config.WithS3Client(stubS3API{}))
+	t.Run("local", func(t *testing.T) {
+		dir := t.TempDir()
+		fsys, err := open(ctx, fileURL(dir))
+		be.NilErr(t, err)
+		localFS, ok := fsys.(*local.FS)
+		be.True(t, ok)
+		text, err := localFS.MarshalText()
+		be.NilErr(t, err)
+		be.Equal(t, fileURL(dir), string(text))
+	})
+	t.Run("s3 bucket", func(t *testing.T) {
+		fsys, err := open(ctx, "s3://bucket")
+		be.NilErr(t, err)
+		_, ok := fsys.(*s3.BucketFS)
+		be.True(t, ok)
+	})
+	t.Run("s3 bucket with prefix", func(t *testing.T) {
+		_, err := open(ctx, "s3://bucket/prefix")
+		be.Nonzero(t, err)
+	})
+	t.Run("invalid", func(t *testing.T) {
+		_, err := open(ctx, "ftp://example.org/ocfl")
+		be.Nonzero(t, err)
+	})
+}
+
 func TestSameBackend(t *testing.T) {
 	noIMDS(t)
 	ctx := context.Background()
@@ -291,16 +320,14 @@ func TestSameBackend(t *testing.T) {
 		clients := make([]s3.S3API, 8)
 		var wg sync.WaitGroup
 		for i := range clients {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				cnf, err := config.New(ctx, conf)
 				if err != nil {
 					t.Error(err)
 					return
 				}
 				clients[i] = cnf.FS.(*s3.BucketFS).Client()
-			}()
+			})
 		}
 		wg.Wait()
 		for _, client := range clients {
