@@ -817,10 +817,7 @@ func parseGetObjectRange(brange string, totalSize int64) (start int64, end int64
 			err = fmt.Errorf("invalid bytes range: %w", parseErr)
 			return
 		}
-		start = totalSize - suffix
-		if start < 0 {
-			start = 0
-		}
+		start = max(totalSize-suffix, 0)
 		end = totalSize - 1
 		return
 	}
