@@ -193,7 +193,7 @@ func parseArgs(args []string, stderr io.Writer) (*cmdFlags, error) {
 	set.StringVar(&f.msg, "msg", "", "message field for new version")
 	set.StringVar(&f.user.Name, "name", "", "name field for new version")
 	set.StringVar(&f.user.Address, "email", "", "email field for new version")
-	set.StringVar(&f.algID, "alg", "sha512", "digest algorith for new version")
+	set.StringVar(&f.algID, "alg", "sha512", "digest algorithm for a new object (ignored for existing objects)")
 	set.StringVar(&f.newID, "id", "", "object ID (required for creating new objects)")
 	if err := set.Parse(args); err != nil {
 		return nil, err
