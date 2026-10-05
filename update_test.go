@@ -155,6 +155,11 @@ func TestObjectUpdate_Edits(t *testing.T) {
 		t.Run("conflicting fixity", func(t *testing.T) {
 			be.Nonzero(t, upd.Add("b.txt", digA, digest.Set{"md5": "def"}))
 		})
+		t.Run("fixity with a different primary digest", func(t *testing.T) {
+			err := upd.Add("b.txt", digA, digest.Set{"sha512": digB})
+			be.Nonzero(t, err)
+			be.In(t, "different sha512 digest", err.Error())
+		})
 		// state is unchanged
 		be.DeepEqual(t, ocfl.DigestMap{digA: {"dir/a.txt"}}, upd.State())
 	})

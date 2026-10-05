@@ -195,9 +195,10 @@ func (u *ObjectUpdate) VersionInfo() (VersionInfo, bool) {
 // Add sets the digest for the file name in the new version state, replacing
 // any existing digest for name. The digest must use the update's digest
 // algorithm. Fixity values for the content are saved unless the content is
-// already in the object. Add returns an error if name is invalid or
-// conflicts with an existing path (a file can't also be a directory), and
-// [ErrFinalized] if u has been finalized.
+// already in the object. fixity may include a value for the update's digest
+// algorithm, which isn't saved and must be dig. Add returns an error if name
+// is invalid or conflicts with an existing path (a file can't also be a
+// directory), and [ErrFinalized] if u has been finalized.
 func (u *ObjectUpdate) Add(name, dig string, fixity digest.Set) error {
 	return u.addAll([]updateEntry{{name: name, digest: dig, fixity: fixity}})
 }
@@ -636,6 +637,9 @@ func (u *ObjectUpdate) addAll(entries []updateEntry) error {
 		e.digest = normalizeDigest(e.digest)
 		if err := validDigest(u.alg, e.digest); err != nil {
 			return fmt.Errorf("adding %q: %w", e.name, err)
+		}
+		if val, ok := e.fixity[u.alg.ID()]; ok && normalizeDigest(val) != e.digest {
+			return fmt.Errorf("adding %q: fixity has a different %s digest: %q", e.name, u.alg.ID(), val)
 		}
 		pathMap[e.name] = e.digest
 	}
