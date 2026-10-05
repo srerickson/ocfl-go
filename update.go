@@ -66,6 +66,16 @@ var (
 // maximum number of missing digests listed in an ErrMissingContent error message
 const maxMissingContentListed = 5
 
+// VersionInfo is the metadata settled by [ObjectUpdate.Finalize] for the new
+// version.
+type VersionInfo struct {
+	Message string
+	User    User
+	// Created is truncated to the second, as it is written to the inventory.
+	Created time.Time
+	Spec    Spec
+}
+
 // ObjectUpdate is a pending version of an OCFL object. It has two phases. As a
 // draft, it holds the new version state and fixity for new content, which are
 // changed with [ObjectUpdate.Add], [ObjectUpdate.Remove],
@@ -157,6 +167,20 @@ func (u *ObjectUpdate) NewInventoryDigest() string {
 		return ""
 	}
 	return u.newInv.digest
+}
+
+// VersionInfo returns the new version's metadata and true if u has been
+// finalized, or the zero value and false if u is a draft.
+func (u *ObjectUpdate) VersionInfo() (VersionInfo, bool) {
+	if u.final == nil {
+		return VersionInfo{}, false
+	}
+	return VersionInfo{
+		Message: u.final.Message,
+		User:    u.final.User,
+		Created: u.final.Created,
+		Spec:    u.final.Spec,
+	}, true
 }
 
 // Add sets the digest for the file name in the new version state, replacing
