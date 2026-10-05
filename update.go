@@ -361,6 +361,11 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) err
 // anything, if src doesn't provide content for every digest that is new in
 // the update. src may be nil if the update doesn't add new content. A
 // [ContentMap] loaded from JSON must be opened with [ContentMap.Open] first.
+// If src is a [ContentChecker], such as a ContentMap, Apply returns any error
+// from its CheckContent method, without writing anything: for a ContentMap,
+// an error wrapping [ErrContentChanged] if files that new content is in are
+// missing or have changed size. Resuming an update copies all new content
+// again, so the check is run then too.
 // Apply uses the options [UpdateWithLogger] and [UpdateWithGoLimit].
 func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, src ContentSource, opts ...UpdateOption) (*Object, error) {
 	if u.final == nil {
@@ -377,7 +382,7 @@ func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, sr
 	}
 	if status == updatePending {
 		steps := u.applySteps()
-		if err := checkContentSource(steps, src); err != nil {
+		if err := checkContentSource(ctx, steps, src); err != nil {
 			return nil, err
 		}
 		if err := runSteps(ctx, steps, writeFS, dir, src, o.goLimit, o.logger); err != nil {
@@ -1018,20 +1023,25 @@ func (u *ObjectUpdate) revertSteps() []updateStep {
 }
 
 // checkContentSource returns an error wrapping ErrMissingContent if src
-// doesn't provide content for every step that copies content.
-func checkContentSource(steps []updateStep, src ContentSource) error {
-	var missing []string
+// doesn't provide content for every step that copies content. If src is a
+// ContentChecker, it returns the error from checking the content.
+func checkContentSource(ctx context.Context, steps []updateStep, src ContentSource) error {
+	var digests, missing []string
 	seen := map[string]bool{}
 	for _, step := range steps {
 		if step.digest == "" || seen[step.digest] {
 			continue
 		}
 		seen[step.digest] = true
+		digests = append(digests, step.digest)
 		if srcFS, _ := getContent(src, step.digest); srcFS == nil {
 			missing = append(missing, step.digest)
 		}
 	}
 	if len(missing) == 0 {
+		if checker, ok := src.(ContentChecker); ok {
+			return checker.CheckContent(ctx, digests)
+		}
 		return nil
 	}
 	listed := missing

@@ -22,6 +22,11 @@ import (
 // A Stage can be saved as JSON (see [ContentMap] for restrictions) and loaded
 // with [json.Unmarshal], which does no I/O. Call [ContentMap.Open] on a loaded
 // stage's Content before applying its Update.
+//
+// Files added to a stage must not change before the stage is applied. The
+// size of each file is recorded when it is added: use [ContentMap.Check] to
+// find files that are missing or whose size has changed. [ObjectUpdate.Apply]
+// runs the same check before writing anything.
 type Stage struct {
 	Update  *ObjectUpdate `json:"update"`
 	Content *ContentMap   `json:"content"`
@@ -177,8 +182,9 @@ func (s *Stage) addFiles(ctx context.Context, files []*ocflfs.FileRef, o *stageO
 		return err
 	}
 	for i, ref := range digested {
+		// Info was set by CheckFileTypes
 		if dig := entries[i].digest; s.Update.needsContent(dig) {
-			s.Content.AddFile(dig, ref.FS, ref.FullPath())
+			s.Content.AddFile(dig, ref.FS, ref.FullPath(), ref.Info.Size())
 		}
 	}
 	s.pruneContent()
