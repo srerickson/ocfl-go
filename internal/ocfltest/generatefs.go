@@ -3,13 +3,12 @@ package ocfltest
 import (
 	"math/rand"
 	"path"
-	"slices"
 	"sort"
 )
 
 func GenerateFS(genr *rand.Rand, numFiles, maxSize int) SeedFS {
 	fsys := SeedFS{}
-	for range numFiles {
+	for i := 0; i < numFiles; i++ {
 		size := genr.Intn(maxSize-1) + 1
 		seed := genr.Int63()
 		dir := randomDir(genr, fsys)
@@ -72,8 +71,10 @@ func exists(fsys SeedFS, name string) bool {
 		return true
 	}
 	for n := range fsys {
-		if slices.Contains(allParents(n), name) {
-			return true
+		for _, p := range allParents(n) {
+			if p == name {
+				return true
+			}
 		}
 	}
 	return false

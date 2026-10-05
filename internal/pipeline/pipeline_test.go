@@ -41,7 +41,7 @@ func TestPipelineResultErr(t *testing.T) {
 func TestPipeline(t *testing.T) {
 	times := 100
 	input := func(add func(job) bool) {
-		for i := range times {
+		for i := 0; i < times; i++ {
 			add(job(i))
 		}
 	}
