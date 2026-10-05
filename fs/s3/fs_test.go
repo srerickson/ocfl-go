@@ -1039,7 +1039,7 @@ func TestMultiCopierConcurrentReuse_Mock(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, workers)
 	sizes := make([]int64, workers)
-	for i := range workers {
+	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -1051,7 +1051,7 @@ func TestMultiCopierConcurrentReuse_Mock(t *testing.T) {
 
 	const defaultCopyPartSize = 32 * megabyte
 	expETag := mock.ETag(srcBody, defaultCopyPartSize)
-	for i := range workers {
+	for i := 0; i < workers; i++ {
 		be.NilErr(t, errs[i])
 		be.Equal(t, srcSize, sizes[i])
 		dst := fmt.Sprintf("dst-file-%d", i)

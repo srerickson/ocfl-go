@@ -24,12 +24,12 @@ func DirectoryList(numFiles, numDirs int, prefix string) []*Object {
 	}
 	objects := make([]Object, numFiles+numDirs)
 	ret := make([]*Object, len(objects))
-	for i := range numDirs {
+	for i := 0; i < numDirs; i++ {
 		objects[i].Key = fmt.Sprintf("%s-dir-%d/tmp.txt", prefix, i)
 		objects[i].ContentLength = 1
 		ret[i] = &objects[i]
 	}
-	for i := range numFiles {
+	for i := 0; i < numFiles; i++ {
 		offset := i + numDirs
 		objects[offset].Key = fmt.Sprintf("%s-file-%d.txt", prefix, i)
 		objects[offset].ContentLength = 1
@@ -44,7 +44,7 @@ func StorageRoot(seed uint64, prefix string, numObjects int) []*Object {
 		{Key: path.Join(prefix, "extensions/mylayout/config.json")},
 		{Key: path.Join(prefix, "ocfl_1.1.md")},
 	}
-	for i := range numObjects {
+	for i := 0; i < numObjects; i++ {
 		part := fmt.Sprintf("%s-%d", randPathPart(5, 8), i)
 		newObjects := []*Object{
 			{Key: path.Join(prefix, part, "0=ocfl_object_1.1")},
@@ -61,7 +61,10 @@ func StorageRoot(seed uint64, prefix string, numObjects int) []*Object {
 func randPathPart(minSize, maxSize int) string {
 	const chars = `abcdefghijklmnopqrstuvwzyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-_. `
 	const lenChars = len(chars)
-	size := max(minSize, 1)
+	size := minSize
+	if size < 1 {
+		size = 1
+	}
 	if maxSize > size {
 		size += rand.IntN(maxSize - size + 1)
 	}

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 )
 
 // Registry is an immutable container of Extension constructors.
@@ -43,7 +42,9 @@ func (r Registry) Append(extFns ...func() Extension) Registry {
 	newR := Registry{
 		exts: make(map[string]func() Extension, len(r.exts)+len(extFns)),
 	}
-	maps.Copy(newR.exts, r.exts)
+	for n, fn := range r.exts {
+		newR.exts[n] = fn
+	}
 	for _, fn := range extFns {
 		newR.exts[fn().Name()] = fn
 	}

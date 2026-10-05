@@ -26,12 +26,12 @@ func TestMockConcurrentUse(t *testing.T) {
 	const workers = 8
 	const opsPerWorker = 25
 	var wg sync.WaitGroup
-	for w := range workers {
+	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func(w int) {
 			defer wg.Done()
 			key := fmt.Sprintf("worker-%d.txt", w%4) // overlapping keys across workers
-			for i := range opsPerWorker {
+			for i := 0; i < opsPerWorker; i++ {
 				_, _ = api.PutObject(ctx, &s3v2.PutObjectInput{
 					Bucket: aws.String(bucket),
 					Key:    aws.String(key),

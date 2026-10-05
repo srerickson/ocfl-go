@@ -74,13 +74,13 @@ func (fsys SeedFS) Open(name string) (fs.File, error) {
 	if name == "." {
 		elem = "."
 		for fname, f := range fsys {
-			before, _, ok := strings.Cut(fname, "/")
-			if !ok {
+			i := strings.Index(fname, "/")
+			if i < 0 {
 				if fname != "." {
 					list = append(list, seedFileInfo{fname, f})
 				}
 			} else {
-				need[before] = true
+				need[fname[:i]] = true
 			}
 		}
 	} else {
