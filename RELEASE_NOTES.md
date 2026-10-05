@@ -22,6 +22,7 @@ Changes since **v0.11.2** (July 17, 2026).
 ## Bug fixes
 
 - `runSteps` (object update plans) built its errgroup with `errgroup.WithContext` and then immediately replaced it with a bare `errgroup.Group`, so a failing asynchronous step never canceled its siblings' context. The replacement is gone.
+- When an update's context is canceled, `Apply` and `Revert` no longer start (and log) the steps still queued, and a step that fails because the context was canceled or timed out is logged at Debug level instead of Error. The returned error still wraps the context error.
 - `fs.WalkFiles`' fallback walk dereferenced a nil `fs.DirEntry` after yielding a listing error, panicking on any error-yielding `DirEntriesFS` — including the error iterator `fs.DirEntries` returns for an `FS` that isn't one.
 - `local.FS.DirEntries` reported listing errors with the absolute OS path instead of the name the caller passed in.
 - `fs.WrapFS.DirEntries` no longer drops a pending `ReadDir` error when it notices context cancellation first; the two are joined.
