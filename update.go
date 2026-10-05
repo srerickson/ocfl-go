@@ -350,12 +350,15 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) err
 // interrupted, Apply resumes it.
 //
 // What Apply does depends on the object's root inventory sidecar in storage.
-// If it holds the update's base inventory digest (or, for a new object, there
-// is no sidecar), the update has not been committed: every step is run again,
-// overwriting anything written by an earlier attempt. If it holds the new
-// inventory digest, the update was committed and there is nothing to do. Any
-// other value means the object was changed by something else, and Apply
-// returns an error wrapping [ErrUpdateConflict] without writing anything.
+// If it holds the update's base inventory digest, the update has not been
+// committed: every step is run again, overwriting anything written by an
+// earlier attempt. If it holds the new inventory digest, the update was
+// committed and there is nothing to do. Any other value means the object was
+// changed by something else, and Apply returns an error wrapping
+// [ErrUpdateConflict] without writing anything. For a new object, which has
+// no sidecar until the update is committed, dir must also be missing or
+// empty, or hold only files and directories that the update writes (an error
+// wrapping ErrUpdateConflict otherwise).
 //
 // Apply returns an error wrapping [ErrMissingContent], without writing
 // anything, if src doesn't provide content for every digest that is new in
@@ -400,7 +403,9 @@ func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, sr
 // Like Apply, Revert decides what to do from the object's root inventory
 // sidecar. It returns [ErrRevertUpdate] if the update was committed, and an
 // error wrapping [ErrUpdateConflict] if the object was changed by something
-// else. Revert uses the options [UpdateWithLogger] and [UpdateWithGoLimit].
+// else. For a new object, Revert removes dir only if everything in it could
+// have been written by the update, as described for Apply. Revert uses the
+// options [UpdateWithLogger] and [UpdateWithGoLimit].
 func (u *ObjectUpdate) Revert(ctx context.Context, fsys ocflfs.FS, dir string, opts ...UpdateOption) error {
 	if u.final == nil {
 		return ErrNotFinalized
@@ -854,23 +859,58 @@ func (u *ObjectUpdate) storageStatus(ctx context.Context, fsys ocflfs.FS, dir st
 		if sidecar != "" {
 			return 0, fmt.Errorf("%w: object has an inventory sidecar but the update is for a new object", ErrUpdateConflict)
 		}
-		// whatever is there must be ours: there may be no inventory.json, or
-		// one written by this update.
-		invBytes, err := ocflfs.ReadAll(ctx, fsys, path.Join(dir, inventoryBase))
-		switch {
-		case errors.Is(err, fs.ErrNotExist):
-			return updatePending, nil
-		case err != nil:
+		if err := u.checkNewObjectDir(ctx, fsys, dir); err != nil {
 			return 0, err
-		case bytes.Equal(invBytes, u.newInv.bytes):
-			return updatePending, nil
 		}
-		return 0, fmt.Errorf("%w: object has an inventory.json that wasn't written by the update", ErrUpdateConflict)
+		return updatePending, nil
 	}
 	if strings.EqualFold(sidecar, u.base.digest) {
 		return updatePending, nil
 	}
 	return 0, fmt.Errorf("%w: root inventory sidecar doesn't match the update's base inventory or new inventory", ErrUpdateConflict)
+}
+
+// checkNewObjectDir returns an error wrapping ErrUpdateConflict unless
+// everything in the object directory dir could have been written by u, an
+// update for a new object: dir may be missing or empty, or hold only u's
+// object declaration, inventory.json with u's new inventory, the inventory
+// sidecar, and u's version directory. Temporary files left by an interrupted
+// write of one of those files (".<name>.tmp-*", as local.FS names them) are
+// allowed too. Revert removes dir, so it must not hold anything else.
+func (u *ObjectUpdate) checkNewObjectDir(ctx context.Context, fsys ocflfs.FS, dir string) error {
+	entries, err := ocflfs.ReadDir(ctx, fsys, dir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("reading object root directory: %w", err)
+	}
+	decl := Namaste{Type: NamasteTypeObject, Version: u.newInv.Type.Spec}
+	rootFiles := []string{decl.Name(), inventoryBase, inventoryBase + "." + u.newInv.DigestAlgorithm}
+	isTemp := func(name string) bool {
+		return slices.ContainsFunc(rootFiles, func(f string) bool {
+			return strings.HasPrefix(name, "."+f+".tmp-")
+		})
+	}
+	var hasInventory bool
+	for _, e := range entries {
+		name := e.Name()
+		switch {
+		case e.IsDir() && name == u.newInv.Head.String():
+		case !e.IsDir() && (slices.Contains(rootFiles, name) || isTemp(name)):
+			hasInventory = hasInventory || name == inventoryBase
+		default:
+			return fmt.Errorf("%w: object directory has %q, which the update doesn't write", ErrUpdateConflict, name)
+		}
+	}
+	if !hasInventory {
+		return nil
+	}
+	invBytes, err := ocflfs.ReadAll(ctx, fsys, path.Join(dir, inventoryBase))
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(invBytes, u.newInv.bytes) {
+		return fmt.Errorf("%w: object has an inventory.json that wasn't written by the update", ErrUpdateConflict)
+	}
+	return nil
 }
 
 // readSidecarIfExists reads the root inventory sidecar using alg in dir. It

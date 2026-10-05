@@ -587,6 +587,57 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		_, err = other.Apply(ctx, fsys, "obj", nil)
 		be.NilErr(t, err)
 	})
+	t.Run("new object over a directory that isn't the update's", func(t *testing.T) {
+		fsys := testutil.TmpLocalFS(t)
+		upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj")
+		be.NilErr(t, err)
+		stage := ocfl.NewStage(upd)
+		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
+		be.NilErr(t, upd.Finalize("v1", user))
+		// entries in dir that the update doesn't write
+		for _, entry := range []string{
+			"notes.txt",
+			".notes.txt",
+			"v2/notes.txt",
+			"0=ocfl_object_1.0",
+			"inventory.json.sha256",
+		} {
+			t.Run(entry, func(t *testing.T) {
+				_, err := fsys.Write(ctx, path.Join("dir", entry), strings.NewReader("data"))
+				be.NilErr(t, err)
+				t.Cleanup(func() { be.NilErr(t, fsys.RemoveAll(ctx, "dir")) })
+				before := snapshot(t, fsys)
+				_, err = upd.Apply(ctx, fsys, "dir", stage.Content)
+				be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
+				be.In(t, strings.Split(entry, "/")[0], err.Error())
+				be.True(t, errors.Is(upd.Revert(ctx, fsys, "dir"), ocfl.ErrUpdateConflict))
+				be.DeepEqual(t, before, snapshot(t, fsys))
+			})
+		}
+	})
+	t.Run("new object with leftover temporary files", func(t *testing.T) {
+		// a crash while writing a root file can leave the temporary file that
+		// local.FS writes it to.
+		fsys := testutil.TmpLocalFS(t)
+		upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj")
+		be.NilErr(t, err)
+		stage := ocfl.NewStage(upd)
+		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
+		be.NilErr(t, upd.Finalize("v1", user))
+		// writes: namaste, content, version inventory and sidecar
+		_, err = upd.Apply(ctx, &crashFS{FS: fsys, n: 4}, "obj", stage.Content)
+		be.True(t, errors.Is(err, errCrash))
+		_, err = fsys.Write(ctx, "obj/.inventory.json.tmp-123", strings.NewReader("partial"))
+		be.NilErr(t, err)
+		be.NilErr(t, upd.Revert(ctx, fsys, "obj"))
+		_, err = ocflfs.ReadDir(ctx, fsys, "obj")
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+		be.NilErr(t, upd.Finalize("v1", user))
+		_, err = fsys.Write(ctx, "obj/.0=ocfl_object_1.1.tmp-123", strings.NewReader("partial"))
+		be.NilErr(t, err)
+		_, err = upd.Apply(ctx, fsys, "obj", stage.Content)
+		be.NilErr(t, err)
+	})
 	t.Run("missing content", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t)
 		upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj")
