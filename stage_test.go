@@ -263,6 +263,38 @@ func TestStage_JSON(t *testing.T) {
 	be.NilErr(t, ocfl.ValidateObject(ctx, objFS, obj.Path()).Err())
 	be.DeepEqual(t, []string{"md5"}, obj.FixityAlgorithms())
 
+	t.Run("file sizes", func(t *testing.T) {
+		var savedJSON struct {
+			Content struct{ Content map[string][]any }
+		}
+		be.NilErr(t, json.Unmarshal(saved, &savedJSON))
+		be.Equal(t, 3, len(savedJSON.Content.Content))
+		for _, entry := range savedJSON.Content.Content {
+			be.Equal(t, 3, len(entry))
+			info, err := os.Stat(filepath.Join(contentFS.Root(), entry[1].(string)))
+			be.NilErr(t, err)
+			be.Equal(t, float64(info.Size()), entry[2].(float64))
+		}
+	})
+	t.Run("saved without file sizes", func(t *testing.T) {
+		// stages saved before sizes were recorded can be loaded and applied
+		var old map[string]any
+		be.NilErr(t, json.Unmarshal(saved, &old))
+		content := old["content"].(map[string]any)["content"].(map[string]any)
+		for dig, entry := range content {
+			content[dig] = entry.([]any)[:2]
+		}
+		var loaded ocfl.Stage
+		be.NilErr(t, json.Unmarshal(mustMarshal(t, old), &loaded))
+		be.DeepEqual(t, stage.Content.Digests(), loaded.Content.Digests())
+		be.NilErr(t, loaded.Content.Open(ctx, reg))
+		be.NilErr(t, loaded.Content.Check(ctx))
+		objFS := testutil.TmpLocalFS(t)
+		be.NilErr(t, loaded.Update.Finalize("v1", ocfl.User{Name: "Tester"}))
+		obj, err := loaded.Update.Apply(ctx, objFS, "obj", loaded.Content)
+		be.NilErr(t, err)
+		be.NilErr(t, ocfl.ValidateObject(ctx, objFS, obj.Path()).Err())
+	})
 	t.Run("content in memory can't be saved", func(t *testing.T) {
 		upd, err := ocfl.NewUpdate(ctx, objFS, "obj2", "obj2")
 		be.NilErr(t, err)

@@ -12,10 +12,15 @@ import (
 	"net/url"
 	"reflect"
 	"slices"
+	"strings"
 	"testing/fstest"
 
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
+
+// ErrContentChanged is returned when files that content was added from are
+// missing or have changed since they were added. See [ContentChangedError].
+var ErrContentChanged = errors.New("content has changed or is missing")
 
 // ContentSource is used to access content with a given digest when creating and
 // updating objects.
@@ -23,6 +28,15 @@ type ContentSource interface {
 	// GetContent returns an FS and path to a file in FS for a file with the given digest.
 	// If no content is associated with the digest, fsys is nil and path is an empty string.
 	GetContent(digest string) (fsys ocflfs.FS, path string)
+}
+
+// ContentChecker is a [ContentSource] that can check that its content hasn't
+// changed since it was added. [ObjectUpdate.Apply] calls CheckContent with
+// the digests of the content it will copy, before writing anything, and
+// returns any error without writing anything.
+type ContentChecker interface {
+	ContentSource
+	CheckContent(ctx context.Context, digests []string) error
 }
 
 // ContentMap maps digests to the location of content with the digest: a file
@@ -39,6 +53,11 @@ type ContentSource interface {
 // be loaded, changed and saved. Call [ContentMap.Open] to open the FSs before
 // using the ContentMap as a [ContentSource]: until then, GetContent finds no
 // content in them.
+//
+// A file's size can be recorded when it is added, and is saved with it.
+// [ContentMap.Check] uses the sizes to find files that have changed since
+// they were added, so that a changed file isn't copied into an object under
+// the digest of its old content.
 type ContentMap struct {
 	sources []contentMapSource
 	files   map[string]contentMapFile // digest -> file
@@ -46,8 +65,10 @@ type ContentMap struct {
 }
 
 // AddFile sets the location of content with the digest dig to the file name
-// in fsys. fsys must not be nil.
-func (c *ContentMap) AddFile(dig string, fsys ocflfs.FS, name string) {
+// in fsys, which has size bytes. If size is negative, the file's size is
+// unknown, and [ContentMap.Check] only checks that the file exists. fsys must
+// not be nil.
+func (c *ContentMap) AddFile(dig string, fsys ocflfs.FS, name string, size int64) {
 	dig = normalizeDigest(dig)
 	src := slices.IndexFunc(c.sources, func(s contentMapSource) bool { return sameFS(s.fs, fsys) })
 	if src < 0 {
@@ -58,7 +79,7 @@ func (c *ContentMap) AddFile(dig string, fsys ocflfs.FS, name string) {
 		c.files = map[string]contentMapFile{}
 	}
 	delete(c.bytes, dig)
-	c.files[dig] = contentMapFile{src: src, name: name}
+	c.files[dig] = contentMapFile{src: src, name: name, size: max(size, -1)}
 }
 
 // AddBytes sets the content with the digest dig to b. A ContentMap with
@@ -132,6 +153,68 @@ func (c *ContentMap) Open(ctx context.Context, reg ocflfs.Registry) error {
 	return errors.Join(errs...)
 }
 
+// Check stats every file that c's content is in, and returns a
+// *[ContentChangedError], which wraps [ErrContentChanged], listing files that
+// are missing or whose size differs from the size given when they were added.
+// A file's size isn't compared if its size wasn't given or its FS reports a
+// negative size (for example, an HTTP server that doesn't send the content
+// length). Content in an FS that isn't open is reported as missing, so c must
+// be opened with [ContentMap.Open] first. Content in memory isn't checked.
+// If a file can't be checked for another reason, the error is returned,
+// joined with any ContentChangedError.
+func (c *ContentMap) Check(ctx context.Context) error {
+	return c.CheckContent(ctx, slices.Sorted(maps.Keys(c.files)))
+}
+
+// CheckContent implements [ContentChecker] for *ContentMap. It is
+// [ContentMap.Check] for the content with the given digests only. Digests
+// that c has no file for are skipped.
+func (c *ContentMap) CheckContent(ctx context.Context, digests []string) error {
+	var changes []ContentChange
+	var errs []error
+	for _, dig := range digests {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		dig = normalizeDigest(dig)
+		file, ok := c.files[dig]
+		if !ok {
+			continue
+		}
+		change := ContentChange{
+			Digest: dig,
+			FS:     c.sources[file.src].fs,
+			Path:   file.name,
+			Size:   file.size,
+		}
+		if change.FS == nil {
+			change.Missing = true
+			changes = append(changes, change)
+			continue
+		}
+		info, err := ocflfs.StatFile(ctx, change.FS, file.name)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			change.Missing = true
+		case err != nil:
+			errs = append(errs, fmt.Errorf("checking content %q: %w", dig, err))
+			continue
+		case info.IsDir():
+			change.Missing = true
+		default:
+			change.NewSize = info.Size()
+			if file.size < 0 || change.NewSize < 0 || change.NewSize == file.size {
+				continue
+			}
+		}
+		changes = append(changes, change)
+	}
+	if len(changes) > 0 {
+		errs = append([]error{&ContentChangedError{Changes: changes}}, errs...)
+	}
+	return errors.Join(errs...)
+}
+
 // MarshalJSON implements [json.Marshaler] for ContentMap. It returns an error
 // if any content is in memory or if any FS can't be marshaled as text. An FS
 // loaded from JSON is saved as the same text, whether or not it was opened.
@@ -161,7 +244,8 @@ func (c ContentMap) MarshalJSON() ([]byte, error) {
 			}
 			srcIndex[file.src] = idx
 		}
-		j.Content[dig] = contentMapFile{src: idx, name: file.name}
+		file.src = idx
+		j.Content[dig] = file
 	}
 	return json.Marshal(j)
 }
@@ -199,6 +283,49 @@ func (c *ContentMap) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// ContentChangedError is returned by [ContentMap.Check] and
+// [ContentMap.CheckContent] (and so by [ObjectUpdate.Apply]) when files that
+// content was added from are missing or have changed. It wraps
+// [ErrContentChanged].
+type ContentChangedError struct {
+	Changes []ContentChange
+}
+
+func (e *ContentChangedError) Error() string {
+	listed := e.Changes
+	var more string
+	if len(listed) > maxMissingContentListed {
+		listed = listed[:maxMissingContentListed]
+		more = fmt.Sprintf(" and %d more", len(e.Changes)-maxMissingContentListed)
+	}
+	descs := make([]string, len(listed))
+	for i, change := range listed {
+		descs[i] = change.String()
+	}
+	return fmt.Sprintf("%s: %d file(s): %s%s", ErrContentChanged, len(e.Changes), strings.Join(descs, ", "), more)
+}
+
+func (e *ContentChangedError) Unwrap() error { return ErrContentChanged }
+
+// ContentChange describes a file that content was added from that is missing
+// or whose size has changed.
+type ContentChange struct {
+	Digest  string    // digest of the content
+	FS      ocflfs.FS // FS the file is in; nil if the FS isn't open
+	Path    string    // path of the file in FS
+	Size    int64     // size when the file was added; -1 if unknown
+	Missing bool      // the file doesn't exist, or the FS isn't open
+	NewSize int64     // size of the file now, if it isn't missing
+}
+
+// String returns the file's path and what has changed.
+func (c ContentChange) String() string {
+	if c.Missing {
+		return fmt.Sprintf("%q is missing", c.Path)
+	}
+	return fmt.Sprintf("%q has size %d, not %d", c.Path, c.NewSize, c.Size)
+}
+
 // contentMapSource is an FS in a ContentMap. A source loaded from JSON has the
 // saved text, and fs is nil until it is opened. A source added with
 // [ContentMap.AddFile] has fs and no text.
@@ -227,27 +354,41 @@ func (src contentMapSource) marshal() (string, error) {
 type contentMapFile struct {
 	src  int    // index of the FS in the content map's sources
 	name string // path relative to the FS
+	size int64  // size of the file when it was added; -1 if unknown
 }
 
-// MarshalJSON encodes f as a two-element array: [src, name].
+// MarshalJSON encodes f as an array: [src, name, size], or [src, name] if the
+// size is unknown.
 func (f contentMapFile) MarshalJSON() ([]byte, error) {
-	return json.Marshal([]any{f.src, f.name})
+	if f.size < 0 {
+		return json.Marshal([]any{f.src, f.name})
+	}
+	return json.Marshal([]any{f.src, f.name, f.size})
 }
 
-// UnmarshalJSON decodes f from a two-element array: [src, name].
+// UnmarshalJSON decodes f from an array: [src, name, size] or [src, name].
 func (f *contentMapFile) UnmarshalJSON(data []byte) error {
 	var parts []json.RawMessage
 	if err := json.Unmarshal(data, &parts); err != nil {
 		return err
 	}
-	if len(parts) != 2 {
-		return fmt.Errorf("content map entry must have two elements, not %d", len(parts))
+	if len(parts) != 2 && len(parts) != 3 {
+		return fmt.Errorf("content map entry must have two or three elements, not %d", len(parts))
 	}
 	if err := json.Unmarshal(parts[0], &f.src); err != nil {
 		return fmt.Errorf("content map entry source index: %w", err)
 	}
 	if err := json.Unmarshal(parts[1], &f.name); err != nil {
 		return fmt.Errorf("content map entry path: %w", err)
+	}
+	f.size = -1
+	if len(parts) == 3 {
+		if err := json.Unmarshal(parts[2], &f.size); err != nil {
+			return fmt.Errorf("content map entry size: %w", err)
+		}
+		if f.size < 0 {
+			return fmt.Errorf("content map entry has a negative size: %d", f.size)
+		}
 	}
 	return nil
 }

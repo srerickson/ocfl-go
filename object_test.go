@@ -96,7 +96,7 @@ func TestObject_Example(t *testing.T) {
 	manifest := v2Obj.Manifest()
 	for name, dig := range sourceVersion.State().Paths() {
 		be.NilErr(t, forkUpdate.Add(name, dig, nil))
-		forkContent.AddFile(dig, v2Obj.FS(), path.Join(v2Obj.Path(), manifest[dig][0]))
+		forkContent.AddFile(dig, v2Obj.FS(), path.Join(v2Obj.Path(), manifest[dig][0]), -1)
 	}
 	be.NilErr(t, forkUpdate.Finalize(sourceVersion.Message(), *sourceVersion.User()))
 	forkObj, err := forkUpdate.Apply(ctx, tmpFS, forkID, forkContent)
