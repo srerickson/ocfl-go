@@ -7,8 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"iter"
 	"path"
+	"slices"
+	"strings"
 
 	"github.com/srerickson/ocfl-go/digest"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
@@ -33,30 +34,43 @@ func NewStage(u *ObjectUpdate) *Stage {
 }
 
 // AddFS adds all files in the directory dir in fsys to the stage, in the
-// directory dst ("." for the top-level directory). Hidden files (with names
-// starting with ".") are ignored. Files are digested with the update's digest
-// algorithm and the fixity algorithms. Nothing is added if there is an error.
-func (s *Stage) AddFS(ctx context.Context, fsys ocflfs.FS, dir, dst string, fixity ...digest.Algorithm) error {
+// directory dst ("." for the top-level directory). By default, hidden files
+// and directories (with names starting with ".") are skipped; use
+// [StageWithHidden] or [StageWithFilter] to change which files are added.
+// Files are digested with the update's digest algorithm and any fixity
+// algorithms from [StageWithFixity], using the goroutines set by
+// [StageWithGoLimit]. Nothing is added if there is an error.
+func (s *Stage) AddFS(ctx context.Context, fsys ocflfs.FS, dir, dst string, opts ...StageOption) error {
 	if !fs.ValidPath(dst) {
 		return &MapPathInvalidErr{Path: dst}
 	}
-	files, walkErr := ocflfs.UntilErr(ocflfs.WalkFiles(ctx, fsys, dir))
-	files = ocflfs.FilterFiles(files, ocflfs.IsNotHidden)
-	if err := s.addFiles(ctx, files, walkErr, func(ref *ocflfs.FileRef) string {
+	o := newStageOptions(opts...)
+	var files []*ocflfs.FileRef
+	for ref, err := range ocflfs.WalkFiles(ctx, fsys, dir) {
+		if err != nil {
+			return fmt.Errorf("adding %q to stage: %w", dir, err)
+		}
+		if o.filter == nil || o.filter(ref) {
+			files = append(files, ref)
+		}
+	}
+	if err := s.addFiles(ctx, files, o, func(ref *ocflfs.FileRef) string {
 		return path.Join(dst, ref.Path)
-	}, fixity); err != nil {
+	}); err != nil {
 		return fmt.Errorf("adding %q to stage: %w", dir, err)
 	}
 	return nil
 }
 
 // AddFile adds the file name in fsys to the stage as dst. The file is
-// digested with the update's digest algorithm and the fixity algorithms.
-func (s *Stage) AddFile(ctx context.Context, fsys ocflfs.FS, name, dst string, fixity ...digest.Algorithm) error {
-	files := ocflfs.Files(fsys, name)
-	if err := s.addFiles(ctx, files, func() error { return nil }, func(*ocflfs.FileRef) string {
+// digested with the update's digest algorithm and any fixity algorithms from
+// [StageWithFixity]. The file is added even if it is hidden: [StageWithHidden]
+// and [StageWithFilter] only apply to [Stage.AddFS].
+func (s *Stage) AddFile(ctx context.Context, fsys ocflfs.FS, name, dst string, opts ...StageOption) error {
+	files := []*ocflfs.FileRef{{FS: fsys, Path: name}}
+	if err := s.addFiles(ctx, files, newStageOptions(opts...), func(*ocflfs.FileRef) string {
 		return dst
-	}, fixity); err != nil {
+	}); err != nil {
 		return fmt.Errorf("adding %q to stage: %w", name, err)
 	}
 	return nil
@@ -99,6 +113,17 @@ func (s *Stage) Rename(src, dst string) error {
 	return s.Update.Rename(src, dst)
 }
 
+// Clear removes all files from the stage, leaving its update with an empty
+// state and its ContentMap with no content. Call Clear instead of
+// [ObjectUpdate.Clear], which doesn't change the ContentMap.
+func (s *Stage) Clear() error {
+	if err := s.Update.Clear(); err != nil {
+		return err
+	}
+	s.pruneContent()
+	return nil
+}
+
 // UnmarshalJSON implements [json.Unmarshaler] for *Stage. It returns an
 // error if data has fields other than "update" and "content", or is missing
 // either of them.
@@ -118,30 +143,40 @@ func (s *Stage) UnmarshalJSON(data []byte) error {
 }
 
 // addFiles digests files and adds them to the stage with names from
-// dstName. All files are added, or none of them.
-func (s *Stage) addFiles(ctx context.Context, files iter.Seq[*ocflfs.FileRef], filesErr func() error, dstName func(*ocflfs.FileRef) string, fixity []digest.Algorithm) error {
+// dstName, using the fixity algorithms and goroutines from o. All files are
+// added, or none of them. files is a slice rather than an iterator so that
+// listing errors are found before any goroutines start digesting.
+func (s *Stage) addFiles(ctx context.Context, files []*ocflfs.FileRef, o *stageOptions, dstName func(*ocflfs.FileRef) string) error {
+	for _, err := range ocflfs.CheckFileTypes(ctx, slices.Values(files)) {
+		if err != nil {
+			return err
+		}
+	}
 	alg := s.Update.DigestAlgorithm()
-	validFiles, fileTypeErr := ocflfs.UntilErr(ocflfs.CheckFileTypes(ctx, files))
-	digests, digestErr := ocflfs.UntilErr(digest.DigestFiles(ctx, validFiles, alg, fixity...))
-	var entries []updateEntry
-	var refs []*digest.FileRef
-	for ref := range digests {
-		entries = append(entries, updateEntry{
+	digested := make([]*digest.FileRef, 0, len(files))
+	for ref, err := range digest.DigestFilesBatch(ctx, slices.Values(files), o.goLimit, alg, o.fixity...) {
+		if err != nil {
+			return err
+		}
+		digested = append(digested, ref)
+	}
+	// digests from concurrent goroutines arrive in any order: sort them so
+	// the content location for duplicate content doesn't depend on timing.
+	slices.SortFunc(digested, func(a, b *digest.FileRef) int {
+		return strings.Compare(a.FullPath(), b.FullPath())
+	})
+	entries := make([]updateEntry, len(digested))
+	for i, ref := range digested {
+		entries[i] = updateEntry{
 			name:   dstName(&ref.FileRef),
 			digest: ref.Digests[alg.ID()],
 			fixity: ref.Fixity,
-		})
-		refs = append(refs, ref)
-	}
-	for _, errFn := range []func() error{digestErr, fileTypeErr, filesErr} {
-		if err := errFn(); err != nil {
-			return err
 		}
 	}
 	if err := s.Update.addAll(entries); err != nil {
 		return err
 	}
-	for i, ref := range refs {
+	for i, ref := range digested {
 		if dig := entries[i].digest; s.Update.needsContent(dig) {
 			s.Content.AddFile(dig, ref.FS, ref.FullPath())
 		}
@@ -157,5 +192,60 @@ func (s *Stage) pruneContent() {
 		if !s.Update.needsContent(dig) {
 			s.Content.Remove(dig)
 		}
+	}
+}
+
+// StageOption is an optional argument for [Stage.AddFS] and [Stage.AddFile].
+// Each function documents the methods that use it; others ignore it.
+type StageOption func(*stageOptions)
+
+type stageOptions struct {
+	fixity  []digest.Algorithm
+	filter  func(*ocflfs.FileRef) bool
+	goLimit int
+}
+
+func newStageOptions(opts ...StageOption) *stageOptions {
+	o := &stageOptions{filter: ocflfs.IsNotHidden, goLimit: 1}
+	for _, opt := range opts {
+		opt(o)
+	}
+	return o
+}
+
+// StageWithFixity sets fixity algorithms to digest added files with, in
+// addition to the update's digest algorithm. It is used by [Stage.AddFS] and
+// [Stage.AddFile].
+func StageWithFixity(algs ...digest.Algorithm) StageOption {
+	return func(o *stageOptions) {
+		o.fixity = algs
+	}
+}
+
+// StageWithHidden includes hidden files and directories (with names starting
+// with ".") in [Stage.AddFS], which skips them by default. It replaces any
+// filter set by [StageWithFilter].
+func StageWithHidden() StageOption {
+	return func(o *stageOptions) {
+		o.filter = nil
+	}
+}
+
+// StageWithFilter sets a function that decides which files [Stage.AddFS]
+// adds: a file is added if keep returns true for it. The *FileRef's Path is
+// relative to the directory being added. keep replaces the default filter,
+// which skips hidden files and directories, and any set by [StageWithHidden].
+func StageWithFilter(keep func(*ocflfs.FileRef) bool) StageOption {
+	return func(o *stageOptions) {
+		o.filter = keep
+	}
+}
+
+// StageWithGoLimit sets the number of goroutines used by [Stage.AddFS] and
+// [Stage.AddFile] to digest files concurrently. The default is 1. If gos is
+// less than 1, runtime.GOMAXPROCS(0) is used.
+func StageWithGoLimit(gos int) StageOption {
+	return func(o *stageOptions) {
+		o.goLimit = gos
 	}
 }

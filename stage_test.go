@@ -6,8 +6,10 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
@@ -28,7 +30,7 @@ func TestStage_AddFS(t *testing.T) {
 	}
 	t.Run("top-level directory", func(t *testing.T) {
 		stage := newStage(t)
-		be.NilErr(t, stage.AddFS(ctx, testdataFS, "content-fixture", ".", digest.MD5))
+		be.NilErr(t, stage.AddFS(ctx, testdataFS, "content-fixture", ".", ocfl.StageWithFixity(digest.MD5)))
 		// hidden files are ignored
 		be.DeepEqual(t, []string{
 			"folder1/file.txt",
@@ -70,6 +72,85 @@ func TestStage_AddFS(t *testing.T) {
 		err := stage.AddFS(ctx, testdataFS, "missing", ".")
 		be.True(t, errors.Is(err, fs.ErrNotExist))
 	})
+	t.Run("hidden files", func(t *testing.T) {
+		hiddenFS := ocflfs.NewWrapFS(fstest.MapFS{
+			"a.txt":       &fstest.MapFile{Data: []byte("a")},
+			".b.txt":      &fstest.MapFile{Data: []byte("b")},
+			".dir/c.txt":  &fstest.MapFile{Data: []byte("c")},
+			"dir/.d.txt":  &fstest.MapFile{Data: []byte("d")},
+			"dir/e/f.txt": &fstest.MapFile{Data: []byte("f")},
+		})
+		stage := newStage(t)
+		be.NilErr(t, stage.AddFS(ctx, hiddenFS, ".", "."))
+		be.DeepEqual(t, []string{"a.txt", "dir/e/f.txt"}, stage.Update.State().AllPaths())
+		stage = newStage(t)
+		be.NilErr(t, stage.AddFS(ctx, hiddenFS, ".", ".", ocfl.StageWithHidden()))
+		be.DeepEqual(t, []string{
+			".b.txt",
+			".dir/c.txt",
+			"a.txt",
+			"dir/.d.txt",
+			"dir/e/f.txt",
+		}, stage.Update.State().AllPaths())
+		be.Equal(t, 5, len(stage.Content.Digests()))
+	})
+	t.Run("hidden symlink adds nothing", func(t *testing.T) {
+		// content-fixture's hidden directory has a symlink, which can't be
+		// added
+		stage := newStage(t)
+		err := stage.AddFS(ctx, testdataFS, "content-fixture", ".", ocfl.StageWithHidden())
+		be.True(t, errors.Is(err, ocflfs.ErrFileType))
+		be.Equal(t, 0, len(stage.Update.State().AllPaths()))
+		be.Equal(t, 0, len(stage.Content.Digests()))
+	})
+	t.Run("filter", func(t *testing.T) {
+		stage := newStage(t)
+		noHiddenDir := func(ref *ocflfs.FileRef) bool { return path.Base(path.Dir(ref.Path)) != ".hidden_folder" }
+		be.NilErr(t, stage.AddFS(ctx, testdataFS, "content-fixture/folder1", ".", ocfl.StageWithFilter(noHiddenDir)))
+		// the filter replaces the default, so hidden files that pass it are
+		// added
+		be.DeepEqual(t, []string{
+			"file.txt",
+			"folder2/.hidden_file.txt",
+			"folder2/file2.txt",
+			"folder2/sculpture-stone-face-head-888027.jpg",
+		}, stage.Update.State().AllPaths())
+	})
+	t.Run("go limit", func(t *testing.T) {
+		serial := newStage(t)
+		be.NilErr(t, serial.AddFS(ctx, testdataFS, "content-fixture", ".", ocfl.StageWithFixity(digest.MD5)))
+		concurrent := newStage(t)
+		be.NilErr(t, concurrent.AddFS(ctx, testdataFS, "content-fixture", ".",
+			ocfl.StageWithFixity(digest.MD5), ocfl.StageWithGoLimit(4)))
+		be.True(t, serial.Update.State().Eq(concurrent.Update.State()))
+		be.DeepEqual(t, serial.Content.Digests(), concurrent.Content.Digests())
+		for dig := range serial.Update.State() {
+			be.DeepEqual(t, serial.Update.Fixity(dig), concurrent.Update.Fixity(dig))
+		}
+	})
+	t.Run("digest error adds nothing", func(t *testing.T) {
+		badFS := &openErrFS{WrapFS: ocflfs.DirFS(`testdata`), name: "content-fixture/hello.csv"}
+		stage := newStage(t)
+		err := stage.AddFS(ctx, badFS, "content-fixture", ".", ocfl.StageWithGoLimit(4))
+		be.True(t, errors.Is(err, errOpen))
+		be.Equal(t, 0, len(stage.Update.State().AllPaths()))
+		be.Equal(t, 0, len(stage.Content.Digests()))
+	})
+}
+
+var errOpen = errors.New("open failed")
+
+// openErrFS returns errOpen when the file name is opened.
+type openErrFS struct {
+	*ocflfs.WrapFS
+	name string
+}
+
+func (fsys *openErrFS) OpenFile(ctx context.Context, name string) (fs.File, error) {
+	if name == fsys.name {
+		return nil, errOpen
+	}
+	return fsys.WrapFS.OpenFile(ctx, name)
 }
 
 func TestStage_AddFile(t *testing.T) {
@@ -78,7 +159,7 @@ func TestStage_AddFile(t *testing.T) {
 	upd, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(t.TempDir()), "obj", "obj")
 	be.NilErr(t, err)
 	stage := ocfl.NewStage(upd)
-	be.NilErr(t, stage.AddFile(ctx, testdataFS, "content-fixture/hello.csv", "data/hello.csv", digest.SIZE))
+	be.NilErr(t, stage.AddFile(ctx, testdataFS, "content-fixture/hello.csv", "data/hello.csv", ocfl.StageWithFixity(digest.SIZE)))
 	dig := upd.State().DigestFor("data/hello.csv")
 	be.Nonzero(t, dig)
 	be.Nonzero(t, upd.Fixity(dig)["size"])
@@ -88,6 +169,11 @@ func TestStage_AddFile(t *testing.T) {
 	t.Run("missing file", func(t *testing.T) {
 		err := stage.AddFile(ctx, testdataFS, "missing", "missing")
 		be.True(t, errors.Is(err, fs.ErrNotExist))
+	})
+	t.Run("hidden file", func(t *testing.T) {
+		name := "content-fixture/folder1/folder2/.hidden_file.txt"
+		be.NilErr(t, stage.AddFile(ctx, testdataFS, name, ".hidden.txt"))
+		be.Nonzero(t, upd.State().DigestFor(".hidden.txt"))
 	})
 }
 
@@ -125,6 +211,17 @@ func TestStage_Edits(t *testing.T) {
 		be.NilErr(t, stage.AddBytes("a.txt", []byte("b")))
 		be.DeepEqual(t, []string{stage.Update.State().DigestFor("a.txt")}, stage.Content.Digests())
 	})
+	t.Run("clear", func(t *testing.T) {
+		stage := ocfl.NewStage(obj.NewUpdate())
+		be.NilErr(t, stage.AddBytes("new/a.txt", []byte("a"), digest.MD5))
+		be.NilErr(t, stage.AddFS(ctx, ocflfs.DirFS(`testdata`), "content-fixture", "fixture"))
+		be.NilErr(t, stage.Clear())
+		be.Equal(t, 0, len(stage.Update.State()))
+		be.Equal(t, 0, len(stage.Content.Digests()))
+		// the content can be added again
+		be.NilErr(t, stage.AddBytes("new/a.txt", []byte("a")))
+		be.Equal(t, 1, len(stage.Content.Digests()))
+	})
 	t.Run("rename keeps content", func(t *testing.T) {
 		stage := ocfl.NewStage(obj.NewUpdate())
 		be.NilErr(t, stage.AddBytes("new/a.txt", []byte("a")))
@@ -144,7 +241,7 @@ func TestStage_JSON(t *testing.T) {
 	upd, err := ocfl.NewUpdate(ctx, objFS, "obj", "obj")
 	be.NilErr(t, err)
 	stage := ocfl.NewStage(upd)
-	be.NilErr(t, stage.AddFS(ctx, contentFS, "folder1", "files", digest.MD5))
+	be.NilErr(t, stage.AddFS(ctx, contentFS, "folder1", "files", ocfl.StageWithFixity(digest.MD5)))
 	be.NilErr(t, stage.AddFile(ctx, contentFS, "hello.csv", "hello.csv"))
 
 	saved, err := json.Marshal(stage)
