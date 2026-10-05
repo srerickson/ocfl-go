@@ -100,8 +100,7 @@ type ObjectUpdate struct {
 	fixity   map[string]digest.Set
 	final    *updateFinal // nil for a draft
 
-	// baseInv is a normalized copy of base, with digests using alg. It must
-	// not be modified.
+	// baseInv is a normalized copy of base. It must not be modified.
 	baseInv *Inventory
 	// newInv is the new inventory, built during finalize.
 	newInv *StoredInventory
@@ -112,9 +111,9 @@ type ObjectUpdate struct {
 // state, and the object's ID must match id (if id is not empty). If the
 // object doesn't exist, id is required, the update starts with an empty state,
 // and the digest algorithm is sha512 unless [UpdateWithDigestAlgorithm] is
-// used. NewUpdate returns an error if dir isn't empty and doesn't hold an OCFL
-// object, or if the object is incomplete (an error wrapping
-// [ErrObjectIncomplete]).
+// used (it is ignored if the object exists). NewUpdate returns an error if dir
+// isn't empty and doesn't hold an OCFL object, or if the object is incomplete
+// (an error wrapping [ErrObjectIncomplete]).
 func NewUpdate(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...UpdateOption) (*ObjectUpdate, error) {
 	if !fs.ValidPath(dir) {
 		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
@@ -124,7 +123,11 @@ func NewUpdate(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...Upda
 		return nil, err
 	}
 	o := newUpdateOptions(opts...)
-	return newObjectUpdate(id, base, o.rootSpec, o.alg)
+	alg := o.alg
+	if base != nil {
+		alg = nil // use the object's algorithm
+	}
+	return newObjectUpdate(id, base, o.rootSpec, alg)
 }
 
 // ID returns the ID of the object being updated.
@@ -346,7 +349,7 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) err
 // If it holds the update's base inventory digest (or, for a new object, there
 // is no sidecar), the update has not been committed: every step is run again,
 // overwriting anything written by an earlier attempt. If it holds the new
-// inventory digest, the update was committed and only cleanup remains. Any
+// inventory digest, the update was committed and there is nothing to do. Any
 // other value means the object was changed by something else, and Apply
 // returns an error wrapping [ErrUpdateConflict] without writing anything.
 //
@@ -368,15 +371,14 @@ func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, sr
 	if err != nil {
 		return nil, err
 	}
-	steps := u.cleanupSteps()
 	if status == updatePending {
-		steps = u.applySteps()
+		steps := u.applySteps()
 		if err := checkContentSource(steps, src); err != nil {
 			return nil, err
 		}
-	}
-	if err := runSteps(ctx, steps, writeFS, dir, src, o.goLimit, o.logger); err != nil {
-		return nil, err
+		if err := runSteps(ctx, steps, writeFS, dir, src, o.goLimit, o.logger); err != nil {
+			return nil, err
+		}
 	}
 	return &Object{fs: fsys, path: dir, inventory: u.newInv}, nil
 }
@@ -508,19 +510,21 @@ func (u *ObjectUpdate) UnmarshalJSON(data []byte) error {
 
 // newObjectUpdate returns a new draft for an object with the given base
 // inventory (nil for a new object). If alg is nil, the base inventory's
-// algorithm or sha512 is used.
+// algorithm or sha512 is used. If base and alg are both set, alg must be the
+// base inventory's algorithm.
 func newObjectUpdate(id string, base *StoredInventory, rootSpec Spec, alg digest.Algorithm) (*ObjectUpdate, error) {
 	if base != nil {
 		if id != "" && id != base.ID {
 			return nil, fmt.Errorf("object has unexpected ID: %q; expected: %q", base.ID, id)
 		}
 		id = base.ID
-		if alg == nil {
-			var err error
-			alg, err = digest.DefaultRegistry().Get(base.DigestAlgorithm)
-			if err != nil {
-				return nil, err
-			}
+		if alg != nil && alg.ID() != base.DigestAlgorithm {
+			return nil, fmt.Errorf("digest algorithm %s doesn't match the object's digest algorithm, %s: changing an existing object's digest algorithm isn't supported",
+				alg.ID(), base.DigestAlgorithm)
+		}
+		var err error
+		if alg, err = digest.DefaultRegistry().Get(base.DigestAlgorithm); err != nil {
+			return nil, err
 		}
 	}
 	if id == "" {
@@ -542,7 +546,7 @@ func newObjectUpdate(id string, base *StoredInventory, rootSpec Spec, alg digest
 	}
 	if base != nil {
 		var err error
-		u.baseInv, err = convertInventory(&base.Inventory, alg.ID())
+		u.baseInv, err = normalizeInventory(&base.Inventory)
 		if err != nil {
 			return nil, err
 		}
@@ -733,7 +737,7 @@ func (u *ObjectUpdate) buildInventory(final *updateFinal) (*StoredInventory, err
 	}
 	if u.baseInv != nil {
 		// a fresh copy: u.baseInv must not be modified.
-		if inv, err = convertInventory(u.baseInv, u.alg.ID()); err != nil {
+		if inv, err = normalizeInventory(u.baseInv); err != nil {
 			return nil, err
 		}
 	}
@@ -820,16 +824,15 @@ const (
 // wrapping ErrUpdateConflict if the object matches neither the base inventory
 // nor the new inventory.
 func (u *ObjectUpdate) storageStatus(ctx context.Context, fsys ocflfs.FS, dir string) (updateStatus, error) {
-	newAlg := u.newInv.DigestAlgorithm
-	newSidecar, err := readSidecarIfExists(ctx, fsys, dir, newAlg)
+	sidecar, err := readSidecarIfExists(ctx, fsys, dir, u.newInv.DigestAlgorithm)
 	if err != nil {
 		return 0, err
 	}
-	if strings.EqualFold(newSidecar, u.newInv.digest) {
+	if strings.EqualFold(sidecar, u.newInv.digest) {
 		return updateCommitted, nil
 	}
 	if u.base == nil {
-		if newSidecar != "" {
+		if sidecar != "" {
 			return 0, fmt.Errorf("%w: object has an inventory sidecar but the update is for a new object", ErrUpdateConflict)
 		}
 		// whatever is there must be ours: there may be no inventory.json, or
@@ -845,18 +848,7 @@ func (u *ObjectUpdate) storageStatus(ctx context.Context, fsys ocflfs.FS, dir st
 		}
 		return 0, fmt.Errorf("%w: object has an inventory.json that wasn't written by the update", ErrUpdateConflict)
 	}
-	baseAlg := u.base.DigestAlgorithm
-	baseSidecar := newSidecar
-	if baseAlg != newAlg {
-		if newSidecar != "" {
-			return 0, fmt.Errorf("%w: unexpected %s inventory sidecar digest", ErrUpdateConflict, newAlg)
-		}
-		baseSidecar, err = readSidecarIfExists(ctx, fsys, dir, baseAlg)
-		if err != nil {
-			return 0, err
-		}
-	}
-	if strings.EqualFold(baseSidecar, u.base.digest) {
+	if strings.EqualFold(sidecar, u.base.digest) {
 		return updatePending, nil
 	}
 	return 0, fmt.Errorf("%w: root inventory sidecar doesn't match the update's base inventory or new inventory", ErrUpdateConflict)
@@ -958,23 +950,7 @@ func (u *ObjectUpdate) applySteps() []updateStep {
 			},
 		},
 	)
-	return append(steps, u.cleanupSteps()...)
-}
-
-// cleanupSteps returns the steps that follow the commit point when applying
-// u: removing the root inventory sidecar for the base inventory's digest
-// algorithm, if it changed.
-func (u *ObjectUpdate) cleanupSteps() []updateStep {
-	if u.base == nil || u.base.DigestAlgorithm == u.newInv.DigestAlgorithm {
-		return nil
-	}
-	oldSidecar := inventoryBase + "." + u.base.DigestAlgorithm
-	return []updateStep{{
-		name: "remove " + oldSidecar,
-		run: func(ctx context.Context, fsys ocflfs.WriteFS, dir string, _ ContentSource) error {
-			return removeIfExists(ctx, fsys, path.Join(dir, oldSidecar))
-		},
-	}}
+	return steps
 }
 
 // revertSteps returns steps for undoing an uncommitted update. They must not
@@ -1123,12 +1099,8 @@ func removeIfExists(ctx context.Context, fsys ocflfs.WriteFS, name string) error
 	return err
 }
 
-// convertInventory returns a normalized copy of inv that uses the digest
-// algorithm alg. If inv uses a different algorithm, the inventory's fixity
-// for alg must include every file in the manifest: the manifest, version
-// states and fixity are rewritten to use alg, and the previous digests are
-// kept as fixity.
-func convertInventory(inv *Inventory, alg string) (*Inventory, error) {
+// normalizeInventory returns a normalized copy of inv.
+func normalizeInventory(inv *Inventory) (*Inventory, error) {
 	out := &Inventory{
 		ID:               inv.ID,
 		Type:             inv.Type,
@@ -1158,48 +1130,6 @@ func convertInventory(inv *Inventory, alg string) (*Inventory, error) {
 		}
 		out.Versions[vnum] = newVer
 	}
-	if inv.DigestAlgorithm == alg {
-		return out, nil
-	}
-	// change the digest algorithm using fixity values
-	newDigests := out.Fixity[alg].PathMap() // content path -> new digest
-	convert := make(map[string]string, len(out.Manifest))
-	newManifest := make(DigestMap, len(out.Manifest))
-	for oldDig, paths := range out.Manifest {
-		var newDig string
-		for _, p := range paths {
-			d := newDigests[p]
-			if d == "" {
-				return nil, fmt.Errorf("can't change the object's digest algorithm to %s: inventory has no %s fixity for %q", alg, alg, p)
-			}
-			if newDig != "" && d != newDig {
-				return nil, fmt.Errorf("can't change the object's digest algorithm to %s: inventory has inconsistent %s fixity for %q", alg, alg, oldDig)
-			}
-			newDig = d
-		}
-		if len(newManifest[newDig]) > 0 {
-			return nil, fmt.Errorf("can't change the object's digest algorithm to %s: digest %q is used for different content", alg, newDig)
-		}
-		convert[oldDig] = newDig
-		newManifest[newDig] = paths
-	}
-	for vnum, ver := range out.Versions {
-		newState := make(DigestMap, len(ver.State))
-		for oldDig, paths := range ver.State {
-			newDig := convert[oldDig]
-			if newDig == "" {
-				return nil, fmt.Errorf("in existing inventory %s state: digest not in manifest: %q", vnum, oldDig)
-			}
-			newState[newDig] = paths
-		}
-		ver.State = newState
-	}
-	delete(out.Fixity, alg)
-	if out.Fixity[out.DigestAlgorithm], err = out.Fixity[out.DigestAlgorithm].Merge(out.Manifest, true); err != nil {
-		return nil, err
-	}
-	out.Manifest = newManifest
-	out.DigestAlgorithm = alg
 	return out, nil
 }
 
@@ -1295,10 +1225,9 @@ func newUpdateOptions(opts ...UpdateOption) *updateOptions {
 }
 
 // UpdateWithDigestAlgorithm sets the primary digest algorithm (sha512 or
-// sha256) for a new [ObjectUpdate]. Without it, an update uses the object's
-// existing algorithm, or sha512 for a new object. The algorithm of an
-// existing object can only be changed if the object's inventory includes
-// fixity values using the new algorithm for all of the object's content.
+// sha256) for a new object. Without it, a new object uses sha512. It is
+// ignored if the object exists: the update uses the object's algorithm.
+// Changing an existing object's digest algorithm isn't supported.
 func UpdateWithDigestAlgorithm(alg digest.Algorithm) UpdateOption {
 	return func(o *updateOptions) {
 		o.alg = alg

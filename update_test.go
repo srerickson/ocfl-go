@@ -66,6 +66,13 @@ func TestNewUpdate(t *testing.T) {
 			be.True(t, obj.Version(0).State().Eq(upd.State()))
 		}
 	})
+	t.Run("existing object ignores digest algorithm", func(t *testing.T) {
+		// spec-ex-full uses sha512
+		upd, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "",
+			ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
+		be.NilErr(t, err)
+		be.Equal(t, digest.SHA512.ID(), upd.DigestAlgorithm().ID())
+	})
 	t.Run("existing object with wrong ID", func(t *testing.T) {
 		_, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "other-id")
 		be.Nonzero(t, err)
@@ -393,6 +400,20 @@ func TestObjectUpdate_JSON(t *testing.T) {
 		be.NilErr(t, json.Unmarshal(final["content_paths"], &contentPaths))
 		be.DeepEqual(t, []string{"v4/content/new/a.txt", "v4/content/new/b.txt"}, contentPaths.AllPaths())
 	})
+	t.Run("digest algorithm doesn't match base inventory", func(t *testing.T) {
+		_, stage := newStage(t)
+		saved, err := json.Marshal(stage.Update)
+		be.NilErr(t, err)
+		var fields map[string]any
+		be.NilErr(t, json.Unmarshal(saved, &fields))
+		fields["digest_algorithm"] = "sha256"
+		changed, err := json.Marshal(fields)
+		be.NilErr(t, err)
+		var loaded ocfl.ObjectUpdate
+		err = json.Unmarshal(changed, &loaded)
+		be.Nonzero(t, err)
+		be.In(t, "isn't supported", err.Error())
+	})
 	t.Run("tampering", func(t *testing.T) {
 		_, stage := newStage(t)
 		be.NilErr(t, stage.Update.Finalize("v4", user))
@@ -424,6 +445,9 @@ func TestObjectUpdate_JSON(t *testing.T) {
 			},
 			"new inventory digest": func(u map[string]any) {
 				u["finalized"].(map[string]any)["new_inventory_digest"] = strings.Repeat("0", 128)
+			},
+			"digest algorithm": func(u map[string]any) {
+				u["digest_algorithm"] = "sha256"
 			},
 			"base inventory": func(u map[string]any) {
 				u["base_inventory"] = strings.Replace(u["base_inventory"].(string), "Initial import", "Changed", 1)
@@ -580,13 +604,6 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		be.DeepEqual(t, []string{"dir/renamed.txt"}, newObj.Version(0).State().AllPaths())
 		be.NilErr(t, ocfl.ValidateObject(ctx, fsys, obj.Path()).Err())
 	})
-	t.Run("digest algorithm can't change without fixity", func(t *testing.T) {
-		fsys := testutil.TmpLocalFS(t, fixture)
-		_, err := ocfl.NewUpdate(ctx, fsys, "minimal_one_version_one_file", "",
-			ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
-		be.Nonzero(t, err)
-		be.In(t, "no sha256 fixity", err.Error())
-	})
 }
 
 // Every fixture can be updated with new content.
@@ -656,21 +673,21 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 			},
 			baseHead: 3,
 		},
-		"digest algorithm change": {
+		"existing sha256 object": {
 			setup: func(t *testing.T, fsys *local.FS) *ocfl.Stage {
-				// v1 uses sha256 with sha512 fixity
 				upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj", ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
 				be.NilErr(t, err)
 				stage := stageBytes(t, upd, map[string][]byte{
 					"a.txt":     []byte("a"),
 					"dir/b.txt": []byte("b"),
-				}, digest.SHA512)
+				})
 				be.NilErr(t, upd.Finalize("v1", user))
 				_, err = upd.Apply(ctx, fsys, "obj", stage.Content)
 				be.NilErr(t, err)
-				// v2 uses sha512
+				// v2 keeps sha256: the option is ignored for an existing object
 				upd, err = ocfl.NewUpdate(ctx, fsys, "obj", "", ocfl.UpdateWithDigestAlgorithm(digest.SHA512))
 				be.NilErr(t, err)
+				be.Equal(t, digest.SHA256.ID(), upd.DigestAlgorithm().ID())
 				stage = ocfl.NewStage(upd)
 				be.NilErr(t, stage.AddBytes("c.txt", []byte("c")))
 				be.NilErr(t, stage.Remove("a.txt"))
