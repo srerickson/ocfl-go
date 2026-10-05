@@ -523,105 +523,6 @@ func (u *ObjectUpdate) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// newObjectUpdate returns a new draft for an object with the given base
-// inventory (nil for a new object). If alg is nil, the base inventory's
-// algorithm or sha512 is used. If base and alg are both set, alg must be the
-// base inventory's algorithm.
-func newObjectUpdate(id string, base *StoredInventory, rootSpec Spec, alg digest.Algorithm) (*ObjectUpdate, error) {
-	if base != nil {
-		if id != "" && id != base.ID {
-			return nil, fmt.Errorf("object has unexpected ID: %q; expected: %q", base.ID, id)
-		}
-		id = base.ID
-		if alg != nil && alg.ID() != base.DigestAlgorithm {
-			return nil, fmt.Errorf("digest algorithm %s doesn't match the object's digest algorithm, %s: changing an existing object's digest algorithm isn't supported",
-				alg.ID(), base.DigestAlgorithm)
-		}
-		var err error
-		if alg, err = digest.DefaultRegistry().Get(base.DigestAlgorithm); err != nil {
-			return nil, err
-		}
-	}
-	if id == "" {
-		return nil, ErrNoObjectID
-	}
-	if alg == nil {
-		alg = digest.SHA512
-	}
-	if err := validUpdateAlgorithm(alg); err != nil {
-		return nil, err
-	}
-	u := &ObjectUpdate{
-		id:       id,
-		base:     base,
-		rootSpec: rootSpec,
-		alg:      alg,
-		state:    DigestMap{},
-		fixity:   map[string]digest.Set{},
-	}
-	if base != nil {
-		var err error
-		u.baseInv, err = normalizeInventory(&base.Inventory)
-		if err != nil {
-			return nil, err
-		}
-		u.state = u.baseState().Clone()
-	}
-	return u, nil
-}
-
-// readUpdateBase reads and validates the root inventory for the object at
-// dir. It returns nil if dir doesn't exist or is empty.
-func readUpdateBase(ctx context.Context, fsys ocflfs.FS, dir string) (*StoredInventory, error) {
-	entries, err := ocflfs.ReadDir(ctx, fsys, dir)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("reading object root directory: %w", err)
-	}
-	if len(entries) == 0 {
-		return nil, nil
-	}
-	dirState := ParseObjectDir(entries)
-	if !dirState.HasNamaste() {
-		return nil, errors.New("directory is not empty: non-conforming contents")
-	}
-	inv, err := ReadInventory(ctx, fsys, dir)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("%w: missing %s", ErrObjectIncomplete, inventoryBase)
-		}
-		return nil, err
-	}
-	if err := inv.ValidateSidecar(ctx, fsys, dir); err != nil {
-		var digestErr *digest.DigestError
-		if errors.Is(err, fs.ErrNotExist) || errors.As(err, &digestErr) {
-			return nil, fmt.Errorf("%w: %w", ErrObjectIncomplete, err)
-		}
-		return nil, err
-	}
-	// an update interrupted before writing the root inventory may have left
-	// a new version directory, declaration, or sidecar.
-	if next, err := inv.Head.Next(); err == nil && dirState.HasVersionDir(next) {
-		return nil, fmt.Errorf("%w: version directory %s isn't in the inventory", ErrObjectIncomplete, next)
-	}
-	if dirState.Spec != inv.Type.Spec {
-		return nil, fmt.Errorf("%w: object declaration (OCFL v%s) doesn't match the inventory (OCFL v%s)",
-			ErrObjectIncomplete, dirState.Spec, inv.Type.Spec)
-	}
-	for _, name := range dirState.Invalid {
-		if strings.HasPrefix(name, objectDeclPrefix) || strings.HasPrefix(name, sidecarPrefix) {
-			return nil, fmt.Errorf("%w: unexpected %s", ErrObjectIncomplete, name)
-		}
-	}
-	return inv, nil
-}
-
-// updateEntry is a file added to an update's state
-type updateEntry struct {
-	name   string
-	digest string
-	fixity digest.Set
-}
-
 // addAll adds all entries to u's state, or none of them if there is an
 // error.
 func (u *ObjectUpdate) addAll(entries []updateEntry) error {
@@ -839,14 +740,6 @@ func (u *ObjectUpdate) checkSpec(spec Spec) error {
 	return nil
 }
 
-// updateStatus describes the state of an update in storage
-type updateStatus int
-
-const (
-	updatePending   updateStatus = iota // not committed: may be partially applied
-	updateCommitted                     // new root inventory sidecar was written
-)
-
 // storageStatus reads the root inventory sidecar for the object at dir and
 // reports whether the update is pending or committed. It returns an error
 // wrapping ErrUpdateConflict if the object matches neither the base inventory
@@ -915,25 +808,6 @@ func (u *ObjectUpdate) checkNewObjectDir(ctx context.Context, fsys ocflfs.FS, di
 		return fmt.Errorf("%w: object has an inventory.json that wasn't written by the update", ErrUpdateConflict)
 	}
 	return nil
-}
-
-// readSidecarIfExists reads the root inventory sidecar using alg in dir. It
-// returns an empty string if the sidecar doesn't exist.
-func readSidecarIfExists(ctx context.Context, fsys ocflfs.FS, dir, alg string) (string, error) {
-	sum, err := ReadInventorySidecar(ctx, fsys, dir, alg)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", nil
-	}
-	return sum, err
-}
-
-// updateStep is a single step in applying or reverting an update. Steps must
-// be safe to run more than once.
-type updateStep struct {
-	name   string
-	digest string // digest of content copied in the step, if any
-	async  bool   // run concurrently with adjacent async steps
-	run    func(ctx context.Context, fsys ocflfs.WriteFS, dir string, src ContentSource) error
 }
 
 // applySteps returns the steps for applying u to storage. The step that
@@ -1064,6 +938,269 @@ func (u *ObjectUpdate) revertSteps() []updateStep {
 		)
 	}
 	return steps
+}
+
+// UpdateOption is an optional argument for creating, finalizing, applying
+// and reverting an [ObjectUpdate]. Each function documents the options it
+// uses; others are ignored.
+type UpdateOption func(*updateOptions)
+
+type updateOptions struct {
+	// constructors
+	alg      digest.Algorithm
+	rootSpec Spec
+	// finalize
+	created         time.Time
+	spec            Spec
+	newHead         int
+	allowUnchanged  bool
+	contentPathFunc PathMutation
+	// apply and revert
+	logger  *slog.Logger
+	goLimit int
+}
+
+func newUpdateOptions(opts ...UpdateOption) *updateOptions {
+	o := &updateOptions{logger: logging.DisabledLogger()}
+	for _, opt := range opts {
+		opt(o)
+	}
+	return o
+}
+
+// UpdateWithDigestAlgorithm sets the primary digest algorithm (sha512 or
+// sha256) for a new object. Without it, a new object uses sha512. It is
+// ignored if the object exists: the update uses the object's algorithm.
+// Changing an existing object's digest algorithm isn't supported.
+func UpdateWithDigestAlgorithm(alg digest.Algorithm) UpdateOption {
+	return func(o *updateOptions) {
+		o.alg = alg
+	}
+}
+
+// UpdateWithVersionCreated sets the 'created' timestamp for the new version.
+// It is used by [ObjectUpdate.Finalize]. The timestamp is truncated to the
+// second. Without it, the current time is used.
+func UpdateWithVersionCreated(t time.Time) UpdateOption {
+	return func(o *updateOptions) {
+		o.created = t
+	}
+}
+
+// UpdateWithOCFLSpec sets the OCFL specification for the new object version.
+// It is used by [ObjectUpdate.Finalize]. Without it, an existing object keeps
+// its spec, and a new object uses its storage root's spec (if known) or the
+// latest spec.
+func UpdateWithOCFLSpec(s Spec) UpdateOption {
+	return func(o *updateOptions) {
+		o.spec = s
+	}
+}
+
+// UpdateWithNewHead is used to enforce the expected version number (without
+// padding) for the new version. It is used by [ObjectUpdate.Finalize], which
+// returns an error wrapping [ErrUnexpectedHead] if the update would create a
+// version with a different number. For a new object, the expected version
+// number is 1. Values of v less than 1 are ignored.
+func UpdateWithNewHead(v int) UpdateOption {
+	return func(o *updateOptions) {
+		o.newHead = v
+	}
+}
+
+// UpdateWithUnchangedVersionState allows updates that don't change the
+// version state. Without it, [ObjectUpdate.Finalize] returns an error if the
+// new version state is the same as the head version's.
+func UpdateWithUnchangedVersionState() UpdateOption {
+	return func(o *updateOptions) {
+		o.allowUnchanged = true
+	}
+}
+
+// UpdateWithContentPathFunc sets a function for enforcing naming conventions
+// for content paths in the new inventory. The function is called by
+// [ObjectUpdate.Finalize] with the logical paths for each new digest.
+func UpdateWithContentPathFunc(mutate PathMutation) UpdateOption {
+	return func(o *updateOptions) {
+		o.contentPathFunc = mutate
+	}
+}
+
+// UpdateWithLogger sets the logger used to log each step of
+// [ObjectUpdate.Apply] and [ObjectUpdate.Revert].
+func UpdateWithLogger(logger *slog.Logger) UpdateOption {
+	return func(o *updateOptions) {
+		if logger != nil {
+			o.logger = logger
+		}
+	}
+}
+
+// UpdateWithGoLimit sets the number of goroutines used by
+// [ObjectUpdate.Apply] to copy content concurrently. The default is
+// runtime.NumCPU().
+func UpdateWithGoLimit(gos int) UpdateOption {
+	return func(o *updateOptions) {
+		o.goLimit = gos
+	}
+}
+
+// updateWithRootSpec sets the storage root's spec for a new ObjectUpdate.
+func updateWithRootSpec(spec Spec) UpdateOption {
+	return func(o *updateOptions) {
+		o.rootSpec = spec
+	}
+}
+
+// newObjectUpdate returns a new draft for an object with the given base
+// inventory (nil for a new object). If alg is nil, the base inventory's
+// algorithm or sha512 is used. If base and alg are both set, alg must be the
+// base inventory's algorithm.
+func newObjectUpdate(id string, base *StoredInventory, rootSpec Spec, alg digest.Algorithm) (*ObjectUpdate, error) {
+	if base != nil {
+		if id != "" && id != base.ID {
+			return nil, fmt.Errorf("object has unexpected ID: %q; expected: %q", base.ID, id)
+		}
+		id = base.ID
+		if alg != nil && alg.ID() != base.DigestAlgorithm {
+			return nil, fmt.Errorf("digest algorithm %s doesn't match the object's digest algorithm, %s: changing an existing object's digest algorithm isn't supported",
+				alg.ID(), base.DigestAlgorithm)
+		}
+		var err error
+		if alg, err = digest.DefaultRegistry().Get(base.DigestAlgorithm); err != nil {
+			return nil, err
+		}
+	}
+	if id == "" {
+		return nil, ErrNoObjectID
+	}
+	if alg == nil {
+		alg = digest.SHA512
+	}
+	if err := validUpdateAlgorithm(alg); err != nil {
+		return nil, err
+	}
+	u := &ObjectUpdate{
+		id:       id,
+		base:     base,
+		rootSpec: rootSpec,
+		alg:      alg,
+		state:    DigestMap{},
+		fixity:   map[string]digest.Set{},
+	}
+	if base != nil {
+		var err error
+		u.baseInv, err = normalizeInventory(&base.Inventory)
+		if err != nil {
+			return nil, err
+		}
+		u.state = u.baseState().Clone()
+	}
+	return u, nil
+}
+
+// updateEntry is a file added to an update's state
+type updateEntry struct {
+	name   string
+	digest string
+	fixity digest.Set
+}
+
+// readUpdateBase reads and validates the root inventory for the object at
+// dir. It returns nil if dir doesn't exist or is empty.
+func readUpdateBase(ctx context.Context, fsys ocflfs.FS, dir string) (*StoredInventory, error) {
+	entries, err := ocflfs.ReadDir(ctx, fsys, dir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("reading object root directory: %w", err)
+	}
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	dirState := ParseObjectDir(entries)
+	if !dirState.HasNamaste() {
+		return nil, errors.New("directory is not empty: non-conforming contents")
+	}
+	inv, err := ReadInventory(ctx, fsys, dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w: missing %s", ErrObjectIncomplete, inventoryBase)
+		}
+		return nil, err
+	}
+	if err := inv.ValidateSidecar(ctx, fsys, dir); err != nil {
+		var digestErr *digest.DigestError
+		if errors.Is(err, fs.ErrNotExist) || errors.As(err, &digestErr) {
+			return nil, fmt.Errorf("%w: %w", ErrObjectIncomplete, err)
+		}
+		return nil, err
+	}
+	// an update interrupted before writing the root inventory may have left
+	// a new version directory, declaration, or sidecar.
+	if next, err := inv.Head.Next(); err == nil && dirState.HasVersionDir(next) {
+		return nil, fmt.Errorf("%w: version directory %s isn't in the inventory", ErrObjectIncomplete, next)
+	}
+	if dirState.Spec != inv.Type.Spec {
+		return nil, fmt.Errorf("%w: object declaration (OCFL v%s) doesn't match the inventory (OCFL v%s)",
+			ErrObjectIncomplete, dirState.Spec, inv.Type.Spec)
+	}
+	for _, name := range dirState.Invalid {
+		if strings.HasPrefix(name, objectDeclPrefix) || strings.HasPrefix(name, sidecarPrefix) {
+			return nil, fmt.Errorf("%w: unexpected %s", ErrObjectIncomplete, name)
+		}
+	}
+	return inv, nil
+}
+
+// updateStatus describes the state of an update in storage
+type updateStatus int
+
+const (
+	updatePending   updateStatus = iota // not committed: may be partially applied
+	updateCommitted                     // new root inventory sidecar was written
+)
+
+// updateStep is a single step in applying or reverting an update. Steps must
+// be safe to run more than once.
+type updateStep struct {
+	name   string
+	digest string // digest of content copied in the step, if any
+	async  bool   // run concurrently with adjacent async steps
+	run    func(ctx context.Context, fsys ocflfs.WriteFS, dir string, src ContentSource) error
+}
+
+// objectUpdateJSON is the saved form of an ObjectUpdate
+type objectUpdateJSON struct {
+	ID              string                `json:"id"`
+	BaseInventory   string                `json:"base_inventory,omitempty"`
+	RootSpec        Spec                  `json:"root_spec,omitempty"`
+	DigestAlgorithm string                `json:"digest_algorithm"`
+	State           DigestMap             `json:"state"`
+	Fixity          map[string]digest.Set `json:"fixity,omitempty"`
+	Finalized       *updateFinal          `json:"finalized,omitempty"`
+}
+
+// updateFinal holds the values settled by ObjectUpdate.Finalize: together
+// with the base inventory, state and fixity, they determine the new
+// inventory.
+type updateFinal struct {
+	Message string    `json:"message"`
+	User    User      `json:"user"`
+	Created time.Time `json:"created"`
+	Spec    Spec      `json:"spec"`
+	// ContentPaths are the manifest paths for content that is new in the
+	// version.
+	ContentPaths       DigestMap `json:"content_paths"`
+	NewInventoryDigest string    `json:"new_inventory_digest"`
+}
+
+// readSidecarIfExists reads the root inventory sidecar using alg in dir. It
+// returns an empty string if the sidecar doesn't exist.
+func readSidecarIfExists(ctx context.Context, fsys ocflfs.FS, dir, alg string) (string, error) {
+	sum, err := ReadInventorySidecar(ctx, fsys, dir, alg)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	return sum, err
 }
 
 // checkContentSource returns an error wrapping ErrMissingContent if src
@@ -1245,141 +1382,4 @@ func validDigest(alg digest.Algorithm, dig string) error {
 		return fmt.Errorf("invalid %s digest: %q", alg.ID(), dig)
 	}
 	return nil
-}
-
-// objectUpdateJSON is the saved form of an ObjectUpdate
-type objectUpdateJSON struct {
-	ID              string                `json:"id"`
-	BaseInventory   string                `json:"base_inventory,omitempty"`
-	RootSpec        Spec                  `json:"root_spec,omitempty"`
-	DigestAlgorithm string                `json:"digest_algorithm"`
-	State           DigestMap             `json:"state"`
-	Fixity          map[string]digest.Set `json:"fixity,omitempty"`
-	Finalized       *updateFinal          `json:"finalized,omitempty"`
-}
-
-// updateFinal holds the values settled by ObjectUpdate.Finalize: together
-// with the base inventory, state and fixity, they determine the new
-// inventory.
-type updateFinal struct {
-	Message string    `json:"message"`
-	User    User      `json:"user"`
-	Created time.Time `json:"created"`
-	Spec    Spec      `json:"spec"`
-	// ContentPaths are the manifest paths for content that is new in the
-	// version.
-	ContentPaths       DigestMap `json:"content_paths"`
-	NewInventoryDigest string    `json:"new_inventory_digest"`
-}
-
-// UpdateOption is an optional argument for creating, finalizing, applying
-// and reverting an [ObjectUpdate]. Each function documents the options it
-// uses; others are ignored.
-type UpdateOption func(*updateOptions)
-
-type updateOptions struct {
-	// constructors
-	alg      digest.Algorithm
-	rootSpec Spec
-	// finalize
-	created         time.Time
-	spec            Spec
-	newHead         int
-	allowUnchanged  bool
-	contentPathFunc PathMutation
-	// apply and revert
-	logger  *slog.Logger
-	goLimit int
-}
-
-func newUpdateOptions(opts ...UpdateOption) *updateOptions {
-	o := &updateOptions{logger: logging.DisabledLogger()}
-	for _, opt := range opts {
-		opt(o)
-	}
-	return o
-}
-
-// UpdateWithDigestAlgorithm sets the primary digest algorithm (sha512 or
-// sha256) for a new object. Without it, a new object uses sha512. It is
-// ignored if the object exists: the update uses the object's algorithm.
-// Changing an existing object's digest algorithm isn't supported.
-func UpdateWithDigestAlgorithm(alg digest.Algorithm) UpdateOption {
-	return func(o *updateOptions) {
-		o.alg = alg
-	}
-}
-
-// UpdateWithVersionCreated sets the 'created' timestamp for the new version.
-// It is used by [ObjectUpdate.Finalize]. The timestamp is truncated to the
-// second. Without it, the current time is used.
-func UpdateWithVersionCreated(t time.Time) UpdateOption {
-	return func(o *updateOptions) {
-		o.created = t
-	}
-}
-
-// UpdateWithOCFLSpec sets the OCFL specification for the new object version.
-// It is used by [ObjectUpdate.Finalize]. Without it, an existing object keeps
-// its spec, and a new object uses its storage root's spec (if known) or the
-// latest spec.
-func UpdateWithOCFLSpec(s Spec) UpdateOption {
-	return func(o *updateOptions) {
-		o.spec = s
-	}
-}
-
-// UpdateWithNewHead is used to enforce the expected version number (without
-// padding) for the new version. It is used by [ObjectUpdate.Finalize], which
-// returns an error wrapping [ErrUnexpectedHead] if the update would create a
-// version with a different number. For a new object, the expected version
-// number is 1. Values of v less than 1 are ignored.
-func UpdateWithNewHead(v int) UpdateOption {
-	return func(o *updateOptions) {
-		o.newHead = v
-	}
-}
-
-// UpdateWithUnchangedVersionState allows updates that don't change the
-// version state. Without it, [ObjectUpdate.Finalize] returns an error if the
-// new version state is the same as the head version's.
-func UpdateWithUnchangedVersionState() UpdateOption {
-	return func(o *updateOptions) {
-		o.allowUnchanged = true
-	}
-}
-
-// UpdateWithContentPathFunc sets a function for enforcing naming conventions
-// for content paths in the new inventory. The function is called by
-// [ObjectUpdate.Finalize] with the logical paths for each new digest.
-func UpdateWithContentPathFunc(mutate PathMutation) UpdateOption {
-	return func(o *updateOptions) {
-		o.contentPathFunc = mutate
-	}
-}
-
-// UpdateWithLogger sets the logger used to log each step of
-// [ObjectUpdate.Apply] and [ObjectUpdate.Revert].
-func UpdateWithLogger(logger *slog.Logger) UpdateOption {
-	return func(o *updateOptions) {
-		if logger != nil {
-			o.logger = logger
-		}
-	}
-}
-
-// UpdateWithGoLimit sets the number of goroutines used by
-// [ObjectUpdate.Apply] to copy content concurrently. The default is
-// runtime.NumCPU().
-func UpdateWithGoLimit(gos int) UpdateOption {
-	return func(o *updateOptions) {
-		o.goLimit = gos
-	}
-}
-
-// updateWithRootSpec sets the storage root's spec for a new ObjectUpdate.
-func updateWithRootSpec(spec Spec) UpdateOption {
-	return func(o *updateOptions) {
-		o.rootSpec = spec
-	}
 }
