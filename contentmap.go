@@ -409,11 +409,12 @@ func redactURL(text string) string {
 	return u.Redacted()
 }
 
-// sameFS returns true if a and b are the same FS value. Values of types that
-// can't be compared are never the same.
+// sameFS returns true if a and b are the same FS value. Values that can't be
+// compared, including values of comparable types that hold uncomparable
+// values (such as a struct with an interface field holding a map), are never
+// the same.
 func sameFS(a, b ocflfs.FS) bool {
-	typ := reflect.TypeOf(a)
-	if typ != reflect.TypeOf(b) || !typ.Comparable() {
+	if reflect.TypeOf(a) != reflect.TypeOf(b) || !reflect.ValueOf(a).Comparable() {
 		return false
 	}
 	return a == b

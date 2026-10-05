@@ -53,6 +53,24 @@ func TestContentMap(t *testing.T) {
 		srcFS, _ = c.GetContent(digA)
 		be.Zero(t, srcFS)
 	})
+	t.Run("FS values that can't be compared", func(t *testing.T) {
+		// the struct type is comparable, but its value isn't
+		fsys := mapFS{files: fstest.MapFS{"a.txt": &fstest.MapFile{Data: []byte("a")}}}
+		var c ocfl.ContentMap
+		c.AddFile(digA, fsys, "a.txt", 1)
+		c.AddFile(digB, fsys, "a.txt", 1)
+		srcFS, srcPath := c.GetContent(digB)
+		got, err := ocflfs.ReadAll(ctx, srcFS, srcPath)
+		be.NilErr(t, err)
+		be.Equal(t, "a", string(got))
+	})
+}
+
+// mapFS is an ocflfs.FS with a field that holds a map.
+type mapFS struct{ files fs.FS }
+
+func (m mapFS) OpenFile(_ context.Context, name string) (fs.File, error) {
+	return m.files.Open(name)
 }
 
 func TestContentMap_JSON(t *testing.T) {
