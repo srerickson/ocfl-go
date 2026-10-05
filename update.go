@@ -1045,15 +1045,26 @@ func getContent(src ContentSource, dig string) (ocflfs.FS, string) {
 
 // runSteps runs steps in order. Consecutive async steps run concurrently,
 // using up to gos goroutines. It stops at the first error.
+//
+// A step isn't started, or logged, once ctx is done. A step error wrapping
+// [context.Canceled] or [context.DeadlineExceeded] is logged at Debug level,
+// not Error, leaving the caller to report the interruption.
 func runSteps(ctx context.Context, steps []updateStep, fsys ocflfs.WriteFS, dir string, src ContentSource, gos int, logger *slog.Logger) error {
 	if gos < 1 {
 		gos = runtime.NumCPU()
 	}
 	runStep := func(ctx context.Context, step updateStep) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		logger.Info(step.name)
 		if err := step.run(ctx, fsys, dir, src); err != nil {
 			err = fmt.Errorf("%s: %w", step.name, err)
-			logger.Error(err.Error())
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				logger.Debug(err.Error())
+			} else {
+				logger.Error(err.Error())
+			}
 			return err
 		}
 		return nil
@@ -1077,9 +1088,6 @@ func runSteps(ctx context.Context, steps []updateStep, fsys ocflfs.WriteFS, dir 
 				return err
 			}
 			group = nil
-		}
-		if err := ctx.Err(); err != nil {
-			return err
 		}
 		if err := runStep(ctx, step); err != nil {
 			return err

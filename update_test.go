@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -777,6 +779,91 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 	}
 }
 
+// Steps that fail because the context was canceled aren't logged as errors,
+// and steps aren't started after cancellation.
+func TestObjectUpdate_Canceled(t *testing.T) {
+	user := ocfl.User{Name: "Tester"}
+	fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `minimal_one_version_one_file`)
+	objPath := path.Base(fixture)
+	// setup returns storage with an existing object and a finalized update
+	// that adds three files to it.
+	setup := func(t *testing.T) (*local.FS, *ocfl.Stage) {
+		t.Helper()
+		fsys := testutil.TmpLocalFS(t, fixture)
+		obj, err := ocfl.NewObject(context.Background(), fsys, objPath)
+		be.NilErr(t, err)
+		stage := stageBytes(t, obj.NewUpdate(), map[string][]byte{
+			"b.txt": []byte("b"),
+			"c.txt": []byte("c"),
+			"d.txt": []byte("d"),
+		})
+		be.NilErr(t, stage.Update.Finalize("v2", user))
+		return fsys, stage
+	}
+	// cancelWrites returns fsys with writes to names with the suffix replaced
+	// by canceling ctx.
+	cancelWrites := func(fsys *local.FS, cancel context.CancelFunc, suffix string) *failFS {
+		return &failFS{FS: fsys, fail: func(ctx context.Context, name string) error {
+			if !strings.HasSuffix(name, suffix) {
+				return nil
+			}
+			cancel()
+			return ctx.Err()
+		}}
+	}
+	t.Run("apply canceled while copying", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		fsys, stage := setup(t)
+		logs := &logRecorder{}
+		_, err := stage.Update.Apply(ctx, cancelWrites(fsys, cancel, "/content/b.txt"), objPath, stage.Content,
+			ocfl.UpdateWithGoLimit(1), ocfl.UpdateWithLogger(slog.New(logs)))
+		be.True(t, errors.Is(err, context.Canceled))
+		// only the copy that was running is logged, and its error isn't
+		be.DeepEqual(t, []string{"INFO copy v2/content/b.txt"}, logs.messages(slog.LevelInfo))
+
+		// reverting the interrupted update is canceled too
+		ctx, cancel = context.WithCancel(context.Background())
+		defer cancel()
+		logs = &logRecorder{}
+		err = stage.Update.Revert(ctx, cancelWrites(fsys, cancel, objPath+"/inventory.json"), objPath,
+			ocfl.UpdateWithLogger(slog.New(logs)))
+		be.True(t, errors.Is(err, context.Canceled))
+		be.DeepEqual(t, []string{"INFO restore inventory.json"}, logs.messages(slog.LevelInfo))
+		be.NilErr(t, stage.Update.Revert(context.Background(), fsys, objPath))
+		be.NilErr(t, ocfl.ValidateObject(context.Background(), fsys, objPath).Err())
+	})
+	t.Run("apply canceled before starting", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		fsys, stage := setup(t)
+		logs := &logRecorder{}
+		_, err := stage.Update.Apply(ctx, fsys, objPath, stage.Content, ocfl.UpdateWithLogger(slog.New(logs)))
+		be.True(t, errors.Is(err, context.Canceled))
+		be.Zero(t, len(logs.messages(slog.LevelInfo)))
+	})
+	t.Run("copy fails", func(t *testing.T) {
+		ctx := context.Background()
+		fsys, stage := setup(t)
+		errDiskFull := errors.New("disk full")
+		failCopy := &failFS{FS: fsys, fail: func(_ context.Context, name string) error {
+			if strings.HasSuffix(name, "/content/b.txt") {
+				return errDiskFull
+			}
+			return nil
+		}}
+		logs := &logRecorder{}
+		_, err := stage.Update.Apply(ctx, failCopy, objPath, stage.Content,
+			ocfl.UpdateWithGoLimit(1), ocfl.UpdateWithLogger(slog.New(logs)))
+		be.True(t, errors.Is(err, errDiskFull))
+		msgs := logs.messages(slog.LevelInfo)
+		be.Equal(t, 2, len(msgs))
+		be.Equal(t, "INFO copy v2/content/b.txt", msgs[0])
+		be.True(t, strings.HasPrefix(msgs[1], "ERROR copy v2/content/b.txt: "))
+		be.In(t, errDiskFull.Error(), msgs[1])
+	})
+}
+
 // crashFS is a local FS that stops writing after n writes or removes,
 // simulating an interrupted process.
 type crashFS struct {
@@ -816,6 +903,52 @@ func (c *crashFS) RemoveAll(ctx context.Context, name string) error {
 		return err
 	}
 	return c.FS.RemoveAll(ctx, name)
+}
+
+// failFS is a local FS whose writes fail with the error returned by fail, if
+// it isn't nil.
+type failFS struct {
+	*local.FS
+	fail func(ctx context.Context, name string) error
+}
+
+func (f *failFS) Write(ctx context.Context, name string, r io.Reader) (int64, error) {
+	if err := f.fail(ctx, name); err != nil {
+		return 0, err
+	}
+	return f.FS.Write(ctx, name, r)
+}
+
+// logRecorder is a [slog.Handler] that records log messages.
+type logRecorder struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *logRecorder) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *logRecorder) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r.Clone())
+	return nil
+}
+
+func (h *logRecorder) WithAttrs([]slog.Attr) slog.Handler { return h }
+
+func (h *logRecorder) WithGroup(string) slog.Handler { return h }
+
+// messages returns the level and message of each record at level or above.
+func (h *logRecorder) messages(level slog.Level) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var msgs []string
+	for _, r := range h.records {
+		if r.Level >= level {
+			msgs = append(msgs, r.Level.String()+" "+r.Message)
+		}
+	}
+	return msgs
 }
 
 // snapshot returns the paths and contents of all files in fsys.
