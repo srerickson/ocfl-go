@@ -37,6 +37,7 @@ func TestNewUpdate(t *testing.T) {
 		be.Equal(t, ocfl.V(1), upd.NextHead())
 		be.Zero(t, upd.BaseInventoryDigest())
 		be.Equal(t, 0, len(upd.State()))
+		be.Equal(t, 0, len(upd.BaseState()))
 		be.False(t, upd.Finalized())
 	})
 	t.Run("new object requires an ID", func(t *testing.T) {
@@ -66,7 +67,18 @@ func TestNewUpdate(t *testing.T) {
 			be.Equal(t, obj.InventoryDigest(), upd.BaseInventoryDigest())
 			be.Equal(t, ocfl.V(4), upd.NextHead())
 			be.True(t, obj.Version(0).State().Eq(upd.State()))
+			be.True(t, obj.Version(0).State().Eq(upd.BaseState()))
 		}
+	})
+	t.Run("base state is a copy", func(t *testing.T) {
+		upd, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "")
+		be.NilErr(t, err)
+		base := upd.BaseState()
+		be.NilErr(t, upd.Clear())
+		be.Equal(t, 0, len(upd.State()))
+		be.True(t, base.Eq(upd.BaseState()))
+		clear(base)
+		be.Nonzero(t, len(upd.BaseState()))
 	})
 	t.Run("existing object ignores digest algorithm", func(t *testing.T) {
 		// spec-ex-full uses sha512
@@ -344,6 +356,11 @@ func TestObjectUpdate_JSON(t *testing.T) {
 		be.Equal(t, stage.Update.ID(), loaded.ID())
 		be.Equal(t, stage.Update.BaseInventoryDigest(), loaded.BaseInventoryDigest())
 		be.True(t, stage.Update.State().Eq(loaded.State()))
+		// the base state is the fixture's head state, without the draft's edits
+		baseState := loaded.BaseState()
+		be.True(t, stage.Update.BaseState().Eq(baseState))
+		be.DeepEqual(t, []string{"empty2.txt", "foo/bar.xml", "image.tiff"}, baseState.AllPaths())
+		be.False(t, baseState.Eq(loaded.State()))
 		dig := loaded.State().DigestFor("new/a.txt")
 		be.DeepEqual(t, stage.Update.Fixity(dig), loaded.Fixity(dig))
 		// a loaded draft can be edited
@@ -356,6 +373,7 @@ func TestObjectUpdate_JSON(t *testing.T) {
 		loaded := roundTrip(t, upd)
 		be.Equal(t, digest.SHA256.ID(), loaded.DigestAlgorithm().ID())
 		be.Zero(t, loaded.BaseInventoryDigest())
+		be.Equal(t, 0, len(loaded.BaseState()))
 	})
 	t.Run("finalized", func(t *testing.T) {
 		fsys, stage := newStage(t)
@@ -365,6 +383,8 @@ func TestObjectUpdate_JSON(t *testing.T) {
 		loaded := roundTrip(t, stage.Update)
 		be.True(t, loaded.Finalized())
 		be.Equal(t, stage.Update.NewInventoryDigest(), loaded.NewInventoryDigest())
+		be.True(t, stage.Update.BaseState().Eq(loaded.BaseState()))
+		be.DeepEqual(t, []string{"empty2.txt", "foo/bar.xml", "image.tiff"}, loaded.BaseState().AllPaths())
 		info, ok := loaded.VersionInfo()
 		be.True(t, ok)
 		be.Equal(t, "v4", info.Message)
