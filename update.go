@@ -154,6 +154,12 @@ func (u *ObjectUpdate) NextHead() VNum {
 // State returns a copy of the new version's state.
 func (u *ObjectUpdate) State() DigestMap { return u.state.Clone() }
 
+// BaseState returns a copy of the object's head version state at the time the
+// update was started. It is empty if the update creates a new object. Its
+// digests use the update's digest algorithm, so it can be compared with
+// [ObjectUpdate.State] without reading the object.
+func (u *ObjectUpdate) BaseState() DigestMap { return u.baseState().Clone() }
+
 // Fixity returns a copy of the fixity values for new content with the given
 // digest. It returns nil for content that is already in the object.
 func (u *ObjectUpdate) Fixity(dig string) digest.Set {
@@ -286,10 +292,8 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) err
 		return fmt.Errorf("%w: expected update to create version %d, but it would create version %d",
 			ErrUnexpectedHead, o.newHead, newHead.Num())
 	}
-	if !o.allowUnchanged && u.baseInv != nil {
-		if headVer := u.baseInv.Versions[u.baseInv.Head]; headVer != nil && headVer.State.Eq(u.state) {
-			return errors.New("update has unchanged version state")
-		}
+	if !o.allowUnchanged && u.base != nil && u.baseState().Eq(u.state) {
+		return errors.New("update has unchanged version state")
 	}
 	final := &updateFinal{
 		Message:      msg,
@@ -550,9 +554,7 @@ func newObjectUpdate(id string, base *StoredInventory, rootSpec Spec, alg digest
 		if err != nil {
 			return nil, err
 		}
-		if headVer := u.baseInv.Versions[u.baseInv.Head]; headVer != nil {
-			u.state = headVer.State.Clone()
-		}
+		u.state = u.baseState().Clone()
 	}
 	return u, nil
 }
@@ -687,6 +689,18 @@ func (u *ObjectUpdate) addFixity(dig string, set digest.Set) error {
 		}
 	}
 	return nil
+}
+
+// baseState returns the head version state of the base inventory. It is
+// empty for a new object. It must not be modified.
+func (u *ObjectUpdate) baseState() DigestMap {
+	if u.baseInv == nil {
+		return DigestMap{}
+	}
+	if headVer := u.baseInv.Versions[u.baseInv.Head]; headVer != nil && headVer.State != nil {
+		return headVer.State
+	}
+	return DigestMap{}
 }
 
 // inBase returns true if content with the digest is in the base inventory.
