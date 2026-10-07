@@ -75,9 +75,10 @@ type S3API struct {
 
 	CopyObjectFunc func(context.Context, *s3v2.CopyObjectInput, ...func(*s3v2.Options)) (*s3v2.CopyObjectOutput, error)
 
-	parts   sync.Map
-	bucket  string
-	objects map[string]*Object
+	parts      sync.Map // part number -> etag
+	partBodies sync.Map // part number -> []byte
+	bucket     string
+	objects    map[string]*Object
 
 	// notFoundStyle selects the error shape returned for a missing key.
 	// It is set at construction and never written afterwards, so it needs
@@ -111,7 +112,10 @@ func (m *S3API) HeadObject(ctx context.Context, in *s3v2.HeadObjectInput, opts .
 	}
 	out := &s3v2.HeadObjectOutput{
 		ContentLength: aws.Int64(int64(len(obj.Body))),
-		LastModified:  aws.Time(obj.LastModified),
+		// Last-Modified is an HTTP date, in whole seconds, unlike the
+		// millisecond times in ListObjectsV2 responses.
+		LastModified: aws.Time(obj.LastModified.Truncate(time.Second)),
+		ETag:         aws.String(obj.etag()),
 	}
 	return out, nil
 }
@@ -132,7 +136,8 @@ func (m *S3API) GetObject(ctx context.Context, in *s3v2.GetObjectInput, opts ...
 		return nil, m.noSuchKeyErr(err)
 	}
 	body := obj.Body
-	lastMod := obj.LastModified
+	lastMod := obj.LastModified.Truncate(time.Second) // see HeadObject
+	etag := obj.etag()
 	contentLength := int64(len(obj.Body))
 	// Handle Range header for partial reads
 	if in.Range != nil && *in.Range != "" {
@@ -150,6 +155,7 @@ func (m *S3API) GetObject(ctx context.Context, in *s3v2.GetObjectInput, opts ...
 		Body:          io.NopCloser(bytes.NewBuffer(body)),
 		ContentLength: aws.Int64(contentLength),
 		LastModified:  aws.Time(lastMod),
+		ETag:          aws.String(etag),
 	}, nil
 }
 
@@ -218,6 +224,7 @@ func (m *S3API) ListObjectsV2(ctx context.Context, in *s3v2.ListObjectsV2Input, 
 				Key:          aws.String(key),
 				Size:         aws.Int64(object.ContentLength),
 				LastModified: aws.Time(object.LastModified),
+				ETag:         aws.String(object.etag()),
 			}
 			out.Contents = append(out.Contents, cont)
 		}
@@ -275,6 +282,7 @@ func (m *S3API) PutObject(ctx context.Context, in *s3v2.PutObjectInput, opts ...
 		Body:          body,
 		ContentLength: int64(len(body)),
 		LastModified:  time.Now(),
+		ETag:          `"` + etag + `"`,
 	}
 	m.UpdatedETags[*in.Key] = `"` + etag + `"`
 	m.mu.Unlock()
@@ -311,7 +319,11 @@ func (m *S3API) UploadPart(ctx context.Context, in *s3v2.UploadPartInput, opts .
 	if in.PartNumber == nil {
 		return nil, errors.New("PartNumber is required")
 	}
-	etag, err := md5hex(in.Body)
+	body, err := io.ReadAll(in.Body)
+	if err != nil {
+		return nil, err
+	}
+	etag, err := md5hex(bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -319,6 +331,7 @@ func (m *S3API) UploadPart(ctx context.Context, in *s3v2.UploadPartInput, opts .
 		ETag: &etag,
 	}
 	m.parts.Store(*in.PartNumber, etag)
+	m.partBodies.Store(*in.PartNumber, body)
 	return out, nil
 }
 
@@ -368,6 +381,7 @@ func (m *S3API) UploadPartCopy(ctx context.Context, in *s3v2.UploadPartCopyInput
 		CopyPartResult: &types.CopyPartResult{ETag: aws.String(etag)},
 	}
 	m.parts.Store(*in.PartNumber, etag)
+	m.partBodies.Store(*in.PartNumber, srcRange)
 	return out, nil
 }
 
@@ -383,6 +397,7 @@ func (m *S3API) CompleteMultipartUpload(ctx context.Context, in *s3v2.CompleteMu
 		return nil, errors.New("multipart upload is required")
 	}
 	etags := make([][]byte, len(in.MultipartUpload.Parts))
+	bodies := make([][]byte, len(in.MultipartUpload.Parts))
 	for i, p := range in.MultipartUpload.Parts {
 		if p.PartNumber == nil {
 			return nil, errors.New("nil partnumber")
@@ -402,6 +417,9 @@ func (m *S3API) CompleteMultipartUpload(ctx context.Context, in *s3v2.CompleteMu
 			return nil, err
 		}
 		etags[i] = tagDecode
+		if body, ok := m.partBodies.Load(*p.PartNumber); ok {
+			bodies[i] = body.([]byte)
+		}
 	}
 	etag, err := md5hex(bytes.NewReader(bytes.Join(etags, nil)))
 	if err != nil {
@@ -413,7 +431,15 @@ func (m *S3API) CompleteMultipartUpload(ctx context.Context, in *s3v2.CompleteMu
 		Key:    in.Key,
 		ETag:   aws.String(etag),
 	}
+	body := bytes.Join(bodies, nil)
 	m.mu.Lock()
+	m.objects[*in.Key] = &Object{
+		Key:           *in.Key,
+		Body:          body,
+		ContentLength: int64(len(body)),
+		LastModified:  time.Now(),
+		ETag:          etag,
+	}
 	m.UpdatedETags[*in.Key] = etag
 	m.MPUComplete = true
 	m.mu.Unlock()
@@ -474,6 +500,13 @@ func (m *S3API) CopyObject(ctx context.Context, in *s3v2.CopyObjectInput, opts .
 		CopyObjectResult: &types.CopyObjectResult{ETag: aws.String(etag)},
 	}
 	m.mu.Lock()
+	m.objects[*in.Key] = &Object{
+		Key:           *in.Key,
+		Body:          srcBody,
+		ContentLength: int64(len(srcBody)),
+		LastModified:  time.Now(),
+		ETag:          `"` + etag + `"`,
+	}
 	m.UpdatedETags[*in.Key] = `"` + etag + `"` // etag is quoted string
 	m.mu.Unlock()
 	return out, nil
@@ -658,6 +691,21 @@ type Object struct {
 	Body          []byte
 	LastModified  time.Time
 	ContentLength int64
+	// ETag is the object's ETag, quoted as S3 returns it. If it is empty,
+	// the quoted MD5 of Body is used.
+	ETag string
+}
+
+// etag returns o's ETag, quoted.
+func (o *Object) etag() string {
+	if o.ETag != "" {
+		return o.ETag
+	}
+	etag, err := md5hex(bytes.NewReader(o.Body))
+	if err != nil {
+		panic(err)
+	}
+	return `"` + etag + `"`
 }
 
 // func GenObjects(seed uint64, objCount int, keyPrefix string, depth int, maxFileSize int64) map[string]*Object {

@@ -281,7 +281,7 @@ func TestOpenFile_Mock(t *testing.T) {
 				info, err := f.Stat()
 				be.NilErr(t, err)
 				be.Equal(t, int64(len(body)), info.Size())
-				be.Equal(t, obj.LastModified, info.ModTime())
+				be.Equal(t, obj.LastModified.Truncate(time.Second), info.ModTime())
 				be.Equal(t, fs.ModeIrregular|0644, info.Mode())
 				be.Equal(t, false, info.IsDir())
 				be.Nonzero(t, info.Sys())
@@ -2663,6 +2663,61 @@ func TestReadDirNilListField_Mock(t *testing.T) {
 		}
 		be.AllEqual(t, []string{"a.txt", "sub", "z.txt"}, names)
 	})
+}
+
+func TestContentToken_Mock(t *testing.T) {
+	ctx := context.Background()
+	const name = "dir/a.txt"
+	body := []byte("aaa")
+	obj := &mock.Object{
+		Key:  name,
+		Body: body,
+		// ListObjectsV2 gives milliseconds; HeadObject, whole seconds.
+		LastModified:  time.Date(2026, 1, 2, 3, 4, 5, 678_000_000, time.UTC),
+		ContentLength: int64(len(body)),
+	}
+	fsys := s3.NewBucketFS(mock.New(bucket, obj), bucket)
+	// token returns the token for name from walking dir in fsys, and its
+	// FileInfo.
+	token := func(t *testing.T, fsys ocflfs.FS) (string, fs.FileInfo) {
+		t.Helper()
+		for ref, err := range ocflfs.WalkFiles(ctx, fsys, "dir") {
+			be.NilErr(t, err)
+			if ref.FullPath() == name {
+				return ocflfs.ContentToken(ref.Info), ref.Info
+			}
+		}
+		t.Fatalf("%q not found", name)
+		return "", nil
+	}
+	want := "etag:" + mock.ETag(body, 0)
+	walked, walkedInfo := token(t, fsys)
+	be.Equal(t, want, walked)
+	// without FileWalker, files are walked with DirEntries
+	listed, _ := token(t, struct{ ocflfs.DirEntriesFS }{fsys})
+	be.Equal(t, want, listed)
+	info, err := ocflfs.StatFile(ctx, fsys, name)
+	be.NilErr(t, err)
+	be.Equal(t, want, ocflfs.ContentToken(info))
+	be.Unequal(t, walkedInfo.ModTime(), info.ModTime())
+
+	// a file added from a walk isn't reported as changed when it is checked
+	// with HeadObject
+	dig := strings.Repeat("a", 128)
+	var c ocfl.ContentMap
+	c.AddFile(dig, fsys, name, walkedInfo)
+	be.NilErr(t, c.Check(ctx))
+
+	// same size, different content
+	_, err = fsys.Write(ctx, name, strings.NewReader("bbb"))
+	be.NilErr(t, err)
+	info, err = ocflfs.StatFile(ctx, fsys, name)
+	be.NilErr(t, err)
+	newToken := ocflfs.ContentToken(info)
+	be.Equal(t, "etag:"+mock.ETag([]byte("bbb"), 0), newToken)
+	err = c.Check(ctx)
+	be.True(t, errors.Is(err, ocfl.ErrContentChanged))
+	be.In(t, "("+want+" is now "+newToken+")", err.Error())
 }
 
 func TestMarshalText(t *testing.T) {
