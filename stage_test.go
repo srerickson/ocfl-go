@@ -263,26 +263,28 @@ func TestStage_JSON(t *testing.T) {
 	be.NilErr(t, ocfl.ValidateObject(ctx, objFS, obj.Path()).Err())
 	be.DeepEqual(t, []string{"md5"}, obj.FixityAlgorithms())
 
-	t.Run("file sizes", func(t *testing.T) {
+	t.Run("file sizes and tokens", func(t *testing.T) {
 		var savedJSON struct {
 			Content struct{ Content map[string][]any }
 		}
 		be.NilErr(t, json.Unmarshal(saved, &savedJSON))
 		be.Equal(t, 3, len(savedJSON.Content.Content))
 		for _, entry := range savedJSON.Content.Content {
-			be.Equal(t, 3, len(entry))
+			be.Equal(t, 4, len(entry))
 			info, err := os.Stat(filepath.Join(contentFS.Root(), entry[1].(string)))
 			be.NilErr(t, err)
 			be.Equal(t, float64(info.Size()), entry[2].(float64))
+			be.Equal(t, ocflfs.ContentToken(info), entry[3].(string))
 		}
 	})
-	t.Run("saved without file sizes", func(t *testing.T) {
-		// stages saved before sizes were recorded can be loaded and applied
+	t.Run("saved without file sizes or tokens", func(t *testing.T) {
+		// stages whose sizes and tokens are unknown can be loaded and
+		// applied
 		var old map[string]any
 		be.NilErr(t, json.Unmarshal(saved, &old))
 		content := old["content"].(map[string]any)["content"].(map[string]any)
 		for dig, entry := range content {
-			content[dig] = entry.([]any)[:2]
+			content[dig] = append(entry.([]any)[:2], nil, nil)
 		}
 		var loaded ocfl.Stage
 		be.NilErr(t, json.Unmarshal(mustMarshal(t, old), &loaded))

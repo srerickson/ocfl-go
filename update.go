@@ -368,8 +368,8 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) err
 // If src is a [ContentChecker], such as a ContentMap, Apply returns any error
 // from its CheckContent method, without writing anything: for a ContentMap,
 // an error wrapping [ErrContentChanged] if files that new content is in are
-// missing or have changed size. Resuming an update copies all new content
-// again, so the check is run then too.
+// missing or their size or content token has changed. Resuming an update
+// copies all new content again, so the check is run then too.
 // Apply uses the options [UpdateWithLogger] and [UpdateWithGoLimit].
 func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, src ContentSource, opts ...UpdateOption) (*Object, error) {
 	if u.final == nil {
