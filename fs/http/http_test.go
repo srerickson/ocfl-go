@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"path"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
@@ -74,6 +76,41 @@ func TestEmbedFS(t *testing.T) {
 	be.NilErr(t, err)
 	be.Zero(t, info.ModTime())
 	defer srv.Close()
+}
+
+func TestContentToken(t *testing.T) {
+	ctx := context.Background()
+	lastMod := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	lm := "lm:" + strconv.FormatInt(lastMod.Unix(), 10)
+	for name, tc := range map[string]struct {
+		etag    string
+		lastMod bool
+		want    string
+	}{
+		"strong etag":               {etag: `"abc"`, lastMod: true, want: "etag:abc"},
+		"weak etag":                 {etag: `W/"abc"`, lastMod: true, want: lm},
+		"last-modified only":        {lastMod: true, want: lm},
+		"neither":                   {want: ""},
+		"weak etag only":            {etag: `W/"abc"`, want: ""},
+		"strong etag only":          {etag: `"abc"`, want: "etag:abc"},
+		"empty etag, last-modified": {etag: `""`, lastMod: true, want: lm},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.etag != "" {
+					w.Header().Set("ETag", tc.etag)
+				}
+				if tc.lastMod {
+					w.Header().Set("Last-Modified", lastMod.Format(http.TimeFormat))
+				}
+				w.Write([]byte("content"))
+			}))
+			defer srv.Close()
+			info, err := ocflfs.StatFile(ctx, ocflhttp.New(srv.URL), "file.txt")
+			be.NilErr(t, err)
+			be.Equal(t, tc.want, ocflfs.ContentToken(info))
+		})
+	}
 }
 
 func TestMarshalText(t *testing.T) {
