@@ -151,13 +151,14 @@ func (u *ObjectUpdate) NextHead() VNum {
 	return head
 }
 
-// State returns a copy of the new version's state.
-func (u *ObjectUpdate) State() DigestMap { return u.state.Clone() }
+// NewState returns a copy of the new version's state. See [ObjectUpdate.BaseState]
+// for the state of the version the update is based on.
+func (u *ObjectUpdate) NewState() DigestMap { return u.state.Clone() }
 
 // BaseState returns a copy of the object's head version state at the time the
 // update was started. It is empty if the update creates a new object. Its
 // digests use the update's digest algorithm, so it can be compared with
-// [ObjectUpdate.State] without reading the object.
+// [ObjectUpdate.NewState] without reading the object.
 func (u *ObjectUpdate) BaseState() DigestMap { return u.baseState().Clone() }
 
 // Fixity returns a copy of the fixity values for new content with the given
