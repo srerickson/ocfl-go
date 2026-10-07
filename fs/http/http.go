@@ -11,7 +11,11 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
+	"strings"
 	"time"
+
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
 // file more reported by fs.FileInfo.
@@ -32,6 +36,17 @@ func New(baseURl string, opts ...Option) *FS {
 // FS is an ocfl/fs.FS that reads files over http(s). The remote http server
 // must support HEAD and GET requests and response should include Content-Length
 // and Last-Modified headers.
+//
+// The [fs.FileInfo] for a file implements [ocflfs.ContentTokener]. Its content
+// token is "etag:" followed by the strong ETag from the HEAD response when the
+// file was opened, if there is one; otherwise, "lm:" followed by its
+// Last-Modified time in Unix seconds, if there is one; otherwise "". Weak
+// ETags aren't used, since files with different content can share one. The
+// tokens have about one-second resolution: Last-Modified is in whole seconds,
+// and some servers' strong ETags are made from the modification time in
+// seconds and the size (nginx's are, by default). So a change that doesn't
+// change a file's size, made in the same second that its token was read, can
+// go undetected.
 type FS struct {
 	client  *http.Client
 	baseURL string
@@ -105,6 +120,7 @@ func (f FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 		name:    path.Base(name),
 		size:    resp.ContentLength,
 		modTime: modtime,
+		token:   contentToken(resp.Header.Get("ETag"), modtime),
 	}, nil
 }
 
@@ -116,9 +132,13 @@ type httpFile struct {
 	name    string
 	size    int64
 	modTime time.Time
+	token   string
 }
 
-var _ fs.File = (*httpFile)(nil)
+var (
+	_ fs.File               = (*httpFile)(nil)
+	_ ocflfs.ContentTokener = (*httpFile)(nil)
+)
 
 func (f *httpFile) Close() error {
 	if f.body == nil {
@@ -153,6 +173,24 @@ func (f *httpFile) Mode() fs.FileMode          { return fileMode }
 func (f *httpFile) ModTime() time.Time         { return f.modTime }
 func (f *httpFile) IsDir() bool                { return false }
 func (f *httpFile) Sys() any                   { return nil }
+
+// ContentToken implements [ocflfs.ContentTokener] for the file's
+// [fs.FileInfo]. See [FS] for the tokens it returns.
+func (f *httpFile) ContentToken() string { return f.token }
+
+// contentToken returns the content token for a file with the ETag header
+// value etag and the modification time modtime, either of which may be zero.
+func contentToken(etag string, modtime time.Time) string {
+	if etag != "" && !strings.HasPrefix(etag, "W/") {
+		if trimmed := strings.Trim(etag, `"`); trimmed != "" {
+			return "etag:" + trimmed
+		}
+	}
+	if !modtime.IsZero() {
+		return "lm:" + strconv.FormatInt(modtime.Unix(), 10)
+	}
+	return ""
+}
 
 func pathError(op string, name string, err error) error {
 	return &fs.PathError{
