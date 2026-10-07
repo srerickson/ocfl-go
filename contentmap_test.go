@@ -289,7 +289,7 @@ func TestContentMap_Check(t *testing.T) {
 		}
 		c.AddFile(digD, fsys, "d.txt", nil)
 		c.AddBytes(digE, []byte("in memory"))
-		be.NilErr(t, c.Check(ctx))
+		be.NilErr(t, c.FastCheck(ctx))
 		return c, dir, tokens
 	}
 	// changes returns the changes in err, without their FSs.
@@ -310,7 +310,7 @@ func TestContentMap_Check(t *testing.T) {
 		be.NilErr(t, os.Remove(filepath.Join(dir, "b.txt")))
 		// d.txt's size and token aren't checked
 		be.NilErr(t, os.WriteFile(filepath.Join(dir, "d.txt"), []byte("d"), 0o644))
-		err := c.Check(ctx)
+		err := c.FastCheck(ctx)
 		be.DeepEqual(t, []ocfl.ContentChange{
 			{Digest: digA, Path: "a.txt", Size: 3, Token: tokens["a.txt"], NewSize: 1, NewToken: statToken(t, dir, "a.txt")},
 			{Digest: digB, Path: "b.txt", Size: 2, Token: tokens["b.txt"], Missing: true},
@@ -318,8 +318,8 @@ func TestContentMap_Check(t *testing.T) {
 		be.In(t, `"a.txt" has size 1, not 3`, err.Error())
 		be.In(t, `"b.txt" is missing`, err.Error())
 		// only the given digests are checked
-		be.NilErr(t, c.CheckContent(ctx, []string{digC, digD, digE, strings.Repeat("f", 128)}))
-		err = c.CheckContent(ctx, []string{strings.ToUpper(digB)})
+		be.NilErr(t, c.ContentFastCheck(ctx, []string{digC, digD, digE, strings.Repeat("f", 128)}))
+		err = c.ContentFastCheck(ctx, []string{strings.ToUpper(digB)})
 		be.DeepEqual(t, []ocfl.ContentChange{
 			{Digest: digB, Path: "b.txt", Size: 2, Token: tokens["b.txt"], Missing: true},
 		}, changes(t, err))
@@ -328,7 +328,7 @@ func TestContentMap_Check(t *testing.T) {
 		c, dir, tokens := setup(t)
 		be.NilErr(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("xxx"), 0o644))
 		newToken := statToken(t, dir, "a.txt")
-		err := c.Check(ctx)
+		err := c.FastCheck(ctx)
 		be.DeepEqual(t, []ocfl.ContentChange{
 			{Digest: digA, Path: "a.txt", Size: 3, Token: tokens["a.txt"], NewSize: 3, NewToken: newToken},
 		}, changes(t, err))
@@ -339,7 +339,7 @@ func TestContentMap_Check(t *testing.T) {
 		be.NilErr(t, os.Remove(filepath.Join(dir, "d.txt")))
 		be.DeepEqual(t, []ocfl.ContentChange{
 			{Digest: digD, Path: "d.txt", Size: -1, Missing: true},
-		}, changes(t, c.Check(ctx)))
+		}, changes(t, c.FastCheck(ctx)))
 	})
 	t.Run("directory in place of a file", func(t *testing.T) {
 		c, dir, tokens := setup(t)
@@ -347,7 +347,7 @@ func TestContentMap_Check(t *testing.T) {
 		be.NilErr(t, os.Mkdir(filepath.Join(dir, "c.txt"), 0o755))
 		be.DeepEqual(t, []ocfl.ContentChange{
 			{Digest: digC, Path: "c.txt", Size: 1, Token: tokens["c.txt"], Missing: true},
-		}, changes(t, c.Check(ctx)))
+		}, changes(t, c.FastCheck(ctx)))
 	})
 	t.Run("loaded from JSON", func(t *testing.T) {
 		c, dir, tokens := setup(t)
@@ -355,14 +355,14 @@ func TestContentMap_Check(t *testing.T) {
 		var loaded ocfl.ContentMap
 		be.NilErr(t, json.Unmarshal(mustMarshal(t, c), &loaded))
 		// content in an FS that isn't open is missing
-		err := loaded.Check(ctx)
+		err := loaded.FastCheck(ctx)
 		be.Equal(t, 4, len(changes(t, err)))
 		be.NilErr(t, loaded.OpenFS(ctx, config.Registry()))
-		be.NilErr(t, loaded.Check(ctx))
+		be.NilErr(t, loaded.FastCheck(ctx))
 		be.NilErr(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("xxx"), 0o644))
 		be.DeepEqual(t, []ocfl.ContentChange{
 			{Digest: digA, Path: "a.txt", Size: 3, Token: tokens["a.txt"], NewSize: 3, NewToken: statToken(t, dir, "a.txt")},
-		}, changes(t, loaded.Check(ctx)))
+		}, changes(t, loaded.FastCheck(ctx)))
 	})
 	t.Run("loaded from JSON without sizes or tokens", func(t *testing.T) {
 		dir := t.TempDir()
@@ -374,7 +374,7 @@ func TestContentMap_Check(t *testing.T) {
 		be.NilErr(t, c.OpenFS(ctx, config.Registry()))
 		be.DeepEqual(t, []ocfl.ContentChange{
 			{Digest: digB, Path: "b.txt", Size: -1, Missing: true},
-		}, changes(t, c.Check(ctx)))
+		}, changes(t, c.FastCheck(ctx)))
 		// saved without sizes or tokens again
 		be.In(t, `[0,"a.txt",null,null]`, string(mustMarshal(t, c)))
 	})
@@ -388,7 +388,7 @@ func TestContentMap_Check(t *testing.T) {
 		var c ocfl.ContentMap
 		be.NilErr(t, json.Unmarshal([]byte(data), &c))
 		be.NilErr(t, c.OpenFS(ctx, config.Registry()))
-		err := c.Check(ctx)
+		err := c.FastCheck(ctx)
 		be.DeepEqual(t, []ocfl.ContentChange{
 			{Digest: digA, Path: "a.txt", Size: 3, Token: "future:1", NewSize: 3, NewToken: statToken(t, dir, "a.txt")},
 		}, changes(t, err))
@@ -405,18 +405,18 @@ func TestContentMap_Check(t *testing.T) {
 		var c ocfl.ContentMap
 		c.AddFile(digA, fsys, "a.txt", info)
 		files["a.txt"] = &fstest.MapFile{Data: []byte("xxx")}
-		be.NilErr(t, c.Check(ctx))
+		be.NilErr(t, c.FastCheck(ctx))
 		files["a.txt"] = &fstest.MapFile{Data: []byte("x")}
 		be.DeepEqual(t, []ocfl.ContentChange{
 			{Digest: digA, Path: "a.txt", Size: 3, NewSize: 1},
-		}, changes(t, c.Check(ctx)))
+		}, changes(t, c.FastCheck(ctx)))
 	})
 	t.Run("stat errors", func(t *testing.T) {
 		var c ocfl.ContentMap
 		fsys := &openErrFS{WrapFS: ocflfs.NewWrapFS(fstest.MapFS{"a.txt": {}}), name: "a.txt"}
 		c.AddFile(digA, fsys, "a.txt", fileInfo{size: 0})
 		c.AddFile(digB, fsys, "b.txt", fileInfo{size: 0})
-		err := c.Check(ctx)
+		err := c.FastCheck(ctx)
 		be.True(t, errors.Is(err, errOpen))
 		be.DeepEqual(t, []ocfl.ContentChange{
 			{Digest: digB, Path: "b.txt", Size: 0, Missing: true},
@@ -426,7 +426,7 @@ func TestContentMap_Check(t *testing.T) {
 		c, _, _ := setup(t)
 		ctx, cancel := context.WithCancel(ctx)
 		cancel()
-		be.True(t, errors.Is(c.Check(ctx), context.Canceled))
+		be.True(t, errors.Is(c.FastCheck(ctx), context.Canceled))
 	})
 }
 

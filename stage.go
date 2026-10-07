@@ -25,7 +25,7 @@ import (
 //
 // Files added to a stage must not change before the stage is applied. The
 // size and content token of each file are recorded when it is added: use
-// [ContentMap.Check] to find files that are missing or have changed.
+// [ContentMap.FastCheck] to find files that are missing or have changed.
 // [ObjectUpdate.Apply] runs the same check before writing anything.
 type Stage struct {
 	Update  *ObjectUpdate `json:"update"`
@@ -185,7 +185,7 @@ func (s *Stage) addFiles(ctx context.Context, files []*ocflfs.FileRef, o *stageO
 		// Info was set before the file was digested, by the walk or by
 		// CheckFileTypes, so if the file changed while it was being
 		// digested, its recorded content token is older than the digested
-		// content and ContentMap.Check reports the change.
+		// content and ContentMap.FastCheck reports the change.
 		if dig := entries[i].digest; s.Update.needsContent(dig) {
 			s.Content.AddFile(dig, ref.FS, ref.FullPath(), ref.Info)
 		}

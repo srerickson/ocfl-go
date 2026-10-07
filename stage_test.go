@@ -290,7 +290,7 @@ func TestStage_JSON(t *testing.T) {
 		be.NilErr(t, json.Unmarshal(mustMarshal(t, old), &loaded))
 		be.DeepEqual(t, stage.Content.Digests(), loaded.Content.Digests())
 		be.NilErr(t, loaded.Content.OpenFS(ctx, reg))
-		be.NilErr(t, loaded.Content.Check(ctx))
+		be.NilErr(t, loaded.Content.FastCheck(ctx))
 		objFS := testutil.TmpLocalFS(t)
 		be.NilErr(t, loaded.Update.Finalize("v1", ocfl.User{Name: "Tester"}))
 		obj, err := loaded.Update.Apply(ctx, objFS, "obj", loaded.Content)

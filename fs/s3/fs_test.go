@@ -2706,7 +2706,7 @@ func TestContentToken_Mock(t *testing.T) {
 	dig := strings.Repeat("a", 128)
 	var c ocfl.ContentMap
 	c.AddFile(dig, fsys, name, walkedInfo)
-	be.NilErr(t, c.Check(ctx))
+	be.NilErr(t, c.FastCheck(ctx))
 
 	// same size, different content
 	_, err = fsys.Write(ctx, name, strings.NewReader("bbb"))
@@ -2715,7 +2715,7 @@ func TestContentToken_Mock(t *testing.T) {
 	be.NilErr(t, err)
 	newToken := ocflfs.ContentToken(info)
 	be.Equal(t, "etag:"+mock.ETag([]byte("bbb"), 0), newToken)
-	err = c.Check(ctx)
+	err = c.FastCheck(ctx)
 	be.True(t, errors.Is(err, ocfl.ErrContentChanged))
 	be.In(t, "("+want+" is now "+newToken+")", err.Error())
 }
