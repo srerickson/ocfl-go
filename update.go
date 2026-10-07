@@ -43,9 +43,9 @@ var (
 	// by something else.
 	ErrUpdateConflict = errors.New("object in storage has changed since the update was started")
 
-	// ErrRevertUpdate is returned by [ObjectUpdate.Revert] when the update has
+	// ErrUpdateCompleted is returned by [ObjectUpdate.Revert] when the update has
 	// already been committed to storage.
-	ErrRevertUpdate = errors.New("the update has completed and cannot be reverted")
+	ErrUpdateCompleted = errors.New("the update has completed and cannot be reverted")
 
 	// ErrMissingContent is returned when an update can't be applied because
 	// the [ContentSource] doesn't provide content for one or more digests
@@ -404,7 +404,7 @@ func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, sr
 // being a draft, so it can be edited and finalized again.
 //
 // Like Apply, Revert decides what to do from the object's root inventory
-// sidecar. It returns [ErrRevertUpdate] if the update was committed, and an
+// sidecar. It returns [ErrUpdateCompleted] if the update was committed, and an
 // error wrapping [ErrUpdateConflict] if the object was changed by something
 // else. For a new object, Revert removes dir only if everything in it could
 // have been written by the update, as described for Apply. Revert uses the
@@ -423,7 +423,7 @@ func (u *ObjectUpdate) Revert(ctx context.Context, fsys ocflfs.FS, dir string, o
 		return err
 	}
 	if status == updateCommitted {
-		return ErrRevertUpdate
+		return ErrUpdateCompleted
 	}
 	if err := runSteps(ctx, u.revertSteps(), writeFS, dir, nil, o.goLimit, o.logger); err != nil {
 		return err

@@ -549,7 +549,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		again, err := stage.Update.Apply(ctx, fsys, obj.Path(), nil)
 		be.NilErr(t, err)
 		be.Equal(t, newObj.InventoryDigest(), again.InventoryDigest())
-		be.True(t, errors.Is(stage.Update.Revert(ctx, fsys, obj.Path()), ocfl.ErrRevertUpdate))
+		be.True(t, errors.Is(stage.Update.Revert(ctx, fsys, obj.Path()), ocfl.ErrUpdateCompleted))
 	})
 	t.Run("wrong object", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture,
@@ -906,7 +906,7 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 							break
 						}
 					}
-					if errors.Is(err, ocfl.ErrRevertUpdate) {
+					if errors.Is(err, ocfl.ErrUpdateCompleted) {
 						// the update was committed: it can only be resumed
 						obj, err := u.Apply(ctx, fsys, "obj", stage.Content)
 						be.NilErr(t, err)
