@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/carlmjohnson/be"
+	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
 func TestNewFS(t *testing.T) {
@@ -550,6 +551,35 @@ func TestFS_Implements_Interfaces(t *testing.T) {
 	data, err := io.ReadAll(f)
 	be.NilErr(t, err)
 	be.Equal(t, "test", string(data))
+}
+
+// TestFS_ContentToken checks that a file's content token is the same from
+// WalkFiles and StatFile, and changes when the file is rewritten with the
+// same size.
+func TestFS_ContentToken(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	name := filepath.Join(tmpDir, "a.txt")
+	be.NilErr(t, os.WriteFile(name, []byte("aaa"), 0o644))
+	// an old modification time, so that rewriting the file changes it even
+	// on file systems with coarse timestamps.
+	old := time.Now().Add(-time.Hour)
+	be.NilErr(t, os.Chtimes(name, old, old))
+	fsys, err := NewFS(tmpDir)
+	be.NilErr(t, err)
+	var walked string
+	for ref, err := range ocflfs.WalkFiles(ctx, fsys, ".") {
+		be.NilErr(t, err)
+		walked = ocflfs.ContentToken(ref.Info)
+	}
+	be.True(t, strings.HasPrefix(walked, "stat:"))
+	info, err := ocflfs.StatFile(ctx, fsys, "a.txt")
+	be.NilErr(t, err)
+	be.Equal(t, walked, ocflfs.ContentToken(info))
+	be.NilErr(t, os.WriteFile(name, []byte("bbb"), 0o644))
+	info, err = ocflfs.StatFile(ctx, fsys, "a.txt")
+	be.NilErr(t, err)
+	be.Unequal(t, walked, ocflfs.ContentToken(info))
 }
 
 // TestFS_Write_ConcurrentNestedWrites pins the tolerance mkdirAll adds over
