@@ -37,7 +37,7 @@ func TestNewUpdate(t *testing.T) {
 		be.Equal(t, digest.SHA512.ID(), upd.DigestAlgorithm().ID())
 		be.Equal(t, ocfl.V(1), upd.NextHead())
 		be.Zero(t, upd.BaseInventoryDigest())
-		be.Equal(t, 0, len(upd.State()))
+		be.Equal(t, 0, len(upd.NewState()))
 		be.Equal(t, 0, len(upd.BaseState()))
 		be.False(t, upd.Finalized())
 	})
@@ -67,7 +67,7 @@ func TestNewUpdate(t *testing.T) {
 			be.Equal(t, obj.ID(), upd.ID())
 			be.Equal(t, obj.InventoryDigest(), upd.BaseInventoryDigest())
 			be.Equal(t, ocfl.V(4), upd.NextHead())
-			be.True(t, obj.Version(0).State().Eq(upd.State()))
+			be.True(t, obj.Version(0).State().Eq(upd.NewState()))
 			be.True(t, obj.Version(0).State().Eq(upd.BaseState()))
 		}
 	})
@@ -76,7 +76,7 @@ func TestNewUpdate(t *testing.T) {
 		be.NilErr(t, err)
 		base := upd.BaseState()
 		be.NilErr(t, upd.Clear())
-		be.Equal(t, 0, len(upd.State()))
+		be.Equal(t, 0, len(upd.NewState()))
 		be.True(t, base.Eq(upd.BaseState()))
 		clear(base)
 		be.Nonzero(t, len(upd.BaseState()))
@@ -122,12 +122,12 @@ func TestObjectUpdate_Edits(t *testing.T) {
 		upd := newUpdate(t)
 		be.NilErr(t, upd.Add("a.txt", strings.ToUpper(digA), digest.Set{"md5": "ABC", "sha512": digA}))
 		be.NilErr(t, upd.Add("dir/a.txt", digA, digest.Set{"size": "1"}))
-		be.DeepEqual(t, ocfl.DigestMap{digA: {"a.txt", "dir/a.txt"}}, upd.State())
+		be.DeepEqual(t, ocfl.DigestMap{digA: {"a.txt", "dir/a.txt"}}, upd.NewState())
 		// fixity is normalized and doesn't include the primary algorithm
 		be.DeepEqual(t, digest.Set{"md5": "abc", "size": "1"}, upd.Fixity(digA))
 		// replace a.txt
 		be.NilErr(t, upd.Add("a.txt", digB, nil))
-		be.DeepEqual(t, ocfl.DigestMap{digA: {"dir/a.txt"}, digB: {"a.txt"}}, upd.State())
+		be.DeepEqual(t, ocfl.DigestMap{digA: {"dir/a.txt"}, digB: {"a.txt"}}, upd.NewState())
 		// fixity with only the primary algorithm isn't saved
 		be.NilErr(t, upd.Add("c.txt", strings.Repeat("c", 128), digest.Set{"sha512": strings.Repeat("c", 128)}))
 		be.Zero(t, upd.Fixity(strings.Repeat("c", 128)))
@@ -162,7 +162,7 @@ func TestObjectUpdate_Edits(t *testing.T) {
 			be.In(t, "different sha512 digest", err.Error())
 		})
 		// state is unchanged
-		be.DeepEqual(t, ocfl.DigestMap{digA: {"dir/a.txt"}}, upd.State())
+		be.DeepEqual(t, ocfl.DigestMap{digA: {"dir/a.txt"}}, upd.NewState())
 	})
 	t.Run("remove", func(t *testing.T) {
 		upd := newUpdate(t)
@@ -171,9 +171,9 @@ func TestObjectUpdate_Edits(t *testing.T) {
 		be.NilErr(t, upd.Add("dir/sub/a.txt", digA, nil))
 		be.NilErr(t, upd.Add("dir2/c.txt", digB, nil))
 		be.NilErr(t, upd.Remove("a.txt"))
-		be.DeepEqual(t, []string{"dir/b.txt", "dir/sub/a.txt", "dir2/c.txt"}, upd.State().AllPaths())
+		be.DeepEqual(t, []string{"dir/b.txt", "dir/sub/a.txt", "dir2/c.txt"}, upd.NewState().AllPaths())
 		be.NilErr(t, upd.Remove("dir"))
-		be.DeepEqual(t, []string{"dir2/c.txt"}, upd.State().AllPaths())
+		be.DeepEqual(t, []string{"dir2/c.txt"}, upd.NewState().AllPaths())
 		be.True(t, errors.Is(upd.Remove("dir"), fs.ErrNotExist))
 		be.True(t, errors.Is(upd.Remove("dir2/c"), fs.ErrNotExist))
 		be.Nonzero(t, upd.Remove("."))
@@ -183,21 +183,21 @@ func TestObjectUpdate_Edits(t *testing.T) {
 		be.NilErr(t, upd.Add("a.txt", digA, nil))
 		be.NilErr(t, upd.Add("dir/b.txt", digB, nil))
 		be.NilErr(t, upd.Rename("a.txt", "c.txt"))
-		be.DeepEqual(t, []string{"c.txt", "dir/b.txt"}, upd.State().AllPaths())
+		be.DeepEqual(t, []string{"c.txt", "dir/b.txt"}, upd.NewState().AllPaths())
 		be.NilErr(t, upd.Rename("dir", "new/dir"))
-		be.DeepEqual(t, []string{"c.txt", "new/dir/b.txt"}, upd.State().AllPaths())
+		be.DeepEqual(t, []string{"c.txt", "new/dir/b.txt"}, upd.NewState().AllPaths())
 		be.NilErr(t, upd.Rename(".", "top"))
-		be.DeepEqual(t, []string{"top/c.txt", "top/new/dir/b.txt"}, upd.State().AllPaths())
+		be.DeepEqual(t, []string{"top/c.txt", "top/new/dir/b.txt"}, upd.NewState().AllPaths())
 		be.True(t, errors.Is(upd.Rename("missing", "x"), fs.ErrNotExist))
 		// conflict: a file can't be a directory
 		be.Nonzero(t, upd.Rename("top/c.txt", "top/new"))
-		be.DeepEqual(t, []string{"top/c.txt", "top/new/dir/b.txt"}, upd.State().AllPaths())
+		be.DeepEqual(t, []string{"top/c.txt", "top/new/dir/b.txt"}, upd.NewState().AllPaths())
 	})
 	t.Run("clear", func(t *testing.T) {
 		upd := newUpdate(t)
 		be.NilErr(t, upd.Add("a.txt", digA, digest.Set{"md5": "abc"}))
 		be.NilErr(t, upd.Clear())
-		be.Equal(t, 0, len(upd.State()))
+		be.Equal(t, 0, len(upd.NewState()))
 		be.Zero(t, upd.Fixity(digA))
 	})
 	t.Run("finalized", func(t *testing.T) {
@@ -210,7 +210,7 @@ func TestObjectUpdate_Edits(t *testing.T) {
 		be.True(t, errors.Is(upd.Rename("a.txt", "b.txt"), ocfl.ErrFinalized))
 		be.True(t, errors.Is(upd.Clear(), ocfl.ErrFinalized))
 		be.True(t, errors.Is(upd.Finalize("msg", ocfl.User{Name: "Tester"}), ocfl.ErrFinalized))
-		be.DeepEqual(t, []string{"a.txt"}, upd.State().AllPaths())
+		be.DeepEqual(t, []string{"a.txt"}, upd.NewState().AllPaths())
 	})
 }
 
@@ -361,13 +361,13 @@ func TestObjectUpdate_JSON(t *testing.T) {
 		be.False(t, ok)
 		be.Equal(t, stage.Update.ID(), loaded.ID())
 		be.Equal(t, stage.Update.BaseInventoryDigest(), loaded.BaseInventoryDigest())
-		be.True(t, stage.Update.State().Eq(loaded.State()))
+		be.True(t, stage.Update.NewState().Eq(loaded.NewState()))
 		// the base state is the fixture's head state, without the draft's edits
 		baseState := loaded.BaseState()
 		be.True(t, stage.Update.BaseState().Eq(baseState))
 		be.DeepEqual(t, []string{"empty2.txt", "foo/bar.xml", "image.tiff"}, baseState.AllPaths())
-		be.False(t, baseState.Eq(loaded.State()))
-		dig := loaded.State().DigestFor("new/a.txt")
+		be.False(t, baseState.Eq(loaded.NewState()))
+		dig := loaded.NewState().DigestFor("new/a.txt")
 		be.DeepEqual(t, stage.Update.Fixity(dig), loaded.Fixity(dig))
 		// a loaded draft can be edited
 		be.NilErr(t, loaded.Remove("new/a.txt"))
@@ -447,7 +447,7 @@ func TestObjectUpdate_JSON(t *testing.T) {
 		be.NilErr(t, stage.Update.Finalize("v4", user))
 		saved, err := json.Marshal(stage.Update)
 		be.NilErr(t, err)
-		digA := stage.Update.State().DigestFor("new/a.txt")
+		digA := stage.Update.NewState().DigestFor("new/a.txt")
 		edits := map[string]func(u map[string]any){
 			"state": func(u map[string]any) {
 				state := u["state"].(map[string]any)

@@ -258,7 +258,7 @@ func TestObject_NewUpdate(t *testing.T) {
 		be.Equal(t, obj.DigestAlgorithm().ID(), u.DigestAlgorithm().ID())
 		be.Equal(t, obj.InventoryDigest(), u.BaseInventoryDigest())
 		be.Equal(t, ocfl.V(4), u.NextHead())
-		be.True(t, obj.Version(0).State().Eq(u.State()))
+		be.True(t, obj.Version(0).State().Eq(u.NewState()))
 		be.False(t, u.Finalized())
 	})
 	t.Run("new object", func(t *testing.T) {
@@ -269,7 +269,7 @@ func TestObject_NewUpdate(t *testing.T) {
 		be.Equal(t, digest.SHA512.ID(), u.DigestAlgorithm().ID())
 		be.Zero(t, u.BaseInventoryDigest())
 		be.Equal(t, ocfl.V(1), u.NextHead())
-		be.Equal(t, 0, len(u.State()))
+		be.Equal(t, 0, len(u.NewState()))
 	})
 	// Changing the update's state must not change the object's version
 	// states: an aliased state would rewrite earlier versions in the next
