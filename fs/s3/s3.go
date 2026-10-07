@@ -210,7 +210,7 @@ func dirEntries(ctx context.Context, api ReadDirAPI, buck string, dir string) it
 					size:    *item.Size,
 					mode:    fileMode,
 					modTime: *item.LastModified,
-					//sys:     &item,
+					etag:    normalizeETag(item.ETag),
 				})
 			}
 			slices.SortFunc(entries, func(a, b fs.DirEntry) int {
@@ -493,6 +493,7 @@ func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string, fsys 
 						size:    *s3obj.Size,
 						mode:    fileMode,
 						modTime: *s3obj.LastModified,
+						etag:    normalizeETag(s3obj.ETag),
 					},
 				}
 				if !yield(info, nil) {
@@ -528,6 +529,7 @@ func (f *s3File) Stat() (fs.FileInfo, error) {
 		size:    f.size,
 		mode:    fileMode,
 		modTime: *f.info.LastModified,
+		etag:    normalizeETag(f.info.ETag),
 		sys:     f.info,
 	}, nil
 }
@@ -606,6 +608,7 @@ type iofsInfo struct {
 	size    int64
 	mode    fs.FileMode
 	modTime time.Time
+	etag    string // without quotes; "" if unknown
 	sys     any
 }
 
@@ -620,6 +623,27 @@ func (i iofsInfo) Sys() any           { return i.sys }
 // iofsInfo implements fs.DirEntry
 func (i iofsInfo) Info() (fs.FileInfo, error) { return i, nil }
 func (i iofsInfo) Type() fs.FileMode          { return i.mode.Type() }
+
+// ContentToken implements [ocflfs.ContentTokener]: it returns "etag:"
+// followed by the object's ETag, or "" if the ETag is unknown. The ETag is
+// the same in listings and HEAD responses, and changes whenever the object is
+// overwritten with different content.
+func (i iofsInfo) ContentToken() string {
+	if i.etag == "" {
+		return ""
+	}
+	return "etag:" + i.etag
+}
+
+// normalizeETag returns etag without surrounding quotes, or "" if etag is nil.
+// Some S3-compatible stores quote ETags in listings and HEAD responses
+// differently.
+func normalizeETag(etag *string) string {
+	if etag == nil {
+		return ""
+	}
+	return strings.Trim(*etag, `"`)
+}
 
 // countReader is a reader that updates a size counter with each read. It is
 // what write returns a byte count from. It should stay a plain io.Reader: an
