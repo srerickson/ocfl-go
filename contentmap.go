@@ -30,13 +30,17 @@ type ContentSource interface {
 	GetContent(digest string) (fsys ocflfs.FS, path string)
 }
 
-// ContentChecker is a [ContentSource] that can check that its content hasn't
-// changed since it was added. [ObjectUpdate.Apply] calls CheckContent with
-// the digests of the content it will copy, before writing anything, and
-// returns any error without writing anything.
-type ContentChecker interface {
+// ContentFastChecker is a [ContentSource] that can cheaply check that its
+// content hasn't changed since it was added. The check is "fast" because it
+// does not read or digest the content: it compares metadata recorded when the
+// content was added (such as size and modification time), so it can miss
+// changes that leave the metadata the same. It does not validate content
+// digests. [ObjectUpdate.Apply] calls ContentFastCheck with the digests of the
+// content it will copy, before writing anything, and returns any error without
+// writing anything.
+type ContentFastChecker interface {
 	ContentSource
-	CheckContent(ctx context.Context, digests []string) error
+	ContentFastCheck(ctx context.Context, digests []string) error
 }
 
 // ContentMap maps digests to the location of content with the digest: a file
@@ -55,7 +59,7 @@ type ContentChecker interface {
 // content in them.
 //
 // A file's size and content token (see [ocflfs.ContentToken]) can be recorded
-// when it is added, and are saved with it. [ContentMap.Check] uses them to
+// when it is added, and are saved with it. [ContentMap.FastCheck] uses them to
 // find files that have changed since they were added, so that a changed file
 // isn't copied into an object under the digest of its old content. The check
 // is only as good as the storage backend's content tokens: a file changed
@@ -70,10 +74,10 @@ type ContentMap struct {
 
 // AddFile sets the location of content with the digest dig to the file name
 // in fsys. info is the file's information, from which its size and content
-// token are recorded for [ContentMap.Check]. info should be read before the
+// token are recorded for [ContentMap.FastCheck]. info should be read before the
 // file's content is digested: then a change made while the file is being
-// digested is found by Check. info may be nil, or have a negative size or
-// no content token, if they are unknown: Check doesn't compare what is
+// digested is found by FastCheck. info may be nil, or have a negative size or
+// no content token, if they are unknown: FastCheck doesn't compare what is
 // unknown, and if both are, it only checks that the file exists. fsys must
 // not be nil.
 func (c *ContentMap) AddFile(dig string, fsys ocflfs.FS, name string, info fs.FileInfo) {
@@ -167,7 +171,12 @@ func (c *ContentMap) OpenFS(ctx context.Context, reg ocflfs.Registry) error {
 	return errors.Join(errs...)
 }
 
-// Check stats every file that c's content is in, and returns a
+// FastCheck is a fast check that content hasn't changed since it was added to
+// c. It does not read or digest any file's content, so it does not validate
+// that content still matches its digest: it only compares the file's current
+// size and content token with the ones recorded when it was added.
+//
+// FastCheck stats every file that c's content is in, and returns a
 // *[ContentChangedError], which wraps [ErrContentChanged], listing files that
 // are missing, or whose size or content token differs from the one recorded
 // when they were added. A file's size isn't compared if it wasn't recorded or
@@ -178,14 +187,15 @@ func (c *ContentMap) OpenFS(ctx context.Context, reg ocflfs.Registry) error {
 // Content in memory isn't checked.
 // If a file can't be checked for another reason, the error is returned,
 // joined with any ContentChangedError.
-func (c *ContentMap) Check(ctx context.Context) error {
-	return c.CheckContent(ctx, slices.Sorted(maps.Keys(c.files)))
+func (c *ContentMap) FastCheck(ctx context.Context) error {
+	return c.ContentFastCheck(ctx, slices.Sorted(maps.Keys(c.files)))
 }
 
-// CheckContent implements [ContentChecker] for *ContentMap. It is
-// [ContentMap.Check] for the content with the given digests only. Digests
-// that c has no file for are skipped.
-func (c *ContentMap) CheckContent(ctx context.Context, digests []string) error {
+// ContentFastCheck implements [ContentFastChecker] for *ContentMap. It is
+// [ContentMap.FastCheck] for the content with the given digests only: like
+// FastCheck, it does not validate the content's digests. Digests that c has no
+// file for are skipped.
+func (c *ContentMap) ContentFastCheck(ctx context.Context, digests []string) error {
 	var changes []ContentChange
 	var errs []error
 	for _, dig := range digests {
@@ -303,8 +313,8 @@ func (c *ContentMap) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ContentChangedError is returned by [ContentMap.Check] and
-// [ContentMap.CheckContent] (and so by [ObjectUpdate.Apply]) when files that
+// ContentChangedError is returned by [ContentMap.FastCheck] and
+// [ContentMap.ContentFastCheck] (and so by [ObjectUpdate.Apply]) when files that
 // content was added from are missing or their size or content token has
 // changed. It wraps [ErrContentChanged].
 type ContentChangedError struct {

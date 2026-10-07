@@ -365,8 +365,9 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) err
 // anything, if src doesn't provide content for every digest that is new in
 // the update. src may be nil if the update doesn't add new content. A
 // [ContentMap] loaded from JSON must be opened with [ContentMap.OpenFS] first.
-// If src is a [ContentChecker], such as a ContentMap, Apply returns any error
-// from its CheckContent method, without writing anything: for a ContentMap,
+// If src is a [ContentFastChecker], such as a ContentMap, Apply returns any error
+// from its ContentFastCheck method, without writing anything (this is a fast
+// check of file metadata; it does not validate digests): for a ContentMap,
 // an error wrapping [ErrContentChanged] if files that new content is in are
 // missing or their size or content token has changed. Resuming an update
 // copies all new content again, so the check is run then too.
@@ -1205,7 +1206,7 @@ func readSidecarIfExists(ctx context.Context, fsys ocflfs.FS, dir, alg string) (
 
 // checkContentSource returns an error wrapping ErrMissingContent if src
 // doesn't provide content for every step that copies content. If src is a
-// ContentChecker, it returns the error from checking the content.
+// ContentFastChecker, it returns the error from checking the content.
 func checkContentSource(ctx context.Context, steps []updateStep, src ContentSource) error {
 	var digests, missing []string
 	seen := map[string]bool{}
@@ -1220,8 +1221,8 @@ func checkContentSource(ctx context.Context, steps []updateStep, src ContentSour
 		}
 	}
 	if len(missing) == 0 {
-		if checker, ok := src.(ContentChecker); ok {
-			return checker.CheckContent(ctx, digests)
+		if checker, ok := src.(ContentFastChecker); ok {
+			return checker.ContentFastCheck(ctx, digests)
 		}
 		return nil
 	}
