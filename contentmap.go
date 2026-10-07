@@ -50,7 +50,7 @@ type ContentChecker interface {
 //
 // A ContentMap loaded from JSON keeps each FS as its saved text: decoding
 // does no I/O, so a ContentMap whose content is no longer available can still
-// be loaded, changed and saved. Call [ContentMap.Open] to open the FSs before
+// be loaded, changed and saved. Call [ContentMap.OpenFS] to open the FSs before
 // using the ContentMap as a [ContentSource]: until then, GetContent finds no
 // content in them.
 //
@@ -123,7 +123,7 @@ func (c *ContentMap) Digests() []string {
 }
 
 // GetContent implements [ContentSource] for *ContentMap. Content in an FS
-// that was loaded from JSON and hasn't been opened with [ContentMap.Open] is
+// that was loaded from JSON and hasn't been opened with [ContentMap.OpenFS] is
 // not found.
 func (c *ContentMap) GetContent(dig string) (ocflfs.FS, string) {
 	dig = normalizeDigest(dig)
@@ -140,13 +140,13 @@ func (c *ContentMap) GetContent(dig string) (ocflfs.FS, string) {
 	return nil, ""
 }
 
-// Open opens the FSs loaded from JSON that c's content is in, using reg to
+// OpenFS opens the FSs loaded from JSON that c's content is in, using reg to
 // open each FS from its saved text. It must be called before c is used as a
 // [ContentSource] (for example, by [ObjectUpdate.Apply]). FSs that are already
-// open and FSs that no content is in are skipped, so calling Open again is
-// safe. If any FS can't be opened, Open returns all of the errors joined, each
+// open and FSs that no content is in are skipped, so calling OpenFS again is
+// safe. If any FS can't be opened, OpenFS returns all of the errors joined, each
 // naming the FS's saved text, and keeps the FSs that did open.
-func (c *ContentMap) Open(ctx context.Context, reg ocflfs.Registry) error {
+func (c *ContentMap) OpenFS(ctx context.Context, reg ocflfs.Registry) error {
 	used := map[int]bool{}
 	for _, file := range c.files {
 		used[file.src] = true
@@ -174,7 +174,7 @@ func (c *ContentMap) Open(ctx context.Context, reg ocflfs.Registry) error {
 // its FS reports a negative size (for example, an HTTP server that doesn't
 // send the content length). Likewise, its content token isn't compared if it
 // wasn't recorded or its FS provides none. Content in an FS that isn't open
-// is reported as missing, so c must be opened with [ContentMap.Open] first.
+// is reported as missing, so c must be opened with [ContentMap.OpenFS] first.
 // Content in memory isn't checked.
 // If a file can't be checked for another reason, the error is returned,
 // joined with any ContentChangedError.
@@ -272,7 +272,7 @@ func (c ContentMap) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements [json.Unmarshaler] for *ContentMap. It replaces c
 // with the ContentMap saved in data. It does no I/O: each FS is kept as its
-// saved text until [ContentMap.Open] is called.
+// saved text until [ContentMap.OpenFS] is called.
 func (c *ContentMap) UnmarshalJSON(data []byte) error {
 	var j contentMapJSON
 	dec := json.NewDecoder(bytes.NewReader(data))

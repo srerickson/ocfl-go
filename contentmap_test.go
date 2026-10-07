@@ -211,7 +211,7 @@ func TestContentMap_Open(t *testing.T) {
 	}
 	t.Run("open", func(t *testing.T) {
 		c, dirA, dirB := load(t)
-		be.NilErr(t, c.Open(ctx, reg))
+		be.NilErr(t, c.OpenFS(ctx, reg))
 		srcFS, srcPath := c.GetContent(digA)
 		be.Equal(t, dirA, srcFS.(*local.FS).Root())
 		be.Equal(t, "a.txt", srcPath)
@@ -219,7 +219,7 @@ func TestContentMap_Open(t *testing.T) {
 		be.Equal(t, dirB, srcFS.(*local.FS).Root())
 		be.Equal(t, "b.txt", srcPath)
 		// opening again doesn't open sources again
-		be.NilErr(t, c.Open(ctx, ocflfs.Registry{}))
+		be.NilErr(t, c.OpenFS(ctx, ocflfs.Registry{}))
 		gotFS, _ := c.GetContent(digA)
 		be.Equal(t, dirA, gotFS.(*local.FS).Root())
 	})
@@ -227,7 +227,7 @@ func TestContentMap_Open(t *testing.T) {
 		c, dirA, dirB := load(t)
 		textA := localText(t, dirA)
 		be.NilErr(t, os.Remove(dirA))
-		err := c.Open(ctx, reg)
+		err := c.OpenFS(ctx, reg)
 		be.True(t, errors.Is(err, fs.ErrNotExist))
 		be.In(t, textA, err.Error())
 		// the other source was opened
@@ -240,18 +240,18 @@ func TestContentMap_Open(t *testing.T) {
 		c, dirA, _ := load(t)
 		be.NilErr(t, os.Remove(dirA))
 		c.Remove(digA)
-		be.NilErr(t, c.Open(ctx, reg))
+		be.NilErr(t, c.OpenFS(ctx, reg))
 	})
 	t.Run("unknown scheme", func(t *testing.T) {
 		c, _, _ := load(t)
-		err := c.Open(ctx, ocflfs.Registry{})
+		err := c.OpenFS(ctx, ocflfs.Registry{})
 		be.True(t, errors.Is(err, ocflfs.ErrUnknownScheme))
 	})
 	t.Run("passwords aren't in errors", func(t *testing.T) {
 		data := `{"sources": ["https://user:secret@example.org/ocfl"], "content": {"` + digA + `": [0, "a.txt", null, null]}}`
 		var c ocfl.ContentMap
 		be.NilErr(t, json.Unmarshal([]byte(data), &c))
-		err := c.Open(ctx, ocflfs.Registry{})
+		err := c.OpenFS(ctx, ocflfs.Registry{})
 		be.Nonzero(t, err)
 		be.NotIn(t, "secret", err.Error())
 	})
@@ -357,7 +357,7 @@ func TestContentMap_Check(t *testing.T) {
 		// content in an FS that isn't open is missing
 		err := loaded.Check(ctx)
 		be.Equal(t, 4, len(changes(t, err)))
-		be.NilErr(t, loaded.Open(ctx, config.Registry()))
+		be.NilErr(t, loaded.OpenFS(ctx, config.Registry()))
 		be.NilErr(t, loaded.Check(ctx))
 		be.NilErr(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("xxx"), 0o644))
 		be.DeepEqual(t, []ocfl.ContentChange{
@@ -371,7 +371,7 @@ func TestContentMap_Check(t *testing.T) {
 			"content": {"` + digA + `": [0, "a.txt", null, null], "` + digB + `": [0, "b.txt", null, null]}}`
 		var c ocfl.ContentMap
 		be.NilErr(t, json.Unmarshal([]byte(data), &c))
-		be.NilErr(t, c.Open(ctx, config.Registry()))
+		be.NilErr(t, c.OpenFS(ctx, config.Registry()))
 		be.DeepEqual(t, []ocfl.ContentChange{
 			{Digest: digB, Path: "b.txt", Size: -1, Missing: true},
 		}, changes(t, c.Check(ctx)))
@@ -387,7 +387,7 @@ func TestContentMap_Check(t *testing.T) {
 			"content": {"` + digA + `": [0, "a.txt", 3, "future:1"]}}`
 		var c ocfl.ContentMap
 		be.NilErr(t, json.Unmarshal([]byte(data), &c))
-		be.NilErr(t, c.Open(ctx, config.Registry()))
+		be.NilErr(t, c.OpenFS(ctx, config.Registry()))
 		err := c.Check(ctx)
 		be.DeepEqual(t, []ocfl.ContentChange{
 			{Digest: digA, Path: "a.txt", Size: 3, Token: "future:1", NewSize: 3, NewToken: statToken(t, dir, "a.txt")},
