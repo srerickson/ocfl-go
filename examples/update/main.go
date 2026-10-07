@@ -94,7 +94,7 @@ func runUpdate(ctx context.Context, args []string, stderr io.Writer) error {
 			return err
 		}
 	}
-	if err := stage.Content.Open(ctx, config.Registry(config.WithLogger(logger))); err != nil {
+	if err := stage.Content.OpenFS(ctx, config.Registry(config.WithLogger(logger))); err != nil {
 		return err
 	}
 	applyCtx, stop := signal.NotifyContext(ctx, os.Interrupt)

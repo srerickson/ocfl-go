@@ -20,7 +20,7 @@ import (
 // recorded in both, and content that is no longer needed is dropped from both.
 //
 // A Stage can be saved as JSON (see [ContentMap] for restrictions) and loaded
-// with [json.Unmarshal], which does no I/O. Call [ContentMap.Open] on a loaded
+// with [json.Unmarshal], which does no I/O. Call [ContentMap.OpenFS] on a loaded
 // stage's Content before applying its Update.
 //
 // Files added to a stage must not change before the stage is applied. The

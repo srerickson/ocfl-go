@@ -364,7 +364,7 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) err
 // Apply returns an error wrapping [ErrMissingContent], without writing
 // anything, if src doesn't provide content for every digest that is new in
 // the update. src may be nil if the update doesn't add new content. A
-// [ContentMap] loaded from JSON must be opened with [ContentMap.Open] first.
+// [ContentMap] loaded from JSON must be opened with [ContentMap.OpenFS] first.
 // If src is a [ContentChecker], such as a ContentMap, Apply returns any error
 // from its CheckContent method, without writing anything: for a ContentMap,
 // an error wrapping [ErrContentChanged] if files that new content is in are

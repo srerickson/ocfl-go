@@ -257,7 +257,7 @@ func TestStage_JSON(t *testing.T) {
 	// the loaded stage can be used to create the object once its content is
 	// opened
 	be.NilErr(t, loaded.Update.Finalize("v1", ocfl.User{Name: "Tester"}))
-	be.NilErr(t, loaded.Content.Open(ctx, reg))
+	be.NilErr(t, loaded.Content.OpenFS(ctx, reg))
 	obj, err := loaded.Update.Apply(ctx, objFS, "obj", loaded.Content)
 	be.NilErr(t, err)
 	be.NilErr(t, ocfl.ValidateObject(ctx, objFS, obj.Path()).Err())
@@ -289,7 +289,7 @@ func TestStage_JSON(t *testing.T) {
 		var loaded ocfl.Stage
 		be.NilErr(t, json.Unmarshal(mustMarshal(t, old), &loaded))
 		be.DeepEqual(t, stage.Content.Digests(), loaded.Content.Digests())
-		be.NilErr(t, loaded.Content.Open(ctx, reg))
+		be.NilErr(t, loaded.Content.OpenFS(ctx, reg))
 		be.NilErr(t, loaded.Content.Check(ctx))
 		objFS := testutil.TmpLocalFS(t)
 		be.NilErr(t, loaded.Update.Finalize("v1", ocfl.User{Name: "Tester"}))
@@ -351,7 +351,7 @@ func TestStage_JSON_missingContent(t *testing.T) {
 	_, err = ocflfs.ReadDir(ctx, objFS, "obj")
 	be.True(t, errors.Is(err, fs.ErrNotExist))
 
-	err = loaded.Content.Open(ctx, config.Registry())
+	err = loaded.Content.OpenFS(ctx, config.Registry())
 	be.True(t, errors.Is(err, fs.ErrNotExist))
 	be.In(t, string(contentText), err.Error())
 
