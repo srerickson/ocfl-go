@@ -54,7 +54,7 @@ var (
 
 	// ErrUnexpectedHead is returned by [ObjectUpdate.Finalize] when the
 	// version number of the new object version does not match the number
-	// expected by [UpdateWithNewHead].
+	// expected by [UpdateWithExpectedHead].
 	ErrUnexpectedHead = errors.New("unexpected object version number")
 
 	// ErrObjectSpecExceedsRoot is returned when an update would give an object
@@ -277,7 +277,7 @@ func (u *ObjectUpdate) Clear() error {
 // timestamp and OCFL spec) and the content paths for new content, builds the
 // new inventory, and makes u read-only. It does no I/O. Finalize uses the
 // options [UpdateWithVersionCreated], [UpdateWithOCFLSpec],
-// [UpdateWithContentPathFunc], [UpdateWithNewHead] and
+// [UpdateWithContentPathFunc], [UpdateWithExpectedHead] and
 // [UpdateWithUnchangedVersionState]. If Finalize returns an error, u is
 // unchanged.
 func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) error {
@@ -289,9 +289,9 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) err
 	if err != nil {
 		return err
 	}
-	if o.newHead > 0 && newHead.Num() != o.newHead {
+	if o.expectedHead > 0 && newHead.Num() != o.expectedHead {
 		return fmt.Errorf("%w: expected update to create version %d, but it would create version %d",
-			ErrUnexpectedHead, o.newHead, newHead.Num())
+			ErrUnexpectedHead, o.expectedHead, newHead.Num())
 	}
 	if !o.allowUnchanged && u.base != nil && u.baseState().Eq(u.state) {
 		return errors.New("update has unchanged version state")
@@ -952,7 +952,7 @@ type updateOptions struct {
 	// finalize
 	created         time.Time
 	spec            Spec
-	newHead         int
+	expectedHead    int
 	allowUnchanged  bool
 	contentPathFunc PathMutation
 	// apply and revert
@@ -997,14 +997,14 @@ func UpdateWithOCFLSpec(s Spec) UpdateOption {
 	}
 }
 
-// UpdateWithNewHead is used to enforce the expected version number (without
+// UpdateWithExpectedHead is used to enforce the expected version number (without
 // padding) for the new version. It is used by [ObjectUpdate.Finalize], which
 // returns an error wrapping [ErrUnexpectedHead] if the update would create a
 // version with a different number. For a new object, the expected version
 // number is 1. Values of v less than 1 are ignored.
-func UpdateWithNewHead(v int) UpdateOption {
+func UpdateWithExpectedHead(v int) UpdateOption {
 	return func(o *updateOptions) {
-		o.newHead = v
+		o.expectedHead = v
 	}
 }
 
