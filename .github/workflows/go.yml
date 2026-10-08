@@ -8,6 +8,11 @@ on: # rebuild any PRs and main branch changes
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # docker compose builds with buildx bake, which refuses to read the
+      # devcontainer CLI's generated Dockerfile (outside the build context)
+      # without an fs.read entitlement. Disable the entitlement check.
+      BUILDX_BAKE_ENTITLEMENTS_FS: 0
     steps:
 
       - name: Checkout (GitHub)
