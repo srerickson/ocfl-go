@@ -18,11 +18,10 @@ var (
 	storeFixturePath   = filepath.Join(`testdata`, `store-fixtures`)
 )
 
-// stageBytes clears u's state and returns a stage with the files in content.
-func stageBytes(t *testing.T, u *ocfl.ObjectUpdate, content map[string][]byte, fixity ...digest.Algorithm) *ocfl.Stage {
+// stageBytes clears stage and adds the files in content to it.
+func stageBytes(t *testing.T, stage *ocfl.Stage, content map[string][]byte, fixity ...digest.Algorithm) *ocfl.Stage {
 	t.Helper()
-	be.NilErr(t, u.Clear())
-	stage := ocfl.NewStage(u)
+	be.NilErr(t, stage.Clear())
 	for name, b := range content {
 		be.NilErr(t, stage.AddBytes(name, b, fixity...))
 	}
@@ -34,8 +33,8 @@ func stageBytes(t *testing.T, u *ocfl.ObjectUpdate, content map[string][]byte, f
 func commit(t *testing.T, obj *ocfl.Object, stage *ocfl.Stage, msg string, opts ...ocfl.UpdateOption) *ocfl.Object {
 	t.Helper()
 	ctx := context.Background()
-	be.NilErr(t, stage.Update.Finalize(msg, ocfl.User{Name: "Tester"}, opts...))
-	newObj, err := stage.Update.Apply(ctx, obj.FS(), obj.Path(), stage.Content)
+	be.NilErr(t, stage.Finalize(msg, ocfl.User{Name: "Tester"}, opts...))
+	newObj, err := stage.Update().Apply(ctx, obj.FS(), obj.Path(), stage.Content())
 	be.NilErr(t, err)
 	return newObj
 }

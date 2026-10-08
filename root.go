@@ -139,6 +139,17 @@ func (r *Root) NewUpdate(ctx context.Context, id string, opts ...UpdateOption) (
 	return NewUpdate(ctx, r.fs, path.Join(r.dir, objPath), id, opts...)
 }
 
+// NewStage returns a new *[Stage] for the object with the given ID in the
+// root. The stage's update is created as with [Root.NewUpdate], and its
+// ContentMap is empty.
+func (r *Root) NewStage(ctx context.Context, id string, opts ...UpdateOption) (*Stage, error) {
+	u, err := r.NewUpdate(ctx, id, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return newStage(u), nil
+}
+
 // Apply applies the finalized update u to the object in the root with u's
 // ID, using src for new content, and returns the updated object. See
 // [ObjectUpdate.Apply].

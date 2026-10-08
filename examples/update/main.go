@@ -94,19 +94,19 @@ func runUpdate(ctx context.Context, args []string, stderr io.Writer) error {
 			return err
 		}
 	}
-	if err := stage.Content.OpenFS(ctx, config.Registry(config.WithLogger(logger))); err != nil {
+	if err := stage.Content().OpenFS(ctx, config.Registry(config.WithLogger(logger))); err != nil {
 		return err
 	}
 	applyCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
-	_, err = stage.Update.Apply(applyCtx, objCnf.FS, objCnf.Path, stage.Content, ocfl.UpdateWithLogger(logger))
+	_, err = stage.Update().Apply(applyCtx, objCnf.FS, objCnf.Path, stage.Content(), ocfl.UpdateWithLogger(logger))
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			// the stage file is kept, so the update can be resumed
 			return err
 		}
 		logger.Info("received interupt: reverting changes...")
-		if err := stage.Update.Revert(ctx, objCnf.FS, objCnf.Path, ocfl.UpdateWithLogger(logger)); err != nil {
+		if err := stage.Update().Revert(ctx, objCnf.FS, objCnf.Path, ocfl.UpdateWithLogger(logger)); err != nil {
 			return err
 		}
 	}
@@ -126,7 +126,7 @@ func newStage(ctx context.Context, objCnf *config.FSConfig, f *cmdFlags) (*ocfl.
 	if err != nil {
 		return nil, err
 	}
-	update, err := ocfl.NewUpdate(ctx, objCnf.FS, objCnf.Path, f.newID, ocfl.UpdateWithDigestAlgorithm(alg))
+	stage, err := ocfl.NewStage(ctx, objCnf.FS, objCnf.Path, f.newID, ocfl.UpdateWithDigestAlgorithm(alg))
 	if err != nil {
 		if errors.Is(err, ocfl.ErrNoObjectID) {
 			return nil, errors.New("'id' flag is required for to a create new objects (object does not exist)")
@@ -134,18 +134,17 @@ func newStage(ctx context.Context, objCnf *config.FSConfig, f *cmdFlags) (*ocfl.
 		return nil, fmt.Errorf("%s: %w", objCnf.Path, err)
 	}
 	// the new version state is the contents of srcDir
-	if err := update.Clear(); err != nil {
+	if err := stage.Clear(); err != nil {
 		return nil, err
 	}
 	srcFS, err := local.NewFS(f.srcDir)
 	if err != nil {
 		return nil, err
 	}
-	stage := ocfl.NewStage(update)
 	if err := stage.AddFS(ctx, srcFS, ".", "."); err != nil {
 		return nil, err
 	}
-	if err := update.Finalize(f.msg, f.user); err != nil {
+	if err := stage.Finalize(f.msg, f.user); err != nil {
 		return nil, err
 	}
 	return stage, nil

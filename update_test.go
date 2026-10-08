@@ -219,15 +219,15 @@ func TestObjectUpdate_Finalize(t *testing.T) {
 	user := ocfl.User{Name: "Tester", Address: "mailto:tester@example.org"}
 	t.Run("new object", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t)
-		upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj")
+		stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj")
 		be.NilErr(t, err)
-		stage := ocfl.NewStage(upd)
+		upd := stage.Update()
 		be.NilErr(t, stage.AddBytes("a.txt", []byte("a"), digest.MD5))
 		be.NilErr(t, stage.AddBytes("b.txt", []byte("a")))
 		created := time.Date(2026, 10, 4, 12, 0, 0, 999, time.FixedZone("PDT", -7*60*60))
 		_, ok := upd.VersionInfo()
 		be.False(t, ok)
-		be.NilErr(t, upd.Finalize("first version", user, ocfl.UpdateWithVersionCreated(created)))
+		be.NilErr(t, stage.Finalize("first version", user, ocfl.UpdateWithVersionCreated(created)))
 		be.Nonzero(t, upd.NewInventoryDigest())
 		info, ok := upd.VersionInfo()
 		be.True(t, ok)
@@ -239,7 +239,7 @@ func TestObjectUpdate_Finalize(t *testing.T) {
 		be.Equal(t, 0, info.Created.Nanosecond())
 		_, offset := info.Created.Zone()
 		be.Equal(t, -7*60*60, offset)
-		obj, err := upd.Apply(ctx, fsys, "obj", stage.Content)
+		obj, err := upd.Apply(ctx, fsys, "obj", stage.Content())
 		be.NilErr(t, err)
 		be.Equal(t, upd.NewInventoryDigest(), obj.InventoryDigest())
 		ver := obj.Version(1)
@@ -255,17 +255,17 @@ func TestObjectUpdate_Finalize(t *testing.T) {
 	})
 	t.Run("content path func", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t)
-		upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj")
+		stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj")
 		be.NilErr(t, err)
-		stage := ocfl.NewStage(upd)
+		upd := stage.Update()
 		be.NilErr(t, stage.AddBytes("dir/a.txt", []byte("a")))
-		be.NilErr(t, upd.Finalize("msg", user, ocfl.UpdateWithContentPathFunc(func(paths []string) []string {
+		be.NilErr(t, stage.Finalize("msg", user, ocfl.UpdateWithContentPathFunc(func(paths []string) []string {
 			for i, p := range paths {
 				paths[i] = strings.ToUpper(p)
 			}
 			return paths
 		})))
-		obj, err := upd.Apply(ctx, fsys, "obj", stage.Content)
+		obj, err := upd.Apply(ctx, fsys, "obj", stage.Content())
 		be.NilErr(t, err)
 		be.DeepEqual(t, []string{"v1/content/DIR/A.TXT"}, obj.Manifest().AllPaths())
 		// the content path func isn't needed after finalize
@@ -280,7 +280,7 @@ func TestObjectUpdate_Finalize(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture)
 		obj, err := ocfl.NewObject(ctx, fsys, "minimal_content_dir_called_stuff")
 		be.NilErr(t, err)
-		stage := ocfl.NewStage(obj.NewUpdate())
+		stage := obj.NewStage()
 		be.NilErr(t, stage.AddBytes("new.txt", []byte("new"), digest.MD5))
 		newObj := commit(t, obj, stage, "v2")
 		be.Equal(t, "stuff", newObj.ContentDirectory())
@@ -334,9 +334,8 @@ func TestObjectUpdate_JSON(t *testing.T) {
 	// newStage returns a stage for an update to the fixture
 	newStage := func(t *testing.T) (*local.FS, *ocfl.Stage) {
 		fsys := testutil.TmpLocalFS(t, fixture)
-		upd, err := ocfl.NewUpdate(ctx, fsys, "spec-ex-full", "")
+		stage, err := ocfl.NewStage(ctx, fsys, "spec-ex-full", "")
 		be.NilErr(t, err)
-		stage := ocfl.NewStage(upd)
 		be.NilErr(t, stage.AddBytes("new/a.txt", []byte("a"), digest.MD5, digest.SIZE))
 		be.NilErr(t, stage.AddBytes("new/b.txt", []byte("b"), digest.MD5))
 		be.NilErr(t, stage.Rename("foo", "bar"))
@@ -355,20 +354,20 @@ func TestObjectUpdate_JSON(t *testing.T) {
 	}
 	t.Run("draft", func(t *testing.T) {
 		_, stage := newStage(t)
-		loaded := roundTrip(t, stage.Update)
+		loaded := roundTrip(t, stage.Update())
 		be.False(t, loaded.Finalized())
 		_, ok := loaded.VersionInfo()
 		be.False(t, ok)
-		be.Equal(t, stage.Update.ID(), loaded.ID())
-		be.Equal(t, stage.Update.BaseInventoryDigest(), loaded.BaseInventoryDigest())
-		be.True(t, stage.Update.NewState().Eq(loaded.NewState()))
+		be.Equal(t, stage.Update().ID(), loaded.ID())
+		be.Equal(t, stage.Update().BaseInventoryDigest(), loaded.BaseInventoryDigest())
+		be.True(t, stage.Update().NewState().Eq(loaded.NewState()))
 		// the base state is the fixture's head state, without the draft's edits
 		baseState := loaded.BaseState()
-		be.True(t, stage.Update.BaseState().Eq(baseState))
+		be.True(t, stage.Update().BaseState().Eq(baseState))
 		be.DeepEqual(t, []string{"empty2.txt", "foo/bar.xml", "image.tiff"}, baseState.AllPaths())
 		be.False(t, baseState.Eq(loaded.NewState()))
 		dig := loaded.NewState().DigestFor("new/a.txt")
-		be.DeepEqual(t, stage.Update.Fixity(dig), loaded.Fixity(dig))
+		be.DeepEqual(t, stage.Update().Fixity(dig), loaded.Fixity(dig))
 		// a loaded draft can be edited
 		be.NilErr(t, loaded.Remove("new/a.txt"))
 	})
@@ -384,12 +383,12 @@ func TestObjectUpdate_JSON(t *testing.T) {
 	t.Run("finalized", func(t *testing.T) {
 		fsys, stage := newStage(t)
 		created := time.Date(2026, 10, 4, 12, 0, 0, 0, time.FixedZone("", 5*60*60+30*60))
-		be.NilErr(t, stage.Update.Finalize("v4", user,
+		be.NilErr(t, stage.Finalize("v4", user,
 			ocfl.UpdateWithVersionCreated(created), ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1)))
-		loaded := roundTrip(t, stage.Update)
+		loaded := roundTrip(t, stage.Update())
 		be.True(t, loaded.Finalized())
-		be.Equal(t, stage.Update.NewInventoryDigest(), loaded.NewInventoryDigest())
-		be.True(t, stage.Update.BaseState().Eq(loaded.BaseState()))
+		be.Equal(t, stage.Update().NewInventoryDigest(), loaded.NewInventoryDigest())
+		be.True(t, stage.Update().BaseState().Eq(loaded.BaseState()))
 		be.DeepEqual(t, []string{"empty2.txt", "foo/bar.xml", "image.tiff"}, loaded.BaseState().AllPaths())
 		info, ok := loaded.VersionInfo()
 		be.True(t, ok)
@@ -400,16 +399,16 @@ func TestObjectUpdate_JSON(t *testing.T) {
 		_, offset := info.Created.Zone()
 		be.Equal(t, 5*60*60+30*60, offset)
 		// the loaded update is applied
-		obj, err := loaded.Apply(ctx, fsys, "spec-ex-full", stage.Content)
+		obj, err := loaded.Apply(ctx, fsys, "spec-ex-full", stage.Content())
 		be.NilErr(t, err)
-		be.Equal(t, stage.Update.NewInventoryDigest(), obj.InventoryDigest())
+		be.Equal(t, stage.Update().NewInventoryDigest(), obj.InventoryDigest())
 		be.True(t, created.Equal(obj.Version(0).Created()))
 		be.NilErr(t, ocfl.ValidateObject(ctx, fsys, "spec-ex-full").Err())
 	})
 	t.Run("saved form", func(t *testing.T) {
 		_, stage := newStage(t)
-		be.NilErr(t, stage.Update.Finalize("v4", user))
-		saved, err := json.Marshal(stage.Update)
+		be.NilErr(t, stage.Finalize("v4", user))
+		saved, err := json.Marshal(stage.Update())
 		be.NilErr(t, err)
 		var fields map[string]json.RawMessage
 		be.NilErr(t, json.Unmarshal(saved, &fields))
@@ -430,7 +429,7 @@ func TestObjectUpdate_JSON(t *testing.T) {
 	})
 	t.Run("digest algorithm doesn't match base inventory", func(t *testing.T) {
 		_, stage := newStage(t)
-		saved, err := json.Marshal(stage.Update)
+		saved, err := json.Marshal(stage.Update())
 		be.NilErr(t, err)
 		var fields map[string]any
 		be.NilErr(t, json.Unmarshal(saved, &fields))
@@ -444,10 +443,10 @@ func TestObjectUpdate_JSON(t *testing.T) {
 	})
 	t.Run("tampering", func(t *testing.T) {
 		_, stage := newStage(t)
-		be.NilErr(t, stage.Update.Finalize("v4", user))
-		saved, err := json.Marshal(stage.Update)
+		be.NilErr(t, stage.Finalize("v4", user))
+		saved, err := json.Marshal(stage.Update())
 		be.NilErr(t, err)
-		digA := stage.Update.NewState().DigestFor("new/a.txt")
+		digA := stage.Update().NewState().DigestFor("new/a.txt")
 		edits := map[string]func(u map[string]any){
 			"state": func(u map[string]any) {
 				state := u["state"].(map[string]any)
@@ -523,7 +522,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture)
 		obj, err := ocfl.NewObject(ctx, fsys, "minimal_one_version_one_file")
 		be.NilErr(t, err)
-		stage := ocfl.NewStage(obj.NewUpdate())
+		stage := obj.NewStage()
 		be.NilErr(t, stage.AddBytes("new.txt", []byte("new")))
 		newObj := commit(t, obj, stage, "v2")
 		be.Equal(t, ocfl.V(2), newObj.Head())
@@ -531,35 +530,35 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		// obj is an out-of-date view
 		be.Equal(t, ocfl.V(1), obj.Head())
 		// an update from obj conflicts with storage
-		stage = ocfl.NewStage(obj.NewUpdate())
+		stage = obj.NewStage()
 		be.NilErr(t, stage.AddBytes("other.txt", []byte("other")))
-		be.NilErr(t, stage.Update.Finalize("v2", user))
-		_, err = stage.Update.Apply(ctx, fsys, obj.Path(), stage.Content)
+		be.NilErr(t, stage.Finalize("v2", user))
+		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
 		be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
-		be.True(t, errors.Is(stage.Update.Revert(ctx, fsys, obj.Path()), ocfl.ErrUpdateConflict))
+		be.True(t, errors.Is(stage.Update().Revert(ctx, fsys, obj.Path()), ocfl.ErrUpdateConflict))
 		be.NilErr(t, ocfl.ValidateObject(ctx, fsys, obj.Path()).Err())
 	})
 	t.Run("applying a committed update again", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture)
 		obj, err := ocfl.NewObject(ctx, fsys, "minimal_one_version_one_file")
 		be.NilErr(t, err)
-		stage := ocfl.NewStage(obj.NewUpdate())
+		stage := obj.NewStage()
 		be.NilErr(t, stage.AddBytes("new.txt", []byte("new")))
 		newObj := commit(t, obj, stage, "v2")
-		again, err := stage.Update.Apply(ctx, fsys, obj.Path(), nil)
+		again, err := stage.Update().Apply(ctx, fsys, obj.Path(), nil)
 		be.NilErr(t, err)
 		be.Equal(t, newObj.InventoryDigest(), again.InventoryDigest())
-		be.True(t, errors.Is(stage.Update.Revert(ctx, fsys, obj.Path()), ocfl.ErrUpdateCompleted))
+		be.True(t, errors.Is(stage.Update().Revert(ctx, fsys, obj.Path()), ocfl.ErrUpdateCompleted))
 	})
 	t.Run("wrong object", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture,
 			filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `minimal_no_content`))
 		obj, err := ocfl.NewObject(ctx, fsys, "minimal_one_version_one_file")
 		be.NilErr(t, err)
-		stage := ocfl.NewStage(obj.NewUpdate())
+		stage := obj.NewStage()
 		be.NilErr(t, stage.AddBytes("new.txt", []byte("new")))
-		be.NilErr(t, stage.Update.Finalize("v2", user))
-		_, err = stage.Update.Apply(ctx, fsys, "minimal_no_content", stage.Content)
+		be.NilErr(t, stage.Finalize("v2", user))
+		_, err = stage.Update().Apply(ctx, fsys, "minimal_no_content", stage.Content())
 		be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
 	})
 	t.Run("new object over an existing object", func(t *testing.T) {
@@ -595,11 +594,11 @@ func TestObjectUpdate_Apply(t *testing.T) {
 	})
 	t.Run("new object over a directory that isn't the update's", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t)
-		upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj")
+		stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj")
 		be.NilErr(t, err)
-		stage := ocfl.NewStage(upd)
+		upd := stage.Update()
 		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
-		be.NilErr(t, upd.Finalize("v1", user))
+		be.NilErr(t, stage.Finalize("v1", user))
 		// entries in dir that the update doesn't write
 		for _, entry := range []string{
 			"notes.txt",
@@ -613,7 +612,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 				be.NilErr(t, err)
 				t.Cleanup(func() { be.NilErr(t, fsys.RemoveAll(ctx, "dir")) })
 				before := snapshot(t, fsys)
-				_, err = upd.Apply(ctx, fsys, "dir", stage.Content)
+				_, err = upd.Apply(ctx, fsys, "dir", stage.Content())
 				be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
 				be.In(t, strings.Split(entry, "/")[0], err.Error())
 				be.True(t, errors.Is(upd.Revert(ctx, fsys, "dir"), ocfl.ErrUpdateConflict))
@@ -625,36 +624,36 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		// a crash while writing a root file can leave the temporary file that
 		// local.FS writes it to.
 		fsys := testutil.TmpLocalFS(t)
-		upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj")
+		stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj")
 		be.NilErr(t, err)
-		stage := ocfl.NewStage(upd)
+		upd := stage.Update()
 		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
-		be.NilErr(t, upd.Finalize("v1", user))
+		be.NilErr(t, stage.Finalize("v1", user))
 		// writes: namaste, content, version inventory and sidecar
-		_, err = upd.Apply(ctx, &crashFS{FS: fsys, n: 4}, "obj", stage.Content)
+		_, err = upd.Apply(ctx, &crashFS{FS: fsys, n: 4}, "obj", stage.Content())
 		be.True(t, errors.Is(err, errCrash))
 		_, err = fsys.Write(ctx, "obj/.inventory.json.tmp-123", strings.NewReader("partial"))
 		be.NilErr(t, err)
 		be.NilErr(t, upd.Revert(ctx, fsys, "obj"))
 		_, err = ocflfs.ReadDir(ctx, fsys, "obj")
 		be.True(t, errors.Is(err, fs.ErrNotExist))
-		be.NilErr(t, upd.Finalize("v1", user))
+		be.NilErr(t, stage.Finalize("v1", user))
 		_, err = fsys.Write(ctx, "obj/.0=ocfl_object_1.1.tmp-123", strings.NewReader("partial"))
 		be.NilErr(t, err)
-		_, err = upd.Apply(ctx, fsys, "obj", stage.Content)
+		_, err = upd.Apply(ctx, fsys, "obj", stage.Content())
 		be.NilErr(t, err)
 	})
 	t.Run("missing content", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t)
-		upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj")
+		stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj")
 		be.NilErr(t, err)
-		stage := ocfl.NewStage(upd)
+		upd := stage.Update()
 		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
 		for i := range 8 {
 			be.NilErr(t, upd.Add(fmt.Sprintf("missing-%d.txt", i), fmt.Sprintf("%0128d", i), nil))
 		}
-		be.NilErr(t, upd.Finalize("v1", user))
-		_, err = upd.Apply(ctx, fsys, "obj", stage.Content)
+		be.NilErr(t, stage.Finalize("v1", user))
+		_, err = upd.Apply(ctx, fsys, "obj", stage.Content())
 		be.True(t, errors.Is(err, ocfl.ErrMissingContent))
 		be.In(t, "8 missing digest(s)", err.Error())
 		be.In(t, "and 3 more", err.Error())
@@ -666,9 +665,9 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		be.True(t, errors.Is(err, fs.ErrNotExist))
 		// the update can be applied once the content is available
 		for i := range 8 {
-			stage.Content.AddBytes(fmt.Sprintf("%0128d", i), []byte("not checked"))
+			stage.Content().AddBytes(fmt.Sprintf("%0128d", i), []byte("not checked"))
 		}
-		_, err = upd.Apply(ctx, fsys, "obj", stage.Content)
+		_, err = upd.Apply(ctx, fsys, "obj", stage.Content())
 		be.NilErr(t, err)
 	})
 	t.Run("changed content", func(t *testing.T) {
@@ -682,34 +681,34 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		helloData, err := os.ReadFile(hello)
 		be.NilErr(t, err)
 		writeOld(t, hello, string(helloData))
-		stage := ocfl.NewStage(obj.NewUpdate())
+		stage := obj.NewStage()
 		be.NilErr(t, stage.AddFS(ctx, contentFS, "content-fixture", "new"))
-		be.NilErr(t, stage.Update.Finalize("v2", user))
+		be.NilErr(t, stage.Finalize("v2", user))
 		before := snapshot(t, fsys)
 		// same size, different content
 		be.NilErr(t, os.WriteFile(hello, bytes.Repeat([]byte("x"), len(helloData)), 0o644))
-		_, err = stage.Update.Apply(ctx, fsys, obj.Path(), stage.Content)
+		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
 		be.True(t, errors.Is(err, ocfl.ErrContentChanged))
 		be.In(t, `"content-fixture/hello.csv" has changed since it was added`, err.Error())
 		be.DeepEqual(t, before, snapshot(t, fsys))
 		be.NilErr(t, os.Truncate(hello, 1))
 		be.NilErr(t, os.Rename(hello, hello+".moved"))
-		_, err = stage.Update.Apply(ctx, fsys, obj.Path(), stage.Content)
+		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
 		be.True(t, errors.Is(err, ocfl.ErrContentChanged))
 		be.In(t, `"content-fixture/hello.csv" is missing`, err.Error())
 		be.DeepEqual(t, before, snapshot(t, fsys))
 		be.NilErr(t, os.Rename(hello+".moved", hello))
-		_, err = stage.Update.Apply(ctx, fsys, obj.Path(), stage.Content)
+		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
 		be.True(t, errors.Is(err, ocfl.ErrContentChanged))
 		be.In(t, `"content-fixture/hello.csv" has size 1, not 15`, err.Error())
 		be.DeepEqual(t, before, snapshot(t, fsys))
 		// restoring the content changes the file's token, so it is
 		// recorded again
 		be.NilErr(t, os.WriteFile(hello, helloData, 0o644))
-		_, err = stage.Update.Apply(ctx, fsys, obj.Path(), stage.Content)
+		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
 		be.True(t, errors.Is(err, ocfl.ErrContentChanged))
-		readdFile(t, stage.Content, "content-fixture/hello.csv")
-		newObj, err := stage.Update.Apply(ctx, fsys, obj.Path(), stage.Content)
+		readdFile(t, stage.Content(), "content-fixture/hello.csv")
+		newObj, err := stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
 		be.NilErr(t, err)
 		be.Equal(t, ocfl.V(2), newObj.Head())
 		be.NilErr(t, ocfl.ValidateObject(ctx, fsys, obj.Path()).Err())
@@ -719,10 +718,10 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		obj, err := ocfl.NewObject(ctx, fsys, "minimal_one_version_one_file")
 		be.NilErr(t, err)
 		contentFS := testutil.TmpLocalFS(t, filepath.Join(`testdata`, `content-fixture`))
-		stage := ocfl.NewStage(obj.NewUpdate())
+		stage := obj.NewStage()
 		be.NilErr(t, stage.AddFS(ctx, contentFS, "content-fixture", "new"))
-		be.NilErr(t, stage.Update.Finalize("v2", user))
-		_, err = stage.Update.Apply(ctx, &crashFS{FS: fsys, n: 1}, obj.Path(), stage.Content)
+		be.NilErr(t, stage.Finalize("v2", user))
+		_, err = stage.Update().Apply(ctx, &crashFS{FS: fsys, n: 1}, obj.Path(), stage.Content())
 		be.True(t, errors.Is(err, errCrash))
 		_, err = os.Stat(filepath.Join(fsys.Root(), obj.Path(), "v2"))
 		be.NilErr(t, err)
@@ -732,13 +731,13 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		be.NilErr(t, err)
 		be.NilErr(t, os.WriteFile(hello, []byte("changed"), 0o644))
 		before := snapshot(t, fsys)
-		_, err = stage.Update.Apply(ctx, fsys, obj.Path(), stage.Content)
+		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
 		be.True(t, errors.Is(err, ocfl.ErrContentChanged))
 		be.DeepEqual(t, before, snapshot(t, fsys))
 		// it is resumed once the content is restored and recorded again
 		be.NilErr(t, os.WriteFile(hello, helloData, 0o644))
-		readdFile(t, stage.Content, "content-fixture/hello.csv")
-		_, err = stage.Update.Apply(ctx, fsys, obj.Path(), stage.Content)
+		readdFile(t, stage.Content(), "content-fixture/hello.csv")
+		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
 		be.NilErr(t, err)
 		be.NilErr(t, ocfl.ValidateObject(ctx, fsys, obj.Path()).Err())
 	})
@@ -769,7 +768,7 @@ func TestObjectUpdate_Fixtures(t *testing.T) {
 				fsys := testutil.TmpLocalFS(t, fixture)
 				obj, err := ocfl.NewObject(ctx, fsys, dir.Name())
 				be.NilErr(t, err)
-				stage := ocfl.NewStage(obj.NewUpdate())
+				stage := obj.NewStage()
 				be.NilErr(t, stage.AddBytes("a-new-file", []byte("new stuff")))
 				newObj := commit(t, obj, stage, "update")
 				be.NilErr(t, ocfl.ValidateObject(ctx, fsys, newObj.Path()).Err())
@@ -797,14 +796,14 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 	scenarios := map[string]scenario{
 		"new object": {
 			setup: func(t *testing.T, fsys *local.FS) *ocfl.Stage {
-				upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj")
+				stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj")
 				be.NilErr(t, err)
-				stage := stageBytes(t, upd, map[string][]byte{
+				stageBytes(t, stage, map[string][]byte{
 					"a.txt":     []byte("a"),
 					"dir/b.txt": []byte("b"),
 					"dir/c.txt": []byte("c"),
 				}, digest.MD5)
-				be.NilErr(t, upd.Finalize("v1", user))
+				be.NilErr(t, stage.Finalize("v1", user))
 				return stage
 			},
 		},
@@ -812,36 +811,34 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 			setup: func(t *testing.T, fsys *local.FS) *ocfl.Stage {
 				fixture := filepath.Join(objectFixturesPath, `1.0`, `good-objects`, `spec-ex-full`)
 				be.NilErr(t, os.CopyFS(filepath.Join(fsys.Root(), "obj"), os.DirFS(fixture)))
-				upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "")
+				stage, err := ocfl.NewStage(ctx, fsys, "obj", "")
 				be.NilErr(t, err)
-				stage := ocfl.NewStage(upd)
 				be.NilErr(t, stage.AddBytes("new/a.txt", []byte("a")))
 				be.NilErr(t, stage.AddBytes("new/b.txt", []byte("b")))
 				be.NilErr(t, stage.Rename("foo/bar.xml", "bar.xml"))
-				be.NilErr(t, upd.Finalize("v4", user, ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1)))
+				be.NilErr(t, stage.Finalize("v4", user, ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1)))
 				return stage
 			},
 			baseHead: 3,
 		},
 		"existing sha256 object": {
 			setup: func(t *testing.T, fsys *local.FS) *ocfl.Stage {
-				upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj", ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
+				stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj", ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
 				be.NilErr(t, err)
-				stage := stageBytes(t, upd, map[string][]byte{
+				stageBytes(t, stage, map[string][]byte{
 					"a.txt":     []byte("a"),
 					"dir/b.txt": []byte("b"),
 				})
-				be.NilErr(t, upd.Finalize("v1", user))
-				_, err = upd.Apply(ctx, fsys, "obj", stage.Content)
+				be.NilErr(t, stage.Finalize("v1", user))
+				_, err = stage.Update().Apply(ctx, fsys, "obj", stage.Content())
 				be.NilErr(t, err)
 				// v2 keeps sha256: the option is ignored for an existing object
-				upd, err = ocfl.NewUpdate(ctx, fsys, "obj", "", ocfl.UpdateWithDigestAlgorithm(digest.SHA512))
+				stage, err = ocfl.NewStage(ctx, fsys, "obj", "", ocfl.UpdateWithDigestAlgorithm(digest.SHA512))
 				be.NilErr(t, err)
-				be.Equal(t, digest.SHA256.ID(), upd.DigestAlgorithm().ID())
-				stage = ocfl.NewStage(upd)
+				be.Equal(t, digest.SHA256.ID(), stage.Update().DigestAlgorithm().ID())
 				be.NilErr(t, stage.AddBytes("c.txt", []byte("c")))
 				be.NilErr(t, stage.Remove("a.txt"))
-				be.NilErr(t, upd.Finalize("v2", user))
+				be.NilErr(t, stage.Finalize("v2", user))
 				return stage
 			},
 			baseHead: 1,
@@ -858,10 +855,10 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 				fsys = testutil.TmpLocalFS(t)
 				stage = sc.setup(t, fsys)
 				before = snapshot(t, fsys)
-				saved, err := json.Marshal(stage.Update)
+				saved, err := json.Marshal(stage.Update())
 				be.NilErr(t, err)
 				crash := &crashFS{FS: fsys, n: n}
-				_, err = stage.Update.Apply(ctx, crash, "obj", stage.Content, ocfl.UpdateWithGoLimit(1))
+				_, err = stage.Update().Apply(ctx, crash, "obj", stage.Content(), ocfl.UpdateWithGoLimit(1))
 				if err == nil {
 					return fsys, before, stage, saved, true
 				}
@@ -882,11 +879,11 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 				}
 				t.Run(fmt.Sprintf("resume after %d writes", n), func(t *testing.T) {
 					// a new update can't be started over the interrupted one
-					_, err := ocfl.NewUpdate(ctx, fsys, "obj", stage.Update.ID())
+					_, err := ocfl.NewUpdate(ctx, fsys, "obj", stage.Update().ID())
 					if n > 0 {
 						be.True(t, errors.Is(err, ocfl.ErrObjectIncomplete))
 					}
-					obj, err := load(t, saved).Apply(ctx, fsys, "obj", stage.Content)
+					obj, err := load(t, saved).Apply(ctx, fsys, "obj", stage.Content())
 					be.NilErr(t, err)
 					be.Equal(t, sc.baseHead+1, obj.Head().Num())
 					be.NilErr(t, ocfl.ValidateObject(ctx, fsys, "obj").Err())
@@ -908,7 +905,7 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 					}
 					if errors.Is(err, ocfl.ErrUpdateCompleted) {
 						// the update was committed: it can only be resumed
-						obj, err := u.Apply(ctx, fsys, "obj", stage.Content)
+						obj, err := u.Apply(ctx, fsys, "obj", stage.Content())
 						be.NilErr(t, err)
 						be.Equal(t, sc.baseHead+1, obj.Head().Num())
 						be.NilErr(t, ocfl.ValidateObject(ctx, fsys, "obj").Err())
@@ -940,12 +937,12 @@ func TestObjectUpdate_Canceled(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture)
 		obj, err := ocfl.NewObject(context.Background(), fsys, objPath)
 		be.NilErr(t, err)
-		stage := stageBytes(t, obj.NewUpdate(), map[string][]byte{
+		stage := stageBytes(t, obj.NewStage(), map[string][]byte{
 			"b.txt": []byte("b"),
 			"c.txt": []byte("c"),
 			"d.txt": []byte("d"),
 		})
-		be.NilErr(t, stage.Update.Finalize("v2", user))
+		be.NilErr(t, stage.Finalize("v2", user))
 		return fsys, stage
 	}
 	// cancelWrites returns fsys with writes to names with the suffix replaced
@@ -964,7 +961,7 @@ func TestObjectUpdate_Canceled(t *testing.T) {
 		defer cancel()
 		fsys, stage := setup(t)
 		logs := &logRecorder{}
-		_, err := stage.Update.Apply(ctx, cancelWrites(fsys, cancel, "/content/b.txt"), objPath, stage.Content,
+		_, err := stage.Update().Apply(ctx, cancelWrites(fsys, cancel, "/content/b.txt"), objPath, stage.Content(),
 			ocfl.UpdateWithGoLimit(1), ocfl.UpdateWithLogger(slog.New(logs)))
 		be.True(t, errors.Is(err, context.Canceled))
 		// only the copy that was running is logged, and its error isn't
@@ -974,11 +971,11 @@ func TestObjectUpdate_Canceled(t *testing.T) {
 		ctx, cancel = context.WithCancel(context.Background())
 		defer cancel()
 		logs = &logRecorder{}
-		err = stage.Update.Revert(ctx, cancelWrites(fsys, cancel, objPath+"/inventory.json"), objPath,
+		err = stage.Update().Revert(ctx, cancelWrites(fsys, cancel, objPath+"/inventory.json"), objPath,
 			ocfl.UpdateWithLogger(slog.New(logs)))
 		be.True(t, errors.Is(err, context.Canceled))
 		be.DeepEqual(t, []string{"INFO restore inventory.json"}, logs.messages(slog.LevelInfo))
-		be.NilErr(t, stage.Update.Revert(context.Background(), fsys, objPath))
+		be.NilErr(t, stage.Update().Revert(context.Background(), fsys, objPath))
 		be.NilErr(t, ocfl.ValidateObject(context.Background(), fsys, objPath).Err())
 	})
 	t.Run("apply canceled before starting", func(t *testing.T) {
@@ -986,7 +983,7 @@ func TestObjectUpdate_Canceled(t *testing.T) {
 		cancel()
 		fsys, stage := setup(t)
 		logs := &logRecorder{}
-		_, err := stage.Update.Apply(ctx, fsys, objPath, stage.Content, ocfl.UpdateWithLogger(slog.New(logs)))
+		_, err := stage.Update().Apply(ctx, fsys, objPath, stage.Content(), ocfl.UpdateWithLogger(slog.New(logs)))
 		be.True(t, errors.Is(err, context.Canceled))
 		be.Zero(t, len(logs.messages(slog.LevelInfo)))
 	})
@@ -1001,7 +998,7 @@ func TestObjectUpdate_Canceled(t *testing.T) {
 			return nil
 		}}
 		logs := &logRecorder{}
-		_, err := stage.Update.Apply(ctx, failCopy, objPath, stage.Content,
+		_, err := stage.Update().Apply(ctx, failCopy, objPath, stage.Content(),
 			ocfl.UpdateWithGoLimit(1), ocfl.UpdateWithLogger(slog.New(logs)))
 		be.True(t, errors.Is(err, errDiskFull))
 		msgs := logs.messages(slog.LevelInfo)
