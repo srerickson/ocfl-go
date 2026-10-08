@@ -823,7 +823,7 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 		},
 		"existing sha256 object": {
 			setup: func(t *testing.T, fsys *local.FS) *ocfl.Stage {
-				stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj", ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
+				stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj", ocfl.StageWithDigestAlgorithm(digest.SHA256))
 				be.NilErr(t, err)
 				stageBytes(t, stage, map[string][]byte{
 					"a.txt":     []byte("a"),
@@ -833,7 +833,7 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 				_, err = stage.Update().Apply(ctx, fsys, "obj", stage.Content())
 				be.NilErr(t, err)
 				// v2 keeps sha256: the option is ignored for an existing object
-				stage, err = ocfl.NewStage(ctx, fsys, "obj", "", ocfl.UpdateWithDigestAlgorithm(digest.SHA512))
+				stage, err = ocfl.NewStage(ctx, fsys, "obj", "", ocfl.StageWithDigestAlgorithm(digest.SHA512))
 				be.NilErr(t, err)
 				be.Equal(t, digest.SHA256.ID(), stage.Update().DigestAlgorithm().ID())
 				be.NilErr(t, stage.AddBytes("c.txt", []byte("c")))

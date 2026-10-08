@@ -24,7 +24,7 @@ func TestNewStage(t *testing.T) {
 	ctx := context.Background()
 	t.Run("new object", func(t *testing.T) {
 		stage, err := ocfl.NewStage(ctx, testutil.TmpLocalFS(t), "obj", "obj-1",
-			ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
+			ocfl.StageWithDigestAlgorithm(digest.SHA256))
 		be.NilErr(t, err)
 		be.Equal(t, "obj-1", stage.Update().ID())
 		be.Equal(t, digest.SHA256.ID(), stage.Update().DigestAlgorithm().ID())
@@ -50,7 +50,7 @@ func TestStage_AddFS(t *testing.T) {
 	ctx := context.Background()
 	testdataFS := ocflfs.DirFS(`testdata`)
 	newStage := func(t *testing.T) *ocfl.Stage {
-		stage, err := ocfl.NewStage(ctx, ocflfs.DirFS(t.TempDir()), "obj", "obj", ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
+		stage, err := ocfl.NewStage(ctx, ocflfs.DirFS(t.TempDir()), "obj", "obj", ocfl.StageWithDigestAlgorithm(digest.SHA256))
 		be.NilErr(t, err)
 		return stage
 	}

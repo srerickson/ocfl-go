@@ -55,7 +55,7 @@ func TestRoot_Example(t *testing.T) {
 	be.Equal(t, desc, newRoot.Description())
 	// create an object
 	objID := "object-1"
-	stage, err := newRoot.NewStage(ctx, objID, ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
+	stage, err := newRoot.NewStage(ctx, objID, ocfl.StageWithDigestAlgorithm(digest.SHA256))
 	be.NilErr(t, err)
 	be.Equal(t, stage.Update().ID(), objID)
 	be.NilErr(t, stage.AddBytes("file.txt", []byte("readme readme readme")))
