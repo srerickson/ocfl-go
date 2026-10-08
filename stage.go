@@ -36,10 +36,10 @@ type Stage struct {
 }
 
 // NewStage returns a new *Stage for the object at dir in fsys. The stage's
-// update is created as with [NewUpdate], which documents id and the options,
-// and its ContentMap is empty.
-func NewStage(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...UpdateOption) (*Stage, error) {
-	u, err := NewUpdate(ctx, fsys, dir, id, opts...)
+// update is created as with [NewUpdate], which documents id, and its
+// ContentMap is empty. NewStage uses the option [StageWithDigestAlgorithm].
+func NewStage(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...StageOption) (*Stage, error) {
+	u, err := NewUpdate(ctx, fsys, dir, id, newStageOptions(opts...).updateOptions()...)
 	if err != nil {
 		return nil, err
 	}
@@ -241,11 +241,13 @@ func (s *Stage) pruneContent() {
 	}
 }
 
-// StageOption is an optional argument for [Stage.AddFS] and [Stage.AddFile].
-// Each function documents the methods that use it; others ignore it.
+// StageOption is an optional argument for creating a [Stage] and for
+// [Stage.AddFS] and [Stage.AddFile]. Each function documents the functions
+// and methods that use it; others ignore it.
 type StageOption func(*stageOptions)
 
 type stageOptions struct {
+	alg     digest.Algorithm
 	fixity  []digest.Algorithm
 	filter  func(*ocflfs.FileRef) bool
 	goLimit int
@@ -257,6 +259,23 @@ func newStageOptions(opts ...StageOption) *stageOptions {
 		opt(o)
 	}
 	return o
+}
+
+// updateOptions returns the options for creating the stage's update.
+func (o *stageOptions) updateOptions() []UpdateOption {
+	if o.alg == nil {
+		return nil
+	}
+	return []UpdateOption{UpdateWithDigestAlgorithm(o.alg)}
+}
+
+// StageWithDigestAlgorithm sets the primary digest algorithm (sha512 or
+// sha256) for a new object, as with [UpdateWithDigestAlgorithm]. It is used by
+// [NewStage] and [Root.NewStage], and ignored if the object exists.
+func StageWithDigestAlgorithm(alg digest.Algorithm) StageOption {
+	return func(o *stageOptions) {
+		o.alg = alg
+	}
 }
 
 // StageWithFixity sets fixity algorithms to digest added files with, in

@@ -141,9 +141,9 @@ func (r *Root) NewUpdate(ctx context.Context, id string, opts ...UpdateOption) (
 
 // NewStage returns a new *[Stage] for the object with the given ID in the
 // root. The stage's update is created as with [Root.NewUpdate], and its
-// ContentMap is empty.
-func (r *Root) NewStage(ctx context.Context, id string, opts ...UpdateOption) (*Stage, error) {
-	u, err := r.NewUpdate(ctx, id, opts...)
+// ContentMap is empty. NewStage uses the option [StageWithDigestAlgorithm].
+func (r *Root) NewStage(ctx context.Context, id string, opts ...StageOption) (*Stage, error) {
+	u, err := r.NewUpdate(ctx, id, newStageOptions(opts...).updateOptions()...)
 	if err != nil {
 		return nil, err
 	}
