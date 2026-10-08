@@ -20,8 +20,8 @@ var ErrNoObjectID = errors.New("object does not exist: an explicit ID is require
 
 // Object is a read-only view of an OCFL Object, typically part of a [Root],
 // as described by one inventory. An Object never changes: to create a new
-// version, use [Object.NewUpdate] and apply the update with
-// [ObjectUpdate.Apply], which returns a new *Object. The previous *Object
+// version, use [Object.NewStage] (or [Object.NewUpdate]) and apply the update
+// with [ObjectUpdate.Apply], which returns a new *Object. The previous *Object
 // remains a valid but out-of-date view.
 type Object struct {
 	// object's storage backend.
@@ -117,6 +117,12 @@ func (obj *Object) NewUpdate() *ObjectUpdate {
 		panic(fmt.Sprintf("ocfl: Object.NewUpdate: %v", err))
 	}
 	return u
+}
+
+// NewStage returns a new *[Stage] for the object's next version. The stage's
+// update is created as with [Object.NewUpdate], and its ContentMap is empty.
+func (obj *Object) NewStage() *Stage {
+	return newStage(obj.NewUpdate())
 }
 
 // DigestAlgorithm returns sha512 unless sha256 is set in the root inventory.

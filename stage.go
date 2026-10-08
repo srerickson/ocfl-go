@@ -15,9 +15,12 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
-// Stage pairs an [ObjectUpdate] with a [ContentMap] holding the locations of
-// new content, and keeps them consistent: content added to the stage is
-// recorded in both, and content that is no longer needed is dropped from both.
+// Stage is a draft [ObjectUpdate] paired with a [ContentMap] holding the
+// locations of new content. The stage keeps them consistent: content added to
+// the stage is recorded in both, and content that is no longer needed is
+// dropped from both. Create a stage with [NewStage], [Root.NewStage] or
+// [Object.NewStage], edit it, then call [Stage.Finalize] and apply its
+// [Stage.Update] using its [Stage.Content] as the [ContentSource].
 //
 // A Stage can be saved as JSON (see [ContentMap] for restrictions) and loaded
 // with [json.Unmarshal], which does no I/O. Call [ContentMap.OpenFS] on a loaded
@@ -28,14 +31,39 @@ import (
 // [ContentMap.FastCheck] to find files that are missing or have changed.
 // [ObjectUpdate.Apply] runs the same check before writing anything.
 type Stage struct {
-	Update  *ObjectUpdate `json:"update"`
-	Content *ContentMap   `json:"content"`
+	update  *ObjectUpdate
+	content *ContentMap
 }
 
-// NewStage returns a new *Stage for the update u, with an empty ContentMap. u
-// must not be nil.
-func NewStage(u *ObjectUpdate) *Stage {
-	return &Stage{Update: u, Content: &ContentMap{}}
+// NewStage returns a new *Stage for the object at dir in fsys. The stage's
+// update is created as with [NewUpdate], which documents id and the options,
+// and its ContentMap is empty.
+func NewStage(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...UpdateOption) (*Stage, error) {
+	u, err := NewUpdate(ctx, fsys, dir, id, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return newStage(u), nil
+}
+
+// newStage returns a stage for the draft u, which must not have new content.
+func newStage(u *ObjectUpdate) *Stage {
+	return &Stage{update: u, content: &ContentMap{}}
+}
+
+// Update returns the stage's update. Use it to inspect the update and, after
+// [Stage.Finalize], to apply or revert it. Edit the update through the stage:
+// the update's own edit methods don't change the stage's ContentMap.
+func (s *Stage) Update() *ObjectUpdate { return s.update }
+
+// Content returns the stage's ContentMap, the [ContentSource] for applying
+// the stage's update.
+func (s *Stage) Content() *ContentMap { return s.content }
+
+// Finalize finalizes the stage's update, after which the stage can't be
+// edited. See [ObjectUpdate.Finalize].
+func (s *Stage) Finalize(msg string, user User, opts ...UpdateOption) error {
+	return s.update.Finalize(msg, user, opts...)
 }
 
 // AddFS adds all files in the directory dir in fsys to the stage, in the
@@ -85,7 +113,7 @@ func (s *Stage) AddFile(ctx context.Context, fsys ocflfs.FS, name, dst string, o
 // digested with the update's digest algorithm and the fixity algorithms. A
 // stage with content added by AddBytes can't be saved as JSON.
 func (s *Stage) AddBytes(dst string, b []byte, fixity ...digest.Algorithm) error {
-	alg := s.Update.DigestAlgorithm()
+	alg := s.update.DigestAlgorithm()
 	digester := digest.NewMultiDigester(append([]digest.Algorithm{alg}, fixity...)...)
 	if _, err := digester.Write(b); err != nil {
 		return err
@@ -93,11 +121,11 @@ func (s *Stage) AddBytes(dst string, b []byte, fixity ...digest.Algorithm) error
 	sums := digester.Sums()
 	dig := sums[alg.ID()]
 	delete(sums, alg.ID())
-	if err := s.Update.Add(dst, dig, sums); err != nil {
+	if err := s.update.Add(dst, dig, sums); err != nil {
 		return err
 	}
-	if s.Update.needsContent(dig) {
-		s.Content.AddBytes(dig, b)
+	if s.update.needsContent(dig) {
+		s.content.AddBytes(dig, b)
 	}
 	s.pruneContent()
 	return nil
@@ -106,7 +134,7 @@ func (s *Stage) AddBytes(dst string, b []byte, fixity ...digest.Algorithm) error
 // Remove removes the file or directory name from the stage. Content that is
 // no longer needed is removed from the stage's ContentMap.
 func (s *Stage) Remove(name string) error {
-	if err := s.Update.Remove(name); err != nil {
+	if err := s.update.Remove(name); err != nil {
 		return err
 	}
 	s.pruneContent()
@@ -115,26 +143,35 @@ func (s *Stage) Remove(name string) error {
 
 // Rename renames the file or directory src in the stage to dst.
 func (s *Stage) Rename(src, dst string) error {
-	return s.Update.Rename(src, dst)
+	return s.update.Rename(src, dst)
 }
 
 // Clear removes all files from the stage, leaving its update with an empty
-// state and its ContentMap with no content. Call Clear instead of
-// [ObjectUpdate.Clear], which doesn't change the ContentMap.
+// state and its ContentMap with no content.
 func (s *Stage) Clear() error {
-	if err := s.Update.Clear(); err != nil {
+	if err := s.update.Clear(); err != nil {
 		return err
 	}
 	s.pruneContent()
 	return nil
 }
 
+// stageJSON is the JSON form of a Stage.
+type stageJSON struct {
+	Update  *ObjectUpdate `json:"update"`
+	Content *ContentMap   `json:"content"`
+}
+
+// MarshalJSON implements [json.Marshaler] for Stage.
+func (s Stage) MarshalJSON() ([]byte, error) {
+	return json.Marshal(stageJSON{Update: s.update, Content: s.content})
+}
+
 // UnmarshalJSON implements [json.Unmarshaler] for *Stage. It returns an
 // error if data has fields other than "update" and "content", or is missing
 // either of them.
 func (s *Stage) UnmarshalJSON(data []byte) error {
-	type stageFields Stage // without the UnmarshalJSON method
-	var loaded stageFields
+	var loaded stageJSON
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&loaded); err != nil {
@@ -143,7 +180,7 @@ func (s *Stage) UnmarshalJSON(data []byte) error {
 	if loaded.Update == nil || loaded.Content == nil {
 		return errors.New("decoding stage: missing 'update' or 'content'")
 	}
-	*s = Stage(loaded)
+	*s = Stage{update: loaded.Update, content: loaded.Content}
 	return nil
 }
 
@@ -157,7 +194,7 @@ func (s *Stage) addFiles(ctx context.Context, files []*ocflfs.FileRef, o *stageO
 			return err
 		}
 	}
-	alg := s.Update.DigestAlgorithm()
+	alg := s.update.DigestAlgorithm()
 	digested := make([]*digest.FileRef, 0, len(files))
 	for ref, err := range digest.DigestFilesBatch(ctx, slices.Values(files), o.goLimit, alg, o.fixity...) {
 		if err != nil {
@@ -178,7 +215,7 @@ func (s *Stage) addFiles(ctx context.Context, files []*ocflfs.FileRef, o *stageO
 			fixity: ref.Fixity,
 		}
 	}
-	if err := s.Update.addAll(entries); err != nil {
+	if err := s.update.addAll(entries); err != nil {
 		return err
 	}
 	for i, ref := range digested {
@@ -186,8 +223,8 @@ func (s *Stage) addFiles(ctx context.Context, files []*ocflfs.FileRef, o *stageO
 		// CheckFileTypes, so if the file changed while it was being
 		// digested, its recorded content token is older than the digested
 		// content and ContentMap.FastCheck reports the change.
-		if dig := entries[i].digest; s.Update.needsContent(dig) {
-			s.Content.AddFile(dig, ref.FS, ref.FullPath(), ref.Info)
+		if dig := entries[i].digest; s.update.needsContent(dig) {
+			s.content.AddFile(dig, ref.FS, ref.FullPath(), ref.Info)
 		}
 	}
 	s.pruneContent()
@@ -197,9 +234,9 @@ func (s *Stage) addFiles(ctx context.Context, files []*ocflfs.FileRef, o *stageO
 // pruneContent removes content that the update doesn't need from the stage's
 // ContentMap.
 func (s *Stage) pruneContent() {
-	for _, dig := range s.Content.Digests() {
-		if !s.Update.needsContent(dig) {
-			s.Content.Remove(dig)
+	for _, dig := range s.content.Digests() {
+		if !s.update.needsContent(dig) {
+			s.content.Remove(dig)
 		}
 	}
 }

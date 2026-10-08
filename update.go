@@ -89,8 +89,8 @@ type VersionInfo struct {
 // base inventory), so nothing needs to be read from storage to finalize it. A
 // finalized update should be saved before it is applied: if the process is
 // interrupted, the saved update is all that is needed to resume or revert.
-// Content for new digests is not part of the ObjectUpdate: see [ContentMap]
-// and [Stage].
+// Content for new digests is not part of the ObjectUpdate: a [Stage] pairs a
+// draft update with a [ContentMap] that records content as files are added.
 type ObjectUpdate struct {
 	id       string
 	base     *StoredInventory // nil for a new object

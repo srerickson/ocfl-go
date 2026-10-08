@@ -37,10 +37,10 @@ func TestObject_Example(t *testing.T) {
 	be.Equal(t, id, obj.ID()) // its ID is set
 
 	// create the first version from bytes
-	stage := ocfl.NewStage(obj.NewUpdate())
+	stage := obj.NewStage()
 	be.NilErr(t, stage.AddBytes("README.txt", []byte("this is a test file"), digest.MD5))
-	be.NilErr(t, stage.Update.Finalize("first version", ocfl.User{Name: "Mx. Robot"}))
-	v1Obj, err := stage.Update.Apply(ctx, obj.FS(), obj.Path(), stage.Content)
+	be.NilErr(t, stage.Finalize("first version", ocfl.User{Name: "Mx. Robot"}))
+	v1Obj, err := stage.Update().Apply(ctx, obj.FS(), obj.Path(), stage.Content())
 	be.NilErr(t, err)          // update worked
 	be.True(t, v1Obj.Exists()) // the object was created
 	be.False(t, obj.Exists())  // obj is unchanged
@@ -55,13 +55,13 @@ func TestObject_Example(t *testing.T) {
 	be.Nonzero(t, sourceVersion.State().PathMap()["README.txt"])
 
 	// update a new version and upgrade to OCFL v1.1
-	stage = ocfl.NewStage(v1Obj.NewUpdate())
+	stage = v1Obj.NewStage()
 	be.NilErr(t, stage.AddBytes("README.txt", []byte("this is a test file (v2)"), digest.MD5))
 	be.NilErr(t, stage.AddBytes("new-data.csv", []byte("1,2,3"), digest.MD5))
 	be.NilErr(t, stage.AddBytes("docs/note.txt", []byte("this is a note"), digest.MD5))
-	be.NilErr(t, stage.Update.Finalize("second version", ocfl.User{Name: "Dr. Robot"},
+	be.NilErr(t, stage.Finalize("second version", ocfl.User{Name: "Dr. Robot"},
 		ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1)))
-	v2Obj, err := stage.Update.Apply(ctx, obj.FS(), obj.Path(), stage.Content)
+	v2Obj, err := stage.Update().Apply(ctx, obj.FS(), obj.Path(), stage.Content())
 	be.NilErr(t, err)
 	be.Equal(t, "new-object-01", v2Obj.ID())
 	be.Equal(t, ocfl.Spec1_1, v2Obj.Spec())
@@ -279,7 +279,7 @@ func TestObject_NewUpdate(t *testing.T) {
 		obj, err := ocfl.NewObject(ctx, fsys, "spec-ex-full")
 		be.NilErr(t, err)
 		headState := obj.Version(0).State()
-		stage := ocfl.NewStage(obj.NewUpdate())
+		stage := obj.NewStage()
 		be.NilErr(t, stage.Rename("foo/bar.xml", "baz.xml"))
 		be.NilErr(t, stage.Remove("image.tiff"))
 		be.True(t, headState.Eq(obj.Version(0).State()))
