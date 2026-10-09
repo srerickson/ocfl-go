@@ -20,3 +20,14 @@ for input data problems. Only guard nil where nil is documented as meaningful
 Don't put Linear issue identifiers (e.g. `CRUDE-62`) or other issue-tracker
 references in commit messages, either in the subject or the body. Describe
 the change itself; link issues from the pull request instead.
+
+## Release flow
+
+Releases are prepared on a `release/vX.Y.Z` branch. In order:
+
+1. Make sure `ocfl.Version` (in `ocfl.go`) is set to the release version,
+   without the `v` prefix (e.g. `"0.13.0"` for `v0.13.0`).
+2. Run `go fix ./...` across the entire code base. Commit the result on its
+   own, separate from other changes.
+3. Update dependencies with `go get -u ./...`, then run `go mod tidy` and the
+   tests.
