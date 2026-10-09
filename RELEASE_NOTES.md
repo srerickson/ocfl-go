@@ -1,38 +1,43 @@
-# Draft release notes
+# Release notes
 
-Changes since **v0.11.2** (July 17, 2026).
+Breaking changes since **v0.12.0**.
 
-## New functionality
+## Object updates are now `ObjectUpdate`, not `UpdatePlan`
 
-- Added `fs/config` for constructing and round-tripping local, S3, and HTTP(S) backends from URL-style configuration strings (`FSConfig` implements `encoding.TextMarshaler`/`TextUnmarshaler`, so it works as a JSON field). It supports injected S3/HTTP clients and a logger, reuses equivalent S3 clients, and exposes `ResetS3Clients` to drop them.
-- All three backends now implement `encoding.TextMarshaler`: `local.FS` renders a `file://` URL, `s3.BucketFS` an `s3://` URL carrying region/endpoint/path-style when its client is an `*s3.Client`, and `http.FS` its base URL. This is what `fs/config` round-trips through.
-- Local writes are now atomic and context-aware, preserve existing file permissions, and prevent reads or writes from escaping the configured root through symlinks (every path goes through `os.Root`). `local.FS` also adds `Close` and `MarshalText`, and the package adds `MustNewFS`.
-- Added `fs.SameBackend`, an optional interface for reporting that another `FS` refers to the same underlying storage. `fs.Copy` uses it to dispatch a backend's native copy even when source and destination are separate `FS` values: `s3.BucketFS` reports same-bucket/same-client and thereby keeps server-side copies, and `local.FS` reports same absolute root (it has no native `Copy`, so this is for callers and future use).
-- S3 now batches recursive deletes (one `DeleteObjects` per listing page), reports per-key failures, maps missing objects consistently to `fs.ErrNotExist` without discarding the underlying API error, and handles empty buckets and directory-marker objects correctly.
-- S3 copies now percent-encode source keys correctly and choose multipart copy from the source's HEAD `ContentLength` rather than by attempting a copy and parsing the failure. New `ErrNoContentLength` and `ErrIncompleteListing` sentinels make malformed S3 responses detectable with `errors.Is`.
-- `WriteFS` behavior is now consistent across backends and pinned by a shared contract test suite: `Write(".")` and `Remove(".")` return `fs.ErrInvalid`, `Remove` of a missing file returns `fs.ErrNotExist`, and `RemoveAll(".")` empties the storage root without deleting it.
-- The partial-listing contract is now documented: a `DirEntriesFS` listing that fails partway yields the entries it read and then the error, and `WalkFiles` may yield files from such a listing before reporting it.
-- Added an S3 API conformance example (`fs/s3/example/conformance`) plus a Makefile target and docker-compose file for running the S3 tests against a local S3 implementation.
+The `UpdatePlan`/`PlanStep` machinery, `InventoryBuilder`, and the `Stage`-as-input flow are replaced by a persistable `ObjectUpdate` (see `update.go`). An update has a draft phase (`Add`, `Remove`, `Rename`, `Clear`), is settled with `Finalize`, and is written with `Apply` or undone with `Revert`. It can be saved and loaded as JSON (`MarshalJSON`/`UnmarshalJSON`), so an interrupted update can be resumed.
 
-## Bug fixes
+Removed:
 
-- `runSteps` (object update plans) built its errgroup with `errgroup.WithContext` and then immediately replaced it with a bare `errgroup.Group`, so a failing asynchronous step never canceled its siblings' context. The replacement is gone.
-- `fs.WalkFiles`' fallback walk dereferenced a nil `fs.DirEntry` after yielding a listing error, panicking on any error-yielding `DirEntriesFS` — including the error iterator `fs.DirEntries` returns for an `FS` that isn't one.
-- `local.FS.DirEntries` reported listing errors with the absolute OS path instead of the name the caller passed in.
-- `fs.WrapFS.DirEntries` no longer drops a pending `ReadDir` error when it notices context cancellation first; the two are joined.
+- `UpdatePlan`, `PlanStep`, `PlanSteps` and all their methods
+- `Object.NewUpdatePlan`, `Object.ApplyUpdatePlan`, `Object.Update`
+- `InventoryBuilder`, `NewInventoryBuilder`, `Object.InventoryBuilder`
+- `ObjectUpdateOption` (replaced by `UpdateOption`)
+- `FixitySource`, `Object.GetContent`, `Object.GetFixity`, `Object.VersionStage`
+- `Object.ReadOnly` and `ErrObjectReadOnly`
 
-## Breaking API changes
+Replacements:
 
-- S3 uploads moved from `feature/s3/manager` to `feature/s3/transfermanager` (a pre-1.0 AWS SDK module):
-  - `WithUploaderOptions` now accepts `func(*transfermanager.Options)`; uploader option names follow the new API (for example, `PartSizeBytes` rather than `PartSize`).
-  - `BucketFS.WriteWithOptions` now accepts `func(*transfermanager.UploadObjectInput)` instead of `func(*s3.PutObjectInput)`.
-  - `BucketFS.Write` no longer infers a `ContentLength` from the reader. The transfer manager never forwards that field to a request; it is only a part-sizing hint. A write large enough to need a bigger part size (beyond `PartSizeBytes` × `MaxUploadParts`) must now pass the size explicitly through `WriteWithOptions`.
-- Custom S3 clients must update their interfaces: `RemoveAPI` now requires `HeadObject` (for the existence probe that makes `Remove` report `fs.ErrNotExist`), and `RemoveAllAPI` requires `DeleteObjects` instead of `DeleteObject`.
-- `fs.Copy` calls a backend's native `Copy` only when it also implements `SameBackend` and confirms the source shares that backend; it no longer compares `srcFS == dstFS`. Custom `CopyFS` implementations should add `SameBackend` to retain native-copy dispatch.
-- `WriteFS.RemoveAll(".")` is now a backend contract rather than a package-level special case that enumerated and removed top-level entries; custom implementations must empty their root themselves. `Remove` of a missing file must return `fs.ErrNotExist`, and `Write(".")`/`Remove(".")` must return `fs.ErrInvalid`.
-- `local.NewFS` now requires an existing directory and opens a root descriptor that callers should close. `local.FS` no longer embeds the exported `DirEntriesFS` field, and absolute or root-escaping symlinks are rejected even when their target is inside the root.
-- S3 `Remove(".")` now returns `fs.ErrInvalid` instead of `fs.ErrNotExist`.
+- `NewUpdate(ctx, fsys, dir, id, opts...)`, `Root.NewUpdate`, and `Object.NewUpdate` create an `ObjectUpdate`.
+- `ObjectUpdate.Apply` and `ObjectUpdate.Revert` (and `Root.Apply`/`Root.Revert`) run or undo it. `Apply` returns the resulting `*Object`.
+- `UpdateWithNewHead` is now `UpdateWithExpectedHead`. The other `UpdateWith…` options keep their names but return `UpdateOption`.
+- `ErrRevertUpdate` is now `ErrUpdateCompleted`.
+- `ObjectUpdate.State` is now `NewState` (it pairs with the new `BaseState`).
+- New sentinels: `ErrFinalized`, `ErrNotFinalized`, `ErrMissingContent`, `ErrObjectIncomplete`, `ErrUnexpectedHead`, `ErrUpdateConflict`, `ErrObjectSpecExceedsRoot`.
 
-## Dependencies
+## `Stage` is rebuilt around `ObjectUpdate`
 
-- AWS SDK v2 packages updated (`aws-sdk-go-v2` v1.42.1 → v1.47.0, `service/s3` v1.104.2 → v1.113.1, `smithy-go` v1.27.3 → v1.28.1), `feature/s3/manager` replaced with `feature/s3/transfermanager` v0.4.7. `golang.org/x/crypto` and `golang.org/x/sync` were updated as well, and the minimum Go version moved from 1.25 to 1.26.
+- `Stage`'s exported fields (`State`, `DigestAlgorithm`, and the embedded `ContentSource` and `FixitySource`) are gone. Use the `Update()` and `Content()` accessors, plus `ID`, `NextHead`, `DigestAlgorithm`, and `Finalized`.
+- `StageBytes`, `StageDir`, `StageFiles`, `Stage.Overlay`, and `Stage.HasContent` are removed. Create a stage with `NewStage(ctx, fsys, dir, id, opts...)`, `Root.NewStage`, or `Object.NewStage`, then add content with `AddFS`, `AddFile`, and `AddBytes`, and change it with `Remove`, `Rename`, and `Clear`. A stage always starts as a draft with an empty `ContentMap`.
+- Constructors and `AddFS`/`AddFile` take `StageOption` values (`StageWithDigestAlgorithm`, `StageWithFixity`, `StageWithGoLimit`, `StageWithFilter`, `StageWithHidden`) instead of variadic fixity algorithms.
+- `Stage.Finalize(msg, user, opts...)` finalizes the stage's update. The stage's JSON form is unchanged.
+
+## `ContentSource`
+
+`ContentSource` moved to `contentmap.go`. The new `ContentMap` is the standard implementation: it can be saved as JSON, reloaded with `ContentMap.OpenFS` and an `fs.Registry`, and checked with `FastCheck` before `Apply` writes anything. `Object` and `Stage` no longer implement `ContentSource` or `FixitySource`.
+
+## Behavior changes
+
+- `UpdateWithDigestAlgorithm` applies only to new objects and is ignored for existing ones. Converting an existing object's digest algorithm is no longer supported. Loading a saved update whose digest algorithm differs from its base inventory's is an error.
+- Objects created in a storage root now default to the root's OCFL spec. Requesting a spec newer than the root's returns `ErrObjectSpecExceedsRoot` (OCFL E081), and `Root.ValidateObject` checks it.
+- `Apply` and `Revert` for a new object require its directory to be missing, empty, or to hold only what the update writes. Anything else returns an error wrapping `ErrUpdateConflict`.
+- `ObjectUpdate.Add` returns an error for fixity whose value for the update's primary digest disagrees with the digest being added.
