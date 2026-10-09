@@ -388,6 +388,20 @@ func TestRoot_NewUpdate_Spec(t *testing.T) {
 		err = loaded.Finalize("msg", user, ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1))
 		be.True(t, errors.Is(err, ocfl.ErrObjectSpecExceedsRoot))
 	})
+	t.Run("Root.Apply rejects updates not created by the root", func(t *testing.T) {
+		root, fsys := newRoot(t, ocfl.Spec1_0)
+		objPath, err := root.ResolveID("obj1")
+		be.NilErr(t, err)
+		// a plain update doesn't know the root's spec: it defaults to 1.1
+		upd, err := ocfl.NewUpdate(ctx, fsys, objPath, "obj1")
+		be.NilErr(t, err)
+		be.NilErr(t, upd.Finalize("msg", user))
+		_, err = root.Apply(ctx, upd, nil)
+		be.True(t, errors.Is(err, ocfl.ErrObjectSpecExceedsRoot))
+		// nothing written to the object directory
+		_, err = ocflfs.ReadDir(ctx, fsys, objPath)
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+	})
 	t.Run("object without root defaults to latest spec", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
