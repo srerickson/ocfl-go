@@ -718,16 +718,13 @@ func byteRange(partNum int32, partSize, totalSize int64) string {
 // fs.ErrNotExist would conclude the object was never written, when in fact
 // nothing at all can be read or written.
 func errIsNotExist(err error) bool {
-	var notFoundErr *types.NotFound
-	if errors.As(err, &notFoundErr) {
+	if _, ok := errors.AsType[*types.NotFound](err); ok {
 		return true
 	}
-	var noKeyErr *types.NoSuchKey
-	if errors.As(err, &noKeyErr) {
+	if _, ok := errors.AsType[*types.NoSuchKey](err); ok {
 		return true
 	}
-	var apiErr smithy.APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[smithy.APIError](err); ok {
 		switch apiErr.ErrorCode() {
 		case "NoSuchKey", "NotFound":
 			return true

@@ -18,8 +18,7 @@ func ErrorsIncludeOCFLCode(t *testing.T, ocflCode string, errs ...error) {
 	t.Helper()
 	var foundCodes []string
 	for _, err := range errs {
-		var vCode *ocfl.ValidationError
-		if errors.As(err, &vCode) {
+		if vCode, ok := errors.AsType[*ocfl.ValidationError](err); ok {
 			foundCodes = append(foundCodes, vCode.Code)
 		}
 	}

@@ -40,8 +40,7 @@ func (fsys *WrapFS) OpenFile(ctx context.Context, name string) (fs.File, error) 
 	}
 	f, err := fsys.Open(name)
 	if err != nil {
-		var pathErr *fs.PathError
-		if errors.As(err, &pathErr) {
+		if pathErr, ok := errors.AsType[*fs.PathError](err); ok {
 			// replace system path with name
 			pathErr.Path = name
 		}

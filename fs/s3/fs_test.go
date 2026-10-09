@@ -1039,7 +1039,7 @@ func TestMultiCopierConcurrentReuse_Mock(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, workers)
 	sizes := make([]int64, workers)
-	for i := 0; i < workers; i++ {
+	for i := range workers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -1051,7 +1051,7 @@ func TestMultiCopierConcurrentReuse_Mock(t *testing.T) {
 
 	const defaultCopyPartSize = 32 * megabyte
 	expETag := mock.ETag(srcBody, defaultCopyPartSize)
-	for i := 0; i < workers; i++ {
+	for i := range workers {
 		be.NilErr(t, errs[i])
 		be.Equal(t, srcSize, sizes[i])
 		dst := fmt.Sprintf("dst-file-%d", i)
@@ -1512,8 +1512,7 @@ func isPathError(t *testing.T, err error) {
 		t.Error("expected non-nil error")
 		return
 	}
-	var pErr *fs.PathError
-	if !errors.As(err, &pErr) {
+	if _, ok := errors.AsType[*fs.PathError](err); !ok {
 		t.Error("error is not fs.PathError")
 	}
 }

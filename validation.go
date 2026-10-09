@@ -221,15 +221,13 @@ func (v *ObjectValidation) addInventory(inv *StoredInventory, isRoot bool) error
 			continue
 		}
 		if err := existing.manifestDigests.Add(newManifest); err != nil {
-			var digestError *digest.DigestError
-			if errors.As(err, &digestError) {
+			if digestError, ok := errors.AsType[*digest.DigestError](err); ok {
 				digestError.Path = name
 			}
 			allErrors = multierror.Append(allErrors, err)
 		}
 		if err := existing.fixityDigests.Add(newFixity); err != nil {
-			var digestError *digest.DigestError
-			if errors.As(err, &digestError) {
+			if digestError, ok := errors.AsType[*digest.DigestError](err); ok {
 				digestError.Path = name
 			}
 			allErrors = multierror.Append(allErrors, err)

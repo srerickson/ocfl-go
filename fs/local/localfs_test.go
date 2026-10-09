@@ -602,14 +602,12 @@ func TestFS_Write_ConcurrentNestedWrites(t *testing.T) {
 	errs := make(chan error, writers)
 	var wg sync.WaitGroup
 	for i := range writers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			name := prefix + "/file-" + strconv.Itoa(i) + ".txt"
 			_, err := fsys.Write(ctx, name, strings.NewReader(name))
 			errs <- err
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()

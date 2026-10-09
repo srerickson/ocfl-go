@@ -147,8 +147,7 @@ func (fr *FileRef) Validate(ctx context.Context, reg AlgorithmRegistry) error {
 	}
 	defer f.Close()
 	if err := Validate(f, digests, reg); err != nil {
-		var digestErr *DigestError
-		if errors.As(err, &digestErr) {
+		if digestErr, ok := errors.AsType[*DigestError](err); ok {
 			digestErr.Path = fr.FullPath()
 			if _, isPrimaryAlg := fr.Digests[digestErr.Alg]; !isPrimaryAlg {
 				digestErr.IsFixity = true
