@@ -25,9 +25,13 @@ the change itself; link issues from the pull request instead.
 
 Releases are prepared on a `release/vX.Y.Z` branch. In order:
 
-1. Make sure `ocfl.Version` (in `ocfl.go`) is set to the release version,
-   without the `v` prefix (e.g. `"0.13.0"` for `v0.13.0`).
+1. Make sure the `Version` constant in `ocfl.go` (`ocfl.Version`) is set to the
+   release version, without the `v` prefix (e.g. `"0.13.0"` for `v0.13.0`).
 2. Run `go fix ./...` across the entire code base. Commit the result on its
    own, separate from other changes.
-3. Update dependencies with `go get -u ./...`, then run `go mod tidy` and the
-   tests.
+3. Update dependencies with `go get -u ./...`, then run `go mod tidy` and
+   `go test ./...`. If the `go` directive in `go.mod` changed, update the Go
+   version in `.devcontainer/Dockerfile` to match.
+4. Replace `RELEASE_NOTES.md` entirely (don't keep old release notes). Cover
+   the changes since the previous release tag, with breaking API changes
+   called out in their own section.
