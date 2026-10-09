@@ -61,7 +61,7 @@ func (l LayoutHashIDTuple) Resolve(id string) (string, error) {
 	h.Write([]byte(id))
 	hID := hex.EncodeToString(h.Sum(nil))
 	var tuples = make([]string, tupNum+1)
-	for i := 0; i < tupNum; i++ {
+	for i := range tupNum {
 		tuples[i] = hID[i*tupSize : (i+1)*tupSize]
 	}
 	encID := percentEncode(id)

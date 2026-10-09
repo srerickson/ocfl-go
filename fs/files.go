@@ -89,7 +89,7 @@ func StatFiles(ctx context.Context, files iter.Seq[*FileRef]) iter.Seq2[*FileRef
 // IsNotHidden is used with Filter to remove hidden files.
 func IsNotHidden(info *FileRef) bool {
 	// intentionally ignorng BasePath
-	for _, part := range strings.Split(info.Path, "/") {
+	for part := range strings.SplitSeq(info.Path, "/") {
 		if len(part) > 0 && part[0] == '.' {
 			return false
 		}

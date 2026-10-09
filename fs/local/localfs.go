@@ -145,8 +145,7 @@ func (fsys *FS) OpenFile(ctx context.Context, name string) (fs.File, error) {
 		// to the root, so nothing needs rewriting to keep the storage root
 		// out of the error. Only Op differs ("openat"), which is normalized
 		// here to the method's own name.
-		var pathErr *fs.PathError
-		if errors.As(err, &pathErr) {
+		if pathErr, ok := errors.AsType[*fs.PathError](err); ok {
 			pathErr.Op = "openfile"
 		}
 		return nil, err
@@ -168,8 +167,7 @@ func (fsys *FS) DirEntries(ctx context.Context, name string) iter.Seq2[fs.DirEnt
 		}
 		dir, err := fsys.root.Open(name)
 		if err != nil {
-			var pathErr *fs.PathError
-			if errors.As(err, &pathErr) {
+			if pathErr, ok := errors.AsType[*fs.PathError](err); ok {
 				pathErr.Op = "readdir"
 			}
 			yield(nil, err)
@@ -192,8 +190,7 @@ func (fsys *FS) DirEntries(ctx context.Context, name string) iter.Seq2[fs.DirEnt
 		// before the entries are yielded, so the ctx.Err() branch below can
 		// report it without re-doing the rewrite.
 		if err != nil {
-			var pathErr *fs.PathError
-			if errors.As(err, &pathErr) {
+			if pathErr, ok := errors.AsType[*fs.PathError](err); ok {
 				pathErr.Op = "readdir"
 				pathErr.Path = name
 			}
@@ -692,8 +689,7 @@ func (fsys *FS) removeRootContents(ctx context.Context) error {
 // error from os.Root -- which reports its own Op and Path -- can be re-wrapped
 // with this package's without the two nesting.
 func unwrapPathError(err error) error {
-	var pathErr *fs.PathError
-	if errors.As(err, &pathErr) {
+	if pathErr, ok := errors.AsType[*fs.PathError](err); ok {
 		return pathErr.Err
 	}
 	return err

@@ -86,14 +86,11 @@ func (imp ocflV1) ValidateInventory(inv *Inventory) *Validation {
 	if inv.Manifest != nil {
 		err := inv.Manifest.Valid()
 		if err != nil {
-			var dcErr *MapDigestConflictErr
-			var pcErr *MapPathConflictErr
-			var piErr *MapPathInvalidErr
-			if errors.As(err, &dcErr) {
+			if _, ok := errors.AsType[*MapDigestConflictErr](err); ok {
 				err = verr(err, code.E096(specStr))
-			} else if errors.As(err, &pcErr) {
+			} else if _, ok := errors.AsType[*MapPathConflictErr](err); ok {
 				err = verr(err, code.E101(specStr))
-			} else if errors.As(err, &piErr) {
+			} else if _, ok := errors.AsType[*MapPathInvalidErr](err); ok {
 				err = verr(err, code.E099(specStr))
 			}
 			v.AddFatal(err)
@@ -193,14 +190,11 @@ func (imp ocflV1) ValidateInventory(inv *Inventory) *Validation {
 		}
 		err := ver.State.Valid()
 		if err != nil {
-			var dcErr *MapDigestConflictErr
-			var pcErr *MapPathConflictErr
-			var piErr *MapPathInvalidErr
-			if errors.As(err, &dcErr) {
+			if _, ok := errors.AsType[*MapDigestConflictErr](err); ok {
 				err = verr(err, code.E050(specStr))
-			} else if errors.As(err, &pcErr) {
+			} else if _, ok := errors.AsType[*MapPathConflictErr](err); ok {
 				err = verr(err, code.E095(specStr))
-			} else if errors.As(err, &piErr) {
+			} else if _, ok := errors.AsType[*MapPathInvalidErr](err); ok {
 				err = verr(err, code.E052(specStr))
 			}
 			v.AddFatal(err)
@@ -217,14 +211,11 @@ func (imp ocflV1) ValidateInventory(inv *Inventory) *Validation {
 	for _, fixity := range inv.Fixity {
 		err := fixity.Valid()
 		if err != nil {
-			var dcErr *MapDigestConflictErr
-			var piErr *MapPathInvalidErr
-			var pcErr *MapPathConflictErr
-			if errors.As(err, &dcErr) {
+			if _, ok := errors.AsType[*MapDigestConflictErr](err); ok {
 				err = verr(err, code.E097(specStr))
-			} else if errors.As(err, &piErr) {
+			} else if _, ok := errors.AsType[*MapPathInvalidErr](err); ok {
 				err = verr(err, code.E099(specStr))
-			} else if errors.As(err, &pcErr) {
+			} else if _, ok := errors.AsType[*MapPathConflictErr](err); ok {
 				err = verr(err, code.E101(specStr))
 			}
 			v.AddFatal(err)

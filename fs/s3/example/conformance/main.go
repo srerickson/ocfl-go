@@ -192,8 +192,7 @@ func checkAccess(ctx context.Context, client *s3v2.Client, bucket string) error 
 	if err == nil {
 		return nil
 	}
-	var apiErr smithy.APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[smithy.APIError](err); ok {
 		return fmt.Errorf("bucket %q: %s: %s", bucket, apiErr.ErrorCode(), apiErr.ErrorMessage())
 	}
 	return fmt.Errorf("bucket %q: %w", bucket, err)

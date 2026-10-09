@@ -372,8 +372,7 @@ func expectFixtureErrors(t *testing.T, fixtureName string, errs ...error) {
 	}
 	var gotExpected bool
 	for _, e := range errs {
-		var vErr *ocfl.ValidationError
-		if errors.As(e, &vErr) {
+		if vErr, ok := errors.AsType[*ocfl.ValidationError](e); ok {
 			c := vErr.ValidationCode.Code
 			gotCodes[c] = true
 			if expCodes[c] {

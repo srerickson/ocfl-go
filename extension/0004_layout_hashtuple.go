@@ -60,7 +60,7 @@ func (l LayoutHashTuple) Resolve(id string) (string, error) {
 	hID := hex.EncodeToString(h.Sum(nil))
 	tupSize, tupNum := l.TupleSize, l.TupleNum
 	var tuples = make([]string, tupNum+1)
-	for i := 0; i < tupNum; i++ {
+	for i := range tupNum {
 		tuples[i] = hID[i*tupSize : (i+1)*tupSize]
 	}
 	if l.Short {
