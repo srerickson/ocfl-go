@@ -60,6 +60,22 @@ func (s *Stage) Update() *ObjectUpdate { return s.update }
 // the stage's update.
 func (s *Stage) Content() *ContentMap { return s.content }
 
+// ID returns the ID of the object being updated. See [ObjectUpdate.ID].
+func (s *Stage) ID() string { return s.update.ID() }
+
+// NextHead returns the version number of the new version. See
+// [ObjectUpdate.NextHead].
+func (s *Stage) NextHead() VNum { return s.update.NextHead() }
+
+// DigestAlgorithm returns the primary digest algorithm for the new version,
+// which is used to digest content added to the stage. See
+// [ObjectUpdate.DigestAlgorithm].
+func (s *Stage) DigestAlgorithm() digest.Algorithm { return s.update.DigestAlgorithm() }
+
+// Finalized returns true if the stage's update has been finalized. See
+// [ObjectUpdate.Finalized].
+func (s *Stage) Finalized() bool { return s.update.Finalized() }
+
 // Finalize finalizes the stage's update, after which the stage can't be
 // edited. See [ObjectUpdate.Finalize].
 func (s *Stage) Finalize(msg string, user User, opts ...UpdateOption) error {

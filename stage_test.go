@@ -26,10 +26,22 @@ func TestNewStage(t *testing.T) {
 		stage, err := ocfl.NewStage(ctx, testutil.TmpLocalFS(t), "obj", "obj-1",
 			ocfl.StageWithDigestAlgorithm(digest.SHA256))
 		be.NilErr(t, err)
-		be.Equal(t, "obj-1", stage.Update().ID())
-		be.Equal(t, digest.SHA256.ID(), stage.Update().DigestAlgorithm().ID())
-		be.False(t, stage.Update().Finalized())
+		be.Equal(t, "obj-1", stage.ID())
+		be.Equal(t, ocfl.V(1), stage.NextHead())
+		be.Equal(t, digest.SHA256.ID(), stage.DigestAlgorithm().ID())
+		be.False(t, stage.Finalized())
 		be.Equal(t, 0, len(stage.Content().Digests()))
+	})
+	t.Run("existing object", func(t *testing.T) {
+		fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `spec-ex-full`)
+		// the object's digest algorithm is used, not the option
+		stage, err := ocfl.NewStage(ctx, ocflfs.DirFS(fixture), ".", "",
+			ocfl.StageWithDigestAlgorithm(digest.SHA256))
+		be.NilErr(t, err)
+		be.Equal(t, "ark:/12345/bcd987", stage.ID())
+		be.Equal(t, ocfl.V(4), stage.NextHead())
+		be.Equal(t, digest.SHA512.ID(), stage.DigestAlgorithm().ID())
+		be.False(t, stage.Finalized())
 	})
 	t.Run("errors from NewUpdate", func(t *testing.T) {
 		_, err := ocfl.NewStage(ctx, testutil.TmpLocalFS(t), "obj", "")
@@ -40,7 +52,7 @@ func TestNewStage(t *testing.T) {
 		be.NilErr(t, err)
 		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
 		be.NilErr(t, stage.Finalize("v1", ocfl.User{Name: "Tester"}))
-		be.True(t, stage.Update().Finalized())
+		be.True(t, stage.Finalized())
 		be.True(t, errors.Is(stage.AddBytes("b.txt", []byte("b")), ocfl.ErrFinalized))
 		be.Equal(t, 1, len(stage.Content().Digests()))
 	})
@@ -364,7 +376,7 @@ func TestStage_JSON_missingContent(t *testing.T) {
 	var loaded ocfl.Stage
 	be.NilErr(t, json.Unmarshal(saved, &loaded))
 	be.True(t, upd.NewState().Eq(loaded.Update().NewState()))
-	be.True(t, loaded.Update().Finalized())
+	be.True(t, loaded.Finalized())
 	resaved, err := json.Marshal(loaded)
 	be.NilErr(t, err)
 	be.Equal(t, string(saved), string(resaved))
@@ -380,7 +392,7 @@ func TestStage_JSON_missingContent(t *testing.T) {
 	be.In(t, string(contentText), err.Error())
 
 	be.NilErr(t, loaded.Update().Revert(ctx, objFS, "obj"))
-	be.False(t, loaded.Update().Finalized())
+	be.False(t, loaded.Finalized())
 	be.NilErr(t, loaded.Remove("hello.csv"))
 	_, err = json.Marshal(loaded)
 	be.NilErr(t, err)

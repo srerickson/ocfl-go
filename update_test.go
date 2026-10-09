@@ -358,7 +358,7 @@ func TestObjectUpdate_JSON(t *testing.T) {
 		be.False(t, loaded.Finalized())
 		_, ok := loaded.VersionInfo()
 		be.False(t, ok)
-		be.Equal(t, stage.Update().ID(), loaded.ID())
+		be.Equal(t, stage.ID(), loaded.ID())
 		be.Equal(t, stage.Update().BaseInventoryDigest(), loaded.BaseInventoryDigest())
 		be.True(t, stage.Update().NewState().Eq(loaded.NewState()))
 		// the base state is the fixture's head state, without the draft's edits
@@ -835,7 +835,7 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 				// v2 keeps sha256: the option is ignored for an existing object
 				stage, err = ocfl.NewStage(ctx, fsys, "obj", "", ocfl.StageWithDigestAlgorithm(digest.SHA512))
 				be.NilErr(t, err)
-				be.Equal(t, digest.SHA256.ID(), stage.Update().DigestAlgorithm().ID())
+				be.Equal(t, digest.SHA256.ID(), stage.DigestAlgorithm().ID())
 				be.NilErr(t, stage.AddBytes("c.txt", []byte("c")))
 				be.NilErr(t, stage.Remove("a.txt"))
 				be.NilErr(t, stage.Finalize("v2", user))
@@ -879,7 +879,7 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 				}
 				t.Run(fmt.Sprintf("resume after %d writes", n), func(t *testing.T) {
 					// a new update can't be started over the interrupted one
-					_, err := ocfl.NewUpdate(ctx, fsys, "obj", stage.Update().ID())
+					_, err := ocfl.NewUpdate(ctx, fsys, "obj", stage.ID())
 					if n > 0 {
 						be.True(t, errors.Is(err, ocfl.ErrObjectIncomplete))
 					}
