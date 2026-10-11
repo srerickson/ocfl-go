@@ -18,11 +18,13 @@ import (
 // typed, and a Stage can be saved as JSON and loaded again if C can be (a
 // Stage[*FileContentMap], for example).
 //
-// Stage keeps no invariant between its fields, and content that the update no
-// longer needs does no harm: [ObjectUpdate.Apply] asks the content source only
-// for the digests listed by [ObjectUpdate.NewContent], and fails without
-// writing anything if any are missing. Stage is a convenience: the pieces it
-// is built from are meant for building stages of your own.
+// Stage doesn't keep Content in sync with Update: they're independent fields,
+// and changing one doesn't change the other. That's safe. Content the update
+// no longer needs is ignored, because [ObjectUpdate.Apply] only asks the
+// content source for the digests listed by [ObjectUpdate.NewContent]. If any
+// of those are missing, Apply fails with [ErrMissingContent] without writing
+// anything. Stage is a convenience: the pieces it is built from are meant for
+// building stages of your own.
 //
 //   - [StageFS], [StageFile] and [StageBytes] digest content, add it to an
 //     update, and record it with a [FileAdder] or [BytesAdder].
