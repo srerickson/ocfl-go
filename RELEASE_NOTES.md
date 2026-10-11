@@ -6,7 +6,9 @@ Changes since **v0.12.0**. Breaking changes come first, followed by new features
 
 ### Object updates are now `ObjectUpdate`, not `UpdatePlan`
 
-The `UpdatePlan`/`PlanStep` machinery, `InventoryBuilder`, and the `Stage`-as-input flow are replaced by a persistable `ObjectUpdate` (see `update.go`). An update has a draft phase (`Add`, `Remove`, `Rename`, `Clear`), is settled with `Finalize`, and is written with `Apply` or undone with `Revert`. It can be saved and loaded as JSON (`MarshalJSON`/`UnmarshalJSON`), so an interrupted update can be resumed.
+The `UpdatePlan`/`PlanStep` machinery and `InventoryBuilder` are replaced by `ObjectUpdate` (see `update.go`). An update has two phases. As a draft, its new version state is changed with `Add`, `AddAll`, `Remove`, `Rename`, and `Clear`. `Finalize` settles the version metadata and builds the new inventory. The finalized update is then written with `Apply`, or undone with `Revert` if it was interrupted. An update can be saved and loaded as JSON in either phase, and the saved form includes the base inventory, so an interrupted update can be resumed or reverted from the saved update alone.
+
+`Object` is now read-only. Create an update for an object, then apply it.
 
 Removed:
 
@@ -19,36 +21,40 @@ Removed:
 
 Replacements:
 
-- `NewUpdate(ctx, fsys, dir, id, opts...)`, `Root.NewUpdate`, and `Object.NewUpdate` create an `ObjectUpdate`.
-- `ObjectUpdate.Apply` and `ObjectUpdate.Revert` (and `Root.Apply`/`Root.Revert`) run or undo it. `Apply` returns the resulting `*Object`.
+- `NewUpdate(ctx, fsys, dir, id, opts...)`, `Root.NewUpdate`, and `Object.NewUpdate` create a draft `ObjectUpdate`.
+- `ObjectUpdate.Apply(ctx, fsys, dir, src, opts...)` and `ObjectUpdate.Revert` (and `Root.Apply`/`Root.Revert`) write or undo it. `Apply` takes the `ContentSource` for new content and returns the resulting `*Object`.
 - `UpdateWithNewHead` is now `UpdateWithExpectedHead`. The other `UpdateWith…` options keep their names but return `UpdateOption`.
 - `ErrRevertUpdate` is now `ErrUpdateCompleted`.
-- `ObjectUpdate.State` is now `NewState` (it pairs with the new `BaseState`).
-- New sentinels: `ErrFinalized`, `ErrNotFinalized`, `ErrMissingContent`, `ErrObjectIncomplete`, `ErrUnexpectedHead`, `ErrUpdateConflict`, `ErrObjectSpecExceedsRoot`.
+- New sentinels: `ErrFinalized`, `ErrNotFinalized`, `ErrMissingContent`, `ErrContentChanged`, `ErrObjectIncomplete`, `ErrUnexpectedHead`, `ErrUpdateConflict`, `ErrObjectSpecExceedsRoot`.
 
-### `Stage` is rebuilt around `ObjectUpdate`
+### Staging is rebuilt from composable pieces
 
-- `Stage`'s exported fields (`State`, `DigestAlgorithm`, and the embedded `ContentSource` and `FixitySource`) are gone. Use the `Update()` and `Content()` accessors, plus `ID`, `NextHead`, `DigestAlgorithm`, and `Finalized`.
-- `StageBytes`, `StageDir`, `StageFiles`, `Stage.Overlay`, and `Stage.HasContent` are removed. Create a stage with `NewStage(ctx, fsys, dir, id, opts...)`, `Root.NewStage`, or `Object.NewStage`, then add content with `AddFS`, `AddFile`, and `AddBytes`, and change it with `Remove`, `Rename`, and `Clear`. A stage always starts as a draft with an empty `ContentMap`.
-- Constructors and `AddFS`/`AddFile` take `StageOption` values (`StageWithDigestAlgorithm`, `StageWithFixity`, `StageWithGoLimit`, `StageWithFilter`, `StageWithHidden`) instead of variadic fixity algorithms.
-- `Stage.Finalize(msg, user, opts...)` finalizes the stage's update. The stage's JSON form is unchanged.
+`Stage` is no longer the input to an update. Staging functions add files to an `ObjectUpdate` and record their content in a separate content source, so you can build your own stage types from the same pieces.
 
-### `ContentSource`
+- `StageBytes`, `StageDir`, and `StageFiles` are replaced by:
+  - `StageFS(ctx, u, content, fsys, dir, dst, opts...)`
+  - `StageFile(ctx, u, content, fsys, name, dst, opts...)`
+  - `StageBytes(u, content, dst, b, fixity...)`
 
-`ContentSource` moved to `contentmap.go`. The new `ContentMap` is the standard implementation: it can be saved as JSON, reloaded with `ContentMap.OpenFS` and an `fs.Registry`, and checked with `FastCheck` before `Apply` writes anything. `Object` and `Stage` no longer implement `ContentSource` or `FixitySource`.
+  Each one digests content with the update's digest algorithm, adds it to `u`, and records the content `u` needs with a `FileAdder` or `BytesAdder`. Fixity algorithms are set with `StageWithFixity` instead of variadic arguments (except for `StageBytes`).
+- `Stage` is now a generic struct, `Stage[C ContentSource]`, with exported `Update *ObjectUpdate` and `Content C` fields and an `Apply` method. A `Stage[*ocfl.FileContentMap]` can be saved as JSON and loaded again. The old exported fields (`State`, `DigestAlgorithm`, and the embedded `ContentSource` and `FixitySource`), `Stage.Overlay`, and `Stage.HasContent` are removed.
+- `Object` no longer implements `ContentSource` or `FixitySource`.
 
 ### Behavior changes
 
 - `UpdateWithDigestAlgorithm` applies only to new objects and is ignored for existing ones. Converting an existing object's digest algorithm is no longer supported. Loading a saved update whose digest algorithm differs from its base inventory's is an error.
-- Objects created in a storage root now default to the root's OCFL spec. Requesting a spec newer than the root's returns `ErrObjectSpecExceedsRoot` (OCFL E081). `Root.Apply` also refuses updates whose spec is newer than the root's, and `Root.ValidateObject` checks it.
+- Objects created in a storage root now default to the root's OCFL spec. Requesting a spec newer than the root's returns `ErrObjectSpecExceedsRoot` (OCFL E081). `Root.Apply` also refuses updates whose spec is newer than the root's (for example, an update created with `NewUpdate` rather than `Root.NewUpdate`), and `Root.ValidateObject` checks it.
 - `Apply` and `Revert` for a new object require its directory to be missing, empty, or to hold only what the update writes. Anything else returns an error wrapping `ErrUpdateConflict`.
 - `ObjectUpdate.Add` returns an error for fixity whose value for the update's primary digest disagrees with the digest being added.
 
 ## New features
 
-- **Persistable updates.** An `ObjectUpdate` can be saved and loaded as JSON, so an interrupted update can be resumed. `BaseState` exposes the base version's state, and the finalized version's metadata is exposed once the update is finalized.
-- **Verified content.** `Apply` digests new content as it copies it into the object and returns an error wrapping `ErrContentChanged` if any content doesn't match its digest (for example, because a staged file changed). The mismatched file is removed, and the update can be applied again once the content is restored, or reverted. `UpdateWithTrustedContent` skips verification so storage backends can copy content without reading it.
-- **Stage options.** `StageWithGoLimit`, `StageWithFilter`, `StageWithHidden`, and `Stage.Clear` give control over how files are added to a stage.
+- **Persistable updates.** `ObjectUpdate` implements `json.Marshaler` and `json.Unmarshaler`. `BaseState`, `NewState`, `NextHead`, `BaseInventoryDigest`, and `NewInventoryDigest` describe the update, and `VersionInfo` returns the finalized version's metadata.
+- **Content sources.** `FileContentMap` records content as files in FSs and can be saved as JSON. Its FSs are saved with their `MarshalText` form and reopened with `FileContentMap.OpenFS` and an `fs.Registry`. `BytesContentMap` holds content in memory. `ObjectUpdate.NeedsContent` and `ObjectUpdate.NewContent` report which content an update needs, and `ObjectUpdate.AddAll` adds files whose digests are already known.
+- **FS registry.** The new `fs.Registry` (`fs.NewRegistry`, `Registry.Append`, `Registry.Open`) opens an FS from a configuration string by URL scheme. `config.Registry` returns a registry for this module's `file`, `s3`, `http`, and `https` backends.
+- **Verified content.** `Apply` digests new content as it copies it into the object and returns an error wrapping `ErrContentChanged` if any content doesn't match its digest (for example, because a staged file changed). The mismatched file is removed, and the update can be applied again once the content is restored, or reverted. `UpdateWithTrustedContent` skips verification and copies with `fs.Copy`, so storage backends can copy content without reading it.
+- **Stage options.** `StageWithFixity`, `StageWithGoLimit`, `StageWithFilter`, and `StageWithHidden` control how `StageFS` and `StageFile` add files.
+- **Examples.** `example_stage_test.go` shows how to build a custom stage type, and `examples/update` shows how to save a stage and resume an interrupted update.
 
 ## Fixes
 
