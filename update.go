@@ -137,9 +137,10 @@ type ObjectUpdate struct {
 // state, and the object's ID must match id (if id is not empty). If the
 // object doesn't exist, id is required, the update starts with an empty state,
 // and the digest algorithm is sha512 unless [UpdateWithDigestAlgorithm] is
-// used (it is ignored if the object exists). NewUpdate returns an error if dir
-// isn't empty and doesn't hold an OCFL object, or if the object is incomplete
-// (an error wrapping [ErrObjectIncomplete]).
+// used. If the object exists, the update uses the object's digest algorithm,
+// and [UpdateWithDigestAlgorithm], if used, must match it. NewUpdate returns
+// an error if dir isn't empty and doesn't hold an OCFL object, or if the
+// object is incomplete (an error wrapping [ErrObjectIncomplete]).
 func NewUpdate(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...UpdateOption) (*ObjectUpdate, error) {
 	if !fs.ValidPath(dir) {
 		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
@@ -149,11 +150,7 @@ func NewUpdate(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...Upda
 		return nil, err
 	}
 	o := newUpdateOptions(opts...)
-	alg := o.alg
-	if base != nil {
-		alg = nil // use the object's algorithm
-	}
-	return newObjectUpdate(id, base, o.rootSpec, alg)
+	return newObjectUpdate(id, base, o.rootSpec, o.alg)
 }
 
 // ID returns the ID of the object being updated.
@@ -1033,9 +1030,10 @@ func newUpdateOptions(opts ...UpdateOption) *updateOptions {
 }
 
 // UpdateWithDigestAlgorithm sets the primary digest algorithm (sha512 or
-// sha256) for a new object. Without it, a new object uses sha512. It is
-// ignored if the object exists: the update uses the object's algorithm.
-// Changing an existing object's digest algorithm isn't supported.
+// sha256) for a new object. Without it, a new object uses sha512. If the
+// object exists, alg must be the object's digest algorithm, or [NewUpdate]
+// returns an error: changing an existing object's digest algorithm isn't
+// supported.
 func UpdateWithDigestAlgorithm(alg digest.Algorithm) UpdateOption {
 	return func(o *updateOptions) {
 		o.alg = alg

@@ -83,10 +83,16 @@ func TestNewUpdate(t *testing.T) {
 		clear(base)
 		be.Nonzero(t, len(upd.BaseState()))
 	})
-	t.Run("existing object ignores digest algorithm", func(t *testing.T) {
+	t.Run("existing object with different digest algorithm", func(t *testing.T) {
 		// spec-ex-full uses sha512
-		upd, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "",
+		_, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "",
 			ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
+		be.Nonzero(t, err)
+		be.In(t, "doesn't match the object's digest algorithm", err.Error())
+	})
+	t.Run("existing object with same digest algorithm", func(t *testing.T) {
+		upd, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "",
+			ocfl.UpdateWithDigestAlgorithm(digest.SHA512))
 		be.NilErr(t, err)
 		be.Equal(t, digest.SHA512.ID(), upd.DigestAlgorithm().ID())
 	})
@@ -834,8 +840,13 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 				be.NilErr(t, stage.Finalize("v1", user))
 				_, err = stage.Update().Apply(ctx, fsys, "obj", stage.Content())
 				be.NilErr(t, err)
-				// v2 keeps sha256: the option is ignored for an existing object
-				stage, err = newTestStage(ctx, fsys, "obj", "", ocfl.UpdateWithDigestAlgorithm(digest.SHA512))
+				// changing an existing object's algorithm is an error
+				_, err = newTestStage(ctx, fsys, "obj", "", ocfl.UpdateWithDigestAlgorithm(digest.SHA512))
+				be.Nonzero(t, err)
+				// v2 keeps sha256, with or without the option
+				_, err = newTestStage(ctx, fsys, "obj", "", ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
+				be.NilErr(t, err)
+				stage, err = newTestStage(ctx, fsys, "obj", "")
 				be.NilErr(t, err)
 				be.Equal(t, digest.SHA256.ID(), stage.DigestAlgorithm().ID())
 				be.NilErr(t, stage.AddBytes("c.txt", []byte("c")))

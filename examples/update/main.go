@@ -129,11 +129,15 @@ func newStage(ctx context.Context, objCnf *config.FSConfig, f *cmdFlags) (*stage
 	if err := f.checkNewVersion(); err != nil {
 		return nil, err
 	}
-	alg, err := digest.DefaultRegistry().Get(f.algID)
-	if err != nil {
-		return nil, err
+	var opts []ocfl.UpdateOption
+	if f.algID != "" {
+		alg, err := digest.DefaultRegistry().Get(f.algID)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, ocfl.UpdateWithDigestAlgorithm(alg))
 	}
-	update, err := ocfl.NewUpdate(ctx, objCnf.FS, objCnf.Path, f.newID, ocfl.UpdateWithDigestAlgorithm(alg))
+	update, err := ocfl.NewUpdate(ctx, objCnf.FS, objCnf.Path, f.newID, opts...)
 	if err != nil {
 		if errors.Is(err, ocfl.ErrNoObjectID) {
 			return nil, errors.New("'id' flag is required for to a create new objects (object does not exist)")
@@ -204,7 +208,7 @@ func parseArgs(args []string, stderr io.Writer) (*cmdFlags, error) {
 	set.StringVar(&f.msg, "msg", "", "message field for new version")
 	set.StringVar(&f.user.Name, "name", "", "name field for new version")
 	set.StringVar(&f.user.Address, "email", "", "email field for new version")
-	set.StringVar(&f.algID, "alg", "sha512", "digest algorithm for a new object (ignored for existing objects)")
+	set.StringVar(&f.algID, "alg", "", "digest algorithm: sha512 (default) or sha256 for a new object; must match an existing object's")
 	set.StringVar(&f.newID, "id", "", "object ID (required for creating new objects)")
 	if err := set.Parse(args); err != nil {
 		return nil, err
