@@ -53,6 +53,20 @@ func TestRun(t *testing.T) {
 		_, err = os.Stat(stageFile)
 		be.True(t, errors.Is(err, fs.ErrNotExist))
 	})
+	t.Run("incomplete stage file", func(t *testing.T) {
+		for _, data := range []string{
+			`{"update":null,"content":null}`,
+			`{"content":{"sources":[],"content":{}}}`,
+			`{}`,
+		} {
+			stageFile := filepath.Join(t.TempDir(), "stage.json")
+			be.NilErr(t, os.WriteFile(stageFile, []byte(data), 0o644))
+			var stderr bytes.Buffer
+			err := run(ctx, []string{"-obj", t.TempDir(), "-stage", stageFile}, &stderr)
+			be.Nonzero(t, err)
+			be.In(t, "stage must have an update and content", err.Error())
+		}
+	})
 	t.Run("missing flags", func(t *testing.T) {
 		var stderr bytes.Buffer
 		err := run(ctx, []string{"-obj", t.TempDir(), "-src", contentFixture}, &stderr)
