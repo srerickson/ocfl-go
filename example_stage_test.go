@@ -27,14 +27,23 @@ func (u uploadDir) GetContent(dig string) (ocflfs.FS, string) {
 	return u.fsys, path.Join(u.dir, dig)
 }
 
-// uploadStage is a stage type of our own: files are added by name and digest,
-// as they are listed in an upload manifest, without reading them again.
+// uploadStage is a stage type of our own: it holds an update and the
+// uploaded content for it, and files are added by name and digest, as they
+// are listed in an upload manifest, without reading them again.
 type uploadStage struct {
-	ocfl.Stage[uploadDir]
+	update  *ocfl.ObjectUpdate
+	content uploadDir
 }
 
 func (s *uploadStage) AddUploaded(name, sha512 string) error {
-	return s.Update.Add(name, sha512, nil)
+	return s.update.Add(name, sha512, nil)
+}
+
+func (s *uploadStage) Commit(ctx context.Context, fsys ocflfs.FS, dir, msg string, user ocfl.User) (*ocfl.Object, error) {
+	if err := s.update.Finalize(msg, user); err != nil {
+		return nil, err
+	}
+	return s.update.Apply(ctx, fsys, dir, s.content)
 }
 
 func Example_customStage() {
@@ -62,17 +71,14 @@ func Example_customStage() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	stage := uploadStage{ocfl.Stage[uploadDir]{
-		Update:  update,
-		Content: uploadDir{fsys: fsys, dir: "uploads"},
-	}}
+	stage := uploadStage{
+		update:  update,
+		content: uploadDir{fsys: fsys, dir: "uploads"},
+	}
 	if err := stage.AddUploaded("greeting.txt", dig); err != nil {
 		log.Fatal(err)
 	}
-	if err := stage.Update.Finalize("first version", ocfl.User{Name: "Example"}); err != nil {
-		log.Fatal(err)
-	}
-	obj, err := stage.Apply(ctx, fsys, "object")
+	obj, err := stage.Commit(ctx, fsys, "object", "first version", ocfl.User{Name: "Example"})
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -92,9 +92,18 @@ type VersionInfo struct {
 // interrupted, the saved update is all that is needed to resume or revert.
 // Content for new digests is not part of the ObjectUpdate: it is provided by
 // the [ContentSource] passed to Apply. [ObjectUpdate.NewContentDigests] lists
-// the digests of the content the update needs. [StageFS], [StageFile] and
-// [StageBytes] add files to an update and record their content in a
-// [FileContentMap], a [BytesContentMap] or a content source of your own.
+// the digests of the content the update needs, and [ObjectUpdate.NeedsContent]
+// reports whether it needs content with a given digest. A content source may
+// hold content the update doesn't need: Apply only asks it for the digests
+// the update needs.
+//
+// [StageFS], [StageFile] and [StageBytes] digest files, add them to an
+// update, and record the content it needs with a [FileAdder] or
+// [BytesAdder], such as a [FileContentMap] (which can be saved as JSON) or a
+// [BytesContentMap] (which holds content in memory). [ObjectUpdate.AddAll]
+// adds files whose digests are already known. To save an update with its
+// content, or to keep them together, define a type of your own that holds
+// both.
 type ObjectUpdate struct {
 	id       string
 	base     *StoredInventory // nil for a new object

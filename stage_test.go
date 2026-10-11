@@ -21,8 +21,11 @@ import (
 	"github.com/srerickson/ocfl-go/internal/testutil"
 )
 
-// fileStage is a stage whose content is in files, which can be saved as JSON.
-type fileStage = ocfl.Stage[*ocfl.FileContentMap]
+// fileStage is an update with content in files, which can be saved as JSON.
+type fileStage struct {
+	Update  *ocfl.ObjectUpdate   `json:"update"`
+	Content *ocfl.FileContentMap `json:"content"`
+}
 
 func TestUpdate_NeedsContent(t *testing.T) {
 	ctx := context.Background()
@@ -290,7 +293,7 @@ func TestStage_Edits(t *testing.T) {
 	})
 }
 
-func TestStage_JSON(t *testing.T) {
+func TestFileStage_JSON(t *testing.T) {
 	ctx := context.Background()
 	reg := config.Registry()
 	contentFS, err := local.NewFS(filepath.Join(`testdata`, `content-fixture`))
@@ -316,7 +319,7 @@ func TestStage_JSON(t *testing.T) {
 	// opened
 	be.NilErr(t, loaded.Update.Finalize("v1", ocfl.User{Name: "Tester"}))
 	be.NilErr(t, loaded.Content.OpenFS(ctx, reg))
-	obj, err := loaded.Apply(ctx, objFS, "obj")
+	obj, err := loaded.Update.Apply(ctx, objFS, "obj", loaded.Content)
 	be.NilErr(t, err)
 	be.NilErr(t, ocfl.ValidateObject(ctx, objFS, obj.Path()).Err())
 	be.DeepEqual(t, []string{"md5"}, obj.FixityAlgorithms())
@@ -334,7 +337,7 @@ func TestStage_JSON(t *testing.T) {
 	})
 }
 
-func TestStage_JSON_missingContent(t *testing.T) {
+func TestFileStage_JSON_missingContent(t *testing.T) {
 	// a stage whose content directory has been removed can be loaded, changed,
 	// saved and reverted: only opening its content fails.
 	ctx := context.Background()

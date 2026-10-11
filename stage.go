@@ -12,39 +12,6 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
-// Stage pairs an [ObjectUpdate], which holds an object's new version state,
-// with the [ContentSource] that provides content for digests that are new in
-// the update. C is the type of the content source, so a stage's Content is
-// typed, and a Stage can be saved as JSON and loaded again if C can be (a
-// Stage[*FileContentMap], for example).
-//
-// Stage doesn't keep Content in sync with Update: they're independent fields,
-// and changing one doesn't change the other. That's safe. Content the update
-// no longer needs is ignored, because [ObjectUpdate.Apply] only asks the
-// content source for the digests listed by
-// [ObjectUpdate.NewContentDigests]. If any of those are missing, Apply fails
-// with [ErrMissingContent] without writing anything. Stage is a convenience:
-// the pieces it is built from are meant for building stages of your own.
-//
-//   - [StageFS], [StageFile] and [StageBytes] digest content, add it to an
-//     update, and record it with a [FileAdder] or [BytesAdder].
-//   - [FileContentMap] records files in FSs and can be saved as JSON.
-//     [BytesContentMap] holds content in memory.
-//   - [ObjectUpdate.AddAll] adds files whose digests are already known, and
-//     [ObjectUpdate.NeedsContent] and [ObjectUpdate.NewContentDigests] tell
-//     which content must be provided.
-type Stage[C ContentSource] struct {
-	Update  *ObjectUpdate `json:"update"`
-	Content C             `json:"content"`
-}
-
-// Apply applies s's finalized update to the object at dir in fsys, using s's
-// content. See [ObjectUpdate.Apply]. Use [Root.Apply] to apply it to an
-// object in a storage root.
-func (s *Stage[C]) Apply(ctx context.Context, fsys ocflfs.FS, dir string, opts ...UpdateOption) (*Object, error) {
-	return s.Update.Apply(ctx, fsys, dir, s.Content, opts...)
-}
-
 // FileAdder records the file that content with a digest was read from. It is
 // implemented by [*FileContentMap].
 type FileAdder interface {

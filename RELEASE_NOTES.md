@@ -29,7 +29,7 @@ Replacements:
 
 ### Staging is rebuilt from composable pieces
 
-`Stage` is no longer the input to an update. Staging functions add files to an `ObjectUpdate` and record their content in a separate content source, so you can build your own stage types from the same pieces.
+`Stage` is removed. Staging functions add files to an `ObjectUpdate` and record their content in a separate content source, and `ObjectUpdate.Apply` and `Root.Apply` take the update and its content source directly. To save an update together with its content, define a type that holds both (see `examples/update`).
 
 - `StageBytes`, `StageDir`, and `StageFiles` are replaced by:
   - `StageFS(ctx, u, content, fsys, dir, dst, opts...)`
@@ -37,7 +37,7 @@ Replacements:
   - `StageBytes(u, content, dst, b, fixity...)`
 
   Each one digests content with the update's digest algorithm, adds it to `u`, and records the content `u` needs with a `FileAdder` or `BytesAdder`. Fixity algorithms are set with `StageWithFixity` instead of variadic arguments (except for `StageBytes`).
-- `Stage` is now a generic struct, `Stage[C ContentSource]`, with exported `Update *ObjectUpdate` and `Content C` fields and an `Apply` method. A `Stage[*ocfl.FileContentMap]` can be saved as JSON and loaded again. The old exported fields (`State`, `DigestAlgorithm`, and the embedded `ContentSource` and `FixitySource`), `Stage.Overlay`, and `Stage.HasContent` are removed.
+- The `Stage` type and its methods (`Stage.Overlay`, `Stage.HasContent`) are removed. Use an `ObjectUpdate` for the new version state and a `FileContentMap`, a `BytesContentMap`, or your own `ContentSource` for its content.
 - `Object` no longer implements `ContentSource` or `FixitySource`.
 
 ### Behavior changes
