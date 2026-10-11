@@ -172,6 +172,10 @@ func loadStage(name string) (*stage, error) {
 	if err := json.Unmarshal(data, &loaded); err != nil {
 		return nil, fmt.Errorf("loading stage from %s: %w", name, err)
 	}
+	// a stage file with a null or missing field loads without error
+	if loaded.Update == nil || loaded.Content == nil {
+		return nil, fmt.Errorf("loading stage from %s: stage must have an update and content", name)
+	}
 	return &loaded, nil
 }
 
