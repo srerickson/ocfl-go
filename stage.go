@@ -12,16 +12,17 @@ import (
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
-// FileAdder records the file that content with a digest was read from. It is
-// implemented by [*FileContentMap].
-type FileAdder interface {
-	AddFile(dig string, fsys ocflfs.FS, name string)
+// FileStager records the file that staged content with a digest was read
+// from. It is used by [StageFS] and [StageFile], and implemented by
+// [*FileContentMap].
+type FileStager interface {
+	StageFile(dig string, fsys ocflfs.FS, name string)
 }
 
-// BytesAdder records content with a digest held in memory. It is implemented
-// by [*BytesContentMap].
-type BytesAdder interface {
-	AddBytes(dig string, b []byte)
+// BytesStager records staged content with a digest held in memory. It is
+// used by [StageBytes], and implemented by [*BytesContentMap].
+type BytesStager interface {
+	StageBytes(dig string, b []byte)
 }
 
 // StageFS adds all files in the directory dir in fsys to u, in the directory
@@ -32,7 +33,7 @@ type BytesAdder interface {
 // Files are digested with u's digest algorithm and any fixity algorithms
 // from [StageWithFixity], using the goroutines set by [StageWithGoLimit].
 // Nothing is added to u or content if there is an error.
-func StageFS(ctx context.Context, u *ObjectUpdate, content FileAdder, fsys ocflfs.FS, dir, dst string, opts ...StageOption) error {
+func StageFS(ctx context.Context, u *ObjectUpdate, content FileStager, fsys ocflfs.FS, dir, dst string, opts ...StageOption) error {
 	if !fs.ValidPath(dst) {
 		return &MapPathInvalidErr{Path: dst}
 	}
@@ -59,7 +60,7 @@ func StageFS(ctx context.Context, u *ObjectUpdate, content FileAdder, fsys ocflf
 // algorithm and any fixity algorithms from [StageWithFixity]. The file is
 // added even if it is hidden: [StageWithHidden] and [StageWithFilter] only
 // apply to [StageFS].
-func StageFile(ctx context.Context, u *ObjectUpdate, content FileAdder, fsys ocflfs.FS, name, dst string, opts ...StageOption) error {
+func StageFile(ctx context.Context, u *ObjectUpdate, content FileStager, fsys ocflfs.FS, name, dst string, opts ...StageOption) error {
 	files := []*ocflfs.FileRef{{FS: fsys, Path: name}}
 	if err := stageFiles(ctx, u, content, files, newStageOptions(opts...), func(*ocflfs.FileRef) string {
 		return dst
@@ -72,7 +73,7 @@ func StageFile(ctx context.Context, u *ObjectUpdate, content FileAdder, fsys ocf
 // StageBytes adds a file with the content b to u as dst and, if u needs the
 // content, records it in content. b is digested with u's digest algorithm and
 // the fixity algorithms.
-func StageBytes(u *ObjectUpdate, content BytesAdder, dst string, b []byte, fixity ...digest.Algorithm) error {
+func StageBytes(u *ObjectUpdate, content BytesStager, dst string, b []byte, fixity ...digest.Algorithm) error {
 	alg := u.DigestAlgorithm()
 	digester := digest.NewMultiDigester(append([]digest.Algorithm{alg}, fixity...)...)
 	if _, err := digester.Write(b); err != nil {
@@ -85,7 +86,7 @@ func StageBytes(u *ObjectUpdate, content BytesAdder, dst string, b []byte, fixit
 		return err
 	}
 	if u.NeedsContent(dig) {
-		content.AddBytes(dig, b)
+		content.StageBytes(dig, b)
 	}
 	return nil
 }
@@ -95,7 +96,7 @@ func StageBytes(u *ObjectUpdate, content BytesAdder, dst string, b []byte, fixit
 // content u needs in content. All files are added, or none of them. files is
 // a slice rather than an iterator so that listing errors are found before
 // any goroutines start digesting.
-func stageFiles(ctx context.Context, u *ObjectUpdate, content FileAdder, files []*ocflfs.FileRef, o *stageOptions, dstName func(*ocflfs.FileRef) string) error {
+func stageFiles(ctx context.Context, u *ObjectUpdate, content FileStager, files []*ocflfs.FileRef, o *stageOptions, dstName func(*ocflfs.FileRef) string) error {
 	for _, err := range ocflfs.CheckFileTypes(ctx, slices.Values(files)) {
 		if err != nil {
 			return err
@@ -127,7 +128,7 @@ func stageFiles(ctx context.Context, u *ObjectUpdate, content FileAdder, files [
 	}
 	for i, ref := range digested {
 		if dig := entries[i].Digest; u.NeedsContent(dig) {
-			content.AddFile(dig, ref.FS, ref.FullPath())
+			content.StageFile(dig, ref.FS, ref.FullPath())
 		}
 	}
 	return nil

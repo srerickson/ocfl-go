@@ -98,8 +98,8 @@ type VersionInfo struct {
 // the update needs.
 //
 // [StageFS], [StageFile] and [StageBytes] digest files, add them to an
-// update, and record the content it needs with a [FileAdder] or
-// [BytesAdder], such as a [FileContentMap] (which can be saved as JSON) or a
+// update, and record the content it needs with a [FileStager] or
+// [BytesStager], such as a [FileContentMap] (which can be saved as JSON) or a
 // [BytesContentMap] (which holds content in memory). [ObjectUpdate.AddAll]
 // adds files whose digests are already known. To save an update with its
 // content, or to keep them together, define a type of your own that holds

@@ -17,8 +17,9 @@ import (
 )
 
 // FileContentMap maps digests to files in FSs that hold content with the
-// digest. It implements [ContentSource] and [FileAdder]. The zero value is an empty FileContentMap, ready to use. For
-// content in memory, use a [BytesContentMap].
+// digest. It implements [ContentSource] and [FileStager]. The zero value is
+// an empty FileContentMap, ready to use. For content in memory, use a
+// [BytesContentMap].
 //
 // A FileContentMap can be saved as JSON if each file's FS implements
 // [encoding.TextMarshaler], as the storage backends in this module do. Each
@@ -39,9 +40,9 @@ type FileContentMap struct {
 	files   map[string]contentMapFile // digest -> file
 }
 
-// AddFile sets the location of content with the digest dig to the file name
+// StageFile sets the location of content with the digest dig to the file name
 // in fsys. fsys must not be nil.
-func (c *FileContentMap) AddFile(dig string, fsys ocflfs.FS, name string) {
+func (c *FileContentMap) StageFile(dig string, fsys ocflfs.FS, name string) {
 	dig = normalizeDigest(dig)
 	file := contentMapFile{name: name}
 	src := slices.IndexFunc(c.sources, func(s contentMapSource) bool { return sameFS(s.fs, fsys) })
@@ -180,7 +181,7 @@ func (c *FileContentMap) UnmarshalJSON(data []byte) error {
 
 // contentMapSource is an FS in a FileContentMap. A source loaded from JSON has the
 // saved text, and fs is nil until it is opened. A source added with
-// [FileContentMap.AddFile] has fs and no text.
+// [FileContentMap.StageFile] has fs and no text.
 type contentMapSource struct {
 	text string
 	fs   ocflfs.FS

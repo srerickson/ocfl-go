@@ -36,7 +36,7 @@ Replacements:
   - `StageFile(ctx, u, content, fsys, name, dst, opts...)`
   - `StageBytes(u, content, dst, b, fixity...)`
 
-  Each one digests content with the update's digest algorithm, adds it to `u`, and records the content `u` needs with a `FileAdder` or `BytesAdder`. Fixity algorithms are set with `StageWithFixity` instead of variadic arguments (except for `StageBytes`).
+  Each one digests content with the update's digest algorithm, adds it to `u`, and records the content `u` needs with a `FileStager` or `BytesStager`. Fixity algorithms are set with `StageWithFixity` instead of variadic arguments (except for `StageBytes`).
 - The `Stage` type and its methods (`Stage.Overlay`, `Stage.HasContent`) are removed. Use an `ObjectUpdate` for the new version state and a `FileContentMap`, a `BytesContentMap`, or your own `ContentSource` for its content.
 - `Object` no longer implements `ContentSource` or `FixitySource`.
 
