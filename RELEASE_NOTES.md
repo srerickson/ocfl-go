@@ -24,6 +24,7 @@ Replacements:
 - `NewUpdate(ctx, fsys, dir, id, opts...)`, `Root.NewUpdate`, and `Object.NewUpdate` create a draft `ObjectUpdate`.
 - `ObjectUpdate.Apply(ctx, fsys, dir, src, opts...)` and `ObjectUpdate.Revert` (and `Root.Apply`/`Root.Revert`) write or undo it. `Apply` takes the `ContentSource` for new content and returns the resulting `*Object`.
 - `UpdateWithNewHead` is now `UpdateWithExpectedHead`. The other `UpdateWith…` options keep their names but return `UpdateOption`.
+- `UpdateWithDigestAlgorithm` sets a new object's digest algorithm (sha512 by default), replacing the stage's `DigestAlgorithm`. For an existing object it must match the object's algorithm, or `NewUpdate` returns an error. As before, an existing object's digest algorithm can't be changed.
 - `ErrRevertUpdate` is now `ErrUpdateCompleted`.
 - New sentinels: `ErrFinalized`, `ErrNotFinalized`, `ErrMissingContent`, `ErrContentChanged`, `ErrObjectIncomplete`, `ErrUnexpectedHead`, `ErrUpdateConflict`, `ErrObjectSpecExceedsRoot`.
 
@@ -42,7 +43,6 @@ Replacements:
 
 ### Behavior changes
 
-- `UpdateWithDigestAlgorithm` applies only to new objects and is ignored for existing ones. Converting an existing object's digest algorithm is no longer supported. Loading a saved update whose digest algorithm differs from its base inventory's is an error.
 - Objects created in a storage root now default to the root's OCFL spec. Requesting a spec newer than the root's returns `ErrObjectSpecExceedsRoot` (OCFL E081). `Root.Apply` also refuses updates whose spec is newer than the root's (for example, an update created with `NewUpdate` rather than `Root.NewUpdate`), and `Root.ValidateObject` checks it.
 - `Apply` and `Revert` for a new object require its directory to be missing, empty, or to hold only what the update writes. Anything else returns an error wrapping `ErrUpdateConflict`.
 - `ObjectUpdate.Add` returns an error for fixity whose value for the update's primary digest disagrees with the digest being added.
