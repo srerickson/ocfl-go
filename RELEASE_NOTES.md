@@ -47,11 +47,7 @@ Replacements:
 ## New features
 
 - **Persistable updates.** An `ObjectUpdate` can be saved and loaded as JSON, so an interrupted update can be resumed. `BaseState` exposes the base version's state, and the finalized version's metadata is exposed once the update is finalized.
-- **Content tokens.** `fs.ContentToken(info)` returns an opaque string that changes when a file's content changes, or `""` if none is available. File systems can provide their own by implementing the new `fs.ContentTokener` interface.
-  - Local files use a token built from their OS stat times (`stat:`).
-  - `fs/s3` uses the object's ETag (`etag:`).
-  - `fs/http` uses a strong ETag (`etag:`), otherwise Last-Modified in Unix seconds (`lm:`).
-- **Detecting changed content.** `ContentMap` saves each file's size and content token. `FastCheck` reports files whose size or token changed since they were added, including same-size edits, so `Apply` can refuse to write a stale file under its old digest. It does not validate digests. Each saved content entry is now `[src, name, size, token]`.
+- **Verified content.** `Apply` digests new content as it copies it into the object and returns an error wrapping `ErrContentChanged` if any content doesn't match its digest (for example, because a staged file changed). The mismatched file is removed, and the update can be applied again once the content is restored, or reverted. `UpdateWithTrustedContent` skips verification so storage backends can copy content without reading it.
 - **Stage options.** `StageWithGoLimit`, `StageWithFilter`, `StageWithHidden`, and `Stage.Clear` give control over how files are added to a stage.
 
 ## Fixes
