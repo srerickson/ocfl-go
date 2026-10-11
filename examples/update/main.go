@@ -53,7 +53,10 @@ func (f *cmdFlags) checkNewVersion() error {
 
 // stage is the update for the new version with the files it adds: saving
 // it as JSON before applying it lets an interrupted update be resumed.
-type stage = ocfl.Stage[*ocfl.FileContentMap]
+type stage struct {
+	Update  *ocfl.ObjectUpdate   `json:"update"`
+	Content *ocfl.FileContentMap `json:"content"`
+}
 
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Stderr); err != nil {
@@ -103,7 +106,7 @@ func runUpdate(ctx context.Context, args []string, stderr io.Writer) error {
 	}
 	applyCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
-	_, err = stage.Apply(applyCtx, objCnf.FS, objCnf.Path, ocfl.UpdateWithLogger(logger))
+	_, err = stage.Update.Apply(applyCtx, objCnf.FS, objCnf.Path, stage.Content, ocfl.UpdateWithLogger(logger))
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			// the stage file is kept, so the update can be resumed
