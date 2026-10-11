@@ -9,9 +9,11 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -412,7 +414,7 @@ func TestObjectUpdate_JSON(t *testing.T) {
 		be.NilErr(t, err)
 		var fields map[string]json.RawMessage
 		be.NilErr(t, json.Unmarshal(saved, &fields))
-		be.DeepEqual(t, []string{"base_inventory", "digest_algorithm", "finalized", "fixity", "id", "state"}, sortedKeys(fields))
+		be.DeepEqual(t, []string{"base_inventory", "digest_algorithm", "finalized", "fixity", "id", "state"}, slices.Sorted(maps.Keys(fields)))
 		// the base inventory is saved as a string with the exact bytes of the
 		// object's inventory.json
 		var baseInv string
@@ -422,7 +424,7 @@ func TestObjectUpdate_JSON(t *testing.T) {
 		be.Equal(t, string(invBytes), baseInv)
 		var final map[string]json.RawMessage
 		be.NilErr(t, json.Unmarshal(fields["finalized"], &final))
-		be.DeepEqual(t, []string{"content_paths", "created", "message", "new_inventory_digest", "spec", "user"}, sortedKeys(final))
+		be.DeepEqual(t, []string{"content_paths", "created", "message", "new_inventory_digest", "spec", "user"}, slices.Sorted(maps.Keys(final)))
 		var contentPaths ocfl.DigestMap
 		be.NilErr(t, json.Unmarshal(final["content_paths"], &contentPaths))
 		be.DeepEqual(t, []string{"v4/content/new/a.txt", "v4/content/new/b.txt"}, contentPaths.AllPaths())

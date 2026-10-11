@@ -95,7 +95,7 @@ func TestStageFS(t *testing.T) {
 		// every new digest has content and fixity
 		state := stage.Update().NewState()
 		be.Equal(t, 3, len(state))
-		be.DeepEqual(t, sortedKeys(state), stage.files.Digests())
+		be.DeepEqual(t, stage.Update().NewContentDigests(), stage.files.Digests())
 		for dig := range state {
 			be.Nonzero(t, stage.Update().Fixity(dig)["md5"])
 			srcFS, srcPath := stage.Content().GetContent(dig)
