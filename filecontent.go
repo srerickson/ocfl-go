@@ -17,8 +17,7 @@ import (
 )
 
 // FileContentMap maps digests to files in FSs that hold content with the
-// digest. It implements [ContentSource], [ContentFastChecker] and
-// [FileAdder]. The zero value is an empty FileContentMap, ready to use. For
+// digest. It implements [ContentSource] and [FileAdder]. The zero value is an empty FileContentMap, ready to use. For
 // content in memory, use a [BytesContentMap].
 //
 // A FileContentMap can be saved as JSON if each file's FS implements
@@ -32,34 +31,19 @@ import (
 // FSs before using the FileContentMap as a [ContentSource]: until then,
 // GetContent finds no content in them.
 //
-// A file's size and content token (see [ocflfs.ContentToken]) can be recorded
-// when it is added, and are saved with it. [FileContentMap.FastCheck] uses
-// them to find files that have changed since they were added, so that a changed file
-// isn't copied into an object under the digest of its old content. The check
-// is only as good as the storage backend's content tokens: a file changed
-// without changing its size may go undetected if its FS provides no tokens,
-// or if it changed within the token's time resolution (see the backend's
-// documentation).
+// FileContentMap records only where content is, not anything that could show
+// that a file has changed since it was added: [ObjectUpdate.Apply] digests
+// content as it copies it, and fails if it doesn't match its digest.
 type FileContentMap struct {
 	sources []contentMapSource
 	files   map[string]contentMapFile // digest -> file
 }
 
 // AddFile sets the location of content with the digest dig to the file name
-// in fsys. info is the file's information, from which its size and content
-// token are recorded for [FileContentMap.FastCheck]. info should be read before the
-// file's content is digested: then a change made while the file is being
-// digested is found by FastCheck. info may be nil, or have a negative size or
-// no content token, if they are unknown: FastCheck doesn't compare what is
-// unknown, and if both are, it only checks that the file exists. fsys must
-// not be nil.
-func (c *FileContentMap) AddFile(dig string, fsys ocflfs.FS, name string, info fs.FileInfo) {
+// in fsys. fsys must not be nil.
+func (c *FileContentMap) AddFile(dig string, fsys ocflfs.FS, name string) {
 	dig = normalizeDigest(dig)
-	file := contentMapFile{name: name, size: -1}
-	if info != nil {
-		file.size = max(info.Size(), -1)
-		file.token = ocflfs.ContentToken(info)
-	}
+	file := contentMapFile{name: name}
 	src := slices.IndexFunc(c.sources, func(s contentMapSource) bool { return sameFS(s.fs, fsys) })
 	if src < 0 {
 		src = len(c.sources)
@@ -130,82 +114,8 @@ func (c *FileContentMap) OpenFS(ctx context.Context, reg ocflfs.Registry) error 
 	return errors.Join(errs...)
 }
 
-// FastCheck is a fast check that content hasn't changed since it was added to
-// c. It does not read or digest any file's content, so it does not validate
-// that content still matches its digest: it only compares the file's current
-// size and content token with the ones recorded when it was added.
-//
-// FastCheck stats every file that c's content is in, and returns a
-// *[ContentChangedError], which wraps [ErrContentChanged], listing files that
-// are missing, or whose size or content token differs from the one recorded
-// when they were added. A file's size isn't compared if it wasn't recorded or
-// its FS reports a negative size (for example, an HTTP server that doesn't
-// send the content length). Likewise, its content token isn't compared if it
-// wasn't recorded or its FS provides none. Content in an FS that isn't open
-// is reported as missing, so c must be opened with [FileContentMap.OpenFS] first.
-// If a file can't be checked for another reason, the error is returned,
-// joined with any ContentChangedError.
-func (c *FileContentMap) FastCheck(ctx context.Context) error {
-	return c.ContentFastCheck(ctx, slices.Sorted(maps.Keys(c.files)))
-}
-
-// ContentFastCheck implements [ContentFastChecker] for *FileContentMap. It is
-// [FileContentMap.FastCheck] for the content with the given digests only: like
-// FastCheck, it does not validate the content's digests. Digests that c has no
-// file for are skipped.
-func (c *FileContentMap) ContentFastCheck(ctx context.Context, digests []string) error {
-	var changes []ContentChange
-	var errs []error
-	for _, dig := range digests {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		dig = normalizeDigest(dig)
-		file, ok := c.files[dig]
-		if !ok {
-			continue
-		}
-		change := ContentChange{
-			Digest: dig,
-			FS:     c.sources[file.src].fs,
-			Path:   file.name,
-			Size:   file.size,
-			Token:  file.token,
-		}
-		if change.FS == nil {
-			change.Missing = true
-			changes = append(changes, change)
-			continue
-		}
-		info, err := ocflfs.StatFile(ctx, change.FS, file.name)
-		switch {
-		case errors.Is(err, fs.ErrNotExist):
-			change.Missing = true
-		case err != nil:
-			errs = append(errs, fmt.Errorf("checking content %q: %w", dig, err))
-			continue
-		case info.IsDir():
-			change.Missing = true
-		default:
-			change.NewSize = info.Size()
-			change.NewToken = ocflfs.ContentToken(info)
-			sizeChanged := file.size >= 0 && change.NewSize >= 0 && change.NewSize != file.size
-			tokenChanged := file.token != "" && change.NewToken != "" && change.NewToken != file.token
-			if !sizeChanged && !tokenChanged {
-				continue
-			}
-		}
-		changes = append(changes, change)
-	}
-	if len(changes) > 0 {
-		errs = append([]error{&ContentChangedError{Changes: changes}}, errs...)
-	}
-	return errors.Join(errs...)
-}
-
 // MarshalJSON implements [json.Marshaler] for FileContentMap. It returns an
-// error if any FS can't be marshaled as text. An FS
-// loaded from JSON is saved as the same text, whether or not it was opened.
+// error if any FS can't be marshaled as text. An FS loaded from JSON is saved as the same text, whether or not it was opened.
 func (c FileContentMap) MarshalJSON() ([]byte, error) {
 	j := contentMapJSON{
 		Sources: []string{},
@@ -294,63 +204,29 @@ func (src contentMapSource) marshal() (string, error) {
 
 // contentMapFile is the location of a file in a FileContentMap
 type contentMapFile struct {
-	src   int    // index of the FS in the content map's sources
-	name  string // path relative to the FS
-	size  int64  // size of the file when it was added; -1 if unknown
-	token string // content token when the file was added; "" if unknown
+	src  int    // index of the FS in the content map's sources
+	name string // path relative to the FS
 }
 
-// MarshalJSON encodes f as an array: [src, name, size, token], with null for
-// an unknown size or token.
+// MarshalJSON encodes f as an array: [src, name].
 func (f contentMapFile) MarshalJSON() ([]byte, error) {
-	var size *int64
-	if f.size >= 0 {
-		size = &f.size
-	}
-	var token *string
-	if f.token != "" {
-		token = &f.token
-	}
-	return json.Marshal([]any{f.src, f.name, size, token})
+	return json.Marshal([]any{f.src, f.name})
 }
 
-// UnmarshalJSON decodes f from an array: [src, name, size, token], where size
-// and token may be null.
+// UnmarshalJSON decodes f from an array: [src, name].
 func (f *contentMapFile) UnmarshalJSON(data []byte) error {
 	var parts []json.RawMessage
 	if err := json.Unmarshal(data, &parts); err != nil {
 		return err
 	}
-	if len(parts) != 4 {
-		return fmt.Errorf("content map entry must have four elements (source, path, size, token), not %d", len(parts))
+	if len(parts) != 2 {
+		return fmt.Errorf("content map entry must have two elements (source, path), not %d", len(parts))
 	}
 	if err := json.Unmarshal(parts[0], &f.src); err != nil {
 		return fmt.Errorf("content map entry source index: %w", err)
 	}
 	if err := json.Unmarshal(parts[1], &f.name); err != nil {
 		return fmt.Errorf("content map entry path: %w", err)
-	}
-	var size *int64
-	if err := json.Unmarshal(parts[2], &size); err != nil {
-		return fmt.Errorf("content map entry size: %w", err)
-	}
-	f.size = -1
-	if size != nil {
-		if *size < 0 {
-			return fmt.Errorf("content map entry has a negative size: %d", *size)
-		}
-		f.size = *size
-	}
-	var token *string
-	if err := json.Unmarshal(parts[3], &token); err != nil {
-		return fmt.Errorf("content map entry token: %w", err)
-	}
-	f.token = ""
-	if token != nil {
-		if *token == "" {
-			return errors.New("content map entry has an empty token: an unknown token must be null")
-		}
-		f.token = *token
 	}
 	return nil
 }

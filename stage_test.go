@@ -71,35 +71,6 @@ func TestStageBytes(t *testing.T) {
 	be.Equal(t, 1, len(mem.Digests()))
 }
 
-func TestMultiContentSource(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
-	writeOld(t, filepath.Join(dir, "a.txt"), "a")
-	fsys, err := local.NewFS(dir)
-	be.NilErr(t, err)
-	digA := strings.Repeat("a", 128)
-	digB := strings.Repeat("b", 128)
-	var files ocfl.FileContentMap
-	var mem ocfl.BytesContentMap
-	info, err := ocflfs.StatFile(ctx, fsys, "a.txt")
-	be.NilErr(t, err)
-	files.AddFile(digA, fsys, "a.txt", info)
-	mem.AddBytes(digB, []byte("b"))
-	src := ocfl.MultiContentSource{&files, &mem}
-	srcFS, srcPath := src.GetContent(digA)
-	be.Equal[ocflfs.FS](t, fsys, srcFS)
-	be.Equal(t, "a.txt", srcPath)
-	srcFS, _ = src.GetContent(digB)
-	be.Nonzero(t, srcFS)
-	srcFS, _ = src.GetContent(strings.Repeat("c", 128))
-	be.Zero(t, srcFS)
-	be.NilErr(t, src.ContentFastCheck(ctx, []string{digA, digB}))
-	// the changed file is found by the FileContentMap's check
-	be.NilErr(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("changed"), 0o644))
-	err = src.ContentFastCheck(ctx, []string{digA, digB})
-	be.True(t, errors.Is(err, ocfl.ErrContentChanged))
-}
-
 func TestStageFS(t *testing.T) {
 	ctx := context.Background()
 	testdataFS := ocflfs.DirFS(`testdata`)
@@ -350,40 +321,6 @@ func TestStage_JSON(t *testing.T) {
 	be.NilErr(t, ocfl.ValidateObject(ctx, objFS, obj.Path()).Err())
 	be.DeepEqual(t, []string{"md5"}, obj.FixityAlgorithms())
 
-	t.Run("file sizes and tokens", func(t *testing.T) {
-		var savedJSON struct {
-			Content struct{ Content map[string][]any }
-		}
-		be.NilErr(t, json.Unmarshal(saved, &savedJSON))
-		be.Equal(t, 3, len(savedJSON.Content.Content))
-		for _, entry := range savedJSON.Content.Content {
-			be.Equal(t, 4, len(entry))
-			info, err := os.Stat(filepath.Join(contentFS.Root(), entry[1].(string)))
-			be.NilErr(t, err)
-			be.Equal(t, float64(info.Size()), entry[2].(float64))
-			be.Equal(t, ocflfs.ContentToken(info), entry[3].(string))
-		}
-	})
-	t.Run("saved without file sizes or tokens", func(t *testing.T) {
-		// stages whose sizes and tokens are unknown can be loaded and
-		// applied
-		var old map[string]any
-		be.NilErr(t, json.Unmarshal(saved, &old))
-		content := old["content"].(map[string]any)["content"].(map[string]any)
-		for dig, entry := range content {
-			content[dig] = append(entry.([]any)[:2], nil, nil)
-		}
-		var loaded fileStage
-		be.NilErr(t, json.Unmarshal(mustMarshal(t, old), &loaded))
-		be.DeepEqual(t, stage.Content.Digests(), loaded.Content.Digests())
-		be.NilErr(t, loaded.Content.OpenFS(ctx, reg))
-		be.NilErr(t, loaded.Content.FastCheck(ctx))
-		objFS := testutil.TmpLocalFS(t)
-		be.NilErr(t, loaded.Update.Finalize("v1", ocfl.User{Name: "Tester"}))
-		obj, err := loaded.Apply(ctx, objFS, "obj")
-		be.NilErr(t, err)
-		be.NilErr(t, ocfl.ValidateObject(ctx, objFS, obj.Path()).Err())
-	})
 	t.Run("invalid saved values", func(t *testing.T) {
 		for name, data := range map[string]string{
 			"invalid content": `{"update":` + string(mustMarshal(t, stage.Update)) + `,"content":{"extra":1}}`,

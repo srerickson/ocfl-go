@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"maps"
@@ -445,14 +446,19 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) err
 // Apply returns an error wrapping [ErrMissingContent], without writing
 // anything, if src doesn't provide content for every digest that is new in
 // the update. src may be nil if the update doesn't add new content. A
-// [FileContentMap] loaded from JSON must be opened with [FileContentMap.OpenFS] first.
-// If src is a [ContentFastChecker], such as a FileContentMap, Apply returns any error
-// from its ContentFastCheck method, without writing anything (this is a fast
-// check of file metadata; it does not validate digests): for a FileContentMap,
-// an error wrapping [ErrContentChanged] if files that new content is in are
-// missing or their size or content token has changed. Resuming an update
-// copies all new content again, so the check is run then too.
-// Apply uses the options [UpdateWithLogger] and [UpdateWithGoLimit].
+// [FileContentMap] loaded from JSON must be opened with
+// [FileContentMap.OpenFS] first.
+//
+// By default, Apply digests new content as it copies it into the object, and
+// returns an error wrapping [ErrContentChanged] if any content doesn't match
+// its digest: for example, because the file it was staged from changed after
+// it was staged. The mismatched file is removed, and the update can be
+// applied again once the content is restored, or reverted. Content is
+// verified on every attempt, including when an interrupted update is
+// resumed. Use [UpdateWithTrustedContent] to skip verification and let
+// storage backends copy content without reading it.
+// Apply uses the options [UpdateWithLogger], [UpdateWithGoLimit] and
+// [UpdateWithTrustedContent].
 func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, src ContentSource, opts ...UpdateOption) (*Object, error) {
 	if u.final == nil {
 		return nil, ErrNotFinalized
@@ -467,8 +473,8 @@ func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, sr
 		return nil, err
 	}
 	if status == updatePending {
-		steps := u.applySteps()
-		if err := checkContentSource(ctx, steps, src); err != nil {
+		steps := u.applySteps(!o.trustContent)
+		if err := checkContentSource(steps, src); err != nil {
 			return nil, err
 		}
 		if err := runSteps(ctx, steps, writeFS, dir, src, o.goLimit, o.logger); err != nil {
@@ -841,7 +847,9 @@ func (u *ObjectUpdate) checkNewObjectDir(ctx context.Context, fsys ocflfs.FS, di
 
 // applySteps returns the steps for applying u to storage. The step that
 // writes the new root inventory sidecar commits the update.
-func (u *ObjectUpdate) applySteps() []updateStep {
+// applySteps returns the steps for applying u. If verify is true, content is
+// digested as it is copied.
+func (u *ObjectUpdate) applySteps(verify bool) []updateStep {
 	newInv := u.newInv
 	newHead := newInv.Head
 	newAlg := newInv.DigestAlgorithm
@@ -880,8 +888,12 @@ func (u *ObjectUpdate) applySteps() []updateStep {
 				if srcFS == nil {
 					return fmt.Errorf("%w: %q", ErrMissingContent, dig)
 				}
-				_, err := ocflfs.Copy(ctx, fsys, path.Join(dir, contentPath), srcFS, srcPath)
-				return err
+				dst := path.Join(dir, contentPath)
+				if !verify {
+					_, err := ocflfs.Copy(ctx, fsys, dst, srcFS, srcPath)
+					return err
+				}
+				return copyVerified(ctx, fsys, dst, srcFS, srcPath, u.alg, dig)
 			},
 		})
 	}
@@ -985,8 +997,9 @@ type updateOptions struct {
 	allowUnchanged  bool
 	contentPathFunc PathMutation
 	// apply and revert
-	logger  *slog.Logger
-	goLimit int
+	logger       *slog.Logger
+	goLimit      int
+	trustContent bool
 }
 
 func newUpdateOptions(opts ...UpdateOption) *updateOptions {
@@ -1062,6 +1075,18 @@ func UpdateWithLogger(logger *slog.Logger) UpdateOption {
 		if logger != nil {
 			o.logger = logger
 		}
+	}
+}
+
+// UpdateWithTrustedContent makes [ObjectUpdate.Apply] copy new content
+// without verifying its digests. Content is copied with [ocflfs.Copy], which
+// lets a storage backend copy content within the backend without reading it
+// (for example, from one S3 bucket to another). Use it only when the content
+// source's content can't have changed since it was staged: content that has
+// changed is written into the object under its old digest.
+func UpdateWithTrustedContent() UpdateOption {
+	return func(o *updateOptions) {
+		o.trustContent = true
 	}
 }
 
@@ -1234,25 +1259,20 @@ func readSidecarIfExists(ctx context.Context, fsys ocflfs.FS, dir, alg string) (
 }
 
 // checkContentSource returns an error wrapping ErrMissingContent if src
-// doesn't provide content for every step that copies content. If src is a
-// ContentFastChecker, it returns the error from checking the content.
-func checkContentSource(ctx context.Context, steps []updateStep, src ContentSource) error {
-	var digests, missing []string
+// doesn't provide content for every step that copies content.
+func checkContentSource(steps []updateStep, src ContentSource) error {
+	var missing []string
 	seen := map[string]bool{}
 	for _, step := range steps {
 		if step.digest == "" || seen[step.digest] {
 			continue
 		}
 		seen[step.digest] = true
-		digests = append(digests, step.digest)
 		if srcFS, _ := getContent(src, step.digest); srcFS == nil {
 			missing = append(missing, step.digest)
 		}
 	}
 	if len(missing) == 0 {
-		if checker, ok := src.(ContentFastChecker); ok {
-			return checker.ContentFastCheck(ctx, digests)
-		}
 		return nil
 	}
 	listed := missing
@@ -1276,6 +1296,30 @@ func getContent(src ContentSource, dig string) (ocflfs.FS, string) {
 		return nil, ""
 	}
 	return fsys, name
+}
+
+// copyVerified copies srcPath in srcFS to dst in fsys, digesting it with alg
+// as it is copied. If the content doesn't have the digest dig, dst is removed
+// and copyVerified returns an error wrapping ErrContentChanged.
+func copyVerified(ctx context.Context, fsys ocflfs.WriteFS, dst string, srcFS ocflfs.FS, srcPath string, alg digest.Algorithm, dig string) (err error) {
+	srcFile, err := srcFS.OpenFile(ctx, srcPath)
+	if err != nil {
+		return fmt.Errorf("opening for copy: %w", err)
+	}
+	defer func() {
+		if closeErr := srcFile.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	digester := alg.Digester()
+	if _, err := fsys.Write(ctx, dst, io.TeeReader(srcFile, digester)); err != nil {
+		return fmt.Errorf("writing during copy: %w", err)
+	}
+	if got := digester.String(); got != dig {
+		err := fmt.Errorf("%w: %q has %s %s, not %s", ErrContentChanged, srcPath, alg.ID(), got, dig)
+		return errors.Join(err, removeIfExists(ctx, fsys, dst))
+	}
+	return nil
 }
 
 // runSteps runs steps in order. Consecutive async steps run concurrently,
