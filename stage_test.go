@@ -33,7 +33,7 @@ func TestUpdate_NeedsContent(t *testing.T) {
 	inObj := u.NewState().DigestFor("empty2.txt")
 	be.Nonzero(t, inObj)
 	be.False(t, u.NeedsContent(inObj))
-	be.Equal(t, 0, len(u.NewContent()))
+	be.Equal(t, 0, len(u.NewContentDigests()))
 	newDig := strings.Repeat("A", 128)
 	be.NilErr(t, u.AddAll([]ocfl.UpdateEntry{
 		{Name: "new/a.txt", Digest: newDig},
@@ -41,7 +41,7 @@ func TestUpdate_NeedsContent(t *testing.T) {
 		{Name: "copy.txt", Digest: inObj},
 	}))
 	be.True(t, u.NeedsContent(newDig))
-	be.DeepEqual(t, []string{strings.ToLower(newDig)}, u.NewContent())
+	be.DeepEqual(t, []string{strings.ToLower(newDig)}, u.NewContentDigests())
 	t.Run("AddAll adds nothing if there is an error", func(t *testing.T) {
 		before := u.NewState()
 		err := u.AddAll([]ocfl.UpdateEntry{
@@ -260,7 +260,7 @@ func TestStage_Edits(t *testing.T) {
 		be.Nonzero(t, stage.Update().Fixity(dig))
 		be.NilErr(t, stage.Remove("new"))
 		be.Zero(t, stage.Update().Fixity(dig))
-		be.Equal(t, 0, len(stage.NewContent()))
+		be.Equal(t, 0, len(stage.NewContentDigests()))
 		be.Equal(t, 1, len(stage.mem.Digests()))
 		prune(stage)
 		be.Equal(t, 0, len(stage.mem.Digests()))
