@@ -27,8 +27,7 @@ import (
 //   - [StageFS], [StageFile] and [StageBytes] digest content, add it to an
 //     update, and record it with a [FileAdder] or [BytesAdder].
 //   - [FileContentMap] records files in FSs and can be saved as JSON.
-//     [BytesContentMap] holds content in memory. [MultiContentSource]
-//     combines content sources.
+//     [BytesContentMap] holds content in memory.
 //   - [ObjectUpdate.AddAll] adds files whose digests are already known, and
 //     [ObjectUpdate.NeedsContent] and [ObjectUpdate.NewContent] tell which
 //     content must be provided.
@@ -45,10 +44,9 @@ func (s *Stage[C]) Apply(ctx context.Context, fsys ocflfs.FS, dir string, opts .
 }
 
 // FileAdder records the file that content with a digest was read from. It is
-// implemented by [*FileContentMap]. info is the file's information, read
-// before the file was digested; it may be nil.
+// implemented by [*FileContentMap].
 type FileAdder interface {
-	AddFile(dig string, fsys ocflfs.FS, name string, info fs.FileInfo)
+	AddFile(dig string, fsys ocflfs.FS, name string)
 }
 
 // BytesAdder records content with a digest held in memory. It is implemented
@@ -159,12 +157,8 @@ func stageFiles(ctx context.Context, u *ObjectUpdate, content FileAdder, files [
 		return err
 	}
 	for i, ref := range digested {
-		// Info was set before the file was digested, by the walk or by
-		// CheckFileTypes, so if the file changed while it was being
-		// digested, its recorded content token is older than the digested
-		// content and a fast check reports the change.
 		if dig := entries[i].Digest; u.NeedsContent(dig) {
-			content.AddFile(dig, ref.FS, ref.FullPath(), ref.Info)
+			content.AddFile(dig, ref.FS, ref.FullPath())
 		}
 	}
 	return nil

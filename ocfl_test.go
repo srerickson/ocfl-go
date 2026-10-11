@@ -52,7 +52,19 @@ func stageFor(u *ocfl.ObjectUpdate) *testStage { return &testStage{ObjectUpdate:
 func (s *testStage) Update() *ocfl.ObjectUpdate { return s.ObjectUpdate }
 
 func (s *testStage) Content() ocfl.ContentSource {
-	return ocfl.MultiContentSource{&s.files, &s.mem}
+	return multiSource{&s.files, &s.mem}
+}
+
+// multiSource gets content from the first of its sources that has it.
+type multiSource []ocfl.ContentSource
+
+func (m multiSource) GetContent(dig string) (ocflfs.FS, string) {
+	for _, src := range m {
+		if fsys, name := src.GetContent(dig); fsys != nil {
+			return fsys, name
+		}
+	}
+	return nil, ""
 }
 
 func (s *testStage) AddFS(ctx context.Context, fsys ocflfs.FS, dir, dst string, opts ...ocfl.StageOption) error {

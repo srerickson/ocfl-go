@@ -663,16 +663,17 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		// nothing was written
 		_, err = ocflfs.ReadDir(ctx, fsys, "obj")
 		be.True(t, errors.Is(err, fs.ErrNotExist))
-		// the update can be applied once the content is available
+		// the update can be applied once the content is available (the
+		// placeholder content doesn't match its digests, so it is trusted)
 		for i := range 8 {
 			stage.mem.AddBytes(fmt.Sprintf("%0128d", i), []byte("not checked"))
 		}
-		_, err = upd.Apply(ctx, fsys, "obj", stage.Content())
+		_, err = upd.Apply(ctx, fsys, "obj", stage.Content(), ocfl.UpdateWithTrustedContent())
 		be.NilErr(t, err)
 	})
 	t.Run("changed content", func(t *testing.T) {
-		// staged files that changed aren't copied: nothing is written until
-		// they are restored.
+		// content is digested as it is copied: a staged file that changed
+		// isn't written into the object, and the update isn't committed.
 		fsys := testutil.TmpLocalFS(t, fixture)
 		obj, err := ocfl.NewObject(ctx, fsys, "minimal_one_version_one_file")
 		be.NilErr(t, err)
@@ -680,38 +681,40 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		hello := filepath.Join(contentFS.Root(), "content-fixture", "hello.csv")
 		helloData, err := os.ReadFile(hello)
 		be.NilErr(t, err)
-		writeOld(t, hello, string(helloData))
 		stage := stageFor(obj.NewUpdate())
 		be.NilErr(t, stage.AddFS(ctx, contentFS, "content-fixture", "new"))
 		be.NilErr(t, stage.Finalize("v2", user))
-		before := snapshot(t, fsys)
 		// same size, different content
 		be.NilErr(t, os.WriteFile(hello, bytes.Repeat([]byte("x"), len(helloData)), 0o644))
 		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
 		be.True(t, errors.Is(err, ocfl.ErrContentChanged))
-		be.In(t, `"content-fixture/hello.csv" has changed since it was added`, err.Error())
-		be.DeepEqual(t, before, snapshot(t, fsys))
-		be.NilErr(t, os.Truncate(hello, 1))
-		be.NilErr(t, os.Rename(hello, hello+".moved"))
-		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
-		be.True(t, errors.Is(err, ocfl.ErrContentChanged))
-		be.In(t, `"content-fixture/hello.csv" is missing`, err.Error())
-		be.DeepEqual(t, before, snapshot(t, fsys))
-		be.NilErr(t, os.Rename(hello+".moved", hello))
-		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
-		be.True(t, errors.Is(err, ocfl.ErrContentChanged))
-		be.In(t, `"content-fixture/hello.csv" has size 1, not 15`, err.Error())
-		be.DeepEqual(t, before, snapshot(t, fsys))
-		// restoring the content changes the file's token, so it is
-		// recorded again
+		be.In(t, `"content-fixture/hello.csv" has sha512`, err.Error())
+		_, err = os.Stat(filepath.Join(fsys.Root(), obj.Path(), "v2", "content", "new", "hello.csv"))
+		be.True(t, errors.Is(err, fs.ErrNotExist))
+		head, err := ocfl.NewObject(ctx, fsys, obj.Path())
+		be.NilErr(t, err)
+		be.Equal(t, ocfl.V(1), head.Head())
+		// the update is applied once the content is restored
 		be.NilErr(t, os.WriteFile(hello, helloData, 0o644))
-		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
-		be.True(t, errors.Is(err, ocfl.ErrContentChanged))
-		readdFile(t, &stage.files, "content-fixture/hello.csv")
 		newObj, err := stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
 		be.NilErr(t, err)
 		be.Equal(t, ocfl.V(2), newObj.Head())
 		be.NilErr(t, ocfl.ValidateObject(ctx, fsys, obj.Path()).Err())
+	})
+	t.Run("trusted content isn't verified", func(t *testing.T) {
+		fsys := testutil.TmpLocalFS(t, fixture)
+		obj, err := ocfl.NewObject(ctx, fsys, "minimal_one_version_one_file")
+		be.NilErr(t, err)
+		contentFS := testutil.TmpLocalFS(t, filepath.Join(`testdata`, `content-fixture`))
+		stage := stageFor(obj.NewUpdate())
+		be.NilErr(t, stage.AddFS(ctx, contentFS, "content-fixture", "new"))
+		be.NilErr(t, stage.Finalize("v2", user))
+		hello := filepath.Join(contentFS.Root(), "content-fixture", "hello.csv")
+		be.NilErr(t, os.WriteFile(hello, []byte("changed"), 0o644))
+		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content(), ocfl.UpdateWithTrustedContent())
+		be.NilErr(t, err)
+		// the changed content was written under its old digest
+		be.Nonzero(t, ocfl.ValidateObject(ctx, fsys, obj.Path()).Err())
 	})
 	t.Run("resume with changed content", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture)
@@ -730,13 +733,10 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		helloData, err := os.ReadFile(hello)
 		be.NilErr(t, err)
 		be.NilErr(t, os.WriteFile(hello, []byte("changed"), 0o644))
-		before := snapshot(t, fsys)
 		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
 		be.True(t, errors.Is(err, ocfl.ErrContentChanged))
-		be.DeepEqual(t, before, snapshot(t, fsys))
-		// it is resumed once the content is restored and recorded again
+		// it is resumed once the content is restored
 		be.NilErr(t, os.WriteFile(hello, helloData, 0o644))
-		readdFile(t, &stage.files, "content-fixture/hello.csv")
 		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
 		be.NilErr(t, err)
 		be.NilErr(t, ocfl.ValidateObject(ctx, fsys, obj.Path()).Err())
@@ -1097,23 +1097,6 @@ func (h *logRecorder) messages(level slog.Level) []string {
 }
 
 // snapshot returns the paths and contents of all files in fsys.
-// readdFile adds the file name in c again, with its current size and content
-// token.
-func readdFile(t *testing.T, c *ocfl.FileContentMap, name string) {
-	t.Helper()
-	for _, dig := range c.Digests() {
-		fsys, srcPath := c.GetContent(dig)
-		if srcPath != name {
-			continue
-		}
-		info, err := ocflfs.StatFile(context.Background(), fsys, name)
-		be.NilErr(t, err)
-		c.AddFile(dig, fsys, name, info)
-		return
-	}
-	t.Fatalf("%q isn't in the content map", name)
-}
-
 func snapshot(t *testing.T, fsys *local.FS) map[string]string {
 	t.Helper()
 	files := map[string]string{}

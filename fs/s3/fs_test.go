@@ -2700,23 +2700,12 @@ func TestContentToken_Mock(t *testing.T) {
 	be.Equal(t, want, ocflfs.ContentToken(info))
 	be.Unequal(t, walkedInfo.ModTime(), info.ModTime())
 
-	// a file added from a walk isn't reported as changed when it is checked
-	// with HeadObject
-	dig := strings.Repeat("a", 128)
-	var c ocfl.FileContentMap
-	c.AddFile(dig, fsys, name, walkedInfo)
-	be.NilErr(t, c.FastCheck(ctx))
-
-	// same size, different content
+	// same size, different content: the token changes
 	_, err = fsys.Write(ctx, name, strings.NewReader("bbb"))
 	be.NilErr(t, err)
 	info, err = ocflfs.StatFile(ctx, fsys, name)
 	be.NilErr(t, err)
-	newToken := ocflfs.ContentToken(info)
-	be.Equal(t, "etag:"+mock.ETag([]byte("bbb"), 0), newToken)
-	err = c.FastCheck(ctx)
-	be.True(t, errors.Is(err, ocfl.ErrContentChanged))
-	be.In(t, "("+want+" is now "+newToken+")", err.Error())
+	be.Equal(t, "etag:"+mock.ETag([]byte("bbb"), 0), ocflfs.ContentToken(info))
 }
 
 func TestMarshalText(t *testing.T) {
