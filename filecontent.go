@@ -43,6 +43,9 @@ type FileContentMap struct {
 // StageFile sets the location of content with the digest dig to the file name
 // in fsys. fsys must not be nil.
 func (c *FileContentMap) StageFile(dig string, fsys ocflfs.FS, name string) {
+	if fsys == nil {
+		panic("ocfl: FileContentMap.StageFile: fsys must not be nil")
+	}
 	dig = normalizeDigest(dig)
 	file := contentMapFile{name: name}
 	src := slices.IndexFunc(c.sources, func(s contentMapSource) bool { return sameFS(s.fs, fsys) })
@@ -78,14 +81,15 @@ func (c *FileContentMap) Digests() []string {
 // that was loaded from JSON and hasn't been opened with [FileContentMap.OpenFS] is
 // not found.
 func (c *FileContentMap) GetContent(dig string) (ocflfs.FS, string) {
-	dig = normalizeDigest(dig)
-	if file, ok := c.files[dig]; ok {
-		if fsys := c.sources[file.src].fs; fsys != nil {
-			return fsys, file.name
-		}
+	file, ok := c.files[normalizeDigest(dig)]
+	if !ok {
 		return nil, ""
 	}
-	return nil, ""
+	fsys := c.sources[file.src].fs
+	if fsys == nil {
+		return nil, ""
+	}
+	return fsys, file.name
 }
 
 // OpenFS opens the FSs loaded from JSON that c's content is in, using reg to
@@ -116,7 +120,8 @@ func (c *FileContentMap) OpenFS(ctx context.Context, reg ocflfs.Registry) error 
 }
 
 // MarshalJSON implements [json.Marshaler] for FileContentMap. It returns an
-// error if any FS can't be marshaled as text. An FS loaded from JSON is saved as the same text, whether or not it was opened.
+// error if any FS can't be marshaled as text. An FS loaded from JSON is saved
+// as the same text, whether or not it was opened.
 func (c FileContentMap) MarshalJSON() ([]byte, error) {
 	j := contentMapJSON{
 		Sources: []string{},

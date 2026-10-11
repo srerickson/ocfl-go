@@ -90,6 +90,14 @@ type VersionInfo struct {
 	Spec    Spec
 }
 
+// UpdateEntry is a file to add to an update's new version state with
+// [ObjectUpdate.AddAll].
+type UpdateEntry struct {
+	Name   string     // path in the new version state
+	Digest string     // digest of the content, using the update's algorithm
+	Fixity digest.Set // optional fixity values for the content
+}
+
 // ObjectUpdate is a pending version of an OCFL object. It has two phases. As a
 // draft, it holds the new version state and fixity for new content, which are
 // changed with [ObjectUpdate.Add], [ObjectUpdate.Remove],
@@ -865,9 +873,8 @@ func (u *ObjectUpdate) checkNewObjectDir(ctx context.Context, fsys ocflfs.FS, di
 }
 
 // applySteps returns the steps for applying u to storage. The step that
-// writes the new root inventory sidecar commits the update.
-// applySteps returns the steps for applying u. If verify is true, content is
-// digested as it is copied.
+// writes the new root inventory sidecar commits the update. If verify is
+// true, content is digested as it is copied.
 func (u *ObjectUpdate) applySteps(verify bool) []updateStep {
 	newInv := u.newInv
 	newHead := newInv.Head
@@ -1171,14 +1178,6 @@ func newObjectUpdate(id string, base *StoredInventory, rootSpec Spec, alg digest
 		u.state = u.baseState().Clone()
 	}
 	return u, nil
-}
-
-// UpdateEntry is a file to add to an update's new version state with
-// [ObjectUpdate.AddAll].
-type UpdateEntry struct {
-	Name   string     // path in the new version state
-	Digest string     // digest of the content, using the update's algorithm
-	Fixity digest.Set // optional fixity values for the content
 }
 
 // readUpdateBase reads and validates the root inventory for the object at

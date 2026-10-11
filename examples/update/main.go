@@ -187,11 +187,11 @@ func loadStage(name string) (*stage, error) {
 }
 
 // saveStage saves the stage in the file name, if name isn't empty.
-func saveStage(name string, stage *stage) error {
+func saveStage(name string, s *stage) error {
 	if name == "" {
 		return nil
 	}
-	data, err := json.Marshal(stage)
+	data, err := json.Marshal(s)
 	if err != nil {
 		return err
 	}
