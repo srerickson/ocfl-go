@@ -51,6 +51,10 @@ func (f *cmdFlags) checkNewVersion() error {
 	return nil
 }
 
+// stage is the update for the new version with the files it adds: saving
+// it as JSON before applying it lets an interrupted update be resumed.
+type stage = ocfl.Stage[*ocfl.FileContentMap]
+
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Stderr); err != nil {
 		os.Exit(1)
@@ -94,19 +98,19 @@ func runUpdate(ctx context.Context, args []string, stderr io.Writer) error {
 			return err
 		}
 	}
-	if err := stage.Content().OpenFS(ctx, config.Registry(config.WithLogger(logger))); err != nil {
+	if err := stage.Content.OpenFS(ctx, config.Registry(config.WithLogger(logger))); err != nil {
 		return err
 	}
 	applyCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
-	_, err = stage.Update().Apply(applyCtx, objCnf.FS, objCnf.Path, stage.Content(), ocfl.UpdateWithLogger(logger))
+	_, err = stage.Apply(applyCtx, objCnf.FS, objCnf.Path, ocfl.UpdateWithLogger(logger))
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			// the stage file is kept, so the update can be resumed
 			return err
 		}
 		logger.Info("received interupt: reverting changes...")
-		if err := stage.Update().Revert(ctx, objCnf.FS, objCnf.Path, ocfl.UpdateWithLogger(logger)); err != nil {
+		if err := stage.Update.Revert(ctx, objCnf.FS, objCnf.Path, ocfl.UpdateWithLogger(logger)); err != nil {
 			return err
 		}
 	}
@@ -118,7 +122,7 @@ func runUpdate(ctx context.Context, args []string, stderr io.Writer) error {
 
 // newStage returns a finalized stage for a new version of the object with
 // the contents of the source directory.
-func newStage(ctx context.Context, objCnf *config.FSConfig, f *cmdFlags) (*ocfl.Stage, error) {
+func newStage(ctx context.Context, objCnf *config.FSConfig, f *cmdFlags) (*stage, error) {
 	if err := f.checkNewVersion(); err != nil {
 		return nil, err
 	}
@@ -126,7 +130,7 @@ func newStage(ctx context.Context, objCnf *config.FSConfig, f *cmdFlags) (*ocfl.
 	if err != nil {
 		return nil, err
 	}
-	stage, err := ocfl.NewStage(ctx, objCnf.FS, objCnf.Path, f.newID, ocfl.StageWithDigestAlgorithm(alg))
+	update, err := ocfl.NewUpdate(ctx, objCnf.FS, objCnf.Path, f.newID, ocfl.UpdateWithDigestAlgorithm(alg))
 	if err != nil {
 		if errors.Is(err, ocfl.ErrNoObjectID) {
 			return nil, errors.New("'id' flag is required for to a create new objects (object does not exist)")
@@ -134,25 +138,26 @@ func newStage(ctx context.Context, objCnf *config.FSConfig, f *cmdFlags) (*ocfl.
 		return nil, fmt.Errorf("%s: %w", objCnf.Path, err)
 	}
 	// the new version state is the contents of srcDir
-	if err := stage.Clear(); err != nil {
+	if err := update.Clear(); err != nil {
 		return nil, err
 	}
 	srcFS, err := local.NewFS(f.srcDir)
 	if err != nil {
 		return nil, err
 	}
-	if err := stage.AddFS(ctx, srcFS, ".", "."); err != nil {
+	content := &ocfl.FileContentMap{}
+	if err := ocfl.StageFS(ctx, update, content, srcFS, ".", "."); err != nil {
 		return nil, err
 	}
-	if err := stage.Finalize(f.msg, f.user); err != nil {
+	if err := update.Finalize(f.msg, f.user); err != nil {
 		return nil, err
 	}
-	return stage, nil
+	return &stage{Update: update, Content: content}, nil
 }
 
 // loadStage loads the stage saved in the file name. It returns nil and no
 // error if name is empty or the file doesn't exist.
-func loadStage(name string) (*ocfl.Stage, error) {
+func loadStage(name string) (*stage, error) {
 	if name == "" {
 		return nil, nil
 	}
@@ -163,15 +168,15 @@ func loadStage(name string) (*ocfl.Stage, error) {
 	if err != nil {
 		return nil, err
 	}
-	var stage ocfl.Stage
-	if err := json.Unmarshal(data, &stage); err != nil {
+	var loaded stage
+	if err := json.Unmarshal(data, &loaded); err != nil {
 		return nil, fmt.Errorf("loading stage from %s: %w", name, err)
 	}
-	return &stage, nil
+	return &loaded, nil
 }
 
 // saveStage saves the stage in the file name, if name isn't empty.
-func saveStage(name string, stage *ocfl.Stage) error {
+func saveStage(name string, stage *stage) error {
 	if name == "" {
 		return nil
 	}

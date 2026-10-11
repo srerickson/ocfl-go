@@ -139,23 +139,12 @@ func (r *Root) NewUpdate(ctx context.Context, id string, opts ...UpdateOption) (
 	return NewUpdate(ctx, r.fs, path.Join(r.dir, objPath), id, opts...)
 }
 
-// NewStage returns a new *[Stage] for the object with the given ID in the
-// root. The stage's update is created as with [Root.NewUpdate], and its
-// ContentMap is empty. NewStage uses the option [StageWithDigestAlgorithm].
-func (r *Root) NewStage(ctx context.Context, id string, opts ...StageOption) (*Stage, error) {
-	u, err := r.NewUpdate(ctx, id, newStageOptions(opts...).updateOptions()...)
-	if err != nil {
-		return nil, err
-	}
-	return newStage(u), nil
-}
-
 // Apply applies the finalized update u to the object in the root with u's
 // ID, using src for new content, and returns the updated object. See
 // [ObjectUpdate.Apply]. Apply returns an error wrapping
 // [ErrObjectSpecExceedsRoot], without writing anything, if u's new version
 // has a newer OCFL spec than the root's (E081). This can happen if u wasn't
-// created with [Root.NewUpdate] or [Root.NewStage].
+// created with [Root.NewUpdate].
 func (r *Root) Apply(ctx context.Context, u *ObjectUpdate, src ContentSource, opts ...UpdateOption) (*Object, error) {
 	if info, ok := u.VersionInfo(); ok && !r.spec.Empty() && info.Spec.Cmp(r.spec) > 0 {
 		return nil, fmt.Errorf("%w: object spec is OCFL v%s, storage root spec is OCFL v%s",

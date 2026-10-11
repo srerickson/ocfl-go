@@ -2703,7 +2703,7 @@ func TestContentToken_Mock(t *testing.T) {
 	// a file added from a walk isn't reported as changed when it is checked
 	// with HeadObject
 	dig := strings.Repeat("a", 128)
-	var c ocfl.ContentMap
+	var c ocfl.FileContentMap
 	c.AddFile(dig, fsys, name, walkedInfo)
 	be.NilErr(t, c.FastCheck(ctx))
 

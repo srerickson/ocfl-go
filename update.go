@@ -89,8 +89,11 @@ type VersionInfo struct {
 // base inventory), so nothing needs to be read from storage to finalize it. A
 // finalized update should be saved before it is applied: if the process is
 // interrupted, the saved update is all that is needed to resume or revert.
-// Content for new digests is not part of the ObjectUpdate: a [Stage] pairs a
-// draft update with a [ContentMap] that records content as files are added.
+// Content for new digests is not part of the ObjectUpdate: it is provided by
+// the [ContentSource] passed to Apply. [ObjectUpdate.NewContent] lists the
+// digests of the content the update needs. [StageFS], [StageFile] and
+// [StageBytes] add files to an update and record their content in a
+// [FileContentMap], a [BytesContentMap] or a content source of your own.
 type ObjectUpdate struct {
 	id       string
 	base     *StoredInventory // nil for a new object
@@ -201,7 +204,84 @@ func (u *ObjectUpdate) VersionInfo() (VersionInfo, bool) {
 // is invalid or conflicts with an existing path (a file can't also be a
 // directory), and [ErrFinalized] if u has been finalized.
 func (u *ObjectUpdate) Add(name, dig string, fixity digest.Set) error {
-	return u.addAll([]updateEntry{{name: name, digest: dig, fixity: fixity}})
+	return u.AddAll([]UpdateEntry{{Name: name, Digest: dig, Fixity: fixity}})
+}
+
+// AddAll adds each entry to the new version state, as with
+// [ObjectUpdate.Add]. Either all entries are added, or none of them are and
+// AddAll returns an error. Entries are added in order, so if two entries have
+// the same name, the last one is kept.
+func (u *ObjectUpdate) AddAll(entries []UpdateEntry) error {
+	if u.final != nil {
+		return ErrFinalized
+	}
+	entries = slices.Clone(entries)
+	pathMap := u.state.PathMap()
+	for i := range entries {
+		e := &entries[i]
+		if !validPath(e.Name) {
+			return &MapPathInvalidErr{Path: e.Name}
+		}
+		e.Digest = normalizeDigest(e.Digest)
+		if err := validDigest(u.alg, e.Digest); err != nil {
+			return fmt.Errorf("adding %q: %w", e.Name, err)
+		}
+		if val, ok := e.Fixity[u.alg.ID()]; ok && normalizeDigest(val) != e.Digest {
+			return fmt.Errorf("adding %q: fixity has a different %s digest: %q", e.Name, u.alg.ID(), val)
+		}
+		pathMap[e.Name] = e.Digest
+	}
+	next := pathMap.DigestMap()
+	norm, err := next.Normalize()
+	if err != nil {
+		return err
+	}
+	// check fixity before changing anything
+	fixity := maps.Clone(u.fixity)
+	for _, e := range entries {
+		if u.inBase(e.Digest) || len(e.Fixity) == 0 {
+			continue
+		}
+		set := maps.Clone(fixity[e.Digest])
+		if set == nil {
+			set = digest.Set{}
+		}
+		for alg, val := range e.Fixity {
+			if alg == u.alg.ID() {
+				continue
+			}
+			if err := set.Add(digest.Set{alg: normalizeDigest(val)}); err != nil {
+				return fmt.Errorf("adding %q: conflicting fixity: %w", e.Name, err)
+			}
+		}
+		if len(set) > 0 {
+			fixity[e.Digest] = set
+		}
+	}
+	u.fixity = fixity
+	u.setState(norm)
+	return nil
+}
+
+// NeedsContent returns true if content with the digest dig is in the new
+// version state but not in the object, so that it must be provided by the
+// [ContentSource] used to apply u.
+func (u *ObjectUpdate) NeedsContent(dig string) bool {
+	return u.needsContent(normalizeDigest(dig))
+}
+
+// NewContent returns the sorted digests of all content that is in the new
+// version state but not in the object: the content that must be provided by
+// the [ContentSource] used to apply u.
+func (u *ObjectUpdate) NewContent() []string {
+	var digests []string
+	for dig := range u.state {
+		if u.needsContent(dig) {
+			digests = append(digests, dig)
+		}
+	}
+	slices.Sort(digests)
+	return digests
 }
 
 // Remove removes the file or directory name from the new version state. It
@@ -365,10 +445,10 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) err
 // Apply returns an error wrapping [ErrMissingContent], without writing
 // anything, if src doesn't provide content for every digest that is new in
 // the update. src may be nil if the update doesn't add new content. A
-// [ContentMap] loaded from JSON must be opened with [ContentMap.OpenFS] first.
-// If src is a [ContentFastChecker], such as a ContentMap, Apply returns any error
+// [FileContentMap] loaded from JSON must be opened with [FileContentMap.OpenFS] first.
+// If src is a [ContentFastChecker], such as a FileContentMap, Apply returns any error
 // from its ContentFastCheck method, without writing anything (this is a fast
-// check of file metadata; it does not validate digests): for a ContentMap,
+// check of file metadata; it does not validate digests): for a FileContentMap,
 // an error wrapping [ErrContentChanged] if files that new content is in are
 // missing or their size or content token has changed. Resuming an update
 // copies all new content again, so the check is run then too.
@@ -522,59 +602,6 @@ func (u *ObjectUpdate) UnmarshalJSON(data []byte) error {
 		loaded.newInv = newInv
 	}
 	*u = *loaded
-	return nil
-}
-
-// addAll adds all entries to u's state, or none of them if there is an
-// error.
-func (u *ObjectUpdate) addAll(entries []updateEntry) error {
-	if u.final != nil {
-		return ErrFinalized
-	}
-	pathMap := u.state.PathMap()
-	for i := range entries {
-		e := &entries[i]
-		if !validPath(e.name) {
-			return &MapPathInvalidErr{Path: e.name}
-		}
-		e.digest = normalizeDigest(e.digest)
-		if err := validDigest(u.alg, e.digest); err != nil {
-			return fmt.Errorf("adding %q: %w", e.name, err)
-		}
-		if val, ok := e.fixity[u.alg.ID()]; ok && normalizeDigest(val) != e.digest {
-			return fmt.Errorf("adding %q: fixity has a different %s digest: %q", e.name, u.alg.ID(), val)
-		}
-		pathMap[e.name] = e.digest
-	}
-	next := pathMap.DigestMap()
-	norm, err := next.Normalize()
-	if err != nil {
-		return err
-	}
-	// check fixity before changing anything
-	fixity := maps.Clone(u.fixity)
-	for _, e := range entries {
-		if u.inBase(e.digest) || len(e.fixity) == 0 {
-			continue
-		}
-		set := maps.Clone(fixity[e.digest])
-		if set == nil {
-			set = digest.Set{}
-		}
-		for alg, val := range e.fixity {
-			if alg == u.alg.ID() {
-				continue
-			}
-			if err := set.Add(digest.Set{alg: normalizeDigest(val)}); err != nil {
-				return fmt.Errorf("adding %q: conflicting fixity: %w", e.name, err)
-			}
-		}
-		if len(set) > 0 {
-			fixity[e.digest] = set
-		}
-	}
-	u.fixity = fixity
-	u.setState(norm)
 	return nil
 }
 
@@ -1101,11 +1128,12 @@ func newObjectUpdate(id string, base *StoredInventory, rootSpec Spec, alg digest
 	return u, nil
 }
 
-// updateEntry is a file added to an update's state
-type updateEntry struct {
-	name   string
-	digest string
-	fixity digest.Set
+// UpdateEntry is a file to add to an update's new version state with
+// [ObjectUpdate.AddAll].
+type UpdateEntry struct {
+	Name   string     // path in the new version state
+	Digest string     // digest of the content, using the update's algorithm
+	Fixity digest.Set // optional fixity values for the content
 }
 
 // readUpdateBase reads and validates the root inventory for the object at

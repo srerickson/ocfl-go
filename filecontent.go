@@ -12,75 +12,48 @@ import (
 	"net/url"
 	"reflect"
 	"slices"
-	"strings"
-	"testing/fstest"
 
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 )
 
-// ErrContentChanged is returned when files that content was added from are
-// missing or have changed since they were added. See [ContentChangedError].
-var ErrContentChanged = errors.New("content has changed or is missing")
-
-// ContentSource is used to access content with a given digest when creating and
-// updating objects.
-type ContentSource interface {
-	// GetContent returns an FS and path to a file in FS for a file with the given digest.
-	// If no content is associated with the digest, fsys is nil and path is an empty string.
-	GetContent(digest string) (fsys ocflfs.FS, path string)
-}
-
-// ContentFastChecker is a [ContentSource] that can cheaply check that its
-// content hasn't changed since it was added. The check is "fast" because it
-// does not read or digest the content: it compares metadata recorded when the
-// content was added (such as size and modification time), so it can miss
-// changes that leave the metadata the same. It does not validate content
-// digests. [ObjectUpdate.Apply] calls ContentFastCheck with the digests of the
-// content it will copy, before writing anything, and returns any error without
-// writing anything.
-type ContentFastChecker interface {
-	ContentSource
-	ContentFastCheck(ctx context.Context, digests []string) error
-}
-
-// ContentMap maps digests to the location of content with the digest: a file
-// in an FS or bytes in memory. It implements [ContentSource]. The zero value is
-// an empty ContentMap, ready to use.
+// FileContentMap maps digests to files in FSs that hold content with the
+// digest. It implements [ContentSource], [ContentFastChecker] and
+// [FileAdder]. The zero value is an empty FileContentMap, ready to use. For
+// content in memory, use a [BytesContentMap].
 //
-// A ContentMap can be saved as JSON if all of its content is in files and each
-// file's FS implements [encoding.TextMarshaler], as the storage backends in
-// this module do. Each FS is saved as the text from its MarshalText method,
-// and file paths are saved relative to their FS.
+// A FileContentMap can be saved as JSON if each file's FS implements
+// [encoding.TextMarshaler], as the storage backends in this module do. Each
+// FS is saved as the text from its MarshalText method, and file paths are
+// saved relative to their FS.
 //
-// A ContentMap loaded from JSON keeps each FS as its saved text: decoding
-// does no I/O, so a ContentMap whose content is no longer available can still
-// be loaded, changed and saved. Call [ContentMap.OpenFS] to open the FSs before
-// using the ContentMap as a [ContentSource]: until then, GetContent finds no
-// content in them.
+// A FileContentMap loaded from JSON keeps each FS as its saved text: decoding
+// does no I/O, so a FileContentMap whose content is no longer available can
+// still be loaded, changed and saved. Call [FileContentMap.OpenFS] to open the
+// FSs before using the FileContentMap as a [ContentSource]: until then,
+// GetContent finds no content in them.
 //
 // A file's size and content token (see [ocflfs.ContentToken]) can be recorded
-// when it is added, and are saved with it. [ContentMap.FastCheck] uses them to
-// find files that have changed since they were added, so that a changed file
+// when it is added, and are saved with it. [FileContentMap.FastCheck] uses
+// them to find files that have changed since they were added, so that a changed file
 // isn't copied into an object under the digest of its old content. The check
 // is only as good as the storage backend's content tokens: a file changed
 // without changing its size may go undetected if its FS provides no tokens,
 // or if it changed within the token's time resolution (see the backend's
 // documentation).
-type ContentMap struct {
+type FileContentMap struct {
 	sources []contentMapSource
 	files   map[string]contentMapFile // digest -> file
-	bytes   map[string][]byte         // digest -> content
 }
 
 // AddFile sets the location of content with the digest dig to the file name
 // in fsys. info is the file's information, from which its size and content
-// token are recorded for [ContentMap.FastCheck]. info should be read before the
+// token are recorded for [FileContentMap.FastCheck]. info should be read before the
 // file's content is digested: then a change made while the file is being
 // digested is found by FastCheck. info may be nil, or have a negative size or
 // no content token, if they are unknown: FastCheck doesn't compare what is
 // unknown, and if both are, it only checks that the file exists. fsys must
 // not be nil.
-func (c *ContentMap) AddFile(dig string, fsys ocflfs.FS, name string, info fs.FileInfo) {
+func (c *FileContentMap) AddFile(dig string, fsys ocflfs.FS, name string, info fs.FileInfo) {
 	dig = normalizeDigest(dig)
 	file := contentMapFile{name: name, size: -1}
 	if info != nil {
@@ -95,51 +68,37 @@ func (c *ContentMap) AddFile(dig string, fsys ocflfs.FS, name string, info fs.Fi
 	if c.files == nil {
 		c.files = map[string]contentMapFile{}
 	}
-	delete(c.bytes, dig)
 	file.src = src
 	c.files[dig] = file
 }
 
-// AddBytes sets the content with the digest dig to b. A ContentMap with
-// content in memory can't be saved as JSON.
-func (c *ContentMap) AddBytes(dig string, b []byte) {
-	dig = normalizeDigest(dig)
-	if c.bytes == nil {
-		c.bytes = map[string][]byte{}
-	}
-	delete(c.files, dig)
-	c.bytes[dig] = b
+// Remove removes the content location for the digest dig.
+func (c *FileContentMap) Remove(dig string) {
+	delete(c.files, normalizeDigest(dig))
 }
 
-// Remove removes the content location for the digest dig.
-func (c *ContentMap) Remove(dig string) {
-	dig = normalizeDigest(dig)
-	delete(c.files, dig)
-	delete(c.bytes, dig)
+// DeleteFunc removes the content location for each digest for which del
+// returns true. Use it with [ObjectUpdate.NeedsContent] to remove content
+// that an update no longer needs.
+func (c *FileContentMap) DeleteFunc(del func(dig string) bool) {
+	maps.DeleteFunc(c.files, func(dig string, _ contentMapFile) bool { return del(dig) })
 }
 
 // Digests returns the sorted digests for all content in c.
-func (c *ContentMap) Digests() []string {
-	digests := slices.Collect(maps.Keys(c.files))
-	digests = slices.AppendSeq(digests, maps.Keys(c.bytes))
-	slices.Sort(digests)
-	return digests
+func (c *FileContentMap) Digests() []string {
+	return slices.Sorted(maps.Keys(c.files))
 }
 
-// GetContent implements [ContentSource] for *ContentMap. Content in an FS
-// that was loaded from JSON and hasn't been opened with [ContentMap.OpenFS] is
+// GetContent implements [ContentSource] for *FileContentMap. Content in an FS
+// that was loaded from JSON and hasn't been opened with [FileContentMap.OpenFS] is
 // not found.
-func (c *ContentMap) GetContent(dig string) (ocflfs.FS, string) {
+func (c *FileContentMap) GetContent(dig string) (ocflfs.FS, string) {
 	dig = normalizeDigest(dig)
 	if file, ok := c.files[dig]; ok {
 		if fsys := c.sources[file.src].fs; fsys != nil {
 			return fsys, file.name
 		}
 		return nil, ""
-	}
-	if b, ok := c.bytes[dig]; ok {
-		const name = "content"
-		return ocflfs.NewWrapFS(fstest.MapFS{name: &fstest.MapFile{Data: b}}), name
 	}
 	return nil, ""
 }
@@ -150,7 +109,7 @@ func (c *ContentMap) GetContent(dig string) (ocflfs.FS, string) {
 // open and FSs that no content is in are skipped, so calling OpenFS again is
 // safe. If any FS can't be opened, OpenFS returns all of the errors joined, each
 // naming the FS's saved text, and keeps the FSs that did open.
-func (c *ContentMap) OpenFS(ctx context.Context, reg ocflfs.Registry) error {
+func (c *FileContentMap) OpenFS(ctx context.Context, reg ocflfs.Registry) error {
 	used := map[int]bool{}
 	for _, file := range c.files {
 		used[file.src] = true
@@ -183,19 +142,18 @@ func (c *ContentMap) OpenFS(ctx context.Context, reg ocflfs.Registry) error {
 // its FS reports a negative size (for example, an HTTP server that doesn't
 // send the content length). Likewise, its content token isn't compared if it
 // wasn't recorded or its FS provides none. Content in an FS that isn't open
-// is reported as missing, so c must be opened with [ContentMap.OpenFS] first.
-// Content in memory isn't checked.
+// is reported as missing, so c must be opened with [FileContentMap.OpenFS] first.
 // If a file can't be checked for another reason, the error is returned,
 // joined with any ContentChangedError.
-func (c *ContentMap) FastCheck(ctx context.Context) error {
+func (c *FileContentMap) FastCheck(ctx context.Context) error {
 	return c.ContentFastCheck(ctx, slices.Sorted(maps.Keys(c.files)))
 }
 
-// ContentFastCheck implements [ContentFastChecker] for *ContentMap. It is
-// [ContentMap.FastCheck] for the content with the given digests only: like
+// ContentFastCheck implements [ContentFastChecker] for *FileContentMap. It is
+// [FileContentMap.FastCheck] for the content with the given digests only: like
 // FastCheck, it does not validate the content's digests. Digests that c has no
 // file for are skipped.
-func (c *ContentMap) ContentFastCheck(ctx context.Context, digests []string) error {
+func (c *FileContentMap) ContentFastCheck(ctx context.Context, digests []string) error {
 	var changes []ContentChange
 	var errs []error
 	for _, dig := range digests {
@@ -245,13 +203,10 @@ func (c *ContentMap) ContentFastCheck(ctx context.Context, digests []string) err
 	return errors.Join(errs...)
 }
 
-// MarshalJSON implements [json.Marshaler] for ContentMap. It returns an error
-// if any content is in memory or if any FS can't be marshaled as text. An FS
+// MarshalJSON implements [json.Marshaler] for FileContentMap. It returns an
+// error if any FS can't be marshaled as text. An FS
 // loaded from JSON is saved as the same text, whether or not it was opened.
-func (c ContentMap) MarshalJSON() ([]byte, error) {
-	if len(c.bytes) > 0 {
-		return nil, errors.New("content map has content in memory, which can't be saved: write it to a file first")
-	}
+func (c FileContentMap) MarshalJSON() ([]byte, error) {
 	j := contentMapJSON{
 		Sources: []string{},
 		Content: make(map[string]contentMapFile, len(c.files)),
@@ -280,17 +235,17 @@ func (c ContentMap) MarshalJSON() ([]byte, error) {
 	return json.Marshal(j)
 }
 
-// UnmarshalJSON implements [json.Unmarshaler] for *ContentMap. It replaces c
-// with the ContentMap saved in data. It does no I/O: each FS is kept as its
-// saved text until [ContentMap.OpenFS] is called.
-func (c *ContentMap) UnmarshalJSON(data []byte) error {
+// UnmarshalJSON implements [json.Unmarshaler] for *FileContentMap. It replaces c
+// with the FileContentMap saved in data. It does no I/O: each FS is kept as its
+// saved text until [FileContentMap.OpenFS] is called.
+func (c *FileContentMap) UnmarshalJSON(data []byte) error {
 	var j contentMapJSON
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&j); err != nil {
 		return fmt.Errorf("decoding content map: %w", err)
 	}
-	loaded := ContentMap{
+	loaded := FileContentMap{
 		sources: make([]contentMapSource, len(j.Sources)),
 		files:   make(map[string]contentMapFile, len(j.Content)),
 	}
@@ -313,58 +268,9 @@ func (c *ContentMap) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ContentChangedError is returned by [ContentMap.FastCheck] and
-// [ContentMap.ContentFastCheck] (and so by [ObjectUpdate.Apply]) when files that
-// content was added from are missing or their size or content token has
-// changed. It wraps [ErrContentChanged].
-type ContentChangedError struct {
-	Changes []ContentChange
-}
-
-func (e *ContentChangedError) Error() string {
-	listed := e.Changes
-	var more string
-	if len(listed) > maxMissingContentListed {
-		listed = listed[:maxMissingContentListed]
-		more = fmt.Sprintf(" and %d more", len(e.Changes)-maxMissingContentListed)
-	}
-	descs := make([]string, len(listed))
-	for i, change := range listed {
-		descs[i] = change.String()
-	}
-	return fmt.Sprintf("%s: %d file(s): %s%s", ErrContentChanged, len(e.Changes), strings.Join(descs, ", "), more)
-}
-
-func (e *ContentChangedError) Unwrap() error { return ErrContentChanged }
-
-// ContentChange describes a file that content was added from that is missing
-// or whose size or content token has changed.
-type ContentChange struct {
-	Digest   string    // digest of the content
-	FS       ocflfs.FS // FS the file is in; nil if the FS isn't open
-	Path     string    // path of the file in FS
-	Size     int64     // size when the file was added; -1 if unknown
-	Token    string    // content token when the file was added; "" if unknown
-	Missing  bool      // the file doesn't exist, or the FS isn't open
-	NewSize  int64     // size of the file now, if it isn't missing
-	NewToken string    // content token now; "" if unknown or missing
-}
-
-// String returns the file's path and what has changed.
-func (c ContentChange) String() string {
-	switch {
-	case c.Missing:
-		return fmt.Sprintf("%q is missing", c.Path)
-	case c.Size >= 0 && c.NewSize >= 0 && c.NewSize != c.Size:
-		return fmt.Sprintf("%q has size %d, not %d", c.Path, c.NewSize, c.Size)
-	default:
-		return fmt.Sprintf("%q has changed since it was added (%s is now %s)", c.Path, c.Token, c.NewToken)
-	}
-}
-
-// contentMapSource is an FS in a ContentMap. A source loaded from JSON has the
+// contentMapSource is an FS in a FileContentMap. A source loaded from JSON has the
 // saved text, and fs is nil until it is opened. A source added with
-// [ContentMap.AddFile] has fs and no text.
+// [FileContentMap.AddFile] has fs and no text.
 type contentMapSource struct {
 	text string
 	fs   ocflfs.FS
@@ -386,7 +292,7 @@ func (src contentMapSource) marshal() (string, error) {
 	return string(text), nil
 }
 
-// contentMapFile is the location of a file in a ContentMap
+// contentMapFile is the location of a file in a FileContentMap
 type contentMapFile struct {
 	src   int    // index of the FS in the content map's sources
 	name  string // path relative to the FS
@@ -449,7 +355,7 @@ func (f *contentMapFile) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// contentMapJSON is the saved form of a ContentMap
+// contentMapJSON is the saved form of a FileContentMap
 type contentMapJSON struct {
 	Sources []string                  `json:"sources"`
 	Content map[string]contentMapFile `json:"content"`
