@@ -32,8 +32,12 @@ type BytesStager interface {
 // use [StageWithHidden] or [StageWithFilter] to change which files are added.
 // Files are digested with u's digest algorithm and any fixity algorithms
 // from [StageWithFixity], using the goroutines set by [StageWithGoLimit].
-// Nothing is added to u or content if there is an error.
+// Nothing is added to u or content if there is an error. u and content
+// must not be nil.
 func StageFS(ctx context.Context, u *ObjectUpdate, content FileStager, fsys ocflfs.FS, dir, dst string, opts ...StageOption) error {
+	if u == nil || content == nil {
+		panic("ocfl: StageFS: u and content must not be nil")
+	}
 	if !fs.ValidPath(dst) {
 		return &MapPathInvalidErr{Path: dst}
 	}
@@ -59,8 +63,11 @@ func StageFS(ctx context.Context, u *ObjectUpdate, content FileStager, fsys ocfl
 // content, records the file in content. The file is digested with u's digest
 // algorithm and any fixity algorithms from [StageWithFixity]. The file is
 // added even if it is hidden: [StageWithHidden] and [StageWithFilter] only
-// apply to [StageFS].
+// apply to [StageFS]. u and content must not be nil.
 func StageFile(ctx context.Context, u *ObjectUpdate, content FileStager, fsys ocflfs.FS, name, dst string, opts ...StageOption) error {
+	if u == nil || content == nil {
+		panic("ocfl: StageFile: u and content must not be nil")
+	}
 	files := []*ocflfs.FileRef{{FS: fsys, Path: name}}
 	if err := stageFiles(ctx, u, content, files, newStageOptions(opts...), func(*ocflfs.FileRef) string {
 		return dst
@@ -72,8 +79,11 @@ func StageFile(ctx context.Context, u *ObjectUpdate, content FileStager, fsys oc
 
 // StageBytes adds a file with the content b to u as dst and, if u needs the
 // content, records it in content. b is digested with u's digest algorithm and
-// the fixity algorithms.
+// the fixity algorithms. u and content must not be nil.
 func StageBytes(u *ObjectUpdate, content BytesStager, dst string, b []byte, fixity ...digest.Algorithm) error {
+	if u == nil || content == nil {
+		panic("ocfl: StageBytes: u and content must not be nil")
+	}
 	alg := u.DigestAlgorithm()
 	digester := digest.NewMultiDigester(append([]digest.Algorithm{alg}, fixity...)...)
 	if _, err := digester.Write(b); err != nil {
@@ -87,49 +97,6 @@ func StageBytes(u *ObjectUpdate, content BytesStager, dst string, b []byte, fixi
 	}
 	if u.NeedsContent(dig) {
 		content.StageBytes(dig, b)
-	}
-	return nil
-}
-
-// stageFiles digests files and adds them to u with names from dstName, using
-// the fixity algorithms and goroutines from o, and records the files with
-// content u needs in content. All files are added, or none of them. files is
-// a slice rather than an iterator so that listing errors are found before
-// any goroutines start digesting.
-func stageFiles(ctx context.Context, u *ObjectUpdate, content FileStager, files []*ocflfs.FileRef, o *stageOptions, dstName func(*ocflfs.FileRef) string) error {
-	for _, err := range ocflfs.CheckFileTypes(ctx, slices.Values(files)) {
-		if err != nil {
-			return err
-		}
-	}
-	alg := u.DigestAlgorithm()
-	digested := make([]*digest.FileRef, 0, len(files))
-	for ref, err := range digest.DigestFilesBatch(ctx, slices.Values(files), o.goLimit, alg, o.fixity...) {
-		if err != nil {
-			return err
-		}
-		digested = append(digested, ref)
-	}
-	// digests from concurrent goroutines arrive in any order: sort them so
-	// the content location for duplicate content doesn't depend on timing.
-	slices.SortFunc(digested, func(a, b *digest.FileRef) int {
-		return strings.Compare(a.FullPath(), b.FullPath())
-	})
-	entries := make([]UpdateEntry, len(digested))
-	for i, ref := range digested {
-		entries[i] = UpdateEntry{
-			Name:   dstName(&ref.FileRef),
-			Digest: ref.Digests[alg.ID()],
-			Fixity: ref.Fixity,
-		}
-	}
-	if err := u.AddAll(entries); err != nil {
-		return err
-	}
-	for i, ref := range digested {
-		if dig := entries[i].Digest; u.NeedsContent(dig) {
-			content.StageFile(dig, ref.FS, ref.FullPath())
-		}
 	}
 	return nil
 }
@@ -187,4 +154,47 @@ func StageWithGoLimit(gos int) StageOption {
 	return func(o *stageOptions) {
 		o.goLimit = gos
 	}
+}
+
+// stageFiles digests files and adds them to u with names from dstName, using
+// the fixity algorithms and goroutines from o, and records the files with
+// content u needs in content. All files are added, or none of them. files is
+// a slice rather than an iterator so that listing errors are found before
+// any goroutines start digesting.
+func stageFiles(ctx context.Context, u *ObjectUpdate, content FileStager, files []*ocflfs.FileRef, o *stageOptions, dstName func(*ocflfs.FileRef) string) error {
+	for _, err := range ocflfs.CheckFileTypes(ctx, slices.Values(files)) {
+		if err != nil {
+			return err
+		}
+	}
+	alg := u.DigestAlgorithm()
+	digested := make([]*digest.FileRef, 0, len(files))
+	for ref, err := range digest.DigestFilesBatch(ctx, slices.Values(files), o.goLimit, alg, o.fixity...) {
+		if err != nil {
+			return err
+		}
+		digested = append(digested, ref)
+	}
+	// digests from concurrent goroutines arrive in any order: sort them so
+	// the content location for duplicate content doesn't depend on timing.
+	slices.SortFunc(digested, func(a, b *digest.FileRef) int {
+		return strings.Compare(a.FullPath(), b.FullPath())
+	})
+	entries := make([]UpdateEntry, len(digested))
+	for i, ref := range digested {
+		entries[i] = UpdateEntry{
+			Name:   dstName(&ref.FileRef),
+			Digest: ref.Digests[alg.ID()],
+			Fixity: ref.Fixity,
+		}
+	}
+	if err := u.AddAll(entries); err != nil {
+		return err
+	}
+	for i, ref := range digested {
+		if dig := entries[i].Digest; u.NeedsContent(dig) {
+			content.StageFile(dig, ref.FS, ref.FullPath())
+		}
+	}
+	return nil
 }

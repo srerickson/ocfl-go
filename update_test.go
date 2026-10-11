@@ -222,6 +222,35 @@ func TestObjectUpdate_Edits(t *testing.T) {
 	})
 }
 
+func TestObjectUpdate_NeedsContent(t *testing.T) {
+	ctx := context.Background()
+	fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `spec-ex-full`)
+	obj, err := ocfl.NewObject(ctx, ocflfs.DirFS(fixture), ".")
+	be.NilErr(t, err)
+	u := obj.NewUpdate()
+	inObj := u.NewState().DigestFor("empty2.txt")
+	be.Nonzero(t, inObj)
+	be.False(t, u.NeedsContent(inObj))
+	be.Equal(t, 0, len(u.NewContentDigests()))
+	newDig := strings.Repeat("A", 128)
+	be.NilErr(t, u.AddAll([]ocfl.UpdateEntry{
+		{Name: "new/a.txt", Digest: newDig},
+		{Name: "new/b.txt", Digest: newDig},
+		{Name: "copy.txt", Digest: inObj},
+	}))
+	be.True(t, u.NeedsContent(newDig))
+	be.DeepEqual(t, []string{strings.ToLower(newDig)}, u.NewContentDigests())
+	t.Run("AddAll adds nothing if there is an error", func(t *testing.T) {
+		before := u.NewState()
+		err := u.AddAll([]ocfl.UpdateEntry{
+			{Name: "ok.txt", Digest: newDig},
+			{Name: "new/a.txt/c.txt", Digest: newDig}, // conflicts with a file
+		})
+		be.Nonzero(t, err)
+		be.True(t, before.Eq(u.NewState()))
+	})
+}
+
 func TestObjectUpdate_Finalize(t *testing.T) {
 	ctx := context.Background()
 	user := ocfl.User{Name: "Tester", Address: "mailto:tester@example.org"}
