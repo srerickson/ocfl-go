@@ -3,9 +3,7 @@ package ocfl_test
 import (
 	"context"
 	"encoding/json"
-	"maps"
 	"path/filepath"
-	"slices"
 	"testing"
 
 	"github.com/carlmjohnson/be"
@@ -55,18 +53,6 @@ func (s *testStage) Content() ocfl.ContentSource {
 	return multiSource{&s.files, &s.mem}
 }
 
-// multiSource gets content from the first of its sources that has it.
-type multiSource []ocfl.ContentSource
-
-func (m multiSource) GetContent(dig string) (ocflfs.FS, string) {
-	for _, src := range m {
-		if fsys, name := src.GetContent(dig); fsys != nil {
-			return fsys, name
-		}
-	}
-	return nil, ""
-}
-
 func (s *testStage) AddFS(ctx context.Context, fsys ocflfs.FS, dir, dst string, opts ...ocfl.StageOption) error {
 	return ocfl.StageFS(ctx, s.ObjectUpdate, &s.files, fsys, dir, dst, opts...)
 }
@@ -77,6 +63,18 @@ func (s *testStage) AddFile(ctx context.Context, fsys ocflfs.FS, name, dst strin
 
 func (s *testStage) AddBytes(dst string, b []byte, fixity ...digest.Algorithm) error {
 	return ocfl.StageBytes(s.ObjectUpdate, &s.mem, dst, b, fixity...)
+}
+
+// multiSource gets content from the first of its sources that has it.
+type multiSource []ocfl.ContentSource
+
+func (m multiSource) GetContent(dig string) (ocflfs.FS, string) {
+	for _, src := range m {
+		if fsys, name := src.GetContent(dig); fsys != nil {
+			return fsys, name
+		}
+	}
+	return nil, ""
 }
 
 // stageBytes clears stage and adds the files in content to it.
@@ -98,11 +96,6 @@ func commit(t *testing.T, obj *ocfl.Object, stage *testStage, msg string, opts .
 	newObj, err := stage.Update().Apply(ctx, obj.FS(), obj.Path(), stage.Content())
 	be.NilErr(t, err)
 	return newObj
-}
-
-// sortedKeys returns the sorted keys in m.
-func sortedKeys[V any](m map[string]V) []string {
-	return slices.Sorted(maps.Keys(m))
 }
 
 // mustMarshal returns v encoded as JSON.
