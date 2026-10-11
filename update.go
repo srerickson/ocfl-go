@@ -53,6 +53,11 @@ var (
 	// that are new in the update.
 	ErrMissingContent = errors.New("content source is missing required content")
 
+	// ErrContentChanged is returned by [ObjectUpdate.Apply] when content from
+	// its [ContentSource] doesn't match the content's digest: for example,
+	// because the file it was staged from has changed.
+	ErrContentChanged = errors.New("content doesn't match its digest")
+
 	// ErrUnexpectedHead is returned by [ObjectUpdate.Finalize] when the
 	// version number of the new object version does not match the number
 	// expected by [UpdateWithExpectedHead].
@@ -66,6 +71,14 @@ var (
 
 // maximum number of missing digests listed in an ErrMissingContent error message
 const maxMissingContentListed = 5
+
+// ContentSource is used to access content with a given digest when creating and
+// updating objects.
+type ContentSource interface {
+	// GetContent returns an FS and path to a file in FS for a file with the given digest.
+	// If no content is associated with the digest, fsys is nil and path is an empty string.
+	GetContent(digest string) (fsys ocflfs.FS, path string)
+}
 
 // VersionInfo is the metadata settled by [ObjectUpdate.Finalize] for the new
 // version.
