@@ -21,18 +21,18 @@ import (
 // Stage doesn't keep Content in sync with Update: they're independent fields,
 // and changing one doesn't change the other. That's safe. Content the update
 // no longer needs is ignored, because [ObjectUpdate.Apply] only asks the
-// content source for the digests listed by [ObjectUpdate.NewContent]. If any
-// of those are missing, Apply fails with [ErrMissingContent] without writing
-// anything. Stage is a convenience: the pieces it is built from are meant for
-// building stages of your own.
+// content source for the digests listed by
+// [ObjectUpdate.NewContentDigests]. If any of those are missing, Apply fails
+// with [ErrMissingContent] without writing anything. Stage is a convenience:
+// the pieces it is built from are meant for building stages of your own.
 //
 //   - [StageFS], [StageFile] and [StageBytes] digest content, add it to an
 //     update, and record it with a [FileAdder] or [BytesAdder].
 //   - [FileContentMap] records files in FSs and can be saved as JSON.
 //     [BytesContentMap] holds content in memory.
 //   - [ObjectUpdate.AddAll] adds files whose digests are already known, and
-//     [ObjectUpdate.NeedsContent] and [ObjectUpdate.NewContent] tell which
-//     content must be provided.
+//     [ObjectUpdate.NeedsContent] and [ObjectUpdate.NewContentDigests] tell
+//     which content must be provided.
 type Stage[C ContentSource] struct {
 	Update  *ObjectUpdate `json:"update"`
 	Content C             `json:"content"`

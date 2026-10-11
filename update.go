@@ -91,8 +91,8 @@ type VersionInfo struct {
 // finalized update should be saved before it is applied: if the process is
 // interrupted, the saved update is all that is needed to resume or revert.
 // Content for new digests is not part of the ObjectUpdate: it is provided by
-// the [ContentSource] passed to Apply. [ObjectUpdate.NewContent] lists the
-// digests of the content the update needs. [StageFS], [StageFile] and
+// the [ContentSource] passed to Apply. [ObjectUpdate.NewContentDigests] lists
+// the digests of the content the update needs. [StageFS], [StageFile] and
 // [StageBytes] add files to an update and record their content in a
 // [FileContentMap], a [BytesContentMap] or a content source of your own.
 type ObjectUpdate struct {
@@ -271,10 +271,10 @@ func (u *ObjectUpdate) NeedsContent(dig string) bool {
 	return u.needsContent(normalizeDigest(dig))
 }
 
-// NewContent returns the sorted digests of all content that is in the new
-// version state but not in the object: the content that must be provided by
-// the [ContentSource] used to apply u.
-func (u *ObjectUpdate) NewContent() []string {
+// NewContentDigests returns the sorted digests of all content that is in the
+// new version state but not in the object: the content that must be provided
+// by the [ContentSource] used to apply u.
+func (u *ObjectUpdate) NewContentDigests() []string {
 	var digests []string
 	for dig := range u.state {
 		if u.needsContent(dig) {
