@@ -219,7 +219,7 @@ func TestObjectUpdate_Finalize(t *testing.T) {
 	user := ocfl.User{Name: "Tester", Address: "mailto:tester@example.org"}
 	t.Run("new object", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t)
-		stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj")
+		stage, err := newTestStage(ctx, fsys, "obj", "obj")
 		be.NilErr(t, err)
 		upd := stage.Update()
 		be.NilErr(t, stage.AddBytes("a.txt", []byte("a"), digest.MD5))
@@ -255,7 +255,7 @@ func TestObjectUpdate_Finalize(t *testing.T) {
 	})
 	t.Run("content path func", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t)
-		stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj")
+		stage, err := newTestStage(ctx, fsys, "obj", "obj")
 		be.NilErr(t, err)
 		upd := stage.Update()
 		be.NilErr(t, stage.AddBytes("dir/a.txt", []byte("a")))
@@ -280,7 +280,7 @@ func TestObjectUpdate_Finalize(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture)
 		obj, err := ocfl.NewObject(ctx, fsys, "minimal_content_dir_called_stuff")
 		be.NilErr(t, err)
-		stage := obj.NewStage()
+		stage := stageFor(obj.NewUpdate())
 		be.NilErr(t, stage.AddBytes("new.txt", []byte("new"), digest.MD5))
 		newObj := commit(t, obj, stage, "v2")
 		be.Equal(t, "stuff", newObj.ContentDirectory())
@@ -332,9 +332,9 @@ func TestObjectUpdate_JSON(t *testing.T) {
 	user := ocfl.User{Name: "Tester", Address: "mailto:tester@example.org"}
 	fixture := filepath.Join(objectFixturesPath, `1.0`, `good-objects`, `spec-ex-full`)
 	// newStage returns a stage for an update to the fixture
-	newStage := func(t *testing.T) (*local.FS, *ocfl.Stage) {
+	newStage := func(t *testing.T) (*local.FS, *testStage) {
 		fsys := testutil.TmpLocalFS(t, fixture)
-		stage, err := ocfl.NewStage(ctx, fsys, "spec-ex-full", "")
+		stage, err := newTestStage(ctx, fsys, "spec-ex-full", "")
 		be.NilErr(t, err)
 		be.NilErr(t, stage.AddBytes("new/a.txt", []byte("a"), digest.MD5, digest.SIZE))
 		be.NilErr(t, stage.AddBytes("new/b.txt", []byte("b"), digest.MD5))
@@ -522,7 +522,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture)
 		obj, err := ocfl.NewObject(ctx, fsys, "minimal_one_version_one_file")
 		be.NilErr(t, err)
-		stage := obj.NewStage()
+		stage := stageFor(obj.NewUpdate())
 		be.NilErr(t, stage.AddBytes("new.txt", []byte("new")))
 		newObj := commit(t, obj, stage, "v2")
 		be.Equal(t, ocfl.V(2), newObj.Head())
@@ -530,7 +530,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		// obj is an out-of-date view
 		be.Equal(t, ocfl.V(1), obj.Head())
 		// an update from obj conflicts with storage
-		stage = obj.NewStage()
+		stage = stageFor(obj.NewUpdate())
 		be.NilErr(t, stage.AddBytes("other.txt", []byte("other")))
 		be.NilErr(t, stage.Finalize("v2", user))
 		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
@@ -542,7 +542,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture)
 		obj, err := ocfl.NewObject(ctx, fsys, "minimal_one_version_one_file")
 		be.NilErr(t, err)
-		stage := obj.NewStage()
+		stage := stageFor(obj.NewUpdate())
 		be.NilErr(t, stage.AddBytes("new.txt", []byte("new")))
 		newObj := commit(t, obj, stage, "v2")
 		again, err := stage.Update().Apply(ctx, fsys, obj.Path(), nil)
@@ -555,7 +555,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 			filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `minimal_no_content`))
 		obj, err := ocfl.NewObject(ctx, fsys, "minimal_one_version_one_file")
 		be.NilErr(t, err)
-		stage := obj.NewStage()
+		stage := stageFor(obj.NewUpdate())
 		be.NilErr(t, stage.AddBytes("new.txt", []byte("new")))
 		be.NilErr(t, stage.Finalize("v2", user))
 		_, err = stage.Update().Apply(ctx, fsys, "minimal_no_content", stage.Content())
@@ -594,7 +594,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 	})
 	t.Run("new object over a directory that isn't the update's", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t)
-		stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj")
+		stage, err := newTestStage(ctx, fsys, "obj", "obj")
 		be.NilErr(t, err)
 		upd := stage.Update()
 		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
@@ -624,7 +624,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		// a crash while writing a root file can leave the temporary file that
 		// local.FS writes it to.
 		fsys := testutil.TmpLocalFS(t)
-		stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj")
+		stage, err := newTestStage(ctx, fsys, "obj", "obj")
 		be.NilErr(t, err)
 		upd := stage.Update()
 		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
@@ -645,7 +645,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 	})
 	t.Run("missing content", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t)
-		stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj")
+		stage, err := newTestStage(ctx, fsys, "obj", "obj")
 		be.NilErr(t, err)
 		upd := stage.Update()
 		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
@@ -665,7 +665,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		be.True(t, errors.Is(err, fs.ErrNotExist))
 		// the update can be applied once the content is available
 		for i := range 8 {
-			stage.Content().AddBytes(fmt.Sprintf("%0128d", i), []byte("not checked"))
+			stage.mem.AddBytes(fmt.Sprintf("%0128d", i), []byte("not checked"))
 		}
 		_, err = upd.Apply(ctx, fsys, "obj", stage.Content())
 		be.NilErr(t, err)
@@ -681,7 +681,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		helloData, err := os.ReadFile(hello)
 		be.NilErr(t, err)
 		writeOld(t, hello, string(helloData))
-		stage := obj.NewStage()
+		stage := stageFor(obj.NewUpdate())
 		be.NilErr(t, stage.AddFS(ctx, contentFS, "content-fixture", "new"))
 		be.NilErr(t, stage.Finalize("v2", user))
 		before := snapshot(t, fsys)
@@ -707,7 +707,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		be.NilErr(t, os.WriteFile(hello, helloData, 0o644))
 		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
 		be.True(t, errors.Is(err, ocfl.ErrContentChanged))
-		readdFile(t, stage.Content(), "content-fixture/hello.csv")
+		readdFile(t, &stage.files, "content-fixture/hello.csv")
 		newObj, err := stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
 		be.NilErr(t, err)
 		be.Equal(t, ocfl.V(2), newObj.Head())
@@ -718,7 +718,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		obj, err := ocfl.NewObject(ctx, fsys, "minimal_one_version_one_file")
 		be.NilErr(t, err)
 		contentFS := testutil.TmpLocalFS(t, filepath.Join(`testdata`, `content-fixture`))
-		stage := obj.NewStage()
+		stage := stageFor(obj.NewUpdate())
 		be.NilErr(t, stage.AddFS(ctx, contentFS, "content-fixture", "new"))
 		be.NilErr(t, stage.Finalize("v2", user))
 		_, err = stage.Update().Apply(ctx, &crashFS{FS: fsys, n: 1}, obj.Path(), stage.Content())
@@ -736,7 +736,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		be.DeepEqual(t, before, snapshot(t, fsys))
 		// it is resumed once the content is restored and recorded again
 		be.NilErr(t, os.WriteFile(hello, helloData, 0o644))
-		readdFile(t, stage.Content(), "content-fixture/hello.csv")
+		readdFile(t, &stage.files, "content-fixture/hello.csv")
 		_, err = stage.Update().Apply(ctx, fsys, obj.Path(), stage.Content())
 		be.NilErr(t, err)
 		be.NilErr(t, ocfl.ValidateObject(ctx, fsys, obj.Path()).Err())
@@ -768,7 +768,7 @@ func TestObjectUpdate_Fixtures(t *testing.T) {
 				fsys := testutil.TmpLocalFS(t, fixture)
 				obj, err := ocfl.NewObject(ctx, fsys, dir.Name())
 				be.NilErr(t, err)
-				stage := obj.NewStage()
+				stage := stageFor(obj.NewUpdate())
 				be.NilErr(t, stage.AddBytes("a-new-file", []byte("new stuff")))
 				newObj := commit(t, obj, stage, "update")
 				be.NilErr(t, ocfl.ValidateObject(ctx, fsys, newObj.Path()).Err())
@@ -790,13 +790,13 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 	type scenario struct {
 		// setup creates the object (if any) in fsys, and returns a finalized
 		// stage for the update.
-		setup    func(t *testing.T, fsys *local.FS) *ocfl.Stage
+		setup    func(t *testing.T, fsys *local.FS) *testStage
 		baseHead int
 	}
 	scenarios := map[string]scenario{
 		"new object": {
-			setup: func(t *testing.T, fsys *local.FS) *ocfl.Stage {
-				stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj")
+			setup: func(t *testing.T, fsys *local.FS) *testStage {
+				stage, err := newTestStage(ctx, fsys, "obj", "obj")
 				be.NilErr(t, err)
 				stageBytes(t, stage, map[string][]byte{
 					"a.txt":     []byte("a"),
@@ -808,10 +808,10 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 			},
 		},
 		"existing object with spec upgrade": {
-			setup: func(t *testing.T, fsys *local.FS) *ocfl.Stage {
+			setup: func(t *testing.T, fsys *local.FS) *testStage {
 				fixture := filepath.Join(objectFixturesPath, `1.0`, `good-objects`, `spec-ex-full`)
 				be.NilErr(t, os.CopyFS(filepath.Join(fsys.Root(), "obj"), os.DirFS(fixture)))
-				stage, err := ocfl.NewStage(ctx, fsys, "obj", "")
+				stage, err := newTestStage(ctx, fsys, "obj", "")
 				be.NilErr(t, err)
 				be.NilErr(t, stage.AddBytes("new/a.txt", []byte("a")))
 				be.NilErr(t, stage.AddBytes("new/b.txt", []byte("b")))
@@ -822,8 +822,8 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 			baseHead: 3,
 		},
 		"existing sha256 object": {
-			setup: func(t *testing.T, fsys *local.FS) *ocfl.Stage {
-				stage, err := ocfl.NewStage(ctx, fsys, "obj", "obj", ocfl.StageWithDigestAlgorithm(digest.SHA256))
+			setup: func(t *testing.T, fsys *local.FS) *testStage {
+				stage, err := newTestStage(ctx, fsys, "obj", "obj", ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
 				be.NilErr(t, err)
 				stageBytes(t, stage, map[string][]byte{
 					"a.txt":     []byte("a"),
@@ -833,7 +833,7 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 				_, err = stage.Update().Apply(ctx, fsys, "obj", stage.Content())
 				be.NilErr(t, err)
 				// v2 keeps sha256: the option is ignored for an existing object
-				stage, err = ocfl.NewStage(ctx, fsys, "obj", "", ocfl.StageWithDigestAlgorithm(digest.SHA512))
+				stage, err = newTestStage(ctx, fsys, "obj", "", ocfl.UpdateWithDigestAlgorithm(digest.SHA512))
 				be.NilErr(t, err)
 				be.Equal(t, digest.SHA256.ID(), stage.DigestAlgorithm().ID())
 				be.NilErr(t, stage.AddBytes("c.txt", []byte("c")))
@@ -850,7 +850,7 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 			// writes, a snapshot of the storage before the update, the
 			// update's stage and the saved update. done is true if the update
 			// completed.
-			interrupt := func(t *testing.T, n int) (fsys *local.FS, before map[string]string, stage *ocfl.Stage, saved []byte, done bool) {
+			interrupt := func(t *testing.T, n int) (fsys *local.FS, before map[string]string, stage *testStage, saved []byte, done bool) {
 				t.Helper()
 				fsys = testutil.TmpLocalFS(t)
 				stage = sc.setup(t, fsys)
@@ -932,12 +932,12 @@ func TestObjectUpdate_Canceled(t *testing.T) {
 	objPath := path.Base(fixture)
 	// setup returns storage with an existing object and a finalized update
 	// that adds three files to it.
-	setup := func(t *testing.T) (*local.FS, *ocfl.Stage) {
+	setup := func(t *testing.T) (*local.FS, *testStage) {
 		t.Helper()
 		fsys := testutil.TmpLocalFS(t, fixture)
 		obj, err := ocfl.NewObject(context.Background(), fsys, objPath)
 		be.NilErr(t, err)
-		stage := stageBytes(t, obj.NewStage(), map[string][]byte{
+		stage := stageBytes(t, stageFor(obj.NewUpdate()), map[string][]byte{
 			"b.txt": []byte("b"),
 			"c.txt": []byte("c"),
 			"d.txt": []byte("d"),
@@ -1099,7 +1099,7 @@ func (h *logRecorder) messages(level slog.Level) []string {
 // snapshot returns the paths and contents of all files in fsys.
 // readdFile adds the file name in c again, with its current size and content
 // token.
-func readdFile(t *testing.T, c *ocfl.ContentMap, name string) {
+func readdFile(t *testing.T, c *ocfl.FileContentMap, name string) {
 	t.Helper()
 	for _, dig := range c.Digests() {
 		fsys, srcPath := c.GetContent(dig)

@@ -37,10 +37,11 @@ func TestRun(t *testing.T) {
 	t.Run("resume from stage file", func(t *testing.T) {
 		objDir := t.TempDir()
 		objFS := local.MustNewFS(objDir)
-		stage, err := ocfl.NewStage(ctx, objFS, ".", "ark:/123")
+		update, err := ocfl.NewUpdate(ctx, objFS, ".", "ark:/123")
 		be.NilErr(t, err)
-		be.NilErr(t, stage.AddFS(ctx, local.MustNewFS(contentFixture), ".", "."))
-		be.NilErr(t, stage.Finalize("first", ocfl.User{Name: "Tester"}))
+		stage := &stage{Update: update, Content: &ocfl.FileContentMap{}}
+		be.NilErr(t, ocfl.StageFS(ctx, stage.Update, stage.Content, local.MustNewFS(contentFixture), ".", "."))
+		be.NilErr(t, stage.Update.Finalize("first", ocfl.User{Name: "Tester"}))
 		stageFile := filepath.Join(t.TempDir(), "stage.json")
 		data, err := json.Marshal(stage)
 		be.NilErr(t, err)

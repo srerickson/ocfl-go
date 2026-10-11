@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -20,49 +21,90 @@ import (
 	"github.com/srerickson/ocfl-go/internal/testutil"
 )
 
-func TestNewStage(t *testing.T) {
+// fileStage is a stage whose content is in files, which can be saved as JSON.
+type fileStage = ocfl.Stage[*ocfl.FileContentMap]
+
+func TestUpdate_NeedsContent(t *testing.T) {
 	ctx := context.Background()
-	t.Run("new object", func(t *testing.T) {
-		stage, err := ocfl.NewStage(ctx, testutil.TmpLocalFS(t), "obj", "obj-1",
-			ocfl.StageWithDigestAlgorithm(digest.SHA256))
-		be.NilErr(t, err)
-		be.Equal(t, "obj-1", stage.ID())
-		be.Equal(t, ocfl.V(1), stage.NextHead())
-		be.Equal(t, digest.SHA256.ID(), stage.DigestAlgorithm().ID())
-		be.False(t, stage.Finalized())
-		be.Equal(t, 0, len(stage.Content().Digests()))
-	})
-	t.Run("existing object", func(t *testing.T) {
-		fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `spec-ex-full`)
-		// the object's digest algorithm is used, not the option
-		stage, err := ocfl.NewStage(ctx, ocflfs.DirFS(fixture), ".", "",
-			ocfl.StageWithDigestAlgorithm(digest.SHA256))
-		be.NilErr(t, err)
-		be.Equal(t, "ark:/12345/bcd987", stage.ID())
-		be.Equal(t, ocfl.V(4), stage.NextHead())
-		be.Equal(t, digest.SHA512.ID(), stage.DigestAlgorithm().ID())
-		be.False(t, stage.Finalized())
-	})
-	t.Run("errors from NewUpdate", func(t *testing.T) {
-		_, err := ocfl.NewStage(ctx, testutil.TmpLocalFS(t), "obj", "")
-		be.True(t, errors.Is(err, ocfl.ErrNoObjectID))
-	})
-	t.Run("finalized stage can't be edited", func(t *testing.T) {
-		stage, err := ocfl.NewStage(ctx, testutil.TmpLocalFS(t), "obj", "obj-1")
-		be.NilErr(t, err)
-		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
-		be.NilErr(t, stage.Finalize("v1", ocfl.User{Name: "Tester"}))
-		be.True(t, stage.Finalized())
-		be.True(t, errors.Is(stage.AddBytes("b.txt", []byte("b")), ocfl.ErrFinalized))
-		be.Equal(t, 1, len(stage.Content().Digests()))
+	fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `spec-ex-full`)
+	obj, err := ocfl.NewObject(ctx, ocflfs.DirFS(fixture), ".")
+	be.NilErr(t, err)
+	u := obj.NewUpdate()
+	inObj := u.NewState().DigestFor("empty2.txt")
+	be.Nonzero(t, inObj)
+	be.False(t, u.NeedsContent(inObj))
+	be.Equal(t, 0, len(u.NewContent()))
+	newDig := strings.Repeat("A", 128)
+	be.NilErr(t, u.AddAll([]ocfl.UpdateEntry{
+		{Name: "new/a.txt", Digest: newDig},
+		{Name: "new/b.txt", Digest: newDig},
+		{Name: "copy.txt", Digest: inObj},
+	}))
+	be.True(t, u.NeedsContent(newDig))
+	be.DeepEqual(t, []string{strings.ToLower(newDig)}, u.NewContent())
+	t.Run("AddAll adds nothing if there is an error", func(t *testing.T) {
+		before := u.NewState()
+		err := u.AddAll([]ocfl.UpdateEntry{
+			{Name: "ok.txt", Digest: newDig},
+			{Name: "new/a.txt/c.txt", Digest: newDig}, // conflicts with a file
+		})
+		be.Nonzero(t, err)
+		be.True(t, before.Eq(u.NewState()))
 	})
 }
 
-func TestStage_AddFS(t *testing.T) {
+func TestStageBytes(t *testing.T) {
+	ctx := context.Background()
+	u, err := ocfl.NewUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj-1")
+	be.NilErr(t, err)
+	var mem ocfl.BytesContentMap
+	be.NilErr(t, ocfl.StageBytes(u, &mem, "a.txt", []byte("a"), digest.MD5))
+	dig := u.NewState().DigestFor("a.txt")
+	be.DeepEqual(t, []string{dig}, mem.Digests())
+	be.Nonzero(t, u.Fixity(dig)["md5"])
+	srcFS, srcPath := mem.GetContent(strings.ToUpper(dig))
+	got, err := ocflfs.ReadAll(ctx, srcFS, srcPath)
+	be.NilErr(t, err)
+	be.Equal(t, "a", string(got))
+	be.NilErr(t, u.Finalize("v1", ocfl.User{Name: "Tester"}))
+	be.True(t, errors.Is(ocfl.StageBytes(u, &mem, "b.txt", []byte("b")), ocfl.ErrFinalized))
+	be.Equal(t, 1, len(mem.Digests()))
+}
+
+func TestMultiContentSource(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	writeOld(t, filepath.Join(dir, "a.txt"), "a")
+	fsys, err := local.NewFS(dir)
+	be.NilErr(t, err)
+	digA := strings.Repeat("a", 128)
+	digB := strings.Repeat("b", 128)
+	var files ocfl.FileContentMap
+	var mem ocfl.BytesContentMap
+	info, err := ocflfs.StatFile(ctx, fsys, "a.txt")
+	be.NilErr(t, err)
+	files.AddFile(digA, fsys, "a.txt", info)
+	mem.AddBytes(digB, []byte("b"))
+	src := ocfl.MultiContentSource{&files, &mem}
+	srcFS, srcPath := src.GetContent(digA)
+	be.Equal[ocflfs.FS](t, fsys, srcFS)
+	be.Equal(t, "a.txt", srcPath)
+	srcFS, _ = src.GetContent(digB)
+	be.Nonzero(t, srcFS)
+	srcFS, _ = src.GetContent(strings.Repeat("c", 128))
+	be.Zero(t, srcFS)
+	be.NilErr(t, src.ContentFastCheck(ctx, []string{digA, digB}))
+	// the changed file is found by the FileContentMap's check
+	be.NilErr(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("changed"), 0o644))
+	err = src.ContentFastCheck(ctx, []string{digA, digB})
+	be.True(t, errors.Is(err, ocfl.ErrContentChanged))
+}
+
+func TestStageFS(t *testing.T) {
 	ctx := context.Background()
 	testdataFS := ocflfs.DirFS(`testdata`)
-	newStage := func(t *testing.T) *ocfl.Stage {
-		stage, err := ocfl.NewStage(ctx, ocflfs.DirFS(t.TempDir()), "obj", "obj", ocfl.StageWithDigestAlgorithm(digest.SHA256))
+	newStage := func(t *testing.T) *testStage {
+		stage, err := newTestStage(ctx, ocflfs.DirFS(t.TempDir()), "obj", "obj", ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
 		be.NilErr(t, err)
 		return stage
 	}
@@ -79,7 +121,7 @@ func TestStage_AddFS(t *testing.T) {
 		// every new digest has content and fixity
 		state := stage.Update().NewState()
 		be.Equal(t, 3, len(state))
-		be.DeepEqual(t, sortedKeys(state), stage.Content().Digests())
+		be.DeepEqual(t, sortedKeys(state), stage.files.Digests())
 		for dig := range state {
 			be.Nonzero(t, stage.Update().Fixity(dig)["md5"])
 			srcFS, srcPath := stage.Content().GetContent(dig)
@@ -103,7 +145,7 @@ func TestStage_AddFS(t *testing.T) {
 		err := stage.AddFS(ctx, testdataFS, "content-fixture", ".")
 		be.Nonzero(t, err)
 		be.DeepEqual(t, []string{"folder1"}, stage.Update().NewState().AllPaths())
-		be.Equal(t, 1, len(stage.Content().Digests()))
+		be.Equal(t, 0, len(stage.files.Digests()))
 	})
 	t.Run("missing directory", func(t *testing.T) {
 		stage := newStage(t)
@@ -130,7 +172,7 @@ func TestStage_AddFS(t *testing.T) {
 			"dir/.d.txt",
 			"dir/e/f.txt",
 		}, stage.Update().NewState().AllPaths())
-		be.Equal(t, 5, len(stage.Content().Digests()))
+		be.Equal(t, 5, len(stage.files.Digests()))
 	})
 	t.Run("hidden symlink adds nothing", func(t *testing.T) {
 		// content-fixture's hidden directory has a symlink, which can't be
@@ -139,7 +181,7 @@ func TestStage_AddFS(t *testing.T) {
 		err := stage.AddFS(ctx, testdataFS, "content-fixture", ".", ocfl.StageWithHidden())
 		be.True(t, errors.Is(err, ocflfs.ErrFileType))
 		be.Equal(t, 0, len(stage.Update().NewState().AllPaths()))
-		be.Equal(t, 0, len(stage.Content().Digests()))
+		be.Equal(t, 0, len(stage.files.Digests()))
 	})
 	t.Run("filter", func(t *testing.T) {
 		stage := newStage(t)
@@ -161,7 +203,7 @@ func TestStage_AddFS(t *testing.T) {
 		be.NilErr(t, concurrent.AddFS(ctx, testdataFS, "content-fixture", ".",
 			ocfl.StageWithFixity(digest.MD5), ocfl.StageWithGoLimit(4)))
 		be.True(t, serial.Update().NewState().Eq(concurrent.Update().NewState()))
-		be.DeepEqual(t, serial.Content().Digests(), concurrent.Content().Digests())
+		be.DeepEqual(t, serial.files.Digests(), concurrent.files.Digests())
 		for dig := range serial.Update().NewState() {
 			be.DeepEqual(t, serial.Update().Fixity(dig), concurrent.Update().Fixity(dig))
 		}
@@ -172,7 +214,7 @@ func TestStage_AddFS(t *testing.T) {
 		err := stage.AddFS(ctx, badFS, "content-fixture", ".", ocfl.StageWithGoLimit(4))
 		be.True(t, errors.Is(err, errOpen))
 		be.Equal(t, 0, len(stage.Update().NewState().AllPaths()))
-		be.Equal(t, 0, len(stage.Content().Digests()))
+		be.Equal(t, 0, len(stage.files.Digests()))
 	})
 }
 
@@ -191,10 +233,10 @@ func (fsys *openErrFS) OpenFile(ctx context.Context, name string) (fs.File, erro
 	return fsys.WrapFS.OpenFile(ctx, name)
 }
 
-func TestStage_AddFile(t *testing.T) {
+func TestStageFile(t *testing.T) {
 	ctx := context.Background()
 	testdataFS := ocflfs.DirFS(`testdata`)
-	stage, err := ocfl.NewStage(ctx, ocflfs.DirFS(t.TempDir()), "obj", "obj")
+	stage, err := newTestStage(ctx, ocflfs.DirFS(t.TempDir()), "obj", "obj")
 	be.NilErr(t, err)
 	upd := stage.Update()
 	be.NilErr(t, stage.AddFile(ctx, testdataFS, "content-fixture/hello.csv", "data/hello.csv", ocfl.StageWithFixity(digest.SIZE)))
@@ -216,57 +258,64 @@ func TestStage_AddFile(t *testing.T) {
 }
 
 func TestStage_Edits(t *testing.T) {
+	// content isn't removed when the update stops needing it: it does no
+	// harm, and DeleteFunc with NeedsContent removes it.
 	ctx := context.Background()
 	fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `spec-ex-full`)
 	obj, err := ocfl.NewObject(ctx, ocflfs.DirFS(fixture), ".")
 	be.NilErr(t, err)
+	prune := func(stage *testStage) {
+		unneeded := func(dig string) bool { return !stage.NeedsContent(dig) }
+		stage.files.DeleteFunc(unneeded)
+		stage.mem.DeleteFunc(unneeded)
+	}
 	t.Run("content already in the object", func(t *testing.T) {
-		stage := obj.NewStage()
+		stage := stageFor(obj.NewUpdate())
 		// empty2.txt's content is in the object: only the state changes
 		be.NilErr(t, stage.AddBytes("empty3.txt", []byte{}, digest.MD5))
 		be.Equal(t, stage.Update().NewState().DigestFor("empty2.txt"), stage.Update().NewState().DigestFor("empty3.txt"))
-		be.Equal(t, 0, len(stage.Content().Digests()))
+		be.Equal(t, 0, len(stage.mem.Digests()))
 		be.Zero(t, stage.Update().Fixity(stage.Update().NewState().DigestFor("empty3.txt")))
 	})
-	t.Run("remove drops content and fixity", func(t *testing.T) {
-		stage := obj.NewStage()
+	t.Run("remove drops fixity", func(t *testing.T) {
+		stage := stageFor(obj.NewUpdate())
 		be.NilErr(t, stage.AddBytes("new/a.txt", []byte("a"), digest.MD5))
 		be.NilErr(t, stage.AddBytes("new/b.txt", []byte("a")))
 		dig := stage.Update().NewState().DigestFor("new/a.txt")
 		be.NilErr(t, stage.Remove("new/a.txt"))
 		// content is still used by new/b.txt
-		be.DeepEqual(t, []string{dig}, stage.Content().Digests())
+		prune(stage)
+		be.DeepEqual(t, []string{dig}, stage.mem.Digests())
 		be.Nonzero(t, stage.Update().Fixity(dig))
 		be.NilErr(t, stage.Remove("new"))
-		be.Equal(t, 0, len(stage.Content().Digests()))
 		be.Zero(t, stage.Update().Fixity(dig))
+		be.Equal(t, 0, len(stage.NewContent()))
+		be.Equal(t, 1, len(stage.mem.Digests()))
+		prune(stage)
+		be.Equal(t, 0, len(stage.mem.Digests()))
 		err := stage.Remove("new")
 		be.True(t, errors.Is(err, fs.ErrNotExist))
 	})
-	t.Run("replacing a file drops its content", func(t *testing.T) {
-		stage := obj.NewStage()
-		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
-		be.NilErr(t, stage.AddBytes("a.txt", []byte("b")))
-		be.DeepEqual(t, []string{stage.Update().NewState().DigestFor("a.txt")}, stage.Content().Digests())
-	})
 	t.Run("clear", func(t *testing.T) {
-		stage := obj.NewStage()
+		stage := stageFor(obj.NewUpdate())
 		be.NilErr(t, stage.AddBytes("new/a.txt", []byte("a"), digest.MD5))
 		be.NilErr(t, stage.AddFS(ctx, ocflfs.DirFS(`testdata`), "content-fixture", "fixture"))
 		be.NilErr(t, stage.Clear())
 		be.Equal(t, 0, len(stage.Update().NewState()))
-		be.Equal(t, 0, len(stage.Content().Digests()))
+		prune(stage)
+		be.Equal(t, 0, len(stage.files.Digests()))
+		be.Equal(t, 0, len(stage.mem.Digests()))
 		// the content can be added again
 		be.NilErr(t, stage.AddBytes("new/a.txt", []byte("a")))
-		be.Equal(t, 1, len(stage.Content().Digests()))
+		be.Equal(t, 1, len(stage.mem.Digests()))
 	})
 	t.Run("rename keeps content", func(t *testing.T) {
-		stage := obj.NewStage()
+		stage := stageFor(obj.NewUpdate())
 		be.NilErr(t, stage.AddBytes("new/a.txt", []byte("a")))
 		be.NilErr(t, stage.Rename("new", "newer"))
 		dig := stage.Update().NewState().DigestFor("newer/a.txt")
 		be.Nonzero(t, dig)
-		be.DeepEqual(t, []string{dig}, stage.Content().Digests())
+		be.DeepEqual(t, []string{dig}, stage.mem.Digests())
 	})
 }
 
@@ -276,26 +325,27 @@ func TestStage_JSON(t *testing.T) {
 	contentFS, err := local.NewFS(filepath.Join(`testdata`, `content-fixture`))
 	be.NilErr(t, err)
 	objFS := testutil.TmpLocalFS(t)
-	stage, err := ocfl.NewStage(ctx, objFS, "obj", "obj")
+	update, err := ocfl.NewUpdate(ctx, objFS, "obj", "obj")
 	be.NilErr(t, err)
-	be.NilErr(t, stage.AddFS(ctx, contentFS, "folder1", "files", ocfl.StageWithFixity(digest.MD5)))
-	be.NilErr(t, stage.AddFile(ctx, contentFS, "hello.csv", "hello.csv"))
+	stage := &fileStage{Update: update, Content: &ocfl.FileContentMap{}}
+	be.NilErr(t, ocfl.StageFS(ctx, stage.Update, stage.Content, contentFS, "folder1", "files", ocfl.StageWithFixity(digest.MD5)))
+	be.NilErr(t, ocfl.StageFile(ctx, stage.Update, stage.Content, contentFS, "hello.csv", "hello.csv"))
 
 	saved, err := json.Marshal(stage)
 	be.NilErr(t, err)
-	var loaded ocfl.Stage
+	var loaded fileStage
 	be.NilErr(t, json.Unmarshal(saved, &loaded))
-	be.True(t, stage.Update().NewState().Eq(loaded.Update().NewState()))
-	be.DeepEqual(t, stage.Content().Digests(), loaded.Content().Digests())
+	be.True(t, stage.Update.NewState().Eq(loaded.Update.NewState()))
+	be.DeepEqual(t, stage.Content.Digests(), loaded.Content.Digests())
 	resaved, err := json.Marshal(loaded)
 	be.NilErr(t, err)
 	be.Equal(t, string(saved), string(resaved))
 
 	// the loaded stage can be used to create the object once its content is
 	// opened
-	be.NilErr(t, loaded.Finalize("v1", ocfl.User{Name: "Tester"}))
-	be.NilErr(t, loaded.Content().OpenFS(ctx, reg))
-	obj, err := loaded.Update().Apply(ctx, objFS, "obj", loaded.Content())
+	be.NilErr(t, loaded.Update.Finalize("v1", ocfl.User{Name: "Tester"}))
+	be.NilErr(t, loaded.Content.OpenFS(ctx, reg))
+	obj, err := loaded.Apply(ctx, objFS, "obj")
 	be.NilErr(t, err)
 	be.NilErr(t, ocfl.ValidateObject(ctx, objFS, obj.Path()).Err())
 	be.DeepEqual(t, []string{"md5"}, obj.FixityAlgorithms())
@@ -323,32 +373,24 @@ func TestStage_JSON(t *testing.T) {
 		for dig, entry := range content {
 			content[dig] = append(entry.([]any)[:2], nil, nil)
 		}
-		var loaded ocfl.Stage
+		var loaded fileStage
 		be.NilErr(t, json.Unmarshal(mustMarshal(t, old), &loaded))
-		be.DeepEqual(t, stage.Content().Digests(), loaded.Content().Digests())
-		be.NilErr(t, loaded.Content().OpenFS(ctx, reg))
-		be.NilErr(t, loaded.Content().FastCheck(ctx))
+		be.DeepEqual(t, stage.Content.Digests(), loaded.Content.Digests())
+		be.NilErr(t, loaded.Content.OpenFS(ctx, reg))
+		be.NilErr(t, loaded.Content.FastCheck(ctx))
 		objFS := testutil.TmpLocalFS(t)
-		be.NilErr(t, loaded.Finalize("v1", ocfl.User{Name: "Tester"}))
-		obj, err := loaded.Update().Apply(ctx, objFS, "obj", loaded.Content())
+		be.NilErr(t, loaded.Update.Finalize("v1", ocfl.User{Name: "Tester"}))
+		obj, err := loaded.Apply(ctx, objFS, "obj")
 		be.NilErr(t, err)
 		be.NilErr(t, ocfl.ValidateObject(ctx, objFS, obj.Path()).Err())
 	})
-	t.Run("content in memory can't be saved", func(t *testing.T) {
-		stage, err := ocfl.NewStage(ctx, objFS, "obj2", "obj2")
-		be.NilErr(t, err)
-		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
-		_, err = json.Marshal(stage)
-		be.Nonzero(t, err)
-	})
 	t.Run("invalid saved values", func(t *testing.T) {
 		for name, data := range map[string]string{
-			"missing content": `{"update":` + string(mustMarshal(t, stage.Update())) + `}`,
-			"missing update":  `{"content":{"sources":[],"content":{}}}`,
-			"unknown field":   string(saved[:len(saved)-1]) + `,"extra":1}`,
+			"invalid content": `{"update":` + string(mustMarshal(t, stage.Update)) + `,"content":{"extra":1}}`,
+			"invalid update":  `{"update":{},"content":{"sources":[],"content":{}}}`,
 		} {
 			t.Run(name, func(t *testing.T) {
-				var stage ocfl.Stage
+				var stage fileStage
 				be.Nonzero(t, json.Unmarshal([]byte(data), &stage))
 			})
 		}
@@ -361,11 +403,11 @@ func TestStage_JSON_missingContent(t *testing.T) {
 	ctx := context.Background()
 	contentFS := testutil.TmpLocalFS(t, filepath.Join(`testdata`, `content-fixture`))
 	objFS := testutil.TmpLocalFS(t)
-	stage, err := ocfl.NewStage(ctx, objFS, "obj", "obj")
+	upd, err := ocfl.NewUpdate(ctx, objFS, "obj", "obj")
 	be.NilErr(t, err)
-	upd := stage.Update()
-	be.NilErr(t, stage.AddFS(ctx, contentFS, "content-fixture", "."))
-	be.NilErr(t, stage.Finalize("v1", ocfl.User{Name: "Tester"}))
+	stage := &fileStage{Update: upd, Content: &ocfl.FileContentMap{}}
+	be.NilErr(t, ocfl.StageFS(ctx, upd, stage.Content, contentFS, "content-fixture", "."))
+	be.NilErr(t, upd.Finalize("v1", ocfl.User{Name: "Tester"}))
 	saved, err := json.Marshal(stage)
 	be.NilErr(t, err)
 	contentText, err := contentFS.MarshalText()
@@ -373,27 +415,27 @@ func TestStage_JSON_missingContent(t *testing.T) {
 	be.NilErr(t, contentFS.Close())
 	be.NilErr(t, os.RemoveAll(contentFS.Root()))
 
-	var loaded ocfl.Stage
+	var loaded fileStage
 	be.NilErr(t, json.Unmarshal(saved, &loaded))
-	be.True(t, upd.NewState().Eq(loaded.Update().NewState()))
-	be.True(t, loaded.Finalized())
+	be.True(t, upd.NewState().Eq(loaded.Update.NewState()))
+	be.True(t, loaded.Update.Finalized())
 	resaved, err := json.Marshal(loaded)
 	be.NilErr(t, err)
 	be.Equal(t, string(saved), string(resaved))
 
 	// content that was never opened is missing, so nothing is written
-	_, err = loaded.Update().Apply(ctx, objFS, "obj", loaded.Content())
+	_, err = loaded.Update.Apply(ctx, objFS, "obj", loaded.Content)
 	be.True(t, errors.Is(err, ocfl.ErrMissingContent))
 	_, err = ocflfs.ReadDir(ctx, objFS, "obj")
 	be.True(t, errors.Is(err, fs.ErrNotExist))
 
-	err = loaded.Content().OpenFS(ctx, config.Registry())
+	err = loaded.Content.OpenFS(ctx, config.Registry())
 	be.True(t, errors.Is(err, fs.ErrNotExist))
 	be.In(t, string(contentText), err.Error())
 
-	be.NilErr(t, loaded.Update().Revert(ctx, objFS, "obj"))
-	be.False(t, loaded.Finalized())
-	be.NilErr(t, loaded.Remove("hello.csv"))
+	be.NilErr(t, loaded.Update.Revert(ctx, objFS, "obj"))
+	be.False(t, loaded.Update.Finalized())
+	be.NilErr(t, loaded.Update.Remove("hello.csv"))
 	_, err = json.Marshal(loaded)
 	be.NilErr(t, err)
 }

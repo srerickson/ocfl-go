@@ -19,45 +19,41 @@ import (
 	"github.com/srerickson/ocfl-go/fs/local"
 )
 
-func TestContentMap(t *testing.T) {
+func TestFileContentMap(t *testing.T) {
 	ctx := context.Background()
 	digA := strings.Repeat("a", 128)
 	digB := strings.Repeat("b", 128)
 	t.Run("zero value", func(t *testing.T) {
-		var c ocfl.ContentMap
+		var c ocfl.FileContentMap
 		srcFS, srcPath := c.GetContent(digA)
 		be.Zero(t, srcFS)
 		be.Zero(t, srcPath)
 		be.Equal(t, 0, len(c.Digests()))
 	})
-	t.Run("files and bytes", func(t *testing.T) {
+	t.Run("files", func(t *testing.T) {
 		fsys := ocflfs.DirFS(`testdata`)
-		var c ocfl.ContentMap
+		var c ocfl.FileContentMap
 		c.AddFile(strings.ToUpper(digA), fsys, "content-fixture/hello.csv", nil)
-		c.AddBytes(digB, []byte("content"))
+		c.AddFile(digB, fsys, "content-fixture/folder1/file.txt", nil)
 		be.DeepEqual(t, []string{digA, digB}, c.Digests())
 		srcFS, srcPath := c.GetContent(digA)
 		be.Equal[ocflfs.FS](t, fsys, srcFS)
 		be.Equal(t, "content-fixture/hello.csv", srcPath)
-		srcFS, srcPath = c.GetContent(digB)
-		be.Nonzero(t, srcFS)
-		got, err := ocflfs.ReadAll(ctx, srcFS, srcPath)
-		be.NilErr(t, err)
-		be.Equal(t, "content", string(got))
-		// replace bytes with a file
-		c.AddFile(digB, fsys, "content-fixture/folder1/file.txt", nil)
-		srcFS, srcPath = c.GetContent(digB)
-		be.Equal[ocflfs.FS](t, fsys, srcFS)
-		be.Equal(t, "content-fixture/folder1/file.txt", srcPath)
+		// replace a file
+		c.AddFile(digB, fsys, "content-fixture/folder1/folder2/file2.txt", nil)
+		_, srcPath = c.GetContent(digB)
+		be.Equal(t, "content-fixture/folder1/folder2/file2.txt", srcPath)
 		c.Remove(digA)
 		be.DeepEqual(t, []string{digB}, c.Digests())
 		srcFS, _ = c.GetContent(digA)
 		be.Zero(t, srcFS)
+		c.DeleteFunc(func(dig string) bool { return dig == digB })
+		be.Equal(t, 0, len(c.Digests()))
 	})
 	t.Run("FS values that can't be compared", func(t *testing.T) {
 		// the struct type is comparable, but its value isn't
 		fsys := mapFS{files: fstest.MapFS{"a.txt": &fstest.MapFile{Data: []byte("a")}}}
-		var c ocfl.ContentMap
+		var c ocfl.FileContentMap
 		c.AddFile(digA, fsys, "a.txt", nil)
 		c.AddFile(digB, fsys, "a.txt", nil)
 		srcFS, srcPath := c.GetContent(digB)
@@ -74,7 +70,7 @@ func (m mapFS) OpenFile(_ context.Context, name string) (fs.File, error) {
 	return m.files.Open(name)
 }
 
-func TestContentMap_JSON(t *testing.T) {
+func TestFileContentMap_JSON(t *testing.T) {
 	digA := strings.Repeat("a", 128)
 	digB := strings.Repeat("b", 128)
 	digC := strings.Repeat("c", 128)
@@ -88,7 +84,7 @@ func TestContentMap_JSON(t *testing.T) {
 	unused, err := local.NewFS(t.TempDir())
 	be.NilErr(t, err)
 
-	var c ocfl.ContentMap
+	var c ocfl.FileContentMap
 	c.AddFile(digC, unused, "c.txt", fileInfo{size: 3, token: "stat:1:1"})
 	c.AddFile(digA, fsA, "dir/a.txt", fileInfo{size: 10, token: "stat:1:2"})
 	c.AddFile(digB, fsB, "b.txt", fileInfo{size: 0}) // token unknown
@@ -109,7 +105,7 @@ func TestContentMap_JSON(t *testing.T) {
 	be.DeepEqual(t, []any{float64(0), "c.txt", nil, nil}, savedJSON.Content[digC])
 
 	t.Run("load and save without opening", func(t *testing.T) {
-		var loaded ocfl.ContentMap
+		var loaded ocfl.FileContentMap
 		be.NilErr(t, json.Unmarshal(saved, &loaded))
 		be.DeepEqual(t, c.Digests(), loaded.Digests())
 		// content isn't available until the sources are opened
@@ -124,8 +120,8 @@ func TestContentMap_JSON(t *testing.T) {
 	})
 	t.Run("in a struct", func(t *testing.T) {
 		type file struct {
-			Name    string           `json:"name"`
-			Content *ocfl.ContentMap `json:"content"`
+			Name    string               `json:"name"`
+			Content *ocfl.FileContentMap `json:"content"`
 		}
 		data, err := json.Marshal(file{Name: "test", Content: &c})
 		be.NilErr(t, err)
@@ -135,7 +131,7 @@ func TestContentMap_JSON(t *testing.T) {
 		be.DeepEqual(t, c.Digests(), loaded.Content.Digests())
 	})
 	t.Run("add after loading", func(t *testing.T) {
-		var loaded ocfl.ContentMap
+		var loaded ocfl.FileContentMap
 		be.NilErr(t, json.Unmarshal(saved, &loaded))
 		digD := strings.Repeat("d", 128)
 		digE := strings.Repeat("e", 128)
@@ -156,14 +152,8 @@ func TestContentMap_JSON(t *testing.T) {
 		be.DeepEqual(t, []any{float64(2), "d.txt", float64(4), "etag:d"}, resavedJSON.Content[digD])
 		be.DeepEqual(t, []any{float64(0), "e.txt", nil, nil}, resavedJSON.Content[digE])
 	})
-	t.Run("bytes can't be saved", func(t *testing.T) {
-		var c ocfl.ContentMap
-		c.AddBytes(digA, []byte("a"))
-		_, err := json.Marshal(c)
-		be.Nonzero(t, err)
-	})
 	t.Run("FS without MarshalText can't be saved", func(t *testing.T) {
-		var c ocfl.ContentMap
+		var c ocfl.FileContentMap
 		c.AddFile(digA, ocflfs.DirFS(dirA), "a.txt", nil)
 		_, err := json.Marshal(c)
 		be.Nonzero(t, err)
@@ -186,26 +176,26 @@ func TestContentMap_JSON(t *testing.T) {
 			"unknown field":  `{"sources": [], "content": {}, "extra": 1}`,
 		} {
 			t.Run(name, func(t *testing.T) {
-				var c ocfl.ContentMap
+				var c ocfl.FileContentMap
 				be.Nonzero(t, json.Unmarshal([]byte(data), &c))
 			})
 		}
 	})
 }
 
-func TestContentMap_Open(t *testing.T) {
+func TestFileContentMap_Open(t *testing.T) {
 	ctx := context.Background()
 	reg := config.Registry()
 	digA := strings.Repeat("a", 128)
 	digB := strings.Repeat("b", 128)
 	// load returns a ContentMap loaded from JSON with content in two local
 	// directories, and the directories.
-	load := func(t *testing.T) (*ocfl.ContentMap, string, string) {
+	load := func(t *testing.T) (*ocfl.FileContentMap, string, string) {
 		t.Helper()
 		dirA, dirB := t.TempDir(), t.TempDir()
 		data := `{"sources": [` + string(mustMarshal(t, localText(t, dirA))) + `, ` + string(mustMarshal(t, localText(t, dirB))) + `],
 			"content": {"` + digA + `": [0, "a.txt", null, null], "` + digB + `": [1, "b.txt", null, null]}}`
-		var c ocfl.ContentMap
+		var c ocfl.FileContentMap
 		be.NilErr(t, json.Unmarshal([]byte(data), &c))
 		return &c, dirA, dirB
 	}
@@ -249,7 +239,7 @@ func TestContentMap_Open(t *testing.T) {
 	})
 	t.Run("passwords aren't in errors", func(t *testing.T) {
 		data := `{"sources": ["https://user:secret@example.org/ocfl"], "content": {"` + digA + `": [0, "a.txt", null, null]}}`
-		var c ocfl.ContentMap
+		var c ocfl.FileContentMap
 		be.NilErr(t, json.Unmarshal([]byte(data), &c))
 		err := c.OpenFS(ctx, ocflfs.Registry{})
 		be.Nonzero(t, err)
@@ -257,7 +247,7 @@ func TestContentMap_Open(t *testing.T) {
 	})
 }
 
-func TestContentMap_Check(t *testing.T) {
+func TestFileContentMap_Check(t *testing.T) {
 	ctx := context.Background()
 	digA := strings.Repeat("a", 128)
 	digB := strings.Repeat("b", 128)
@@ -268,7 +258,7 @@ func TestContentMap_Check(t *testing.T) {
 	// the directory, and the files' content tokens when they were added. d.txt
 	// is added without a size or token. The files have old modification
 	// times, so that rewriting them changes their tokens.
-	setup := func(t *testing.T) (*ocfl.ContentMap, string, map[string]string) {
+	setup := func(t *testing.T) (*ocfl.FileContentMap, string, map[string]string) {
 		t.Helper()
 		dir := t.TempDir()
 		for name, data := range map[string]string{
@@ -278,7 +268,7 @@ func TestContentMap_Check(t *testing.T) {
 		}
 		fsys, err := local.NewFS(dir)
 		be.NilErr(t, err)
-		c := &ocfl.ContentMap{}
+		c := &ocfl.FileContentMap{}
 		tokens := map[string]string{}
 		for dig, name := range map[string]string{digA: "a.txt", digB: "b.txt", digC: "c.txt"} {
 			info, err := ocflfs.StatFile(ctx, fsys, name)
@@ -288,7 +278,6 @@ func TestContentMap_Check(t *testing.T) {
 			c.AddFile(dig, fsys, name, info)
 		}
 		c.AddFile(digD, fsys, "d.txt", nil)
-		c.AddBytes(digE, []byte("in memory"))
 		be.NilErr(t, c.FastCheck(ctx))
 		return c, dir, tokens
 	}
@@ -352,7 +341,7 @@ func TestContentMap_Check(t *testing.T) {
 	t.Run("loaded from JSON", func(t *testing.T) {
 		c, dir, tokens := setup(t)
 		c.Remove(digE)
-		var loaded ocfl.ContentMap
+		var loaded ocfl.FileContentMap
 		be.NilErr(t, json.Unmarshal(mustMarshal(t, c), &loaded))
 		// content in an FS that isn't open is missing
 		err := loaded.FastCheck(ctx)
@@ -369,7 +358,7 @@ func TestContentMap_Check(t *testing.T) {
 		be.NilErr(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("aaa"), 0o644))
 		data := `{"sources": [` + string(mustMarshal(t, localText(t, dir))) + `],
 			"content": {"` + digA + `": [0, "a.txt", null, null], "` + digB + `": [0, "b.txt", null, null]}}`
-		var c ocfl.ContentMap
+		var c ocfl.FileContentMap
 		be.NilErr(t, json.Unmarshal([]byte(data), &c))
 		be.NilErr(t, c.OpenFS(ctx, config.Registry()))
 		be.DeepEqual(t, []ocfl.ContentChange{
@@ -385,7 +374,7 @@ func TestContentMap_Check(t *testing.T) {
 		be.NilErr(t, os.WriteFile(filepath.Join(dir, "a.txt"), []byte("aaa"), 0o644))
 		data := `{"sources": [` + string(mustMarshal(t, localText(t, dir))) + `],
 			"content": {"` + digA + `": [0, "a.txt", 3, "future:1"]}}`
-		var c ocfl.ContentMap
+		var c ocfl.FileContentMap
 		be.NilErr(t, json.Unmarshal([]byte(data), &c))
 		be.NilErr(t, c.OpenFS(ctx, config.Registry()))
 		err := c.FastCheck(ctx)
@@ -402,7 +391,7 @@ func TestContentMap_Check(t *testing.T) {
 		fsys := ocflfs.NewWrapFS(files)
 		info, err := ocflfs.StatFile(ctx, fsys, "a.txt")
 		be.NilErr(t, err)
-		var c ocfl.ContentMap
+		var c ocfl.FileContentMap
 		c.AddFile(digA, fsys, "a.txt", info)
 		files["a.txt"] = &fstest.MapFile{Data: []byte("xxx")}
 		be.NilErr(t, c.FastCheck(ctx))
@@ -412,7 +401,7 @@ func TestContentMap_Check(t *testing.T) {
 		}, changes(t, c.FastCheck(ctx)))
 	})
 	t.Run("stat errors", func(t *testing.T) {
-		var c ocfl.ContentMap
+		var c ocfl.FileContentMap
 		fsys := &openErrFS{WrapFS: ocflfs.NewWrapFS(fstest.MapFS{"a.txt": {}}), name: "a.txt"}
 		c.AddFile(digA, fsys, "a.txt", fileInfo{size: 0})
 		c.AddFile(digB, fsys, "b.txt", fileInfo{size: 0})

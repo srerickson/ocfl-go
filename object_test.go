@@ -37,7 +37,7 @@ func TestObject_Example(t *testing.T) {
 	be.Equal(t, id, obj.ID()) // its ID is set
 
 	// create the first version from bytes
-	stage := obj.NewStage()
+	stage := stageFor(obj.NewUpdate())
 	be.NilErr(t, stage.AddBytes("README.txt", []byte("this is a test file"), digest.MD5))
 	be.NilErr(t, stage.Finalize("first version", ocfl.User{Name: "Mx. Robot"}))
 	v1Obj, err := stage.Update().Apply(ctx, obj.FS(), obj.Path(), stage.Content())
@@ -55,7 +55,7 @@ func TestObject_Example(t *testing.T) {
 	be.Nonzero(t, sourceVersion.State().PathMap()["README.txt"])
 
 	// update a new version and upgrade to OCFL v1.1
-	stage = v1Obj.NewStage()
+	stage = stageFor(v1Obj.NewUpdate())
 	be.NilErr(t, stage.AddBytes("README.txt", []byte("this is a test file (v2)"), digest.MD5))
 	be.NilErr(t, stage.AddBytes("new-data.csv", []byte("1,2,3"), digest.MD5))
 	be.NilErr(t, stage.AddBytes("docs/note.txt", []byte("this is a note"), digest.MD5))
@@ -92,7 +92,7 @@ func TestObject_Example(t *testing.T) {
 	be.Nonzero(t, sourceVersion)
 	forkUpdate, err := ocfl.NewUpdate(ctx, tmpFS, forkID, forkID)
 	be.NilErr(t, err)
-	forkContent := &ocfl.ContentMap{}
+	forkContent := &ocfl.FileContentMap{}
 	manifest := v2Obj.Manifest()
 	for name, dig := range sourceVersion.State().Paths() {
 		be.NilErr(t, forkUpdate.Add(name, dig, nil))
@@ -279,7 +279,7 @@ func TestObject_NewUpdate(t *testing.T) {
 		obj, err := ocfl.NewObject(ctx, fsys, "spec-ex-full")
 		be.NilErr(t, err)
 		headState := obj.Version(0).State()
-		stage := obj.NewStage()
+		stage := stageFor(obj.NewUpdate())
 		be.NilErr(t, stage.Rename("foo/bar.xml", "baz.xml"))
 		be.NilErr(t, stage.Remove("image.tiff"))
 		be.True(t, headState.Eq(obj.Version(0).State()))

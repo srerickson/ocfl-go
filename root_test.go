@@ -55,7 +55,7 @@ func TestRoot_Example(t *testing.T) {
 	be.Equal(t, desc, newRoot.Description())
 	// create an object
 	objID := "object-1"
-	stage, err := newRoot.NewStage(ctx, objID, ocfl.StageWithDigestAlgorithm(digest.SHA256))
+	stage, err := newRootStage(ctx, newRoot, objID, ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
 	be.NilErr(t, err)
 	be.Equal(t, stage.ID(), objID)
 	be.NilErr(t, stage.AddBytes("file.txt", []byte("readme readme readme")))
@@ -311,7 +311,7 @@ func TestRoot_NewUpdate_Spec(t *testing.T) {
 	// update creates a version of "obj1" in root with one file
 	update := func(t *testing.T, root *ocfl.Root, name string, opts ...ocfl.UpdateOption) (*ocfl.Object, error) {
 		t.Helper()
-		stage, err := root.NewStage(ctx, "obj1")
+		stage, err := newRootStage(ctx, root, "obj1")
 		be.NilErr(t, err)
 		be.NilErr(t, stage.AddBytes(name, []byte(name)))
 		if err := stage.Finalize("msg", user, opts...); err != nil {
@@ -353,7 +353,7 @@ func TestRoot_NewUpdate_Spec(t *testing.T) {
 		root, _ := newRoot(t, ocfl.Spec1_0)
 		obj, err := root.NewObject(ctx, "obj1")
 		be.NilErr(t, err)
-		stage := obj.NewStage()
+		stage := stageFor(obj.NewUpdate())
 		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
 		err = stage.Finalize("msg", user, ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1))
 		be.True(t, errors.Is(err, ocfl.ErrObjectSpecExceedsRoot))
@@ -425,7 +425,7 @@ func TestRoot_ValidateObject_E081(t *testing.T) {
 	objPath, err := root.ResolveID("obj1")
 	be.NilErr(t, err)
 	// create a 1.1 object inside the 1.0 root, bypassing the root
-	stage, err := ocfl.NewStage(ctx, fsys, objPath, "obj1")
+	stage, err := newTestStage(ctx, fsys, objPath, "obj1")
 	be.NilErr(t, err)
 	upd := stage.Update()
 	be.NilErr(t, stage.AddBytes("a.txt", []byte("hi")))
@@ -449,7 +449,7 @@ func TestRoot_ValidateObject_E081(t *testing.T) {
 		be.Equal(t, "1.0", vErr.Spec)
 	}
 	// the root-created object is fine, though
-	stage2, err := root.NewStage(ctx, "obj2")
+	stage2, err := newRootStage(ctx, root, "obj2")
 	be.NilErr(t, err)
 	be.NilErr(t, stage2.AddBytes("a.txt", []byte("hi")))
 	be.NilErr(t, stage2.Finalize("msg", ocfl.User{Name: "n"}))
