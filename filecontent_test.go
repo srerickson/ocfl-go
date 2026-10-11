@@ -31,14 +31,14 @@ func TestFileContentMap(t *testing.T) {
 	t.Run("files", func(t *testing.T) {
 		fsys := ocflfs.DirFS(`testdata`)
 		var c ocfl.FileContentMap
-		c.AddFile(strings.ToUpper(digA), fsys, "content-fixture/hello.csv")
-		c.AddFile(digB, fsys, "content-fixture/folder1/file.txt")
+		c.StageFile(strings.ToUpper(digA), fsys, "content-fixture/hello.csv")
+		c.StageFile(digB, fsys, "content-fixture/folder1/file.txt")
 		be.DeepEqual(t, []string{digA, digB}, c.Digests())
 		srcFS, srcPath := c.GetContent(digA)
 		be.Equal[ocflfs.FS](t, fsys, srcFS)
 		be.Equal(t, "content-fixture/hello.csv", srcPath)
 		// replace a file
-		c.AddFile(digB, fsys, "content-fixture/folder1/folder2/file2.txt")
+		c.StageFile(digB, fsys, "content-fixture/folder1/folder2/file2.txt")
 		_, srcPath = c.GetContent(digB)
 		be.Equal(t, "content-fixture/folder1/folder2/file2.txt", srcPath)
 		c.Remove(digA)
@@ -52,8 +52,8 @@ func TestFileContentMap(t *testing.T) {
 		// the struct type is comparable, but its value isn't
 		fsys := mapFS{files: fstest.MapFS{"a.txt": &fstest.MapFile{Data: []byte("a")}}}
 		var c ocfl.FileContentMap
-		c.AddFile(digA, fsys, "a.txt")
-		c.AddFile(digB, fsys, "a.txt")
+		c.StageFile(digA, fsys, "a.txt")
+		c.StageFile(digB, fsys, "a.txt")
 		srcFS, srcPath := c.GetContent(digB)
 		got, err := ocflfs.ReadAll(ctx, srcFS, srcPath)
 		be.NilErr(t, err)
@@ -83,10 +83,10 @@ func TestFileContentMap_JSON(t *testing.T) {
 	be.NilErr(t, err)
 
 	var c ocfl.FileContentMap
-	c.AddFile(digC, unused, "c.txt")
-	c.AddFile(digA, fsA, "dir/a.txt")
-	c.AddFile(digB, fsB, "b.txt")
-	c.AddFile(digC, fsA2, "c.txt")
+	c.StageFile(digC, unused, "c.txt")
+	c.StageFile(digA, fsA, "dir/a.txt")
+	c.StageFile(digB, fsB, "b.txt")
+	c.StageFile(digC, fsA2, "c.txt")
 	saved, err := json.Marshal(c)
 	be.NilErr(t, err)
 	// unused sources aren't saved, and sources with the same text are saved
@@ -135,9 +135,9 @@ func TestFileContentMap_JSON(t *testing.T) {
 		dirC := t.TempDir()
 		fsC, err := local.NewFS(dirC)
 		be.NilErr(t, err)
-		loaded.AddFile(digD, fsC, "d.txt")
+		loaded.StageFile(digD, fsC, "d.txt")
 		// a directory that was loaded is saved once
-		loaded.AddFile(digE, fsA2, "e.txt")
+		loaded.StageFile(digE, fsA2, "e.txt")
 		resaved, err := json.Marshal(loaded)
 		be.NilErr(t, err)
 		var resavedJSON struct {
@@ -151,7 +151,7 @@ func TestFileContentMap_JSON(t *testing.T) {
 	})
 	t.Run("FS without MarshalText can't be saved", func(t *testing.T) {
 		var c ocfl.FileContentMap
-		c.AddFile(digA, ocflfs.DirFS(dirA), "a.txt")
+		c.StageFile(digA, ocflfs.DirFS(dirA), "a.txt")
 		_, err := json.Marshal(c)
 		be.Nonzero(t, err)
 	})

@@ -9,16 +9,16 @@ import (
 )
 
 // BytesContentMap maps digests to content held in memory. It implements
-// [ContentSource] and [BytesAdder]. The zero value is an empty
+// [ContentSource] and [BytesStager]. The zero value is an empty
 // BytesContentMap, ready to use. A BytesContentMap can't be saved: use a
 // [FileContentMap] for content that must outlive the process.
 type BytesContentMap struct {
 	bytes map[string][]byte // digest -> content
 }
 
-// AddBytes sets the content with the digest dig to b. b must not be
-// modified after it is added.
-func (c *BytesContentMap) AddBytes(dig string, b []byte) {
+// StageBytes sets the content with the digest dig to b. b must not be
+// modified after it is staged.
+func (c *BytesContentMap) StageBytes(dig string, b []byte) {
 	if c.bytes == nil {
 		c.bytes = map[string][]byte{}
 	}

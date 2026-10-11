@@ -666,7 +666,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		// the update can be applied once the content is available (the
 		// placeholder content doesn't match its digests, so it is trusted)
 		for i := range 8 {
-			stage.mem.AddBytes(fmt.Sprintf("%0128d", i), []byte("not checked"))
+			stage.mem.StageBytes(fmt.Sprintf("%0128d", i), []byte("not checked"))
 		}
 		_, err = upd.Apply(ctx, fsys, "obj", stage.Content(), ocfl.UpdateWithTrustedContent())
 		be.NilErr(t, err)
