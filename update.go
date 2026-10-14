@@ -81,7 +81,7 @@ type ContentSource interface {
 }
 
 // VersionInfo is the metadata settled by [ObjectUpdate.Finalize] for the new
-// version.
+// inventory version.
 type VersionInfo struct {
 	Message string
 	User    User
@@ -117,6 +117,9 @@ type UpdateEntry struct {
 // reports whether it needs content with a given digest. A content source may
 // hold content the update doesn't need: Apply only asks it for the digests
 // the update needs.
+//
+// This package doesn't synchronize updates: only one update may be applied
+// to or reverted from an object at a time (see [ObjectUpdate.Apply]).
 //
 // [StageFS], [StageFile] and [StageBytes] digest files, add them to an
 // update, and record the content it needs with a [FileStager] or
@@ -470,6 +473,13 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) err
 // empty, or hold only files and directories that the update writes (an error
 // wrapping ErrUpdateConflict otherwise).
 //
+// Concurrent applies to the same object are not safe. Apply doesn't lock the
+// object, and it checks the sidecar only before writing: if two updates with
+// the same base are applied at the same time, both may succeed, leaving an
+// object with only the last update's version and with content from both in
+// its version directory. Callers must make sure that only one update is
+// applied to (or reverted from) an object at a time.
+//
 // Apply returns an error wrapping [ErrMissingContent], without writing
 // anything, if src doesn't provide content for every digest that is new in
 // the update. src may be nil if the update doesn't add new content. A
@@ -520,8 +530,9 @@ func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, sr
 // sidecar. It returns [ErrUpdateCompleted] if the update was committed, and an
 // error wrapping [ErrUpdateConflict] if the object was changed by something
 // else. For a new object, Revert removes dir only if everything in it could
-// have been written by the update, as described for Apply. Revert uses the
-// options [UpdateWithLogger] and [UpdateWithGoLimit].
+// have been written by the update, as described for Apply. As with Apply,
+// Revert must not run at the same time as another update to the object.
+// Revert uses the options [UpdateWithLogger] and [UpdateWithGoLimit].
 func (u *ObjectUpdate) Revert(ctx context.Context, fsys ocflfs.FS, dir string, opts ...UpdateOption) error {
 	if u.final == nil {
 		return ErrNotFinalized

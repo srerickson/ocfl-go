@@ -15,6 +15,13 @@ runtime (e.g. a saved `ObjectUpdate` whose digest algorithm is unsupported), and
 for input data problems. Only guard nil where nil is documented as meaningful
 (e.g. an optional `ContentSource`, "may be nil").
 
+## Object update synchronization is out of scope
+
+ocfl-go doesn't synchronize or lock object updates: coordinating concurrent
+writers to the same object is the caller's job. Use optimistic conflict
+detection where possible, but don't add locking, and don't flag its absence as a
+bug. Document it instead where it matters.
+
 ## Commit messages: no issue tracker IDs
 
 Don't put Linear issue identifiers (e.g. `CRUDE-62`) or other issue-tracker
