@@ -42,7 +42,7 @@ var (
 	// [ObjectUpdate.Revert] when the object in storage matches neither the
 	// update's base inventory nor its new inventory: the object was changed
 	// by something else. It is also returned by [NewObjectUpdate] when the
-	// object doesn't match [UpdateWithExpectedBase].
+	// object doesn't match [NewUpdateWithExpectedBase].
 	ErrUpdateConflict = errors.New("object in storage has changed since the update was started")
 
 	// ErrUpdateCompleted is returned by [ObjectUpdate.Revert] when the update has
@@ -59,9 +59,9 @@ var (
 	// because the file it was staged from has changed.
 	ErrContentChanged = errors.New("content doesn't match its digest")
 
-	// ErrUnexpectedHead is returned by [ObjectUpdate.Finalize] when the
-	// version number of the new object version does not match the number
-	// expected by [UpdateWithExpectedHead].
+	// ErrUnexpectedHead is returned by [NewObjectUpdate] when the version
+	// number of the new object version does not match the number expected by
+	// [NewUpdateWithExpectedHead].
 	ErrUnexpectedHead = errors.New("unexpected object version number")
 
 	// ErrObjectSpecExceedsRoot is returned when an update would give an object
@@ -160,16 +160,13 @@ type ObjectUpdate struct {
 // state, and the object's ID must match id (if id is not empty). If the
 // object doesn't exist, id is required, the update starts with an empty state
 // and creates version 1, the digest algorithm is sha512 unless
-// [UpdateWithDigestAlgorithm] is used, and the returned Object's Exists method
-// returns false and its ID is id. If the object exists, the update uses the
-// object's digest algorithm, and [UpdateWithDigestAlgorithm], if used, must
-// match it. NewObjectUpdate returns an error if dir isn't empty and doesn't
+// [NewUpdateWithDigestAlgorithm] is used, and the returned Object's Exists
+// method returns false and its ID is id. If the object exists, the update uses
+// the object's digest algorithm, and [NewUpdateWithDigestAlgorithm], if used,
+// must match it. NewObjectUpdate returns an error if dir isn't empty and doesn't
 // hold an OCFL object, or if the object is incomplete (an error wrapping
 // [ErrObjectIncomplete]).
-//
-// NewObjectUpdate uses the options [UpdateWithDigestAlgorithm],
-// [UpdateWithExpectedBase] and [UpdateMustExist].
-func NewObjectUpdate(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...UpdateOption) (*ObjectUpdate, *Object, error) {
+func NewObjectUpdate(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...NewUpdateOption) (*ObjectUpdate, *Object, error) {
 	if !fs.ValidPath(dir) {
 		return nil, nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
 	}
@@ -177,7 +174,10 @@ func NewObjectUpdate(ctx context.Context, fsys ocflfs.FS, dir, id string, opts .
 	if err != nil {
 		return nil, nil, err
 	}
-	o := newUpdateOptions(opts...)
+	o := &newUpdateOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
 	if err := o.checkBase(base); err != nil {
 		return nil, nil, err
 	}
@@ -410,23 +410,19 @@ func (u *ObjectUpdate) Clear() error {
 
 // Finalize settles the new version's metadata (the message, user, created
 // timestamp and OCFL spec) and the content paths for new content, builds the
-// new inventory, and makes u read-only. It does no I/O. Finalize uses the
-// options [UpdateWithVersionCreated], [UpdateWithOCFLSpec],
-// [UpdateWithContentPathFunc], [UpdateWithExpectedHead] and
-// [UpdateWithUnchangedVersionState]. If Finalize returns an error, u is
-// unchanged.
-func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) error {
+// new inventory, and makes u read-only. It does no I/O. If Finalize returns an
+// error, u is unchanged.
+func (u *ObjectUpdate) Finalize(msg string, user User, opts ...FinalizeUpdateOption) error {
 	if u.final != nil {
 		return ErrFinalized
 	}
-	o := newUpdateOptions(opts...)
+	o := &finalizeUpdateOptions{}
+	for _, opt := range opts {
+		opt(o)
+	}
 	newHead, err := u.nextHead()
 	if err != nil {
 		return err
-	}
-	if o.expectedHead > 0 && newHead.Num() != o.expectedHead {
-		return fmt.Errorf("%w: expected update to create version %d, but it would create version %d",
-			ErrUnexpectedHead, o.expectedHead, newHead.Num())
 	}
 	if !o.allowUnchanged && u.baseInv != nil && u.baseState().Eq(u.state) {
 		return errors.New("update has unchanged version state")
@@ -515,11 +511,9 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) err
 // it was staged. The mismatched file is removed, and the update can be
 // applied again once the content is restored, or reverted. Content is
 // verified on every attempt, including when an interrupted update is
-// resumed. Use [UpdateWithTrustedContent] to skip verification and let
+// resumed. Use [ApplyWithTrustedContent] to skip verification and let
 // storage backends copy content without reading it.
-// Apply uses the options [UpdateWithLogger], [UpdateWithGoLimit] and
-// [UpdateWithTrustedContent].
-func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, src ContentSource, opts ...UpdateOption) (*Object, error) {
+func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, src ContentSource, opts ...ApplyUpdateOption) (*Object, error) {
 	if u.final == nil {
 		return nil, ErrNotFinalized
 	}
@@ -527,7 +521,7 @@ func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, sr
 	if !ok {
 		return nil, fmt.Errorf("%q cannot be updated: storage backend does not support writes", u.id)
 	}
-	o := newUpdateOptions(opts...)
+	o := newApplyUpdateOptions(opts)
 	status, err := u.storageStatus(ctx, fsys, dir)
 	if err != nil {
 		return nil, err
@@ -557,8 +551,8 @@ func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, sr
 // else. For a new object, Revert removes dir only if everything in it could
 // have been written by the update, as described for Apply. As with Apply,
 // Revert must not run at the same time as another update to the object.
-// Revert uses the options [UpdateWithLogger] and [UpdateWithGoLimit].
-func (u *ObjectUpdate) Revert(ctx context.Context, fsys ocflfs.FS, dir string, opts ...UpdateOption) error {
+// Revert ignores [ApplyWithTrustedContent].
+func (u *ObjectUpdate) Revert(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ApplyUpdateOption) error {
 	if u.final == nil {
 		return ErrNotFinalized
 	}
@@ -566,7 +560,7 @@ func (u *ObjectUpdate) Revert(ctx context.Context, fsys ocflfs.FS, dir string, o
 	if !ok {
 		return fmt.Errorf("%q cannot be reverted: storage backend does not support writes", u.id)
 	}
-	o := newUpdateOptions(opts...)
+	o := newApplyUpdateOptions(opts)
 	status, err := u.storageStatus(ctx, fsys, dir)
 	if err != nil {
 		return err
@@ -728,10 +722,16 @@ func (u *ObjectUpdate) needsContent(dig string) bool {
 }
 
 func (u *ObjectUpdate) nextHead() (VNum, error) {
-	if u.baseInv == nil {
+	return nextHead(u.baseInv)
+}
+
+// nextHead returns the number of the version that follows base's head, or v1
+// if base is nil.
+func nextHead(base *Inventory) (VNum, error) {
+	if base == nil {
 		return V(1), nil
 	}
-	head, err := u.baseInv.Head.Next()
+	head, err := base.Head.Next()
 	if err != nil {
 		return VNum{}, fmt.Errorf("existing inventory's version scheme doesn't support additional versions: %w", err)
 	}
@@ -1043,184 +1043,211 @@ func (u *ObjectUpdate) revertSteps() []updateStep {
 	return steps
 }
 
-// UpdateOption is an optional argument for creating, finalizing, applying
-// and reverting an [ObjectUpdate]. Each function documents the options it
-// uses; others are ignored.
-type UpdateOption func(*updateOptions)
+// NewUpdateOption is an optional argument for [NewObjectUpdate] and
+// [Root.NewObjectUpdate].
+type NewUpdateOption func(*newUpdateOptions)
 
-type updateOptions struct {
-	// constructors
-	alg               digest.Algorithm
-	rootSpec          Spec
-	mustExist         bool
-	checkExpectedBase bool
-	expectedBase      string
-	// finalize
-	created         time.Time
-	spec            Spec
-	expectedHead    int
-	allowUnchanged  bool
-	contentPathFunc PathMutation
-	// apply and revert
-	logger       *slog.Logger
-	goLimit      int
-	trustContent bool
-}
-
-func newUpdateOptions(opts ...UpdateOption) *updateOptions {
-	o := &updateOptions{logger: logging.DisabledLogger()}
-	for _, opt := range opts {
-		opt(o)
-	}
-	return o
-}
-
-// checkBase returns an error if base, the root inventory read for a new
-// update (nil if the object doesn't exist), doesn't meet the requirements set
-// by UpdateMustExist and UpdateWithExpectedBase.
-func (o *updateOptions) checkBase(base *StoredInventory) error {
-	if o.mustExist && base == nil {
-		return fmt.Errorf("object doesn't exist: %w", fs.ErrNotExist)
-	}
-	if !o.checkExpectedBase {
-		return nil
-	}
-	switch {
-	case base == nil && o.expectedBase != "":
-		return fmt.Errorf("%w: expected an object with inventory digest %q, but the object doesn't exist",
-			ErrUpdateConflict, o.expectedBase)
-	case base != nil && o.expectedBase == "":
-		return fmt.Errorf("%w: expected no object, but the object exists", ErrUpdateConflict)
-	case base != nil && !strings.EqualFold(base.digest, o.expectedBase):
-		return fmt.Errorf("%w: object's inventory digest is %q, expected %q",
-			ErrUpdateConflict, base.digest, o.expectedBase)
-	}
-	return nil
-}
-
-// UpdateWithDigestAlgorithm sets the primary digest algorithm (sha512 or
+// NewUpdateWithDigestAlgorithm sets the primary digest algorithm (sha512 or
 // sha256) for a new object. Without it, a new object uses sha512. If the
 // object exists, alg must be the object's digest algorithm, or
 // [NewObjectUpdate] returns an error: changing an existing object's digest
-// algorithm isn't supported.
-func UpdateWithDigestAlgorithm(alg digest.Algorithm) UpdateOption {
-	return func(o *updateOptions) {
+// algorithm isn't supported. A nil alg is ignored.
+func NewUpdateWithDigestAlgorithm(alg digest.Algorithm) NewUpdateOption {
+	return func(o *newUpdateOptions) {
 		o.alg = alg
 	}
 }
 
-// UpdateWithExpectedBase sets the expected digest of the object's root
-// inventory for [NewObjectUpdate], which returns an error wrapping
-// [ErrUpdateConflict] if the inventory it reads has a different digest. An
-// empty digest means the object must not exist. It is the base-inventory
-// counterpart of [UpdateWithExpectedHead]. Use it to start an update for an
-// object that was read earlier, such as with [NewObject]:
+// NewUpdateWithExpectedBase sets the expected digest of the object's root
+// inventory. [NewObjectUpdate] returns an error wrapping [ErrUpdateConflict]
+// if the inventory it reads has a different digest. An empty digest means the
+// object must not exist. Use it to start an update for an object that was
+// read earlier, such as with [NewObject]:
 //
 //	u, _, err := ocfl.NewObjectUpdate(ctx, obj.FS(), obj.Path(), obj.ID(),
-//		ocfl.UpdateWithExpectedBase(obj.InventoryDigest()))
+//		ocfl.NewUpdateWithExpectedBase(obj.InventoryDigest()))
 //
 // Without it, the update's base is the inventory that NewObjectUpdate reads,
 // so changes committed after the object was read would go undetected.
-func UpdateWithExpectedBase(inventoryDigest string) UpdateOption {
-	return func(o *updateOptions) {
+func NewUpdateWithExpectedBase(inventoryDigest string) NewUpdateOption {
+	return func(o *newUpdateOptions) {
 		o.checkExpectedBase = true
 		o.expectedBase = inventoryDigest
 	}
 }
 
-// UpdateMustExist makes [NewObjectUpdate] return an error wrapping
-// [fs.ErrNotExist] if the object doesn't exist, instead of starting an update
-// that creates it.
-func UpdateMustExist() UpdateOption {
-	return func(o *updateOptions) {
-		o.mustExist = true
-	}
-}
-
-// UpdateWithVersionCreated sets the 'created' timestamp for the new version.
-// It is used by [ObjectUpdate.Finalize]. The timestamp is truncated to the
-// second. Without it, the current time is used.
-func UpdateWithVersionCreated(t time.Time) UpdateOption {
-	return func(o *updateOptions) {
-		o.created = t
-	}
-}
-
-// UpdateWithOCFLSpec sets the OCFL specification for the new object version.
-// It is used by [ObjectUpdate.Finalize]. Without it, an existing object keeps
-// its spec, and a new object uses its storage root's spec (if known) or the
-// latest spec.
-func UpdateWithOCFLSpec(s Spec) UpdateOption {
-	return func(o *updateOptions) {
-		o.spec = s
-	}
-}
-
-// UpdateWithExpectedHead is used to enforce the expected version number (without
-// padding) for the new version. It is used by [ObjectUpdate.Finalize], which
-// returns an error wrapping [ErrUnexpectedHead] if the update would create a
-// version with a different number. For a new object, the expected version
-// number is 1. Values of v less than 1 are ignored.
-func UpdateWithExpectedHead(v int) UpdateOption {
-	return func(o *updateOptions) {
+// NewUpdateWithExpectedHead sets the expected version number (without
+// padding) of the version the update creates. [NewObjectUpdate] returns an
+// error wrapping [ErrUnexpectedHead] if the update would create a version with
+// a different number. For a new object, the expected version number is 1. It
+// is the version-number counterpart of [NewUpdateWithExpectedBase], for
+// callers that know the object's head but not its inventory digest. Values of
+// v less than 1 are ignored.
+func NewUpdateWithExpectedHead(v int) NewUpdateOption {
+	return func(o *newUpdateOptions) {
 		o.expectedHead = v
 	}
 }
 
-// UpdateWithUnchangedVersionState allows updates that don't change the
+// NewUpdateMustExist makes [NewObjectUpdate] return an error wrapping
+// [fs.ErrNotExist] if the object doesn't exist, instead of starting an update
+// that creates it.
+func NewUpdateMustExist() NewUpdateOption {
+	return func(o *newUpdateOptions) {
+		o.mustExist = true
+	}
+}
+
+type newUpdateOptions struct {
+	alg               digest.Algorithm
+	rootSpec          Spec
+	mustExist         bool
+	checkExpectedBase bool
+	expectedBase      string
+	expectedHead      int
+}
+
+// checkBase returns an error if base, the root inventory read for a new
+// update (nil if the object doesn't exist), doesn't meet the requirements set
+// by NewUpdateMustExist, NewUpdateWithExpectedBase and
+// NewUpdateWithExpectedHead.
+func (o *newUpdateOptions) checkBase(base *StoredInventory) error {
+	if o.mustExist && base == nil {
+		return fmt.Errorf("object doesn't exist: %w", fs.ErrNotExist)
+	}
+	if o.checkExpectedBase {
+		switch {
+		case base == nil && o.expectedBase != "":
+			return fmt.Errorf("%w: expected an object with inventory digest %q, but the object doesn't exist",
+				ErrUpdateConflict, o.expectedBase)
+		case base != nil && o.expectedBase == "":
+			return fmt.Errorf("%w: expected no object, but the object exists", ErrUpdateConflict)
+		case base != nil && !strings.EqualFold(base.digest, o.expectedBase):
+			return fmt.Errorf("%w: object's inventory digest is %q, expected %q",
+				ErrUpdateConflict, base.digest, o.expectedBase)
+		}
+	}
+	if o.expectedHead > 0 {
+		var baseInv *Inventory
+		if base != nil {
+			baseInv = &base.Inventory
+		}
+		newHead, err := nextHead(baseInv)
+		if err != nil {
+			return err
+		}
+		if newHead.Num() != o.expectedHead {
+			return fmt.Errorf("%w: expected update to create version %d, but it would create version %d",
+				ErrUnexpectedHead, o.expectedHead, newHead.Num())
+		}
+	}
+	return nil
+}
+
+// newUpdateWithRootSpec sets the storage root's spec for a new ObjectUpdate.
+func newUpdateWithRootSpec(spec Spec) NewUpdateOption {
+	return func(o *newUpdateOptions) {
+		o.rootSpec = spec
+	}
+}
+
+// FinalizeUpdateOption is an optional argument for [ObjectUpdate.Finalize].
+type FinalizeUpdateOption func(*finalizeUpdateOptions)
+
+// FinalizeWithVersionCreated sets the 'created' timestamp for the new
+// version. The timestamp is truncated to the second. Without it, or if t is
+// the zero time, the current time is used.
+func FinalizeWithVersionCreated(t time.Time) FinalizeUpdateOption {
+	return func(o *finalizeUpdateOptions) {
+		o.created = t
+	}
+}
+
+// FinalizeWithOCFLSpec sets the OCFL specification for the new object
+// version. Without it, or if s is empty, an existing object keeps its spec,
+// and a new object uses its storage root's spec (if known) or the latest
+// spec.
+func FinalizeWithOCFLSpec(s Spec) FinalizeUpdateOption {
+	return func(o *finalizeUpdateOptions) {
+		o.spec = s
+	}
+}
+
+// FinalizeWithUnchangedVersionState allows updates that don't change the
 // version state. Without it, [ObjectUpdate.Finalize] returns an error if the
-// new version state is the same as the head version's.
-func UpdateWithUnchangedVersionState() UpdateOption {
-	return func(o *updateOptions) {
+// new version state is the same as the head version's. It has no effect for a
+// new object.
+func FinalizeWithUnchangedVersionState() FinalizeUpdateOption {
+	return func(o *finalizeUpdateOptions) {
 		o.allowUnchanged = true
 	}
 }
 
-// UpdateWithContentPathFunc sets a function for enforcing naming conventions
-// for content paths in the new inventory. The function is called by
-// [ObjectUpdate.Finalize] with the logical paths for each new digest.
-func UpdateWithContentPathFunc(mutate PathMutation) UpdateOption {
-	return func(o *updateOptions) {
+// FinalizeWithContentPathFunc sets a function for enforcing naming
+// conventions for content paths in the new inventory. The function is called
+// with the logical paths for each new digest. A nil mutate is ignored.
+func FinalizeWithContentPathFunc(mutate PathMutation) FinalizeUpdateOption {
+	return func(o *finalizeUpdateOptions) {
 		o.contentPathFunc = mutate
 	}
 }
 
-// UpdateWithLogger sets the logger used to log each step of
-// [ObjectUpdate.Apply] and [ObjectUpdate.Revert].
-func UpdateWithLogger(logger *slog.Logger) UpdateOption {
-	return func(o *updateOptions) {
+type finalizeUpdateOptions struct {
+	created         time.Time
+	spec            Spec
+	allowUnchanged  bool
+	contentPathFunc PathMutation
+}
+
+// ApplyUpdateOption is an optional argument for [ObjectUpdate.Apply],
+// [ObjectUpdate.Revert], [Root.Apply] and [Root.Revert].
+type ApplyUpdateOption func(*applyUpdateOptions)
+
+// ApplyWithLogger sets the logger used to log each step of
+// [ObjectUpdate.Apply] and [ObjectUpdate.Revert]. Without it, or if logger is
+// nil, nothing is logged.
+func ApplyWithLogger(logger *slog.Logger) ApplyUpdateOption {
+	return func(o *applyUpdateOptions) {
 		if logger != nil {
 			o.logger = logger
 		}
 	}
 }
 
-// UpdateWithTrustedContent makes [ObjectUpdate.Apply] copy new content
-// without verifying its digests. Content is copied with [ocflfs.Copy], which
-// lets a storage backend copy content within the backend without reading it
-// (for example, from one S3 bucket to another). Use it only when the content
-// source's content can't have changed since it was staged: content that has
-// changed is written into the object under its old digest.
-func UpdateWithTrustedContent() UpdateOption {
-	return func(o *updateOptions) {
-		o.trustContent = true
-	}
-}
-
-// UpdateWithGoLimit sets the number of goroutines used by
-// [ObjectUpdate.Apply] to copy content concurrently. The default is
-// runtime.NumCPU().
-func UpdateWithGoLimit(gos int) UpdateOption {
-	return func(o *updateOptions) {
+// ApplyWithGoLimit sets the number of goroutines used by [ObjectUpdate.Apply]
+// and [ObjectUpdate.Revert] to copy and remove files concurrently. Without it,
+// or if gos is less than 1, runtime.GOMAXPROCS(0) is used.
+func ApplyWithGoLimit(gos int) ApplyUpdateOption {
+	return func(o *applyUpdateOptions) {
 		o.goLimit = gos
 	}
 }
 
-// updateWithRootSpec sets the storage root's spec for a new ObjectUpdate.
-func updateWithRootSpec(spec Spec) UpdateOption {
-	return func(o *updateOptions) {
-		o.rootSpec = spec
+// ApplyWithTrustedContent makes [ObjectUpdate.Apply] copy new content without
+// verifying its digests. Content is copied with [ocflfs.Copy], which lets a
+// storage backend copy content within the backend without reading it (for
+// example, from one S3 bucket to another). Use it only when the content
+// source's content can't have changed since it was staged: content that has
+// changed is written into the object under its old digest. It is ignored by
+// [ObjectUpdate.Revert], which doesn't copy content.
+func ApplyWithTrustedContent() ApplyUpdateOption {
+	return func(o *applyUpdateOptions) {
+		o.trustContent = true
 	}
+}
+
+type applyUpdateOptions struct {
+	logger       *slog.Logger
+	goLimit      int
+	trustContent bool
+}
+
+func newApplyUpdateOptions(opts []ApplyUpdateOption) *applyUpdateOptions {
+	o := &applyUpdateOptions{logger: logging.DisabledLogger()}
+	for _, opt := range opts {
+		opt(o)
+	}
+	return o
 }
 
 // newUpdateFromBase returns a new draft for an object with the given base
@@ -1441,7 +1468,7 @@ func copyVerified(ctx context.Context, fsys ocflfs.WriteFS, dst string, srcFS oc
 // not Error, leaving the caller to report the interruption.
 func runSteps(ctx context.Context, steps []updateStep, fsys ocflfs.WriteFS, dir string, src ContentSource, gos int, logger *slog.Logger) error {
 	if gos < 1 {
-		gos = runtime.NumCPU()
+		gos = runtime.GOMAXPROCS(0)
 	}
 	runStep := func(ctx context.Context, step updateStep) error {
 		if err := ctx.Err(); err != nil {

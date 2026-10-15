@@ -15,17 +15,20 @@ Removed:
 - `UpdatePlan`, `PlanStep`, `PlanSteps` and all their methods
 - `Object.NewUpdatePlan`, `Object.ApplyUpdatePlan`, `Object.Update`
 - `InventoryBuilder`, `NewInventoryBuilder`, `Object.InventoryBuilder`
-- `ObjectUpdateOption` (replaced by `UpdateOption`)
+- `ObjectUpdateOption` (replaced by `NewUpdateOption`, `FinalizeUpdateOption` and `ApplyUpdateOption`)
 - `FixitySource`, `Object.GetContent`, `Object.GetFixity`, `Object.VersionStage`
 - `Object.ReadOnly` and `ErrObjectReadOnly`
 
 Replacements:
 
 - `NewObjectUpdate(ctx, fsys, dir, id, opts...)` and `Root.NewObjectUpdate(ctx, id, opts...)` are the only ways to create a draft `ObjectUpdate`. They read and validate the object's root inventory once and return the update and an `Object` describing that same inventory (for a missing object, the `Object`'s `Exists` returns false). They return an error wrapping `ErrObjectIncomplete` if the object is half-written.
-- To update an `Object` you already have, pass `UpdateWithExpectedBase(obj.InventoryDigest())` to `NewObjectUpdate`: it returns an error wrapping `ErrUpdateConflict` if the object has changed since it was read. `UpdateMustExist` makes `NewObjectUpdate` return an error wrapping `fs.ErrNotExist` for a missing object.
+- To update an `Object` you already have, pass `NewUpdateWithExpectedBase(obj.InventoryDigest())` to `NewObjectUpdate`: it returns an error wrapping `ErrUpdateConflict` if the object has changed since it was read. `NewUpdateMustExist` makes `NewObjectUpdate` return an error wrapping `fs.ErrNotExist` for a missing object.
 - `ObjectUpdate.Apply(ctx, fsys, dir, src, opts...)` and `ObjectUpdate.Revert` (and `Root.Apply`/`Root.Revert`) write or undo it. `Apply` takes the `ContentSource` for new content and returns the resulting `*Object`.
-- `UpdateWithNewHead` is now `UpdateWithExpectedHead`. The other `UpdateWith…` options keep their names but return `UpdateOption`.
-- `UpdateWithDigestAlgorithm` sets a new object's digest algorithm (sha512 by default), replacing the stage's `DigestAlgorithm`. For an existing object it must match the object's algorithm, or `NewObjectUpdate` returns an error. As before, an existing object's digest algorithm can't be changed.
+- Update options have a separate type for each step that uses them, so an option passed to the wrong function is a compile error instead of being silently ignored. The options are renamed to match:
+  - `NewUpdateOption`, for `NewObjectUpdate` and `Root.NewObjectUpdate`: `NewUpdateWithDigestAlgorithm`, `NewUpdateWithExpectedBase`, `NewUpdateWithExpectedHead` (formerly `UpdateWithNewHead`, which was used by `Finalize`), and `NewUpdateMustExist`.
+  - `FinalizeUpdateOption`, for `ObjectUpdate.Finalize`: `FinalizeWithVersionCreated`, `FinalizeWithOCFLSpec`, `FinalizeWithUnchangedVersionState`, and `FinalizeWithContentPathFunc` (formerly `UpdateWith…`).
+  - `ApplyUpdateOption`, for `Apply` and `Revert` on `ObjectUpdate` and `Root`: `ApplyWithLogger`, `ApplyWithGoLimit` (formerly `UpdateWith…`), and `ApplyWithTrustedContent`. `Revert` ignores `ApplyWithTrustedContent`.
+- `NewUpdateWithDigestAlgorithm` sets a new object's digest algorithm (sha512 by default), replacing the stage's `DigestAlgorithm`. For an existing object it must match the object's algorithm, or `NewObjectUpdate` returns an error. As before, an existing object's digest algorithm can't be changed.
 - `ErrRevertUpdate` is now `ErrUpdateCompleted`.
 - New sentinels: `ErrFinalized`, `ErrNotFinalized`, `ErrMissingContent`, `ErrContentChanged`, `ErrObjectIncomplete`, `ErrUnexpectedHead`, `ErrUpdateConflict`, `ErrObjectSpecExceedsRoot`.
 
@@ -44,6 +47,7 @@ Replacements:
 
 ### Behavior changes
 
+- `ValidationDigestConcurrency` defaults to `runtime.GOMAXPROCS(0)` instead of `runtime.NumCPU()`, as do `ApplyWithGoLimit` and `StageWithGoLimit`. For all three, a value less than 1 means the default.
 - Objects created in a storage root now default to the root's OCFL spec. Requesting a spec newer than the root's returns `ErrObjectSpecExceedsRoot` (OCFL E081). `Root.Apply` also refuses updates whose spec is newer than the root's (for example, an update created with `NewObjectUpdate` rather than `Root.NewObjectUpdate`), and `Root.ValidateObject` checks it.
 - `Apply` and `Revert` for a new object require its directory to be missing, empty, or to hold only what the update writes. Anything else returns an error wrapping `ErrUpdateConflict`.
 - `ObjectUpdate.Add` returns an error for fixity whose value for the update's primary digest disagrees with the digest being added.
@@ -53,12 +57,12 @@ Replacements:
 - **Persistable updates.** `ObjectUpdate` implements `json.Marshaler` and `json.Unmarshaler`. `BaseState`, `NewState`, `NextHead`, `BaseInventoryDigest`, and `NewInventoryDigest` describe the update, and `VersionInfo` returns the finalized version's metadata.
 - **Content sources.** `FileContentMap` records content as files in FSs and can be saved as JSON. Its FSs are saved with their `MarshalText` form and reopened with `FileContentMap.OpenFS` and an `fs.Registry`. `BytesContentMap` holds content in memory. `ObjectUpdate.NeedsContent` and `ObjectUpdate.NewContentDigests` report which content an update needs, and `ObjectUpdate.AddAll` adds files whose digests are already known.
 - **FS registry.** The new `fs.Registry` (`fs.NewRegistry`, `Registry.Append`, `Registry.Open`) opens an FS from a configuration string by URL scheme. `config.Registry` returns a registry for this module's `file`, `s3`, `http`, and `https` backends.
-- **Verified content.** `Apply` digests new content as it copies it into the object and returns an error wrapping `ErrContentChanged` if any content doesn't match its digest (for example, because a staged file changed). The mismatched file is removed, and the update can be applied again once the content is restored, or reverted. `UpdateWithTrustedContent` skips verification and copies with `fs.Copy`, so storage backends can copy content without reading it.
+- **Verified content.** `Apply` digests new content as it copies it into the object and returns an error wrapping `ErrContentChanged` if any content doesn't match its digest (for example, because a staged file changed). The mismatched file is removed, and the update can be applied again once the content is restored, or reverted. `ApplyWithTrustedContent` skips verification and copies with `fs.Copy`, so storage backends can copy content without reading it.
 - **Stage options.** `StageWithFixity`, `StageWithGoLimit`, `StageWithFilter`, and `StageWithHidden` control how `StageFS` and `StageFile` add files.
 - **Examples.** `example_stage_test.go` shows how to build a custom stage type, and `examples/update` shows how to save a stage and resume an interrupted update.
 
 ## Fixes
 
-- `UpdateWithExpectedHead` (formerly `UpdateWithNewHead`) now enforces the expected version. Previously the option was silently ignored. A mismatch returns an error wrapping `ErrUnexpectedHead`, and nothing is written.
+- `NewUpdateWithExpectedHead` (formerly `UpdateWithNewHead`) now enforces the expected version. Previously the option was silently ignored. A mismatch makes `NewObjectUpdate` return an error wrapping `ErrUnexpectedHead`.
 - Updates validate their inputs before touching storage. A missing digest algorithm or missing content returns an error (wrapping `ErrMissingContent` for missing content) instead of panicking or leaving a partially written object.
 - `Apply` and `Revert` stay quiet after the context is canceled.

@@ -55,7 +55,7 @@ func TestRoot_Example(t *testing.T) {
 	be.Equal(t, desc, newRoot.Description())
 	// create an object
 	objID := "object-1"
-	stage, err := newRootStage(ctx, newRoot, objID, ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
+	stage, err := newRootStage(ctx, newRoot, objID, ocfl.NewUpdateWithDigestAlgorithm(digest.SHA256))
 	be.NilErr(t, err)
 	be.Equal(t, stage.ID(), objID)
 	be.NilErr(t, stage.AddBytes("file.txt", []byte("readme readme readme")))
@@ -309,7 +309,7 @@ func TestRoot_NewObjectUpdate_Spec(t *testing.T) {
 		return root, fsys
 	}
 	// update creates a version of "obj1" in root with one file
-	update := func(t *testing.T, root *ocfl.Root, name string, opts ...ocfl.UpdateOption) (*ocfl.Object, error) {
+	update := func(t *testing.T, root *ocfl.Root, name string, opts ...ocfl.FinalizeUpdateOption) (*ocfl.Object, error) {
 		t.Helper()
 		stage, err := newRootStage(ctx, root, "obj1")
 		be.NilErr(t, err)
@@ -339,7 +339,7 @@ func TestRoot_NewObjectUpdate_Spec(t *testing.T) {
 	})
 	t.Run("explicit 1.1 in 1.0 root is rejected", func(t *testing.T) {
 		root, fsys := newRoot(t, ocfl.Spec1_0)
-		_, err := update(t, root, "a.txt", ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1))
+		_, err := update(t, root, "a.txt", ocfl.FinalizeWithOCFLSpec(ocfl.Spec1_1))
 		be.True(t, errors.Is(err, ocfl.ErrObjectSpecExceedsRoot))
 		be.In(t, "1.1", err.Error())
 		be.In(t, "1.0", err.Error())
@@ -357,14 +357,14 @@ func TestRoot_NewObjectUpdate_Spec(t *testing.T) {
 		be.False(t, obj.Exists())
 		stage := stageFor(upd)
 		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
-		err = stage.Finalize("msg", user, ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1))
+		err = stage.Finalize("msg", user, ocfl.FinalizeWithOCFLSpec(ocfl.Spec1_1))
 		be.True(t, errors.Is(err, ocfl.ErrObjectSpecExceedsRoot))
 	})
 	t.Run("upgrading existing object above 1.0 root is rejected", func(t *testing.T) {
 		root, _ := newRoot(t, ocfl.Spec1_0)
 		_, err := update(t, root, "a.txt")
 		be.NilErr(t, err)
-		_, err = update(t, root, "b.txt", ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1))
+		_, err = update(t, root, "b.txt", ocfl.FinalizeWithOCFLSpec(ocfl.Spec1_1))
 		be.True(t, errors.Is(err, ocfl.ErrObjectSpecExceedsRoot))
 		// a plain update (no spec option) keeps working at 1.0
 		obj, err := update(t, root, "b.txt")
@@ -374,7 +374,7 @@ func TestRoot_NewObjectUpdate_Spec(t *testing.T) {
 	})
 	t.Run("explicit 1.0 in 1.1 root is allowed", func(t *testing.T) {
 		root, _ := newRoot(t, ocfl.Spec1_1)
-		obj, err := update(t, root, "a.txt", ocfl.UpdateWithOCFLSpec(ocfl.Spec1_0))
+		obj, err := update(t, root, "a.txt", ocfl.FinalizeWithOCFLSpec(ocfl.Spec1_0))
 		be.NilErr(t, err)
 		be.Equal(t, ocfl.Spec1_0, obj.Spec())
 		be.NilErr(t, root.ValidateObject(ctx, "obj1").Err())
@@ -387,7 +387,7 @@ func TestRoot_NewObjectUpdate_Spec(t *testing.T) {
 		be.NilErr(t, err)
 		var loaded ocfl.ObjectUpdate
 		be.NilErr(t, json.Unmarshal(saved, &loaded))
-		err = loaded.Finalize("msg", user, ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1))
+		err = loaded.Finalize("msg", user, ocfl.FinalizeWithOCFLSpec(ocfl.Spec1_1))
 		be.True(t, errors.Is(err, ocfl.ErrObjectSpecExceedsRoot))
 	})
 	t.Run("Root.Apply rejects updates not created by the root", func(t *testing.T) {

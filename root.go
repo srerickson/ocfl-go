@@ -128,15 +128,15 @@ func (r *Root) NewObjectDir(ctx context.Context, dir string, opts ...ObjectOptio
 // given ID in the root and an *[Object] for the object, as with
 // [NewObjectUpdate]. The root's OCFL spec is recorded in the update, so the
 // update can't give the object a newer spec than the root's (E081). A new
-// object uses the root's spec unless [UpdateWithOCFLSpec] is used. The
+// object uses the root's spec unless [FinalizeWithOCFLSpec] is used. The
 // object's Root method returns r. If the Root has no storage layout for
 // resolving object IDs, the returned error is ErrLayoutUndefined.
-func (r *Root) NewObjectUpdate(ctx context.Context, id string, opts ...UpdateOption) (*ObjectUpdate, *Object, error) {
+func (r *Root) NewObjectUpdate(ctx context.Context, id string, opts ...NewUpdateOption) (*ObjectUpdate, *Object, error) {
 	objPath, err := r.ResolveID(id)
 	if err != nil {
 		return nil, nil, err
 	}
-	opts = append(opts, updateWithRootSpec(r.spec))
+	opts = append(opts, newUpdateWithRootSpec(r.spec))
 	u, obj, err := NewObjectUpdate(ctx, r.fs, path.Join(r.dir, objPath), id, opts...)
 	if err != nil {
 		return nil, nil, err
@@ -151,7 +151,7 @@ func (r *Root) NewObjectUpdate(ctx context.Context, id string, opts ...UpdateOpt
 // [ErrObjectSpecExceedsRoot], without writing anything, if u's new version
 // has a newer OCFL spec than the root's (E081). This can happen if u wasn't
 // created with [Root.NewObjectUpdate].
-func (r *Root) Apply(ctx context.Context, u *ObjectUpdate, src ContentSource, opts ...UpdateOption) (*Object, error) {
+func (r *Root) Apply(ctx context.Context, u *ObjectUpdate, src ContentSource, opts ...ApplyUpdateOption) (*Object, error) {
 	if info, ok := u.VersionInfo(); ok && !r.spec.Empty() && info.Spec.Cmp(r.spec) > 0 {
 		return nil, fmt.Errorf("%w: object spec is OCFL v%s, storage root spec is OCFL v%s",
 			ErrObjectSpecExceedsRoot, info.Spec, r.spec)
@@ -170,7 +170,7 @@ func (r *Root) Apply(ctx context.Context, u *ObjectUpdate, src ContentSource, op
 
 // Revert reverts the interrupted update u to the object in the root with u's
 // ID. See [ObjectUpdate.Revert].
-func (r *Root) Revert(ctx context.Context, u *ObjectUpdate, opts ...UpdateOption) error {
+func (r *Root) Revert(ctx context.Context, u *ObjectUpdate, opts ...ApplyUpdateOption) error {
 	objPath, err := r.ResolveID(u.ID())
 	if err != nil {
 		return err

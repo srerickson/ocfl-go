@@ -106,14 +106,14 @@ func runUpdate(ctx context.Context, args []string, stderr io.Writer) error {
 	}
 	applyCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
-	_, err = stage.Update.Apply(applyCtx, objCnf.FS, objCnf.Path, stage.Content, ocfl.UpdateWithLogger(logger))
+	_, err = stage.Update.Apply(applyCtx, objCnf.FS, objCnf.Path, stage.Content, ocfl.ApplyWithLogger(logger))
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			// the stage file is kept, so the update can be resumed
 			return err
 		}
 		logger.Info("received interupt: reverting changes...")
-		if err := stage.Update.Revert(ctx, objCnf.FS, objCnf.Path, ocfl.UpdateWithLogger(logger)); err != nil {
+		if err := stage.Update.Revert(ctx, objCnf.FS, objCnf.Path, ocfl.ApplyWithLogger(logger)); err != nil {
 			return err
 		}
 	}
@@ -129,13 +129,13 @@ func newStage(ctx context.Context, objCnf *config.FSConfig, f *cmdFlags) (*stage
 	if err := f.checkNewVersion(); err != nil {
 		return nil, err
 	}
-	var opts []ocfl.UpdateOption
+	var opts []ocfl.NewUpdateOption
 	if f.algID != "" {
 		alg, err := digest.DefaultRegistry().Get(f.algID)
 		if err != nil {
 			return nil, err
 		}
-		opts = append(opts, ocfl.UpdateWithDigestAlgorithm(alg))
+		opts = append(opts, ocfl.NewUpdateWithDigestAlgorithm(alg))
 	}
 	update, _, err := ocfl.NewObjectUpdate(ctx, objCnf.FS, objCnf.Path, f.newID, opts...)
 	if err != nil {

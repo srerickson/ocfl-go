@@ -27,7 +27,7 @@ type testStage struct {
 }
 
 // newTestStage returns a stage for a new update to the object at dir in fsys.
-func newTestStage(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...ocfl.UpdateOption) (*testStage, error) {
+func newTestStage(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...ocfl.NewUpdateOption) (*testStage, error) {
 	u, _, err := ocfl.NewObjectUpdate(ctx, fsys, dir, id, opts...)
 	if err != nil {
 		return nil, err
@@ -36,7 +36,7 @@ func newTestStage(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...o
 }
 
 // newRootStage returns a stage for a new update to the object id in root.
-func newRootStage(ctx context.Context, root *ocfl.Root, id string, opts ...ocfl.UpdateOption) (*testStage, error) {
+func newRootStage(ctx context.Context, root *ocfl.Root, id string, opts ...ocfl.NewUpdateOption) (*testStage, error) {
 	u, _, err := root.NewObjectUpdate(ctx, id, opts...)
 	if err != nil {
 		return nil, err
@@ -89,7 +89,7 @@ func stageBytes(t *testing.T, stage *testStage, content map[string][]byte, fixit
 
 // commit finalizes the stage's update and applies it to obj's storage,
 // returning the updated object.
-func commit(t *testing.T, obj *ocfl.Object, stage *testStage, msg string, opts ...ocfl.UpdateOption) *ocfl.Object {
+func commit(t *testing.T, obj *ocfl.Object, stage *testStage, msg string, opts ...ocfl.FinalizeUpdateOption) *ocfl.Object {
 	t.Helper()
 	ctx := context.Background()
 	be.NilErr(t, stage.Finalize(msg, ocfl.User{Name: "Tester"}, opts...))

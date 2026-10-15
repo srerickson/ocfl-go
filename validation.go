@@ -169,12 +169,13 @@ func (v *ObjectValidation) SkipDigests() bool {
 }
 
 // DigestConcurrency returns the configured number of go routines used to read
-// and digest contents during validation. The default value is runtime.NumCPU().
+// and digest contents during validation. The default value is
+// runtime.GOMAXPROCS(0).
 func (v *ObjectValidation) DigestConcurrency() int {
 	if v.concurrency > 0 {
 		return v.concurrency
 	}
-	return runtime.NumCPU()
+	return runtime.GOMAXPROCS(0)
 }
 
 // ValidationAlgorithms returns the registry of digest algorithms
@@ -325,7 +326,8 @@ func ValidationLogger(logger *slog.Logger) ObjectValidationOption {
 }
 
 // ValidationDigestConcurrency is used to set the number of go routines used to
-// read and digest contents during validation.
+// read and digest contents during validation. Without it, or if num is less
+// than 1, runtime.GOMAXPROCS(0) is used.
 func ValidationDigestConcurrency(num int) ObjectValidationOption {
 	return func(v *ObjectValidation) {
 		v.concurrency = num

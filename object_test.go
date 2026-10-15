@@ -55,14 +55,14 @@ func TestObject_Example(t *testing.T) {
 
 	// update a new version and upgrade to OCFL v1.1
 	update, _, err = ocfl.NewObjectUpdate(ctx, v1Obj.FS(), v1Obj.Path(), v1Obj.ID(),
-		ocfl.UpdateWithExpectedBase(v1Obj.InventoryDigest()))
+		ocfl.NewUpdateWithExpectedBase(v1Obj.InventoryDigest()))
 	be.NilErr(t, err)
 	stage = stageFor(update)
 	be.NilErr(t, stage.AddBytes("README.txt", []byte("this is a test file (v2)"), digest.MD5))
 	be.NilErr(t, stage.AddBytes("new-data.csv", []byte("1,2,3"), digest.MD5))
 	be.NilErr(t, stage.AddBytes("docs/note.txt", []byte("this is a note"), digest.MD5))
 	be.NilErr(t, stage.Finalize("second version", ocfl.User{Name: "Dr. Robot"},
-		ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1)))
+		ocfl.FinalizeWithOCFLSpec(ocfl.Spec1_1)))
 	v2Obj, err := stage.Update().Apply(ctx, obj.FS(), obj.Path(), stage.Content())
 	be.NilErr(t, err)
 	be.Equal(t, "new-object-01", v2Obj.ID())

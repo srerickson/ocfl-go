@@ -60,7 +60,7 @@ func TestStageFS(t *testing.T) {
 	ctx := context.Background()
 	testdataFS := ocflfs.DirFS(`testdata`)
 	newStage := func(t *testing.T) *testStage {
-		stage, err := newTestStage(ctx, ocflfs.DirFS(t.TempDir()), "obj", "obj", ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
+		stage, err := newTestStage(ctx, ocflfs.DirFS(t.TempDir()), "obj", "obj", ocfl.NewUpdateWithDigestAlgorithm(digest.SHA256))
 		be.NilErr(t, err)
 		return stage
 	}
