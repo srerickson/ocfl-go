@@ -263,7 +263,7 @@ func TestFileContentMap_JSON_withUpdate(t *testing.T) {
 	contentFS, err := local.NewFS(filepath.Join(`testdata`, `content-fixture`))
 	be.NilErr(t, err)
 	objFS := testutil.TmpLocalFS(t)
-	update, err := ocfl.NewUpdate(ctx, objFS, "obj", "obj")
+	update, _, err := ocfl.NewObjectUpdate(ctx, objFS, "obj", "obj")
 	be.NilErr(t, err)
 	stage := &fileStage{Update: update, Content: &ocfl.FileContentMap{}}
 	be.NilErr(t, ocfl.StageFS(ctx, stage.Update, stage.Content, contentFS, "folder1", "files", ocfl.StageWithFixity(digest.MD5)))
@@ -307,7 +307,7 @@ func TestFileContentMap_JSON_missingContent(t *testing.T) {
 	ctx := context.Background()
 	contentFS := testutil.TmpLocalFS(t, filepath.Join(`testdata`, `content-fixture`))
 	objFS := testutil.TmpLocalFS(t)
-	upd, err := ocfl.NewUpdate(ctx, objFS, "obj", "obj")
+	upd, _, err := ocfl.NewObjectUpdate(ctx, objFS, "obj", "obj")
 	be.NilErr(t, err)
 	stage := &fileStage{Update: upd, Content: &ocfl.FileContentMap{}}
 	be.NilErr(t, ocfl.StageFS(ctx, upd, stage.Content, contentFS, "content-fixture", "."))

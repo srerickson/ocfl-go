@@ -21,12 +21,11 @@ Removed:
 
 Replacements:
 
-- `NewUpdate(ctx, fsys, dir, id, opts...)` and `Root.NewUpdate` create a draft `ObjectUpdate`. They read and validate the object's root inventory, and return an error wrapping `ErrObjectIncomplete` if the object is half-written. `OpenForUpdate` and `Root.OpenForUpdate` return both an `Object` and a draft update from a single read of the inventory.
-- To update an `Object` you already have, pass `UpdateWithBaseDigest(obj.InventoryDigest())` to `NewUpdate`: it returns an error wrapping `ErrUpdateConflict` if the object has changed since it was read. `UpdateMustExist` makes `NewUpdate` return an error wrapping `fs.ErrNotExist` for a missing object.
-- `ObjectUpdate.Next` returns a draft for the version after a finalized update, so several versions can be committed in a row without reading the object between them.
+- `NewObjectUpdate(ctx, fsys, dir, id, opts...)` and `Root.NewObjectUpdate(ctx, id, opts...)` are the only ways to create a draft `ObjectUpdate`. They read and validate the object's root inventory once and return the update and an `Object` describing that same inventory (for a missing object, the `Object`'s `Exists` returns false). They return an error wrapping `ErrObjectIncomplete` if the object is half-written.
+- To update an `Object` you already have, pass `UpdateWithExpectedBase(obj.InventoryDigest())` to `NewObjectUpdate`: it returns an error wrapping `ErrUpdateConflict` if the object has changed since it was read. `UpdateMustExist` makes `NewObjectUpdate` return an error wrapping `fs.ErrNotExist` for a missing object.
 - `ObjectUpdate.Apply(ctx, fsys, dir, src, opts...)` and `ObjectUpdate.Revert` (and `Root.Apply`/`Root.Revert`) write or undo it. `Apply` takes the `ContentSource` for new content and returns the resulting `*Object`.
 - `UpdateWithNewHead` is now `UpdateWithExpectedHead`. The other `UpdateWith…` options keep their names but return `UpdateOption`.
-- `UpdateWithDigestAlgorithm` sets a new object's digest algorithm (sha512 by default), replacing the stage's `DigestAlgorithm`. For an existing object it must match the object's algorithm, or `NewUpdate` returns an error. As before, an existing object's digest algorithm can't be changed.
+- `UpdateWithDigestAlgorithm` sets a new object's digest algorithm (sha512 by default), replacing the stage's `DigestAlgorithm`. For an existing object it must match the object's algorithm, or `NewObjectUpdate` returns an error. As before, an existing object's digest algorithm can't be changed.
 - `ErrRevertUpdate` is now `ErrUpdateCompleted`.
 - New sentinels: `ErrFinalized`, `ErrNotFinalized`, `ErrMissingContent`, `ErrContentChanged`, `ErrObjectIncomplete`, `ErrUnexpectedHead`, `ErrUpdateConflict`, `ErrObjectSpecExceedsRoot`.
 
@@ -45,7 +44,7 @@ Replacements:
 
 ### Behavior changes
 
-- Objects created in a storage root now default to the root's OCFL spec. Requesting a spec newer than the root's returns `ErrObjectSpecExceedsRoot` (OCFL E081). `Root.Apply` also refuses updates whose spec is newer than the root's (for example, an update created with `NewUpdate` rather than `Root.NewUpdate`), and `Root.ValidateObject` checks it.
+- Objects created in a storage root now default to the root's OCFL spec. Requesting a spec newer than the root's returns `ErrObjectSpecExceedsRoot` (OCFL E081). `Root.Apply` also refuses updates whose spec is newer than the root's (for example, an update created with `NewObjectUpdate` rather than `Root.NewObjectUpdate`), and `Root.ValidateObject` checks it.
 - `Apply` and `Revert` for a new object require its directory to be missing, empty, or to hold only what the update writes. Anything else returns an error wrapping `ErrUpdateConflict`.
 - `ObjectUpdate.Add` returns an error for fixity whose value for the update's primary digest disagrees with the digest being added.
 

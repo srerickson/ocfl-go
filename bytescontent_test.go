@@ -54,7 +54,7 @@ func TestBytesContentMap_DeleteFunc(t *testing.T) {
 	ctx := context.Background()
 	fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `spec-ex-full`)
 	newUpdate := func(t *testing.T) *ocfl.ObjectUpdate {
-		u, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(fixture), ".", "")
+		u, _, err := ocfl.NewObjectUpdate(ctx, ocflfs.DirFS(fixture), ".", "")
 		be.NilErr(t, err)
 		return u
 	}

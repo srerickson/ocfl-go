@@ -297,7 +297,7 @@ func TestNewRoot_InvalidConfig(t *testing.T) {
 // Objects created through a Root must not declare a newer OCFL spec than the
 // root (E081): new objects default to the root's spec, and explicit specs newer
 // than the root's are rejected.
-func TestRoot_NewUpdate_Spec(t *testing.T) {
+func TestRoot_NewObjectUpdate_Spec(t *testing.T) {
 	ctx := context.Background()
 	user := ocfl.User{Name: "n"}
 	newRoot := func(t *testing.T, spec ocfl.Spec) (*ocfl.Root, ocflfs.FS) {
@@ -349,9 +349,9 @@ func TestRoot_NewUpdate_Spec(t *testing.T) {
 		_, err = ocflfs.ReadDir(ctx, fsys, objPath)
 		be.True(t, errors.Is(err, fs.ErrNotExist))
 	})
-	t.Run("the root's spec is checked by updates from Root.OpenForUpdate", func(t *testing.T) {
+	t.Run("the root's spec is checked by updates from Root.NewObjectUpdate", func(t *testing.T) {
 		root, _ := newRoot(t, ocfl.Spec1_0)
-		obj, upd, err := root.OpenForUpdate(ctx, "obj1")
+		upd, obj, err := root.NewObjectUpdate(ctx, "obj1")
 		be.NilErr(t, err)
 		be.Equal(t, root, obj.Root())
 		be.False(t, obj.Exists())
@@ -381,7 +381,7 @@ func TestRoot_NewUpdate_Spec(t *testing.T) {
 	})
 	t.Run("the root's spec is saved with the update", func(t *testing.T) {
 		root, _ := newRoot(t, ocfl.Spec1_0)
-		upd, err := root.NewUpdate(ctx, "obj1")
+		upd, _, err := root.NewObjectUpdate(ctx, "obj1")
 		be.NilErr(t, err)
 		saved, err := json.Marshal(upd)
 		be.NilErr(t, err)
@@ -395,7 +395,7 @@ func TestRoot_NewUpdate_Spec(t *testing.T) {
 		objPath, err := root.ResolveID("obj1")
 		be.NilErr(t, err)
 		// a plain update doesn't know the root's spec: it defaults to 1.1
-		upd, err := ocfl.NewUpdate(ctx, fsys, objPath, "obj1")
+		upd, _, err := ocfl.NewObjectUpdate(ctx, fsys, objPath, "obj1")
 		be.NilErr(t, err)
 		be.NilErr(t, upd.Finalize("msg", user))
 		_, err = root.Apply(ctx, upd, nil)
@@ -407,7 +407,7 @@ func TestRoot_NewUpdate_Spec(t *testing.T) {
 	t.Run("object without root defaults to latest spec", func(t *testing.T) {
 		fsys, err := local.NewFS(t.TempDir())
 		be.NilErr(t, err)
-		upd, err := ocfl.NewUpdate(ctx, fsys, "obj1", "obj1")
+		upd, _, err := ocfl.NewObjectUpdate(ctx, fsys, "obj1", "obj1")
 		be.NilErr(t, err)
 		be.NilErr(t, upd.Finalize("msg", user))
 		obj, err := upd.Apply(ctx, fsys, "obj1", nil)

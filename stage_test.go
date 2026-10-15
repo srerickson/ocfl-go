@@ -19,7 +19,7 @@ import (
 
 func TestStageBytes(t *testing.T) {
 	ctx := context.Background()
-	u, err := ocfl.NewUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj-1")
+	u, _, err := ocfl.NewObjectUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj-1")
 	be.NilErr(t, err)
 	var mem ocfl.BytesContentMap
 	be.NilErr(t, ocfl.StageBytes(u, &mem, "a.txt", []byte("a"), digest.MD5))
@@ -35,7 +35,7 @@ func TestStageBytes(t *testing.T) {
 	be.Equal(t, 1, len(mem.Digests()))
 	t.Run("content already in the object", func(t *testing.T) {
 		fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `spec-ex-full`)
-		u, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(fixture), ".", "")
+		u, _, err := ocfl.NewObjectUpdate(ctx, ocflfs.DirFS(fixture), ".", "")
 		be.NilErr(t, err)
 		var mem ocfl.BytesContentMap
 		// empty2.txt's content is in the object: only the state changes
@@ -46,7 +46,7 @@ func TestStageBytes(t *testing.T) {
 		be.Zero(t, u.Fixity(dig))
 	})
 	t.Run("nil content panics before u is changed", func(t *testing.T) {
-		u, err := ocfl.NewUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj-1")
+		u, _, err := ocfl.NewObjectUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj-1")
 		be.NilErr(t, err)
 		defer func() {
 			be.Nonzero(t, recover())

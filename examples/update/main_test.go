@@ -37,7 +37,7 @@ func TestRun(t *testing.T) {
 	t.Run("resume from stage file", func(t *testing.T) {
 		objDir := t.TempDir()
 		objFS := local.MustNewFS(objDir)
-		update, err := ocfl.NewUpdate(ctx, objFS, ".", "ark:/123")
+		update, _, err := ocfl.NewObjectUpdate(ctx, objFS, ".", "ark:/123")
 		be.NilErr(t, err)
 		stage := &stage{Update: update, Content: &ocfl.FileContentMap{}}
 		be.NilErr(t, ocfl.StageFS(ctx, stage.Update, stage.Content, local.MustNewFS(contentFixture), ".", "."))

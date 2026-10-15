@@ -28,7 +28,7 @@ type testStage struct {
 
 // newTestStage returns a stage for a new update to the object at dir in fsys.
 func newTestStage(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...ocfl.UpdateOption) (*testStage, error) {
-	u, err := ocfl.NewUpdate(ctx, fsys, dir, id, opts...)
+	u, _, err := ocfl.NewObjectUpdate(ctx, fsys, dir, id, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +37,7 @@ func newTestStage(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...o
 
 // newRootStage returns a stage for a new update to the object id in root.
 func newRootStage(ctx context.Context, root *ocfl.Root, id string, opts ...ocfl.UpdateOption) (*testStage, error) {
-	u, err := root.NewUpdate(ctx, id, opts...)
+	u, _, err := root.NewObjectUpdate(ctx, id, opts...)
 	if err != nil {
 		return nil, err
 	}

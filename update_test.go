@@ -22,19 +22,18 @@ import (
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
-	"github.com/srerickson/ocfl-go/extension"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/fs/local"
 	"github.com/srerickson/ocfl-go/internal/testutil"
 )
 
-func TestNewUpdate(t *testing.T) {
+func TestNewObjectUpdate(t *testing.T) {
 	ctx := context.Background()
 	goodObjects := filepath.Join(objectFixturesPath, `1.1`, `good-objects`)
 	badObjects := filepath.Join(objectFixturesPath, `1.1`, `bad-objects`)
 	t.Run("new object", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t)
-		upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj-1")
+		upd, obj, err := ocfl.NewObjectUpdate(ctx, fsys, "obj", "obj-1")
 		be.NilErr(t, err)
 		be.Equal(t, "obj-1", upd.ID())
 		be.Equal(t, digest.SHA512.ID(), upd.DigestAlgorithm().ID())
@@ -43,19 +42,22 @@ func TestNewUpdate(t *testing.T) {
 		be.Equal(t, 0, len(upd.NewState()))
 		be.Equal(t, 0, len(upd.BaseState()))
 		be.False(t, upd.Finalized())
+		be.False(t, obj.Exists())
+		be.Equal(t, "obj-1", obj.ID())
+		be.Equal(t, "obj", obj.Path())
 	})
 	t.Run("new object requires an ID", func(t *testing.T) {
-		_, err := ocfl.NewUpdate(ctx, testutil.TmpLocalFS(t), "obj", "")
+		_, _, err := ocfl.NewObjectUpdate(ctx, testutil.TmpLocalFS(t), "obj", "")
 		be.True(t, errors.Is(err, ocfl.ErrNoObjectID))
 	})
 	t.Run("new object with sha256", func(t *testing.T) {
-		upd, err := ocfl.NewUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj-1",
+		upd, _, err := ocfl.NewObjectUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj-1",
 			ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
 		be.NilErr(t, err)
 		be.Equal(t, digest.SHA256.ID(), upd.DigestAlgorithm().ID())
 	})
 	t.Run("unsupported digest algorithm", func(t *testing.T) {
-		_, err := ocfl.NewUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj-1",
+		_, _, err := ocfl.NewObjectUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj-1",
 			ocfl.UpdateWithDigestAlgorithm(digest.MD5))
 		be.Nonzero(t, err)
 		be.In(t, "md5", err.Error())
@@ -65,17 +67,24 @@ func TestNewUpdate(t *testing.T) {
 		obj, err := ocfl.NewObject(ctx, fsys, "spec-ex-full")
 		be.NilErr(t, err)
 		for _, id := range []string{"", obj.ID()} {
-			upd, err := ocfl.NewUpdate(ctx, fsys, "spec-ex-full", id)
+			upd, got, err := ocfl.NewObjectUpdate(ctx, fsys, "spec-ex-full", id)
 			be.NilErr(t, err)
 			be.Equal(t, obj.ID(), upd.ID())
 			be.Equal(t, obj.InventoryDigest(), upd.BaseInventoryDigest())
 			be.Equal(t, ocfl.V(4), upd.NextHead())
 			be.True(t, obj.Version(0).State().Eq(upd.NewState()))
 			be.True(t, obj.Version(0).State().Eq(upd.BaseState()))
+			// the returned object describes the update's base inventory
+			be.True(t, got.Exists())
+			be.Equal(t, "spec-ex-full", got.Path())
+			be.Equal(t, upd.ID(), got.ID())
+			be.Equal(t, upd.BaseInventoryDigest(), got.InventoryDigest())
+			be.Equal(t, ocfl.V(3), got.Head())
+			be.Equal(t, upd.DigestAlgorithm().ID(), got.DigestAlgorithm().ID())
 		}
 	})
 	t.Run("base state is a copy", func(t *testing.T) {
-		upd, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "")
+		upd, _, err := ocfl.NewObjectUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "")
 		be.NilErr(t, err)
 		base := upd.BaseState()
 		be.NilErr(t, upd.Clear())
@@ -86,33 +95,33 @@ func TestNewUpdate(t *testing.T) {
 	})
 	t.Run("existing object with different digest algorithm", func(t *testing.T) {
 		// spec-ex-full uses sha512
-		_, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "",
+		_, _, err := ocfl.NewObjectUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "",
 			ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
 		be.Nonzero(t, err)
 		be.In(t, "doesn't match the object's digest algorithm", err.Error())
 	})
 	t.Run("existing object with same digest algorithm", func(t *testing.T) {
-		upd, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "",
+		upd, _, err := ocfl.NewObjectUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "",
 			ocfl.UpdateWithDigestAlgorithm(digest.SHA512))
 		be.NilErr(t, err)
 		be.Equal(t, digest.SHA512.ID(), upd.DigestAlgorithm().ID())
 	})
 	t.Run("existing object with wrong ID", func(t *testing.T) {
-		_, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "other-id")
+		_, _, err := ocfl.NewObjectUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "other-id")
 		be.Nonzero(t, err)
 		be.In(t, "unexpected ID", err.Error())
 	})
 	t.Run("not an object", func(t *testing.T) {
-		_, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(`testdata`), "content-fixture", "obj-1")
+		_, _, err := ocfl.NewObjectUpdate(ctx, ocflfs.DirFS(`testdata`), "content-fixture", "obj-1")
 		be.Nonzero(t, err)
 		be.In(t, "non-conforming", err.Error())
 	})
 	t.Run("missing inventory", func(t *testing.T) {
-		_, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(badObjects), "E063_no_inv", "obj-1")
+		_, _, err := ocfl.NewObjectUpdate(ctx, ocflfs.DirFS(badObjects), "E063_no_inv", "obj-1")
 		be.True(t, errors.Is(err, ocfl.ErrObjectIncomplete))
 	})
 	t.Run("root inventory doesn't match sidecar", func(t *testing.T) {
-		_, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(badObjects), "E060_E064_root_inventory_digest_mismatch", "")
+		_, _, err := ocfl.NewObjectUpdate(ctx, ocflfs.DirFS(badObjects), "E060_E064_root_inventory_digest_mismatch", "")
 		be.True(t, errors.Is(err, ocfl.ErrObjectIncomplete))
 		var digestErr *digest.DigestError
 		be.True(t, errors.As(err, &digestErr))
@@ -120,82 +129,47 @@ func TestNewUpdate(t *testing.T) {
 	t.Run("leftover version directory", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, filepath.Join(goodObjects, "minimal_one_version_one_file"))
 		be.NilErr(t, os.Mkdir(filepath.Join(fsys.Root(), "minimal_one_version_one_file", "v2"), 0o755))
-		_, err := ocfl.NewUpdate(ctx, fsys, "minimal_one_version_one_file", "")
+		_, _, err := ocfl.NewObjectUpdate(ctx, fsys, "minimal_one_version_one_file", "")
 		be.True(t, errors.Is(err, ocfl.ErrObjectIncomplete))
 		be.In(t, "v2", err.Error())
 	})
-	t.Run("with base digest", func(t *testing.T) {
+	t.Run("with expected base", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, filepath.Join(goodObjects, "minimal_one_version_one_file"))
 		obj, err := ocfl.NewObject(ctx, fsys, "minimal_one_version_one_file")
 		be.NilErr(t, err)
-		baseDigest := ocfl.UpdateWithBaseDigest(obj.InventoryDigest())
-		upd, err := ocfl.NewUpdate(ctx, fsys, obj.Path(), "", baseDigest)
+		expectedBase := ocfl.UpdateWithExpectedBase(obj.InventoryDigest())
+		upd, _, err := ocfl.NewObjectUpdate(ctx, fsys, obj.Path(), "", expectedBase)
 		be.NilErr(t, err)
 		be.Equal(t, obj.InventoryDigest(), upd.BaseInventoryDigest())
-		_, err = ocfl.NewUpdate(ctx, fsys, obj.Path(), "",
-			ocfl.UpdateWithBaseDigest(strings.ToUpper(obj.InventoryDigest())))
+		_, _, err = ocfl.NewObjectUpdate(ctx, fsys, obj.Path(), "",
+			ocfl.UpdateWithExpectedBase(strings.ToUpper(obj.InventoryDigest())))
 		be.NilErr(t, err)
 		// the object changes after obj was read
 		stage := stageFor(upd)
 		be.NilErr(t, stage.AddBytes("new.txt", []byte("new")))
 		commit(t, obj, stage, "v2")
-		_, err = ocfl.NewUpdate(ctx, fsys, obj.Path(), "", baseDigest)
+		_, _, err = ocfl.NewObjectUpdate(ctx, fsys, obj.Path(), "", expectedBase)
 		be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
 		// an empty digest means the object must not exist
-		_, err = ocfl.NewUpdate(ctx, fsys, obj.Path(), "", ocfl.UpdateWithBaseDigest(""))
+		_, _, err = ocfl.NewObjectUpdate(ctx, fsys, obj.Path(), "", ocfl.UpdateWithExpectedBase(""))
 		be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
-		_, err = ocfl.NewUpdate(ctx, fsys, "new-obj", "new-obj", ocfl.UpdateWithBaseDigest(""))
+		_, _, err = ocfl.NewObjectUpdate(ctx, fsys, "new-obj", "new-obj", ocfl.UpdateWithExpectedBase(""))
 		be.NilErr(t, err)
-		_, err = ocfl.NewUpdate(ctx, fsys, "new-obj", "new-obj", baseDigest)
+		_, _, err = ocfl.NewObjectUpdate(ctx, fsys, "new-obj", "new-obj", expectedBase)
 		be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
 	})
 	t.Run("object must exist", func(t *testing.T) {
-		_, err := ocfl.NewUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj-1", ocfl.UpdateMustExist())
+		_, _, err := ocfl.NewObjectUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj-1", ocfl.UpdateMustExist())
 		be.True(t, errors.Is(err, fs.ErrNotExist))
-		_, err = ocfl.NewUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "", ocfl.UpdateMustExist())
+		_, _, err = ocfl.NewObjectUpdate(ctx, ocflfs.DirFS(goodObjects), "spec-ex-full", "", ocfl.UpdateMustExist())
 		be.NilErr(t, err)
-	})
-}
-
-func TestOpenForUpdate(t *testing.T) {
-	ctx := context.Background()
-	fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `spec-ex-full`)
-	t.Run("existing object", func(t *testing.T) {
-		obj, u, err := ocfl.OpenForUpdate(ctx, ocflfs.DirFS(fixture), ".", "")
-		be.NilErr(t, err)
-		be.True(t, obj.Exists())
-		be.Equal(t, ".", obj.Path())
-		be.Equal(t, obj.ID(), u.ID())
-		be.Equal(t, obj.DigestAlgorithm().ID(), u.DigestAlgorithm().ID())
-		be.Nonzero(t, obj.InventoryDigest())
-		be.Equal(t, obj.InventoryDigest(), u.BaseInventoryDigest())
-		be.Equal(t, ocfl.V(4), u.NextHead())
-		be.True(t, obj.Version(0).State().Eq(u.NewState()))
-		be.False(t, u.Finalized())
-	})
-	t.Run("new object", func(t *testing.T) {
-		obj, u, err := ocfl.OpenForUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj-1")
-		be.NilErr(t, err)
-		be.False(t, obj.Exists())
-		be.Equal(t, "obj-1", obj.ID())
-		be.Equal(t, "obj-1", u.ID())
-		be.Equal(t, digest.SHA512.ID(), u.DigestAlgorithm().ID())
-		be.Zero(t, u.BaseInventoryDigest())
-		be.Equal(t, ocfl.V(1), u.NextHead())
-		be.Equal(t, 0, len(u.NewState()))
-	})
-	t.Run("options", func(t *testing.T) {
-		_, _, err := ocfl.OpenForUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj-1", ocfl.UpdateMustExist())
-		be.True(t, errors.Is(err, fs.ErrNotExist))
-		_, _, err = ocfl.OpenForUpdate(ctx, ocflfs.DirFS(fixture), ".", "", ocfl.UpdateWithBaseDigest("abc"))
-		be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
 	})
 	// Changing the update's state must not change the object's version
 	// states: an aliased state would rewrite earlier versions in the next
 	// inventory.
 	t.Run("update state is a copy", func(t *testing.T) {
-		fsys := testutil.TmpLocalFS(t, fixture)
-		obj, u, err := ocfl.OpenForUpdate(ctx, fsys, "spec-ex-full", "")
+		fsys := testutil.TmpLocalFS(t, filepath.Join(goodObjects, "spec-ex-full"))
+		u, obj, err := ocfl.NewObjectUpdate(ctx, fsys, "spec-ex-full", "")
 		be.NilErr(t, err)
 		headState := obj.Version(0).State()
 		stage := stageFor(u)
@@ -212,7 +186,7 @@ func TestOpenForUpdate(t *testing.T) {
 
 func TestObjectUpdate_Edits(t *testing.T) {
 	newUpdate := func(t *testing.T) *ocfl.ObjectUpdate {
-		upd, err := ocfl.NewUpdate(context.Background(), testutil.TmpLocalFS(t), "obj", "obj")
+		upd, _, err := ocfl.NewObjectUpdate(context.Background(), testutil.TmpLocalFS(t), "obj", "obj")
 		be.NilErr(t, err)
 		return upd
 	}
@@ -317,7 +291,7 @@ func TestObjectUpdate_Edits(t *testing.T) {
 func TestObjectUpdate_NeedsContent(t *testing.T) {
 	ctx := context.Background()
 	fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `spec-ex-full`)
-	u, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(fixture), ".", "")
+	u, _, err := ocfl.NewObjectUpdate(ctx, ocflfs.DirFS(fixture), ".", "")
 	be.NilErr(t, err)
 	inObj := u.NewState().DigestFor("empty2.txt")
 	be.Nonzero(t, inObj)
@@ -406,7 +380,7 @@ func TestObjectUpdate_Finalize(t *testing.T) {
 	t.Run("existing object keeps padding, content directory, and fixity", func(t *testing.T) {
 		fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `minimal_content_dir_called_stuff`)
 		fsys := testutil.TmpLocalFS(t, fixture)
-		obj, upd, err := ocfl.OpenForUpdate(ctx, fsys, "minimal_content_dir_called_stuff", "")
+		upd, obj, err := ocfl.NewObjectUpdate(ctx, fsys, "minimal_content_dir_called_stuff", "")
 		be.NilErr(t, err)
 		stage := stageFor(upd)
 		be.NilErr(t, stage.AddBytes("new.txt", []byte("new"), digest.MD5))
@@ -420,7 +394,7 @@ func TestObjectUpdate_Finalize(t *testing.T) {
 	})
 	t.Run("new head", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t)
-		upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj")
+		upd, _, err := ocfl.NewObjectUpdate(ctx, fsys, "obj", "obj")
 		be.NilErr(t, err)
 		err = upd.Finalize("msg", user, ocfl.UpdateWithExpectedHead(2))
 		be.True(t, errors.Is(err, ocfl.ErrUnexpectedHead))
@@ -431,7 +405,7 @@ func TestObjectUpdate_Finalize(t *testing.T) {
 	})
 	t.Run("unchanged state", func(t *testing.T) {
 		fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `spec-ex-full`)
-		upd, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(fixture), ".", "")
+		upd, _, err := ocfl.NewObjectUpdate(ctx, ocflfs.DirFS(fixture), ".", "")
 		be.NilErr(t, err)
 		err = upd.Finalize("msg", user)
 		be.Nonzero(t, err)
@@ -440,14 +414,14 @@ func TestObjectUpdate_Finalize(t *testing.T) {
 	})
 	t.Run("spec can't be lowered", func(t *testing.T) {
 		fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `spec-ex-full`)
-		upd, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(fixture), ".", "")
+		upd, _, err := ocfl.NewObjectUpdate(ctx, ocflfs.DirFS(fixture), ".", "")
 		be.NilErr(t, err)
 		err = upd.Finalize("msg", user, ocfl.UpdateWithOCFLSpec(ocfl.Spec1_0), ocfl.UpdateWithUnchangedVersionState())
 		be.Nonzero(t, err)
 		be.False(t, upd.Finalized())
 	})
 	t.Run("unknown spec", func(t *testing.T) {
-		upd, err := ocfl.NewUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj")
+		upd, _, err := ocfl.NewObjectUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj")
 		be.NilErr(t, err)
 		be.Nonzero(t, upd.Finalize("msg", user, ocfl.UpdateWithOCFLSpec(ocfl.Spec("2.0"))))
 	})
@@ -498,7 +472,7 @@ func TestObjectUpdate_JSON(t *testing.T) {
 		be.NilErr(t, loaded.Remove("new/a.txt"))
 	})
 	t.Run("draft for new object", func(t *testing.T) {
-		upd, err := ocfl.NewUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj",
+		upd, _, err := ocfl.NewObjectUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj",
 			ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
 		be.NilErr(t, err)
 		loaded := roundTrip(t, upd)
@@ -629,7 +603,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 	fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `minimal_one_version_one_file`)
 	t.Run("draft", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t)
-		upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj")
+		upd, _, err := ocfl.NewObjectUpdate(ctx, fsys, "obj", "obj")
 		be.NilErr(t, err)
 		_, err = upd.Apply(ctx, fsys, "obj", nil)
 		be.True(t, errors.Is(err, ocfl.ErrNotFinalized))
@@ -637,7 +611,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 	})
 	t.Run("read-only storage", func(t *testing.T) {
 		fsys := ocflfs.DirFS(t.TempDir())
-		upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj")
+		upd, _, err := ocfl.NewObjectUpdate(ctx, fsys, "obj", "obj")
 		be.NilErr(t, err)
 		be.NilErr(t, upd.Finalize("msg", user))
 		_, err = upd.Apply(ctx, fsys, "obj", nil)
@@ -646,9 +620,9 @@ func TestObjectUpdate_Apply(t *testing.T) {
 	})
 	t.Run("returns a new object", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture)
-		obj, upd, err := ocfl.OpenForUpdate(ctx, fsys, "minimal_one_version_one_file", "")
+		upd, obj, err := ocfl.NewObjectUpdate(ctx, fsys, "minimal_one_version_one_file", "")
 		be.NilErr(t, err)
-		_, other, err := ocfl.OpenForUpdate(ctx, fsys, "minimal_one_version_one_file", "")
+		other, _, err := ocfl.NewObjectUpdate(ctx, fsys, "minimal_one_version_one_file", "")
 		be.NilErr(t, err)
 		stage := stageFor(upd)
 		be.NilErr(t, stage.AddBytes("new.txt", []byte("new")))
@@ -668,7 +642,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 	})
 	t.Run("applying a committed update again", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture)
-		obj, upd, err := ocfl.OpenForUpdate(ctx, fsys, "minimal_one_version_one_file", "")
+		upd, obj, err := ocfl.NewObjectUpdate(ctx, fsys, "minimal_one_version_one_file", "")
 		be.NilErr(t, err)
 		stage := stageFor(upd)
 		be.NilErr(t, stage.AddBytes("new.txt", []byte("new")))
@@ -681,7 +655,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 	t.Run("wrong object", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture,
 			filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `minimal_no_content`))
-		upd, err := ocfl.NewUpdate(ctx, fsys, "minimal_one_version_one_file", "")
+		upd, _, err := ocfl.NewObjectUpdate(ctx, fsys, "minimal_one_version_one_file", "")
 		be.NilErr(t, err)
 		stage := stageFor(upd)
 		be.NilErr(t, stage.AddBytes("new.txt", []byte("new")))
@@ -691,7 +665,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 	})
 	t.Run("new object over an existing object", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture)
-		upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj")
+		upd, _, err := ocfl.NewObjectUpdate(ctx, fsys, "obj", "obj")
 		be.NilErr(t, err)
 		be.NilErr(t, upd.Finalize("v1", user))
 		_, err = upd.Apply(ctx, fsys, "minimal_one_version_one_file", nil)
@@ -703,14 +677,14 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		// another new object's update was interrupted after writing the root
 		// inventory: it isn't ours, so it can't be resumed or reverted.
 		fsys := testutil.TmpLocalFS(t)
-		other, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj")
+		other, _, err := ocfl.NewObjectUpdate(ctx, fsys, "obj", "obj")
 		be.NilErr(t, err)
 		be.NilErr(t, other.Finalize("other v1", user))
 		// writes: namaste, version inventory and sidecar, root inventory
 		crash := &crashFS{FS: fsys, n: 4}
 		_, err = other.Apply(ctx, crash, "obj", nil)
 		be.True(t, errors.Is(err, errCrash))
-		upd, err := ocfl.NewUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj")
+		upd, _, err := ocfl.NewObjectUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj")
 		be.NilErr(t, err)
 		be.NilErr(t, upd.Finalize("v1", user))
 		_, err = upd.Apply(ctx, fsys, "obj", nil)
@@ -803,7 +777,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		// content is digested as it is copied: a staged file that changed
 		// isn't written into the object, and the update isn't committed.
 		fsys := testutil.TmpLocalFS(t, fixture)
-		obj, upd, err := ocfl.OpenForUpdate(ctx, fsys, "minimal_one_version_one_file", "")
+		upd, obj, err := ocfl.NewObjectUpdate(ctx, fsys, "minimal_one_version_one_file", "")
 		be.NilErr(t, err)
 		contentFS := testutil.TmpLocalFS(t, filepath.Join(`testdata`, `content-fixture`))
 		hello := filepath.Join(contentFS.Root(), "content-fixture", "hello.csv")
@@ -831,7 +805,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 	})
 	t.Run("trusted content isn't verified", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture)
-		obj, upd, err := ocfl.OpenForUpdate(ctx, fsys, "minimal_one_version_one_file", "")
+		upd, obj, err := ocfl.NewObjectUpdate(ctx, fsys, "minimal_one_version_one_file", "")
 		be.NilErr(t, err)
 		contentFS := testutil.TmpLocalFS(t, filepath.Join(`testdata`, `content-fixture`))
 		stage := stageFor(upd)
@@ -846,7 +820,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 	})
 	t.Run("resume with changed content", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture)
-		obj, upd, err := ocfl.OpenForUpdate(ctx, fsys, "minimal_one_version_one_file", "")
+		upd, obj, err := ocfl.NewObjectUpdate(ctx, fsys, "minimal_one_version_one_file", "")
 		be.NilErr(t, err)
 		contentFS := testutil.TmpLocalFS(t, filepath.Join(`testdata`, `content-fixture`))
 		stage := stageFor(upd)
@@ -871,7 +845,7 @@ func TestObjectUpdate_Apply(t *testing.T) {
 	})
 	t.Run("rename without content source", func(t *testing.T) {
 		fsys := testutil.TmpLocalFS(t, fixture)
-		obj, upd, err := ocfl.OpenForUpdate(ctx, fsys, "minimal_one_version_one_file", "")
+		upd, obj, err := ocfl.NewObjectUpdate(ctx, fsys, "minimal_one_version_one_file", "")
 		be.NilErr(t, err)
 		be.NilErr(t, upd.Rename("a_file.txt", "dir/renamed.txt"))
 		be.NilErr(t, upd.Finalize("v2", user))
@@ -879,67 +853,6 @@ func TestObjectUpdate_Apply(t *testing.T) {
 		be.NilErr(t, err)
 		be.DeepEqual(t, []string{"dir/renamed.txt"}, newObj.Version(0).State().AllPaths())
 		be.NilErr(t, ocfl.ValidateObject(ctx, fsys, obj.Path()).Err())
-	})
-}
-
-func TestObjectUpdate_Next(t *testing.T) {
-	ctx := context.Background()
-	user := ocfl.User{Name: "Tester"}
-	t.Run("draft", func(t *testing.T) {
-		upd, err := ocfl.NewUpdate(ctx, testutil.TmpLocalFS(t), "obj", "obj")
-		be.NilErr(t, err)
-		_, err = upd.Next()
-		be.True(t, errors.Is(err, ocfl.ErrNotFinalized))
-	})
-	t.Run("successive versions", func(t *testing.T) {
-		fsys := testutil.TmpLocalFS(t)
-		upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj", ocfl.UpdateWithDigestAlgorithm(digest.SHA256))
-		be.NilErr(t, err)
-		for i := 1; i <= 3; i++ {
-			be.Equal(t, ocfl.V(i), upd.NextHead())
-			stage := stageFor(upd)
-			be.NilErr(t, stage.AddBytes(fmt.Sprintf("%d.txt", i), []byte{byte(i)}))
-			be.NilErr(t, stage.Finalize(fmt.Sprintf("v%d", i), user))
-			obj, err := upd.Apply(ctx, fsys, "obj", stage.Content())
-			be.NilErr(t, err)
-			next, err := upd.Next()
-			be.NilErr(t, err)
-			be.Equal(t, upd.ID(), next.ID())
-			be.Equal(t, digest.SHA256.ID(), next.DigestAlgorithm().ID())
-			be.Equal(t, obj.InventoryDigest(), next.BaseInventoryDigest())
-			be.True(t, obj.Version(0).State().Eq(next.BaseState()))
-			be.True(t, obj.Version(0).State().Eq(next.NewState()))
-			be.False(t, next.Finalized())
-			upd = next
-		}
-		obj, err := ocfl.NewObject(ctx, fsys, "obj")
-		be.NilErr(t, err)
-		be.Equal(t, ocfl.V(3), obj.Head())
-		be.DeepEqual(t, []string{"1.txt", "2.txt", "3.txt"}, obj.Version(0).State().AllPaths())
-		be.NilErr(t, ocfl.ValidateObject(ctx, fsys, "obj").Err())
-	})
-	t.Run("not applied", func(t *testing.T) {
-		fsys := testutil.TmpLocalFS(t)
-		upd, err := ocfl.NewUpdate(ctx, fsys, "obj", "obj")
-		be.NilErr(t, err)
-		be.NilErr(t, upd.Finalize("v1", user, ocfl.UpdateWithUnchangedVersionState()))
-		next, err := upd.Next()
-		be.NilErr(t, err)
-		be.NilErr(t, next.Finalize("v2", user, ocfl.UpdateWithUnchangedVersionState()))
-		_, err = next.Apply(ctx, fsys, "obj", nil)
-		be.True(t, errors.Is(err, ocfl.ErrUpdateConflict))
-	})
-	t.Run("keeps the root's spec", func(t *testing.T) {
-		fsys := testutil.TmpLocalFS(t)
-		root, err := ocfl.NewRoot(ctx, fsys, ".", ocfl.InitRoot(ocfl.Spec1_0, "", extension.Ext0004()))
-		be.NilErr(t, err)
-		upd, err := root.NewUpdate(ctx, "obj")
-		be.NilErr(t, err)
-		be.NilErr(t, upd.Finalize("v1", user, ocfl.UpdateWithUnchangedVersionState()))
-		next, err := upd.Next()
-		be.NilErr(t, err)
-		err = next.Finalize("v2", user, ocfl.UpdateWithUnchangedVersionState(), ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1))
-		be.True(t, errors.Is(err, ocfl.ErrObjectSpecExceedsRoot))
 	})
 }
 
@@ -954,7 +867,7 @@ func TestObjectUpdate_Fixtures(t *testing.T) {
 			fixture := filepath.Join(fixturesDir, dir.Name())
 			t.Run(fixture, func(t *testing.T) {
 				fsys := testutil.TmpLocalFS(t, fixture)
-				obj, upd, err := ocfl.OpenForUpdate(ctx, fsys, dir.Name(), "")
+				upd, obj, err := ocfl.NewObjectUpdate(ctx, fsys, dir.Name(), "")
 				be.NilErr(t, err)
 				stage := stageFor(upd)
 				be.NilErr(t, stage.AddBytes("a-new-file", []byte("new stuff")))
@@ -1072,7 +985,7 @@ func TestObjectUpdate_Interrupted(t *testing.T) {
 				}
 				t.Run(fmt.Sprintf("resume after %d writes", n), func(t *testing.T) {
 					// a new update can't be started over the interrupted one
-					_, err := ocfl.NewUpdate(ctx, fsys, "obj", stage.ID())
+					_, _, err := ocfl.NewObjectUpdate(ctx, fsys, "obj", stage.ID())
 					if n > 0 {
 						be.True(t, errors.Is(err, ocfl.ErrObjectIncomplete))
 					}
@@ -1128,7 +1041,7 @@ func TestObjectUpdate_Canceled(t *testing.T) {
 	setup := func(t *testing.T) (*local.FS, *testStage) {
 		t.Helper()
 		fsys := testutil.TmpLocalFS(t, fixture)
-		upd, err := ocfl.NewUpdate(context.Background(), fsys, objPath, "")
+		upd, _, err := ocfl.NewObjectUpdate(context.Background(), fsys, objPath, "")
 		be.NilErr(t, err)
 		stage := stageBytes(t, stageFor(upd), map[string][]byte{
 			"b.txt": []byte("b"),

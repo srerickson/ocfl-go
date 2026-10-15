@@ -41,7 +41,8 @@ var (
 	// ErrUpdateConflict is returned by [ObjectUpdate.Apply] and
 	// [ObjectUpdate.Revert] when the object in storage matches neither the
 	// update's base inventory nor its new inventory: the object was changed
-	// by something else.
+	// by something else. It is also returned by [NewObjectUpdate] when the
+	// object doesn't match [UpdateWithExpectedBase].
 	ErrUpdateConflict = errors.New("object in storage has changed since the update was started")
 
 	// ErrUpdateCompleted is returned by [ObjectUpdate.Revert] when the update has
@@ -98,9 +99,10 @@ type UpdateEntry struct {
 	Fixity digest.Set // optional fixity values for the content
 }
 
-// ObjectUpdate is a pending version of an OCFL object. It has two phases. As a
-// draft, it holds the new version state and fixity for new content, which are
-// changed with [ObjectUpdate.Add], [ObjectUpdate.Remove],
+// ObjectUpdate is a pending version of an OCFL object. It is created with
+// [NewObjectUpdate] or [Root.NewObjectUpdate], or restored from JSON. It has
+// two phases. As a draft, it holds the new version state and fixity for new
+// content, which are changed with [ObjectUpdate.Add], [ObjectUpdate.Remove],
 // [ObjectUpdate.Rename], and [ObjectUpdate.Clear]. [ObjectUpdate.Finalize]
 // settles the version metadata and builds the new inventory, after which the
 // update is read-only and can be applied to storage with [ObjectUpdate.Apply]
@@ -146,35 +148,28 @@ type ObjectUpdate struct {
 	newInv *StoredInventory
 }
 
-// NewUpdate returns a new draft *ObjectUpdate for the object at dir in fsys.
-// It reads and validates the object's root inventory, which becomes the
-// update's base inventory. If the object exists, the update starts from the
-// object's head version state, and the object's ID must match id (if id is not
-// empty). If the object doesn't exist, id is required, the update starts with
-// an empty state, and the digest algorithm is sha512 unless
-// [UpdateWithDigestAlgorithm] is used. If the object exists, the update uses
-// the object's digest algorithm, and [UpdateWithDigestAlgorithm], if used,
-// must match it. NewUpdate returns an error if dir isn't empty and doesn't
+// NewObjectUpdate returns a new draft *[ObjectUpdate] for the object at dir in
+// fsys and an *[Object] for the object. It reads and validates the object's
+// root inventory once: the update's base inventory and the returned Object
+// describe the same inventory. If the object changes in storage after
+// NewObjectUpdate returns, applying the update fails with an error wrapping
+// [ErrUpdateConflict]. Callers that only need the update can discard the
+// Object.
+//
+// If the object exists, the update starts from the object's head version
+// state, and the object's ID must match id (if id is not empty). If the
+// object doesn't exist, id is required, the update starts with an empty state
+// and creates version 1, the digest algorithm is sha512 unless
+// [UpdateWithDigestAlgorithm] is used, and the returned Object's Exists method
+// returns false and its ID is id. If the object exists, the update uses the
+// object's digest algorithm, and [UpdateWithDigestAlgorithm], if used, must
+// match it. NewObjectUpdate returns an error if dir isn't empty and doesn't
 // hold an OCFL object, or if the object is incomplete (an error wrapping
 // [ErrObjectIncomplete]).
 //
-// NewUpdate uses the options [UpdateWithDigestAlgorithm],
-// [UpdateWithBaseDigest] and [UpdateMustExist]. To read the object for an
-// update, use [OpenForUpdate] instead: it returns an [Object] and an update
-// with the same base inventory.
-func NewUpdate(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...UpdateOption) (*ObjectUpdate, error) {
-	_, u, err := OpenForUpdate(ctx, fsys, dir, id, opts...)
-	return u, err
-}
-
-// OpenForUpdate returns an *[Object] for the object at dir in fsys and a new
-// draft *[ObjectUpdate] for its next version, as with [NewUpdate]. Both
-// describe the root inventory read by a single call: if the object changes in
-// storage after OpenForUpdate returns, applying the update fails with an error
-// wrapping [ErrUpdateConflict]. If the object doesn't exist, the returned
-// Object's Exists method returns false and its ID is id. OpenForUpdate uses
-// the same options as NewUpdate.
-func OpenForUpdate(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...UpdateOption) (*Object, *ObjectUpdate, error) {
+// NewObjectUpdate uses the options [UpdateWithDigestAlgorithm],
+// [UpdateWithExpectedBase] and [UpdateMustExist].
+func NewObjectUpdate(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...UpdateOption) (*ObjectUpdate, *Object, error) {
 	if !fs.ValidPath(dir) {
 		return nil, nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
 	}
@@ -186,7 +181,7 @@ func OpenForUpdate(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...
 	if err := o.checkBase(base); err != nil {
 		return nil, nil, err
 	}
-	u, err := newObjectUpdate(id, base, o.rootSpec, o.alg)
+	u, err := newUpdateFromBase(id, base, o.rootSpec, o.alg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -194,7 +189,7 @@ func OpenForUpdate(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...
 	if base != nil {
 		obj.setInventory(base)
 	}
-	return obj, u, nil
+	return u, obj, nil
 }
 
 // ID returns the ID of the object being updated.
@@ -231,19 +226,6 @@ func (u *ObjectUpdate) Fixity(dig string) digest.Set {
 
 // Finalized returns true if u has been finalized.
 func (u *ObjectUpdate) Finalized() bool { return u.final != nil }
-
-// Next returns a new draft *ObjectUpdate for the version after u's, whose
-// base inventory is u's new inventory. It reads nothing from storage, so
-// several versions can be committed in a row without reading the object
-// between them. Next is meant to be called after u has been applied: if it
-// wasn't, applying the returned update fails with an error wrapping
-// [ErrUpdateConflict]. Next returns [ErrNotFinalized] if u is a draft.
-func (u *ObjectUpdate) Next() (*ObjectUpdate, error) {
-	if u.final == nil {
-		return nil, ErrNotFinalized
-	}
-	return newObjectUpdate(u.id, u.newInv, u.rootSpec, u.alg)
-}
 
 // NewInventoryDigest returns the digest of the new inventory.json, or an
 // empty string if u has not been finalized.
@@ -650,7 +632,7 @@ func (u *ObjectUpdate) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("object update's digest algorithm: %w", err)
 	}
-	loaded, err := newObjectUpdate(j.ID, base, j.RootSpec, alg)
+	loaded, err := newUpdateFromBase(j.ID, base, j.RootSpec, alg)
 	if err != nil {
 		return err
 	}
@@ -1068,11 +1050,11 @@ type UpdateOption func(*updateOptions)
 
 type updateOptions struct {
 	// constructors
-	alg             digest.Algorithm
-	rootSpec        Spec
-	mustExist       bool
-	checkBaseDigest bool
-	baseDigest      string
+	alg               digest.Algorithm
+	rootSpec          Spec
+	mustExist         bool
+	checkExpectedBase bool
+	expectedBase      string
 	// finalize
 	created         time.Time
 	spec            Spec
@@ -1095,59 +1077,60 @@ func newUpdateOptions(opts ...UpdateOption) *updateOptions {
 
 // checkBase returns an error if base, the root inventory read for a new
 // update (nil if the object doesn't exist), doesn't meet the requirements set
-// by UpdateMustExist and UpdateWithBaseDigest.
+// by UpdateMustExist and UpdateWithExpectedBase.
 func (o *updateOptions) checkBase(base *StoredInventory) error {
 	if o.mustExist && base == nil {
 		return fmt.Errorf("object doesn't exist: %w", fs.ErrNotExist)
 	}
-	if !o.checkBaseDigest {
+	if !o.checkExpectedBase {
 		return nil
 	}
 	switch {
-	case base == nil && o.baseDigest != "":
+	case base == nil && o.expectedBase != "":
 		return fmt.Errorf("%w: expected an object with inventory digest %q, but the object doesn't exist",
-			ErrUpdateConflict, o.baseDigest)
-	case base != nil && o.baseDigest == "":
+			ErrUpdateConflict, o.expectedBase)
+	case base != nil && o.expectedBase == "":
 		return fmt.Errorf("%w: expected no object, but the object exists", ErrUpdateConflict)
-	case base != nil && !strings.EqualFold(base.digest, o.baseDigest):
+	case base != nil && !strings.EqualFold(base.digest, o.expectedBase):
 		return fmt.Errorf("%w: object's inventory digest is %q, expected %q",
-			ErrUpdateConflict, base.digest, o.baseDigest)
+			ErrUpdateConflict, base.digest, o.expectedBase)
 	}
 	return nil
 }
 
 // UpdateWithDigestAlgorithm sets the primary digest algorithm (sha512 or
 // sha256) for a new object. Without it, a new object uses sha512. If the
-// object exists, alg must be the object's digest algorithm, or [NewUpdate]
-// returns an error: changing an existing object's digest algorithm isn't
-// supported.
+// object exists, alg must be the object's digest algorithm, or
+// [NewObjectUpdate] returns an error: changing an existing object's digest
+// algorithm isn't supported.
 func UpdateWithDigestAlgorithm(alg digest.Algorithm) UpdateOption {
 	return func(o *updateOptions) {
 		o.alg = alg
 	}
 }
 
-// UpdateWithBaseDigest sets the expected digest of the object's root
-// inventory for [NewUpdate] and [OpenForUpdate], which return an error
-// wrapping [ErrUpdateConflict] if the inventory they read has a different
-// digest. An empty digest means the object must not exist. Use it to start an
-// update for an object that was read earlier, such as with [NewObject]:
+// UpdateWithExpectedBase sets the expected digest of the object's root
+// inventory for [NewObjectUpdate], which returns an error wrapping
+// [ErrUpdateConflict] if the inventory it reads has a different digest. An
+// empty digest means the object must not exist. It is the base-inventory
+// counterpart of [UpdateWithExpectedHead]. Use it to start an update for an
+// object that was read earlier, such as with [NewObject]:
 //
-//	u, err := ocfl.NewUpdate(ctx, obj.FS(), obj.Path(), obj.ID(),
-//		ocfl.UpdateWithBaseDigest(obj.InventoryDigest()))
+//	u, _, err := ocfl.NewObjectUpdate(ctx, obj.FS(), obj.Path(), obj.ID(),
+//		ocfl.UpdateWithExpectedBase(obj.InventoryDigest()))
 //
-// Without it, the update's base is the inventory that NewUpdate reads, so
-// changes committed after the object was read would go undetected.
-func UpdateWithBaseDigest(inventoryDigest string) UpdateOption {
+// Without it, the update's base is the inventory that NewObjectUpdate reads,
+// so changes committed after the object was read would go undetected.
+func UpdateWithExpectedBase(inventoryDigest string) UpdateOption {
 	return func(o *updateOptions) {
-		o.checkBaseDigest = true
-		o.baseDigest = inventoryDigest
+		o.checkExpectedBase = true
+		o.expectedBase = inventoryDigest
 	}
 }
 
-// UpdateMustExist makes [NewUpdate] and [OpenForUpdate] return an error
-// wrapping [fs.ErrNotExist] if the object doesn't exist, instead of starting
-// an update that creates it.
+// UpdateMustExist makes [NewObjectUpdate] return an error wrapping
+// [fs.ErrNotExist] if the object doesn't exist, instead of starting an update
+// that creates it.
 func UpdateMustExist() UpdateOption {
 	return func(o *updateOptions) {
 		o.mustExist = true
@@ -1240,11 +1223,11 @@ func updateWithRootSpec(spec Spec) UpdateOption {
 	}
 }
 
-// newObjectUpdate returns a new draft for an object with the given base
+// newUpdateFromBase returns a new draft for an object with the given base
 // inventory (nil for a new object). If alg is nil, the base inventory's
 // algorithm or sha512 is used. If base and alg are both set, alg must be the
 // base inventory's algorithm.
-func newObjectUpdate(id string, base *StoredInventory, rootSpec Spec, alg digest.Algorithm) (*ObjectUpdate, error) {
+func newUpdateFromBase(id string, base *StoredInventory, rootSpec Spec, alg digest.Algorithm) (*ObjectUpdate, error) {
 	if base != nil {
 		if id != "" && id != base.ID {
 			return nil, fmt.Errorf("object has unexpected ID: %q; expected: %q", base.ID, id)
