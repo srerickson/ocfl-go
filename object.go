@@ -44,7 +44,7 @@ type Object struct {
 // NewObject returns an *Object for reading the OCFL object at directory dir in
 // fsys. The object doesn't need to exist when NewObject is called if its ID is
 // given with [ObjectWithID]. To create or update the object, use
-// [NewObjectUpdate] with [UpdateWithExpectedBase], or use NewObjectUpdate
+// [NewObjectUpdate] with [NewUpdateWithExpectedBase], or use NewObjectUpdate
 // instead of NewObject: it returns an Object along with the update.
 func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOption) (*Object, error) {
 	if !fs.ValidPath(dir) {

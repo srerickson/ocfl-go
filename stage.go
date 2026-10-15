@@ -112,7 +112,7 @@ type stageOptions struct {
 }
 
 func newStageOptions(opts ...StageOption) *stageOptions {
-	o := &stageOptions{filter: ocflfs.IsNotHidden, goLimit: 1}
+	o := &stageOptions{filter: ocflfs.IsNotHidden}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -148,7 +148,7 @@ func StageWithFilter(keep func(*ocflfs.FileRef) bool) StageOption {
 }
 
 // StageWithGoLimit sets the number of goroutines used by [StageFS] and
-// [StageFile] to digest files concurrently. The default is 1. If gos is less
+// [StageFile] to digest files concurrently. Without it, or if gos is less
 // than 1, runtime.GOMAXPROCS(0) is used.
 func StageWithGoLimit(gos int) StageOption {
 	return func(o *stageOptions) {
