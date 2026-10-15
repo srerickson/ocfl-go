@@ -21,7 +21,6 @@ import (
 	"github.com/srerickson/ocfl-go/digest"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/fs/local"
-	"github.com/srerickson/ocfl-go/internal/testutil"
 )
 
 func TestObject_Example(t *testing.T) {
@@ -29,15 +28,15 @@ func TestObject_Example(t *testing.T) {
 	tmpFS, err := local.NewFS(t.TempDir())
 	be.NilErr(t, err)
 
-	// open new-object-01, which doesn't exist
+	// open new-object-01, which doesn't exist, for an update
 	id := "new-object-01"
-	obj, err := ocfl.NewObject(ctx, tmpFS, id, ocfl.ObjectWithID(id))
+	obj, update, err := ocfl.OpenForUpdate(ctx, tmpFS, id, id)
 	be.NilErr(t, err)
 	be.False(t, obj.Exists()) // the object doesn't exist yet
 	be.Equal(t, id, obj.ID()) // its ID is set
 
 	// create the first version from bytes
-	stage := stageFor(obj.NewUpdate())
+	stage := stageFor(update)
 	be.NilErr(t, stage.AddBytes("README.txt", []byte("this is a test file"), digest.MD5))
 	be.NilErr(t, stage.Finalize("first version", ocfl.User{Name: "Mx. Robot"}))
 	v1Obj, err := stage.Update().Apply(ctx, obj.FS(), obj.Path(), stage.Content())
@@ -55,7 +54,9 @@ func TestObject_Example(t *testing.T) {
 	be.Nonzero(t, sourceVersion.State().PathMap()["README.txt"])
 
 	// update a new version and upgrade to OCFL v1.1
-	stage = stageFor(v1Obj.NewUpdate())
+	update, err = stage.Update().Next()
+	be.NilErr(t, err)
+	stage = stageFor(update)
 	be.NilErr(t, stage.AddBytes("README.txt", []byte("this is a test file (v2)"), digest.MD5))
 	be.NilErr(t, stage.AddBytes("new-data.csv", []byte("1,2,3"), digest.MD5))
 	be.NilErr(t, stage.AddBytes("docs/note.txt", []byte("this is a note"), digest.MD5))
@@ -245,50 +246,6 @@ func TestObject_VersionFS(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestObject_NewUpdate(t *testing.T) {
-	ctx := context.Background()
-	fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `spec-ex-full`)
-	t.Run("existing object", func(t *testing.T) {
-		obj, err := ocfl.NewObject(ctx, ocflfs.DirFS(fixture), ".")
-		be.NilErr(t, err)
-		u := obj.NewUpdate()
-		be.Equal(t, obj.ID(), u.ID())
-		be.Equal(t, obj.DigestAlgorithm().ID(), u.DigestAlgorithm().ID())
-		be.Equal(t, obj.InventoryDigest(), u.BaseInventoryDigest())
-		be.Equal(t, ocfl.V(4), u.NextHead())
-		be.True(t, obj.Version(0).State().Eq(u.NewState()))
-		be.False(t, u.Finalized())
-	})
-	t.Run("new object", func(t *testing.T) {
-		obj, err := ocfl.NewObject(ctx, ocflfs.DirFS(t.TempDir()), "obj", ocfl.ObjectWithID("obj-1"))
-		be.NilErr(t, err)
-		u := obj.NewUpdate()
-		be.Equal(t, "obj-1", u.ID())
-		be.Equal(t, digest.SHA512.ID(), u.DigestAlgorithm().ID())
-		be.Zero(t, u.BaseInventoryDigest())
-		be.Equal(t, ocfl.V(1), u.NextHead())
-		be.Equal(t, 0, len(u.NewState()))
-	})
-	// Changing the update's state must not change the object's version
-	// states: an aliased state would rewrite earlier versions in the next
-	// inventory.
-	t.Run("update state is a copy", func(t *testing.T) {
-		fsys := testutil.TmpLocalFS(t, fixture)
-		obj, err := ocfl.NewObject(ctx, fsys, "spec-ex-full")
-		be.NilErr(t, err)
-		headState := obj.Version(0).State()
-		stage := stageFor(obj.NewUpdate())
-		be.NilErr(t, stage.Rename("foo/bar.xml", "baz.xml"))
-		be.NilErr(t, stage.Remove("image.tiff"))
-		be.True(t, headState.Eq(obj.Version(0).State()))
-		newObj := commit(t, obj, stage, "v4")
-		be.True(t, headState.Eq(newObj.Version(3).State()))
-		be.True(t, headState.Eq(obj.Version(0).State()))
-		be.DeepEqual(t, []string{"baz.xml", "empty2.txt"}, newObj.Version(0).State().AllPaths())
-		be.NilErr(t, ocfl.ValidateObject(ctx, fsys, newObj.Path()).Err())
-	})
 }
 
 func TestValidateObject(t *testing.T) {

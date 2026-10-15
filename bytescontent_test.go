@@ -53,13 +53,16 @@ func TestBytesContentMap_DeleteFunc(t *testing.T) {
 	// harm, and DeleteFunc with NeedsContent removes it.
 	ctx := context.Background()
 	fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `spec-ex-full`)
-	obj, err := ocfl.NewObject(ctx, ocflfs.DirFS(fixture), ".")
-	be.NilErr(t, err)
+	newUpdate := func(t *testing.T) *ocfl.ObjectUpdate {
+		u, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(fixture), ".", "")
+		be.NilErr(t, err)
+		return u
+	}
 	prune := func(u *ocfl.ObjectUpdate, c *ocfl.BytesContentMap) {
 		c.DeleteFunc(func(dig string) bool { return !u.NeedsContent(dig) })
 	}
 	t.Run("remove", func(t *testing.T) {
-		u := obj.NewUpdate()
+		u := newUpdate(t)
 		var c ocfl.BytesContentMap
 		be.NilErr(t, ocfl.StageBytes(u, &c, "new/a.txt", []byte("a")))
 		be.NilErr(t, ocfl.StageBytes(u, &c, "new/b.txt", []byte("a")))
@@ -74,7 +77,7 @@ func TestBytesContentMap_DeleteFunc(t *testing.T) {
 		be.Equal(t, 0, len(c.Digests()))
 	})
 	t.Run("clear", func(t *testing.T) {
-		u := obj.NewUpdate()
+		u := newUpdate(t)
 		var c ocfl.BytesContentMap
 		be.NilErr(t, ocfl.StageBytes(u, &c, "new/a.txt", []byte("a")))
 		be.NilErr(t, u.Clear())
@@ -85,7 +88,7 @@ func TestBytesContentMap_DeleteFunc(t *testing.T) {
 		be.Equal(t, 1, len(c.Digests()))
 	})
 	t.Run("rename keeps content", func(t *testing.T) {
-		u := obj.NewUpdate()
+		u := newUpdate(t)
 		var c ocfl.BytesContentMap
 		be.NilErr(t, ocfl.StageBytes(u, &c, "new/a.txt", []byte("a")))
 		be.NilErr(t, u.Rename("new", "newer"))
