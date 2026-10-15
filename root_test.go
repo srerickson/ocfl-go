@@ -349,11 +349,13 @@ func TestRoot_NewUpdate_Spec(t *testing.T) {
 		_, err = ocflfs.ReadDir(ctx, fsys, objPath)
 		be.True(t, errors.Is(err, fs.ErrNotExist))
 	})
-	t.Run("the root's spec is checked by objects from the root", func(t *testing.T) {
+	t.Run("the root's spec is checked by updates from Root.OpenForUpdate", func(t *testing.T) {
 		root, _ := newRoot(t, ocfl.Spec1_0)
-		obj, err := root.NewObject(ctx, "obj1")
+		obj, upd, err := root.OpenForUpdate(ctx, "obj1")
 		be.NilErr(t, err)
-		stage := stageFor(obj.NewUpdate())
+		be.Equal(t, root, obj.Root())
+		be.False(t, obj.Exists())
+		stage := stageFor(upd)
 		be.NilErr(t, stage.AddBytes("a.txt", []byte("a")))
 		err = stage.Finalize("msg", user, ocfl.UpdateWithOCFLSpec(ocfl.Spec1_1))
 		be.True(t, errors.Is(err, ocfl.ErrObjectSpecExceedsRoot))

@@ -546,7 +546,7 @@ func (imp ocflV1) ValidateObjectVersion(ctx context.Context, vldr *ObjectValidat
 			vldr.AddFatal(verr(err, code.E040(specStr)))
 		}
 		// Only compare with root inventory if it exists
-		if rootInv != nil && verInv.Digest() != rootInv.Digest() {
+		if rootInv != nil && verInv.Digest() != vldr.obj.InventoryDigest() {
 			imp.compareVersionInventory(vldr.obj, vnum, verInv, vldr)
 			if err := vldr.addInventory(verInv, false); err != nil {
 				err = fmt.Errorf("%s/inventory.json digests are inconsistent with other inventories: %w", vnum, err)
@@ -606,7 +606,7 @@ func (imp ocflV1) ValidateObjectContent(ctx context.Context, v *ObjectValidation
 func (imp ocflV1) compareVersionInventory(obj *Object, dirNum VNum, verInv *StoredInventory, vldr *ObjectValidation) {
 	rootInv := obj.inventory
 	specStr := string(imp.v1Spec)
-	if verInv.Head == rootInv.Head && verInv.Digest() != rootInv.Digest() {
+	if verInv.Head == rootInv.Head && verInv.Digest() != obj.InventoryDigest() {
 		err := fmt.Errorf("%s/inventor.json is not the same as the root inventory: digests don't match", dirNum)
 		vldr.AddFatal(verr(err, code.E064(specStr)))
 	}

@@ -35,9 +35,8 @@ func TestStageBytes(t *testing.T) {
 	be.Equal(t, 1, len(mem.Digests()))
 	t.Run("content already in the object", func(t *testing.T) {
 		fixture := filepath.Join(objectFixturesPath, `1.1`, `good-objects`, `spec-ex-full`)
-		obj, err := ocfl.NewObject(ctx, ocflfs.DirFS(fixture), ".")
+		u, err := ocfl.NewUpdate(ctx, ocflfs.DirFS(fixture), ".", "")
 		be.NilErr(t, err)
-		u := obj.NewUpdate()
 		var mem ocfl.BytesContentMap
 		// empty2.txt's content is in the object: only the state changes
 		be.NilErr(t, ocfl.StageBytes(u, &mem, "empty3.txt", []byte{}, digest.MD5))

@@ -130,38 +130,71 @@ type UpdateEntry struct {
 // both.
 type ObjectUpdate struct {
 	id       string
-	base     *StoredInventory // nil for a new object
 	rootSpec Spec             // storage root's spec, if known
 	alg      digest.Algorithm // primary digest algorithm for the new version
 	state    DigestMap        // new version state: always normalized
 	fixity   map[string]digest.Set
 	final    *updateFinal // nil for a draft
 
-	// baseInv is a normalized copy of base. It must not be modified.
-	baseInv *Inventory
+	// The base inventory: the object's root inventory when the update was
+	// started. All are empty for a new object.
+	baseBytes  []byte     // exact contents of inventory.json
+	baseDigest string     // digest of baseBytes
+	baseInv    *Inventory // normalized, parsed from baseBytes: must not be modified
+
 	// newInv is the new inventory, built during finalize.
 	newInv *StoredInventory
 }
 
 // NewUpdate returns a new draft *ObjectUpdate for the object at dir in fsys.
-// If the object exists, the update starts from the object's head version
-// state, and the object's ID must match id (if id is not empty). If the
-// object doesn't exist, id is required, the update starts with an empty state,
-// and the digest algorithm is sha512 unless [UpdateWithDigestAlgorithm] is
-// used. If the object exists, the update uses the object's digest algorithm,
-// and [UpdateWithDigestAlgorithm], if used, must match it. NewUpdate returns
-// an error if dir isn't empty and doesn't hold an OCFL object, or if the
-// object is incomplete (an error wrapping [ErrObjectIncomplete]).
+// It reads and validates the object's root inventory, which becomes the
+// update's base inventory. If the object exists, the update starts from the
+// object's head version state, and the object's ID must match id (if id is not
+// empty). If the object doesn't exist, id is required, the update starts with
+// an empty state, and the digest algorithm is sha512 unless
+// [UpdateWithDigestAlgorithm] is used. If the object exists, the update uses
+// the object's digest algorithm, and [UpdateWithDigestAlgorithm], if used,
+// must match it. NewUpdate returns an error if dir isn't empty and doesn't
+// hold an OCFL object, or if the object is incomplete (an error wrapping
+// [ErrObjectIncomplete]).
+//
+// NewUpdate uses the options [UpdateWithDigestAlgorithm],
+// [UpdateWithBaseDigest] and [UpdateMustExist]. To read the object for an
+// update, use [OpenForUpdate] instead: it returns an [Object] and an update
+// with the same base inventory.
 func NewUpdate(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...UpdateOption) (*ObjectUpdate, error) {
+	_, u, err := OpenForUpdate(ctx, fsys, dir, id, opts...)
+	return u, err
+}
+
+// OpenForUpdate returns an *[Object] for the object at dir in fsys and a new
+// draft *[ObjectUpdate] for its next version, as with [NewUpdate]. Both
+// describe the root inventory read by a single call: if the object changes in
+// storage after OpenForUpdate returns, applying the update fails with an error
+// wrapping [ErrUpdateConflict]. If the object doesn't exist, the returned
+// Object's Exists method returns false and its ID is id. OpenForUpdate uses
+// the same options as NewUpdate.
+func OpenForUpdate(ctx context.Context, fsys ocflfs.FS, dir, id string, opts ...UpdateOption) (*Object, *ObjectUpdate, error) {
 	if !fs.ValidPath(dir) {
-		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
+		return nil, nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
 	}
 	base, err := readUpdateBase(ctx, fsys, dir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	o := newUpdateOptions(opts...)
-	return newObjectUpdate(id, base, o.rootSpec, o.alg)
+	if err := o.checkBase(base); err != nil {
+		return nil, nil, err
+	}
+	u, err := newObjectUpdate(id, base, o.rootSpec, o.alg)
+	if err != nil {
+		return nil, nil, err
+	}
+	obj := &Object{fs: fsys, path: dir, requiredID: id}
+	if base != nil {
+		obj.setInventory(base)
+	}
+	return obj, u, nil
 }
 
 // ID returns the ID of the object being updated.
@@ -172,12 +205,7 @@ func (u *ObjectUpdate) DigestAlgorithm() digest.Algorithm { return u.alg }
 
 // BaseInventoryDigest returns the digest of the object's inventory.json at the
 // time the update was started. It is empty if the update creates a new object.
-func (u *ObjectUpdate) BaseInventoryDigest() string {
-	if u.base == nil {
-		return ""
-	}
-	return u.base.digest
-}
+func (u *ObjectUpdate) BaseInventoryDigest() string { return u.baseDigest }
 
 // NextHead returns the version number of the new version.
 func (u *ObjectUpdate) NextHead() VNum {
@@ -203,6 +231,19 @@ func (u *ObjectUpdate) Fixity(dig string) digest.Set {
 
 // Finalized returns true if u has been finalized.
 func (u *ObjectUpdate) Finalized() bool { return u.final != nil }
+
+// Next returns a new draft *ObjectUpdate for the version after u's, whose
+// base inventory is u's new inventory. It reads nothing from storage, so
+// several versions can be committed in a row without reading the object
+// between them. Next is meant to be called after u has been applied: if it
+// wasn't, applying the returned update fails with an error wrapping
+// [ErrUpdateConflict]. Next returns [ErrNotFinalized] if u is a draft.
+func (u *ObjectUpdate) Next() (*ObjectUpdate, error) {
+	if u.final == nil {
+		return nil, ErrNotFinalized
+	}
+	return newObjectUpdate(u.id, u.newInv, u.rootSpec, u.alg)
+}
 
 // NewInventoryDigest returns the digest of the new inventory.json, or an
 // empty string if u has not been finalized.
@@ -405,7 +446,7 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) err
 		return fmt.Errorf("%w: expected update to create version %d, but it would create version %d",
 			ErrUnexpectedHead, o.expectedHead, newHead.Num())
 	}
-	if !o.allowUnchanged && u.base != nil && u.baseState().Eq(u.state) {
+	if !o.allowUnchanged && u.baseInv != nil && u.baseState().Eq(u.state) {
 		return errors.New("update has unchanged version state")
 	}
 	final := &updateFinal{
@@ -416,8 +457,8 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...UpdateOption) err
 	}
 	if final.Spec.Empty() {
 		switch {
-		case u.base != nil:
-			final.Spec = u.base.Type.Spec
+		case u.baseInv != nil:
+			final.Spec = u.baseInv.Type.Spec
 		case !u.rootSpec.Empty():
 			final.Spec = u.rootSpec
 		default:
@@ -518,7 +559,9 @@ func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, sr
 			return nil, err
 		}
 	}
-	return &Object{fs: fsys, path: dir, inventory: u.newInv}, nil
+	obj := &Object{fs: fsys, path: dir}
+	obj.setInventory(u.newInv)
+	return obj, nil
 }
 
 // Revert removes everything written to the object at dir in fsys by an
@@ -572,13 +615,13 @@ func (u ObjectUpdate) MarshalJSON() ([]byte, error) {
 	if j.State == nil {
 		j.State = DigestMap{}
 	}
-	if u.base != nil {
+	if u.baseInv != nil {
 		// the base inventory is saved as a string to preserve its exact bytes:
 		// its digest must match the object's sidecar.
-		if !utf8.Valid(u.base.bytes) {
+		if !utf8.Valid(u.baseBytes) {
 			return nil, errors.New("base inventory is not valid UTF-8")
 		}
-		j.BaseInventory = string(u.base.bytes)
+		j.BaseInventory = string(u.baseBytes)
 	}
 	return json.Marshal(j)
 }
@@ -703,10 +746,10 @@ func (u *ObjectUpdate) needsContent(dig string) bool {
 }
 
 func (u *ObjectUpdate) nextHead() (VNum, error) {
-	if u.base == nil {
+	if u.baseInv == nil {
 		return V(1), nil
 	}
-	head, err := u.base.Head.Next()
+	head, err := u.baseInv.Head.Next()
 	if err != nil {
 		return VNum{}, fmt.Errorf("existing inventory's version scheme doesn't support additional versions: %w", err)
 	}
@@ -714,8 +757,8 @@ func (u *ObjectUpdate) nextHead() (VNum, error) {
 }
 
 func (u *ObjectUpdate) contentDirectory() string {
-	if u.base != nil && u.base.ContentDirectory != "" {
-		return u.base.ContentDirectory
+	if u.baseInv != nil && u.baseInv.ContentDirectory != "" {
+		return u.baseInv.ContentDirectory
 	}
 	return contentDir
 }
@@ -806,9 +849,9 @@ func (u *ObjectUpdate) checkSpec(spec Spec) error {
 		return fmt.Errorf("%w: object spec is OCFL v%s, storage root spec is OCFL v%s",
 			ErrObjectSpecExceedsRoot, spec, u.rootSpec)
 	}
-	if u.base != nil && spec.Cmp(u.base.Type.Spec) < 0 {
+	if u.baseInv != nil && spec.Cmp(u.baseInv.Type.Spec) < 0 {
 		return fmt.Errorf("new version's OCFL spec (%q) cannot be lower than the previous version's (%q)",
-			spec, u.base.Type.Spec)
+			spec, u.baseInv.Type.Spec)
 	}
 	return nil
 }
@@ -825,7 +868,7 @@ func (u *ObjectUpdate) storageStatus(ctx context.Context, fsys ocflfs.FS, dir st
 	if strings.EqualFold(sidecar, u.newInv.digest) {
 		return updateCommitted, nil
 	}
-	if u.base == nil {
+	if u.baseInv == nil {
 		if sidecar != "" {
 			return 0, fmt.Errorf("%w: object has an inventory sidecar but the update is for a new object", ErrUpdateConflict)
 		}
@@ -834,7 +877,7 @@ func (u *ObjectUpdate) storageStatus(ctx context.Context, fsys ocflfs.FS, dir st
 		}
 		return updatePending, nil
 	}
-	if strings.EqualFold(sidecar, u.base.digest) {
+	if strings.EqualFold(sidecar, u.baseDigest) {
 		return updatePending, nil
 	}
 	return 0, fmt.Errorf("%w: root inventory sidecar doesn't match the update's base inventory or new inventory", ErrUpdateConflict)
@@ -891,8 +934,8 @@ func (u *ObjectUpdate) applySteps(verify bool) []updateStep {
 	newHead := newInv.Head
 	newAlg := newInv.DigestAlgorithm
 	var oldSpec Spec
-	if u.base != nil {
-		oldSpec = u.base.Type.Spec
+	if u.baseInv != nil {
+		oldSpec = u.baseInv.Type.Spec
 	}
 	var steps []updateStep
 	// object declaration
@@ -972,7 +1015,7 @@ func (u *ObjectUpdate) applySteps(verify bool) []updateStep {
 // change the root inventory sidecar, so an interrupted revert can be run
 // again.
 func (u *ObjectUpdate) revertSteps() []updateStep {
-	if u.base == nil {
+	if u.baseInv == nil {
 		return []updateStep{{
 			name: "remove object directory",
 			run: func(ctx context.Context, fsys ocflfs.WriteFS, dir string, _ ContentSource) error {
@@ -980,13 +1023,13 @@ func (u *ObjectUpdate) revertSteps() []updateStep {
 			},
 		}}
 	}
-	base := u.base
+	baseBytes := u.baseBytes
 	verDir := u.newInv.Head.String()
 	steps := []updateStep{
 		{
 			name: "restore " + inventoryBase,
 			run: func(ctx context.Context, fsys ocflfs.WriteFS, dir string, _ ContentSource) error {
-				_, err := fsys.Write(ctx, path.Join(dir, inventoryBase), bytes.NewReader(base.bytes))
+				_, err := fsys.Write(ctx, path.Join(dir, inventoryBase), bytes.NewReader(baseBytes))
 				return err
 			},
 		},
@@ -997,7 +1040,7 @@ func (u *ObjectUpdate) revertSteps() []updateStep {
 			},
 		},
 	}
-	if newSpec, oldSpec := u.newInv.Type.Spec, base.Type.Spec; newSpec != oldSpec {
+	if newSpec, oldSpec := u.newInv.Type.Spec, u.baseInv.Type.Spec; newSpec != oldSpec {
 		oldDecl := Namaste{Type: NamasteTypeObject, Version: oldSpec}
 		newDecl := Namaste{Type: NamasteTypeObject, Version: newSpec}
 		steps = append(steps,
@@ -1025,8 +1068,11 @@ type UpdateOption func(*updateOptions)
 
 type updateOptions struct {
 	// constructors
-	alg      digest.Algorithm
-	rootSpec Spec
+	alg             digest.Algorithm
+	rootSpec        Spec
+	mustExist       bool
+	checkBaseDigest bool
+	baseDigest      string
 	// finalize
 	created         time.Time
 	spec            Spec
@@ -1047,6 +1093,29 @@ func newUpdateOptions(opts ...UpdateOption) *updateOptions {
 	return o
 }
 
+// checkBase returns an error if base, the root inventory read for a new
+// update (nil if the object doesn't exist), doesn't meet the requirements set
+// by UpdateMustExist and UpdateWithBaseDigest.
+func (o *updateOptions) checkBase(base *StoredInventory) error {
+	if o.mustExist && base == nil {
+		return fmt.Errorf("object doesn't exist: %w", fs.ErrNotExist)
+	}
+	if !o.checkBaseDigest {
+		return nil
+	}
+	switch {
+	case base == nil && o.baseDigest != "":
+		return fmt.Errorf("%w: expected an object with inventory digest %q, but the object doesn't exist",
+			ErrUpdateConflict, o.baseDigest)
+	case base != nil && o.baseDigest == "":
+		return fmt.Errorf("%w: expected no object, but the object exists", ErrUpdateConflict)
+	case base != nil && !strings.EqualFold(base.digest, o.baseDigest):
+		return fmt.Errorf("%w: object's inventory digest is %q, expected %q",
+			ErrUpdateConflict, base.digest, o.baseDigest)
+	}
+	return nil
+}
+
 // UpdateWithDigestAlgorithm sets the primary digest algorithm (sha512 or
 // sha256) for a new object. Without it, a new object uses sha512. If the
 // object exists, alg must be the object's digest algorithm, or [NewUpdate]
@@ -1055,6 +1124,33 @@ func newUpdateOptions(opts ...UpdateOption) *updateOptions {
 func UpdateWithDigestAlgorithm(alg digest.Algorithm) UpdateOption {
 	return func(o *updateOptions) {
 		o.alg = alg
+	}
+}
+
+// UpdateWithBaseDigest sets the expected digest of the object's root
+// inventory for [NewUpdate] and [OpenForUpdate], which return an error
+// wrapping [ErrUpdateConflict] if the inventory they read has a different
+// digest. An empty digest means the object must not exist. Use it to start an
+// update for an object that was read earlier, such as with [NewObject]:
+//
+//	u, err := ocfl.NewUpdate(ctx, obj.FS(), obj.Path(), obj.ID(),
+//		ocfl.UpdateWithBaseDigest(obj.InventoryDigest()))
+//
+// Without it, the update's base is the inventory that NewUpdate reads, so
+// changes committed after the object was read would go undetected.
+func UpdateWithBaseDigest(inventoryDigest string) UpdateOption {
+	return func(o *updateOptions) {
+		o.checkBaseDigest = true
+		o.baseDigest = inventoryDigest
+	}
+}
+
+// UpdateMustExist makes [NewUpdate] and [OpenForUpdate] return an error
+// wrapping [fs.ErrNotExist] if the object doesn't exist, instead of starting
+// an update that creates it.
+func UpdateMustExist() UpdateOption {
+	return func(o *updateOptions) {
+		o.mustExist = true
 	}
 }
 
@@ -1174,18 +1270,20 @@ func newObjectUpdate(id string, base *StoredInventory, rootSpec Spec, alg digest
 	}
 	u := &ObjectUpdate{
 		id:       id,
-		base:     base,
 		rootSpec: rootSpec,
 		alg:      alg,
 		state:    DigestMap{},
 		fixity:   map[string]digest.Set{},
 	}
 	if base != nil {
+		// only the normalized copy of base's inventory is kept.
 		var err error
 		u.baseInv, err = normalizeInventory(&base.Inventory)
 		if err != nil {
 			return nil, err
 		}
+		u.baseBytes = base.bytes
+		u.baseDigest = base.digest
 		u.state = u.baseState().Clone()
 	}
 	return u, nil

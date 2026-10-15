@@ -20,17 +20,21 @@ var ErrNoObjectID = errors.New("object does not exist: an explicit ID is require
 
 // Object is a read-only view of an OCFL Object, typically part of a [Root],
 // as described by one inventory. An Object never changes: to create a new
-// version, use [Object.NewUpdate] and apply the update
-// with [ObjectUpdate.Apply], which returns a new *Object. The previous *Object
-// remains a valid but out-of-date view.
+// version, create an [ObjectUpdate] with [NewUpdate] or [OpenForUpdate] (or
+// their [Root] equivalents) and apply it with [ObjectUpdate.Apply], which
+// returns a new *Object. The previous *Object remains a valid but out-of-date
+// view.
 type Object struct {
 	// object's storage backend.
 	fs ocflfs.FS
 	// path in FS for object root directory
 	path string
 	// object's root inventory (unless object is initialized with an explicit
-	// inventory!). May be nil if the object hasn't been saved yet.
-	inventory *StoredInventory
+	// inventory!). May be nil if the object hasn't been saved yet. Its source
+	// bytes aren't kept.
+	inventory *Inventory
+	// digest of the inventory's source bytes
+	inventoryDigest string
 	// object's storage root
 	root *Root
 	// expected object ID
@@ -39,22 +43,25 @@ type Object struct {
 
 // NewObject returns an *Object for reading the OCFL object at directory dir in
 // fsys. The object doesn't need to exist when NewObject is called if its ID is
-// given with [ObjectWithID]: the returned *Object can be used to create the
-// object with [Object.NewUpdate].
+// given with [ObjectWithID]. To create or update the object, use [NewUpdate]
+// with [UpdateWithBaseDigest], or use [OpenForUpdate] instead of NewObject.
 func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOption) (*Object, error) {
 	if !fs.ValidPath(dir) {
 		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)
 	}
 	obj, config := newObjectAndConfig(fsys, dir, opts...)
-	if obj.inventory == nil {
-		if err := obj.sync(ctx); err != nil {
+	inv := config.inv
+	if inv == nil {
+		var err error
+		inv, err = ReadInventory(ctx, fsys, dir)
+		if err != nil {
 			if config.mustExist || !errors.Is(err, fs.ErrNotExist) {
-				return nil, err
+				return nil, fmt.Errorf("%q inventory: %w", obj.ID(), err)
 			}
+			inv = nil
 		}
 	}
-	if obj.inventory != nil {
-		inv := obj.inventory
+	if inv != nil {
 		if obj.requiredID != "" && inv.ID != obj.requiredID {
 			err := fmt.Errorf("object has unexpected ID: %q; expected: %q", inv.ID, obj.requiredID)
 			return nil, err
@@ -68,6 +75,7 @@ func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOp
 				return nil, err
 			}
 		}
+		obj.setInventory(inv)
 		return obj, nil
 	}
 	if obj.requiredID == "" {
@@ -99,24 +107,6 @@ func (obj Object) ContentDirectory() string {
 		return obj.inventory.ContentDirectory
 	}
 	return contentDir
-}
-
-// NewUpdate returns a new draft *[ObjectUpdate] for the object's next version.
-// The update starts from the head version state and the object's digest
-// algorithm (sha512 for an object that doesn't exist yet). NewUpdate does no
-// I/O: if the object has changed in storage since obj was created, applying
-// the update fails with an error wrapping [ErrUpdateConflict].
-func (obj *Object) NewUpdate() *ObjectUpdate {
-	var rootSpec Spec
-	if obj.root != nil {
-		rootSpec = obj.root.Spec()
-	}
-	u, err := newObjectUpdate(obj.ID(), obj.inventory, rootSpec, nil)
-	if err != nil {
-		// obj's inventory is valid and, if obj doesn't exist, its ID is set.
-		panic(fmt.Sprintf("ocfl: Object.NewUpdate: %v", err))
-	}
-	return u
 }
 
 // DigestAlgorithm returns sha512 unless sha256 is set in the root inventory.
@@ -176,10 +166,7 @@ func (obj Object) Head() VNum {
 // declarate digest algorithm. It is the expected content of the root
 // inventory's sidecar file.
 func (obj Object) InventoryDigest() string {
-	if obj.inventory == nil {
-		return ""
-	}
-	return obj.inventory.Digest()
+	return obj.inventoryDigest
 }
 
 // ID returns obj's inventory ID if the obj exists (its inventory is not nil).
@@ -280,14 +267,13 @@ func (obj Object) version(v int) *InventoryVersion {
 	return obj.inventory.version(v)
 }
 
-// sync re-reads the object's root inventory, updating obj's internal state
-func (obj *Object) sync(ctx context.Context) error {
-	inv, err := ReadInventory(ctx, obj.fs, obj.path)
-	if err != nil {
-		return fmt.Errorf("%q inventory: %w", obj.ID(), err)
-	}
-	obj.inventory = inv
-	return nil
+// setInventory sets obj's inventory and inventory digest from inv, without
+// keeping inv's source bytes.
+func (obj *Object) setInventory(inv *StoredInventory) {
+	// a shallow copy, so obj doesn't keep a reference to inv.bytes.
+	parsed := inv.Inventory
+	obj.inventory = &parsed
+	obj.inventoryDigest = inv.digest
 }
 
 // ValidateObject fully validates the OCFL Object at dir in fsys
@@ -416,13 +402,16 @@ func newObjectAndConfig(fsys ocflfs.FS, dir string, opts ...ObjectOption) (*Obje
 	for _, optFn := range opts {
 		optFn(&config)
 	}
-	return &Object{
+	obj := &Object{
 		fs:         fsys,
 		path:       dir,
 		root:       config.root,
 		requiredID: config.requiredID,
-		inventory:  config.inv,
-	}, &config
+	}
+	if config.inv != nil {
+		obj.setInventory(config.inv)
+	}
+	return obj, &config
 }
 
 // ObjectVersion is used to access version information from an object's root
