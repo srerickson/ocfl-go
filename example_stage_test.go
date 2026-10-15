@@ -67,7 +67,7 @@ func Example_customStage() {
 		log.Fatal(err)
 	}
 
-	update, err := ocfl.NewUpdate(ctx, fsys, "object", "ark:/example")
+	update, _, err := ocfl.NewObjectUpdate(ctx, fsys, "object", "ark:/example")
 	if err != nil {
 		log.Fatal(err)
 	}

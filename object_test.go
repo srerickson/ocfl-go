@@ -30,7 +30,7 @@ func TestObject_Example(t *testing.T) {
 
 	// open new-object-01, which doesn't exist, for an update
 	id := "new-object-01"
-	obj, update, err := ocfl.OpenForUpdate(ctx, tmpFS, id, id)
+	update, obj, err := ocfl.NewObjectUpdate(ctx, tmpFS, id, id)
 	be.NilErr(t, err)
 	be.False(t, obj.Exists()) // the object doesn't exist yet
 	be.Equal(t, id, obj.ID()) // its ID is set
@@ -54,7 +54,8 @@ func TestObject_Example(t *testing.T) {
 	be.Nonzero(t, sourceVersion.State().PathMap()["README.txt"])
 
 	// update a new version and upgrade to OCFL v1.1
-	update, err = stage.Update().Next()
+	update, _, err = ocfl.NewObjectUpdate(ctx, v1Obj.FS(), v1Obj.Path(), v1Obj.ID(),
+		ocfl.UpdateWithExpectedBase(v1Obj.InventoryDigest()))
 	be.NilErr(t, err)
 	stage = stageFor(update)
 	be.NilErr(t, stage.AddBytes("README.txt", []byte("this is a test file (v2)"), digest.MD5))
@@ -91,7 +92,7 @@ func TestObject_Example(t *testing.T) {
 	forkID := "new-object-02"
 	sourceVersion = v2Obj.Version(0)
 	be.Nonzero(t, sourceVersion)
-	forkUpdate, err := ocfl.NewUpdate(ctx, tmpFS, forkID, forkID)
+	forkUpdate, _, err := ocfl.NewObjectUpdate(ctx, tmpFS, forkID, forkID)
 	be.NilErr(t, err)
 	forkContent := &ocfl.FileContentMap{}
 	manifest := v2Obj.Manifest()

@@ -20,8 +20,8 @@ var ErrNoObjectID = errors.New("object does not exist: an explicit ID is require
 
 // Object is a read-only view of an OCFL Object, typically part of a [Root],
 // as described by one inventory. An Object never changes: to create a new
-// version, create an [ObjectUpdate] with [NewUpdate] or [OpenForUpdate] (or
-// their [Root] equivalents) and apply it with [ObjectUpdate.Apply], which
+// version, create an [ObjectUpdate] with [NewObjectUpdate] or
+// [Root.NewObjectUpdate] and apply it with [ObjectUpdate.Apply], which
 // returns a new *Object. The previous *Object remains a valid but out-of-date
 // view.
 type Object struct {
@@ -43,8 +43,9 @@ type Object struct {
 
 // NewObject returns an *Object for reading the OCFL object at directory dir in
 // fsys. The object doesn't need to exist when NewObject is called if its ID is
-// given with [ObjectWithID]. To create or update the object, use [NewUpdate]
-// with [UpdateWithBaseDigest], or use [OpenForUpdate] instead of NewObject.
+// given with [ObjectWithID]. To create or update the object, use
+// [NewObjectUpdate] with [UpdateWithExpectedBase], or use NewObjectUpdate
+// instead of NewObject: it returns an Object along with the update.
 func NewObject(ctx context.Context, fsys ocflfs.FS, dir string, opts ...ObjectOption) (*Object, error) {
 	if !fs.ValidPath(dir) {
 		return nil, fmt.Errorf("invalid object path: %q: %w", dir, fs.ErrInvalid)

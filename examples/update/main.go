@@ -137,7 +137,7 @@ func newStage(ctx context.Context, objCnf *config.FSConfig, f *cmdFlags) (*stage
 		}
 		opts = append(opts, ocfl.UpdateWithDigestAlgorithm(alg))
 	}
-	update, err := ocfl.NewUpdate(ctx, objCnf.FS, objCnf.Path, f.newID, opts...)
+	update, _, err := ocfl.NewObjectUpdate(ctx, objCnf.FS, objCnf.Path, f.newID, opts...)
 	if err != nil {
 		if errors.Is(err, ocfl.ErrNoObjectID) {
 			return nil, errors.New("'id' flag is required for to a create new objects (object does not exist)")
