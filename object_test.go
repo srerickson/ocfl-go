@@ -362,15 +362,6 @@ func expectFixtureErrors(t *testing.T, fixtureName string, errs ...error) {
 
 }
 
-func TempDirFixtureCopy(t *testing.T, fixture string) string {
-	t.Helper()
-	tmpDir := t.TempDir()
-	if err := os.CopyFS(tmpDir, os.DirFS(fixture)); err != nil {
-		t.Error(err)
-	}
-	return tmpDir
-}
-
 // return if a is subset of b
 func isSubset(a, b []string) bool {
 	for _, aVal := range a {

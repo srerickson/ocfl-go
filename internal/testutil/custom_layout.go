@@ -7,10 +7,7 @@ import (
 	"github.com/srerickson/ocfl-go/extension"
 )
 
-const (
-	customExtensionName = "NNNN-custom-extension"
-	prefix              = "prefix"
-)
+const customExtensionName = "NNNN-custom-extension"
 
 func NewCustomLayout() extension.Extension {
 	return &CustomLayout{

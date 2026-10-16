@@ -57,7 +57,7 @@ type S3API struct {
 	// UpdatedETags, Deleted and the MPU flags are written by the mock's
 	// handlers and read by tests. Handlers may run on the uploader's
 	// goroutines while the test reads from its own, so read them through
-	// the accessors (UpdatedETag, WasDeleted, MPUCreatedFlag, ...) rather
+	// the accessors (UpdatedETag, WasDeleted, MPUCompleteFlag, ...) rather
 	// than directly: the accessor takes the state mutex, the bare field
 	// read does not. The fields stay exported for construction-time
 	// compatibility, but direct reads are only safe before the mock has
@@ -69,7 +69,6 @@ type S3API struct {
 	// ListObjectsV2 unless the test is specifically about which requests
 	// were issued.
 	Deleted     map[string]bool
-	MPUCreated  bool
 	MPUAborted  bool
 	MPUComplete bool
 
@@ -302,9 +301,6 @@ func (m *S3API) CreateMultipartUpload(ctx context.Context, in *s3v2.CreateMultip
 		Key:      in.Key,
 		UploadId: &uploadID,
 	}
-	m.mu.Lock()
-	m.MPUCreated = true
-	m.mu.Unlock()
 	return out, nil
 }
 
@@ -620,14 +616,8 @@ func (m *S3API) UpdatedETag(key string) string {
 	return m.UpdatedETags[key]
 }
 
-// MPUCreatedFlag, MPUAbortedFlag and MPUCompleteFlag report the corresponding
-// MPU flag under the state mutex; prefer them over the bare fields.
-func (m *S3API) MPUCreatedFlag() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.MPUCreated
-}
-
+// MPUAbortedFlag and MPUCompleteFlag report the corresponding MPU flag under
+// the state mutex; prefer them over the bare fields.
 func (m *S3API) MPUAbortedFlag() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
