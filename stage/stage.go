@@ -1,11 +1,19 @@
-// Package stage adds files to an [ocfl.ObjectUpdate] and records where the
-// content the update needs is, so it can be passed to
-// [ocfl.ObjectUpdate.Apply] as an [ocfl.ContentSource].
+// Package stage provides high-level tools for staging content as part of an
+// [ocfl.ObjectUpdate]: it changes an update's new version state and keeps the
+// [ocfl.ContentSource] that provides the update's new content consistent with
+// it, so the two can be passed to [ocfl.ObjectUpdate.Apply] together.
 //
-// [FS], [File] and [Bytes] digest files, add them to an update, and record
-// the content it needs with a [FileStager] or [BytesStager], such as a
-// [FileContentMap] (which can be saved as JSON) or a [BytesContentMap] (which
-// holds content in memory).
+// [FileContentMap] and [BytesContentMap] are content sources for content in
+// files and in memory. A FileContentMap can be saved as JSON along with its
+// update, so an interrupted update can be resumed.
+//
+// [FS], [File] and [Bytes] digest content, add it to an update, and record
+// the content the update needs with a [FileStager] or [BytesStager], such as
+// a FileContentMap or a BytesContentMap. If they return an error, neither the
+// update nor the content source is changed. After files are removed from an
+// update, use [FileContentMap.DeleteFunc] or [BytesContentMap.DeleteFunc]
+// with [ocfl.ObjectUpdate.NeedsContent] to remove content the update no
+// longer needs.
 //
 // Everything in this package is built on the exported [ocfl.ObjectUpdate]
 // API: it is one way to stage content, not the only one. Applications with
