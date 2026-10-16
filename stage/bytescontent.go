@@ -1,4 +1,4 @@
-package ocfl
+package stage
 
 import (
 	"maps"
@@ -9,7 +9,7 @@ import (
 )
 
 // BytesContentMap maps digests to content held in memory. It implements
-// [ContentSource] and [BytesStager]. The zero value is an empty
+// [ocfl.ContentSource] and [BytesStager]. The zero value is an empty
 // BytesContentMap, ready to use. A BytesContentMap can't be saved: use a
 // [FileContentMap] for content that must outlive the process.
 type BytesContentMap struct {
@@ -31,8 +31,8 @@ func (c *BytesContentMap) Remove(dig string) {
 }
 
 // DeleteFunc removes the content for each digest for which del returns true.
-// Use it with [ObjectUpdate.NeedsContent] to remove content that an update
-// no longer needs.
+// Use it with [ocfl.ObjectUpdate.NeedsContent] to remove content that an
+// update no longer needs.
 func (c *BytesContentMap) DeleteFunc(del func(dig string) bool) {
 	maps.DeleteFunc(c.bytes, func(dig string, _ []byte) bool { return del(dig) })
 }
@@ -42,7 +42,7 @@ func (c *BytesContentMap) Digests() []string {
 	return slices.Sorted(maps.Keys(c.bytes))
 }
 
-// GetContent implements [ContentSource] for *BytesContentMap.
+// GetContent implements [ocfl.ContentSource] for *BytesContentMap.
 func (c *BytesContentMap) GetContent(dig string) (ocflfs.FS, string) {
 	b, ok := c.bytes[normalizeDigest(dig)]
 	if !ok {

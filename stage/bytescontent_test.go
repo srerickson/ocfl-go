@@ -1,4 +1,4 @@
-package ocfl_test
+package stage_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
+	"github.com/srerickson/ocfl-go/stage"
 )
 
 func TestBytesContentMap(t *testing.T) {
@@ -16,7 +17,7 @@ func TestBytesContentMap(t *testing.T) {
 	digA := strings.Repeat("a", 128)
 	digB := strings.Repeat("b", 128)
 	t.Run("zero value", func(t *testing.T) {
-		var c ocfl.BytesContentMap
+		var c stage.BytesContentMap
 		srcFS, srcPath := c.GetContent(digA)
 		be.Zero(t, srcFS)
 		be.Zero(t, srcPath)
@@ -25,7 +26,7 @@ func TestBytesContentMap(t *testing.T) {
 		c.DeleteFunc(func(string) bool { return true })
 	})
 	t.Run("bytes", func(t *testing.T) {
-		var c ocfl.BytesContentMap
+		var c stage.BytesContentMap
 		c.StageBytes(strings.ToUpper(digA), []byte("a"))
 		c.StageBytes(digB, []byte("b"))
 		be.DeepEqual(t, []string{digA, digB}, c.Digests())
@@ -58,14 +59,14 @@ func TestBytesContentMap_DeleteFunc(t *testing.T) {
 		be.NilErr(t, err)
 		return u
 	}
-	prune := func(u *ocfl.ObjectUpdate, c *ocfl.BytesContentMap) {
+	prune := func(u *ocfl.ObjectUpdate, c *stage.BytesContentMap) {
 		c.DeleteFunc(func(dig string) bool { return !u.NeedsContent(dig) })
 	}
 	t.Run("remove", func(t *testing.T) {
 		u := newUpdate(t)
-		var c ocfl.BytesContentMap
-		be.NilErr(t, ocfl.StageBytes(u, &c, "new/a.txt", []byte("a")))
-		be.NilErr(t, ocfl.StageBytes(u, &c, "new/b.txt", []byte("a")))
+		var c stage.BytesContentMap
+		be.NilErr(t, stage.Bytes(u, &c, "new/a.txt", []byte("a")))
+		be.NilErr(t, stage.Bytes(u, &c, "new/b.txt", []byte("a")))
 		dig := u.NewState().DigestFor("new/a.txt")
 		be.NilErr(t, u.Remove("new/a.txt"))
 		// content is still used by new/b.txt
@@ -78,19 +79,19 @@ func TestBytesContentMap_DeleteFunc(t *testing.T) {
 	})
 	t.Run("clear", func(t *testing.T) {
 		u := newUpdate(t)
-		var c ocfl.BytesContentMap
-		be.NilErr(t, ocfl.StageBytes(u, &c, "new/a.txt", []byte("a")))
+		var c stage.BytesContentMap
+		be.NilErr(t, stage.Bytes(u, &c, "new/a.txt", []byte("a")))
 		be.NilErr(t, u.Clear())
 		prune(u, &c)
 		be.Equal(t, 0, len(c.Digests()))
 		// the content can be added again
-		be.NilErr(t, ocfl.StageBytes(u, &c, "new/a.txt", []byte("a")))
+		be.NilErr(t, stage.Bytes(u, &c, "new/a.txt", []byte("a")))
 		be.Equal(t, 1, len(c.Digests()))
 	})
 	t.Run("rename keeps content", func(t *testing.T) {
 		u := newUpdate(t)
-		var c ocfl.BytesContentMap
-		be.NilErr(t, ocfl.StageBytes(u, &c, "new/a.txt", []byte("a")))
+		var c stage.BytesContentMap
+		be.NilErr(t, stage.Bytes(u, &c, "new/a.txt", []byte("a")))
 		be.NilErr(t, u.Rename("new", "newer"))
 		prune(u, &c)
 		be.DeepEqual(t, []string{u.NewState().DigestFor("newer/a.txt")}, c.Digests())

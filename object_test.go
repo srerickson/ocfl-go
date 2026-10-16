@@ -21,6 +21,7 @@ import (
 	"github.com/srerickson/ocfl-go/digest"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/fs/local"
+	"github.com/srerickson/ocfl-go/stage"
 )
 
 func TestObject_Example(t *testing.T) {
@@ -36,10 +37,10 @@ func TestObject_Example(t *testing.T) {
 	be.Equal(t, id, obj.ID()) // its ID is set
 
 	// create the first version from bytes
-	stage := stageFor(update)
-	be.NilErr(t, stage.AddBytes("README.txt", []byte("this is a test file"), digest.MD5))
-	be.NilErr(t, stage.Finalize("first version", ocfl.User{Name: "Mx. Robot"}))
-	v1Obj, err := stage.Update().Apply(ctx, obj.FS(), obj.Path(), stage.Content())
+	stg := stageFor(update)
+	be.NilErr(t, stg.AddBytes("README.txt", []byte("this is a test file"), digest.MD5))
+	be.NilErr(t, stg.Finalize("first version", ocfl.User{Name: "Mx. Robot"}))
+	v1Obj, err := stg.Update().Apply(ctx, obj.FS(), obj.Path(), stg.Content())
 	be.NilErr(t, err)          // update worked
 	be.True(t, v1Obj.Exists()) // the object was created
 	be.False(t, obj.Exists())  // obj is unchanged
@@ -57,13 +58,13 @@ func TestObject_Example(t *testing.T) {
 	update, _, err = ocfl.NewObjectUpdate(ctx, v1Obj.FS(), v1Obj.Path(), v1Obj.ID(),
 		ocfl.NewUpdateWithExpectedBase(v1Obj.InventoryDigest()))
 	be.NilErr(t, err)
-	stage = stageFor(update)
-	be.NilErr(t, stage.AddBytes("README.txt", []byte("this is a test file (v2)"), digest.MD5))
-	be.NilErr(t, stage.AddBytes("new-data.csv", []byte("1,2,3"), digest.MD5))
-	be.NilErr(t, stage.AddBytes("docs/note.txt", []byte("this is a note"), digest.MD5))
-	be.NilErr(t, stage.Finalize("second version", ocfl.User{Name: "Dr. Robot"},
+	stg = stageFor(update)
+	be.NilErr(t, stg.AddBytes("README.txt", []byte("this is a test file (v2)"), digest.MD5))
+	be.NilErr(t, stg.AddBytes("new-data.csv", []byte("1,2,3"), digest.MD5))
+	be.NilErr(t, stg.AddBytes("docs/note.txt", []byte("this is a note"), digest.MD5))
+	be.NilErr(t, stg.Finalize("second version", ocfl.User{Name: "Dr. Robot"},
 		ocfl.FinalizeWithOCFLSpec(ocfl.Spec1_1)))
-	v2Obj, err := stage.Update().Apply(ctx, obj.FS(), obj.Path(), stage.Content())
+	v2Obj, err := stg.Update().Apply(ctx, obj.FS(), obj.Path(), stg.Content())
 	be.NilErr(t, err)
 	be.Equal(t, "new-object-01", v2Obj.ID())
 	be.Equal(t, ocfl.Spec1_1, v2Obj.Spec())
@@ -94,7 +95,7 @@ func TestObject_Example(t *testing.T) {
 	be.Nonzero(t, sourceVersion)
 	forkUpdate, _, err := ocfl.NewObjectUpdate(ctx, tmpFS, forkID, forkID)
 	be.NilErr(t, err)
-	forkContent := &ocfl.FileContentMap{}
+	forkContent := &stage.FileContentMap{}
 	manifest := v2Obj.Manifest()
 	for name, dig := range sourceVersion.State().Paths() {
 		be.NilErr(t, forkUpdate.Add(name, dig, nil))
