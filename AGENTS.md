@@ -30,6 +30,9 @@ the change itself; link issues from the pull request instead.
 
 ## Release flow
 
+`RELEASE_NOTES.md` describes changes since the last release. It should only be
+updated as part of the release flow, in a release branch.
+
 Releases are prepared on a `release/vX.Y.Z` branch. In order:
 
 1. Make sure the `Version` constant in `ocfl.go` (`ocfl.Version`) is set to the
