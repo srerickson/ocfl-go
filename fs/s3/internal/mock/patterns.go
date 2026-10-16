@@ -2,8 +2,6 @@ package mock
 
 import (
 	"fmt"
-	"path"
-
 	"math/rand/v2"
 )
 
@@ -36,50 +34,4 @@ func DirectoryList(numFiles, numDirs int, prefix string) []*Object {
 		ret[offset] = &objects[offset]
 	}
 	return ret
-}
-
-func StorageRoot(seed uint64, prefix string, numObjects int) []*Object {
-	objects := []*Object{
-		{Key: path.Join(prefix, "0=ocfl_1.1")},
-		{Key: path.Join(prefix, "extensions/mylayout/config.json")},
-		{Key: path.Join(prefix, "ocfl_1.1.md")},
-	}
-	for i := range numObjects {
-		part := fmt.Sprintf("%s-%d", randPathPart(5, 8), i)
-		newObjects := []*Object{
-			{Key: path.Join(prefix, part, "0=ocfl_object_1.1")},
-			{Key: path.Join(prefix, part, "inventory.json")},
-			{Key: path.Join(prefix, part, "inventory.json.sha512")},
-			{Key: path.Join(prefix, part, "v1/contents/file.txt")},
-			{Key: path.Join(prefix, part, "extensions/ext01/config.json")},
-		}
-		objects = append(objects, newObjects...)
-	}
-	return objects
-}
-
-func randPathPart(minSize, maxSize int) string {
-	const chars = `abcdefghijklmnopqrstuvwzyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-_. `
-	const lenChars = len(chars)
-	size := max(minSize, 1)
-	if maxSize > size {
-		size += rand.IntN(maxSize - size + 1)
-	}
-	out := ""
-	for i := 0; i < size; i++ {
-		var next byte
-		for {
-			next = chars[rand.IntN(lenChars)]
-			if next == '.' && i > 0 && out[i-1] == '.' {
-				// dont allow '..'
-				continue // try again
-			}
-			if size == 1 && next == '.' {
-				continue
-			}
-			break
-		}
-		out += string(next)
-	}
-	return out
 }
