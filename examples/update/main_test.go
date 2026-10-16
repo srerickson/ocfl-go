@@ -13,6 +13,7 @@ import (
 	"github.com/carlmjohnson/be"
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/fs/local"
+	"github.com/srerickson/ocfl-go/stage"
 )
 
 var contentFixture = filepath.Join("..", "..", "testdata", "content-fixture")
@@ -39,11 +40,11 @@ func TestRun(t *testing.T) {
 		objFS := local.MustNewFS(objDir)
 		update, _, err := ocfl.NewObjectUpdate(ctx, objFS, ".", "ark:/123")
 		be.NilErr(t, err)
-		stage := &stage{Update: update, Content: &ocfl.FileContentMap{}}
-		be.NilErr(t, ocfl.StageFS(ctx, stage.Update, stage.Content, local.MustNewFS(contentFixture), ".", "."))
-		be.NilErr(t, stage.Update.Finalize("first", ocfl.User{Name: "Tester"}))
+		staged := &stagedUpdate{Update: update, Content: &stage.FileContentMap{}}
+		be.NilErr(t, stage.FS(ctx, staged.Update, staged.Content, local.MustNewFS(contentFixture), ".", "."))
+		be.NilErr(t, staged.Update.Finalize("first", ocfl.User{Name: "Tester"}))
 		stageFile := filepath.Join(t.TempDir(), "stage.json")
-		data, err := json.Marshal(stage)
+		data, err := json.Marshal(staged)
 		be.NilErr(t, err)
 		be.NilErr(t, os.WriteFile(stageFile, data, 0o644))
 

@@ -1,4 +1,4 @@
-package ocfl
+package stage
 
 import (
 	"bytes"
@@ -17,9 +17,9 @@ import (
 )
 
 // FileContentMap maps digests to files in FSs that hold content with the
-// digest. It implements [ContentSource] and [FileStager]. The zero value is
-// an empty FileContentMap, ready to use. For content in memory, use a
-// [BytesContentMap].
+// digest. It implements [ocfl.ContentSource] and [FileStager]. The zero
+// value is an empty FileContentMap, ready to use. For content in memory, use
+// a [BytesContentMap].
 //
 // A FileContentMap can be saved as JSON if each file's FS implements
 // [encoding.TextMarshaler], as the storage backends in this module do. Each
@@ -29,12 +29,12 @@ import (
 // A FileContentMap loaded from JSON keeps each FS as its saved text: decoding
 // does no I/O, so a FileContentMap whose content is no longer available can
 // still be loaded, changed and saved. Call [FileContentMap.OpenFS] to open the
-// FSs before using the FileContentMap as a [ContentSource]: until then,
+// FSs before using the FileContentMap as a [ocfl.ContentSource]: until then,
 // GetContent finds no content in them.
 //
 // FileContentMap records only where content is, not anything that could show
-// that a file has changed since it was added: [ObjectUpdate.Apply] digests
-// content as it copies it, and fails if it doesn't match its digest.
+// that a file has changed since it was added: [ocfl.ObjectUpdate.Apply]
+// digests content as it copies it, and fails if it doesn't match its digest.
 type FileContentMap struct {
 	sources []contentMapSource
 	files   map[string]contentMapFile // digest -> file
@@ -44,7 +44,7 @@ type FileContentMap struct {
 // in fsys. fsys must not be nil.
 func (c *FileContentMap) StageFile(dig string, fsys ocflfs.FS, name string) {
 	if fsys == nil {
-		panic("ocfl: FileContentMap.StageFile: fsys must not be nil")
+		panic("stage: FileContentMap.StageFile: fsys must not be nil")
 	}
 	dig = normalizeDigest(dig)
 	file := contentMapFile{name: name}
@@ -66,7 +66,7 @@ func (c *FileContentMap) Remove(dig string) {
 }
 
 // DeleteFunc removes the content location for each digest for which del
-// returns true. Use it with [ObjectUpdate.NeedsContent] to remove content
+// returns true. Use it with [ocfl.ObjectUpdate.NeedsContent] to remove content
 // that an update no longer needs.
 func (c *FileContentMap) DeleteFunc(del func(dig string) bool) {
 	maps.DeleteFunc(c.files, func(dig string, _ contentMapFile) bool { return del(dig) })
@@ -77,9 +77,9 @@ func (c *FileContentMap) Digests() []string {
 	return slices.Sorted(maps.Keys(c.files))
 }
 
-// GetContent implements [ContentSource] for *FileContentMap. Content in an FS
-// that was loaded from JSON and hasn't been opened with [FileContentMap.OpenFS] is
-// not found.
+// GetContent implements [ocfl.ContentSource] for *FileContentMap. Content in
+// an FS that was loaded from JSON and hasn't been opened with
+// [FileContentMap.OpenFS] is not found.
 func (c *FileContentMap) GetContent(dig string) (ocflfs.FS, string) {
 	file, ok := c.files[normalizeDigest(dig)]
 	if !ok {
@@ -94,10 +94,11 @@ func (c *FileContentMap) GetContent(dig string) (ocflfs.FS, string) {
 
 // OpenFS opens the FSs loaded from JSON that c's content is in, using reg to
 // open each FS from its saved text. It must be called before c is used as a
-// [ContentSource] (for example, by [ObjectUpdate.Apply]). FSs that are already
-// open and FSs that no content is in are skipped, so calling OpenFS again is
-// safe. If any FS can't be opened, OpenFS returns all of the errors joined, each
-// naming the FS's saved text, and keeps the FSs that did open.
+// [ocfl.ContentSource] (for example, by [ocfl.ObjectUpdate.Apply]). FSs that
+// are already open and FSs that no content is in are skipped, so calling
+// OpenFS again is safe. If any FS can't be opened, OpenFS returns all of the
+// errors joined, each naming the FS's saved text, and keeps the FSs that did
+// open.
 func (c *FileContentMap) OpenFS(ctx context.Context, reg ocflfs.Registry) error {
 	used := map[int]bool{}
 	for _, file := range c.files {

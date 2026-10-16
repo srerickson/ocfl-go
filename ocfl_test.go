@@ -2,7 +2,6 @@ package ocfl_test
 
 import (
 	"context"
-	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/srerickson/ocfl-go"
 	"github.com/srerickson/ocfl-go/digest"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
+	"github.com/srerickson/ocfl-go/stage"
 )
 
 var (
@@ -22,8 +22,8 @@ var (
 // with methods to add both.
 type testStage struct {
 	*ocfl.ObjectUpdate
-	files ocfl.FileContentMap
-	mem   ocfl.BytesContentMap
+	files stage.FileContentMap
+	mem   stage.BytesContentMap
 }
 
 // newTestStage returns a stage for a new update to the object at dir in fsys.
@@ -53,16 +53,16 @@ func (s *testStage) Content() ocfl.ContentSource {
 	return multiSource{&s.files, &s.mem}
 }
 
-func (s *testStage) AddFS(ctx context.Context, fsys ocflfs.FS, dir, dst string, opts ...ocfl.StageOption) error {
-	return ocfl.StageFS(ctx, s.ObjectUpdate, &s.files, fsys, dir, dst, opts...)
+func (s *testStage) AddFS(ctx context.Context, fsys ocflfs.FS, dir, dst string, opts ...stage.Option) error {
+	return stage.FS(ctx, s.ObjectUpdate, &s.files, fsys, dir, dst, opts...)
 }
 
-func (s *testStage) AddFile(ctx context.Context, fsys ocflfs.FS, name, dst string, opts ...ocfl.StageOption) error {
-	return ocfl.StageFile(ctx, s.ObjectUpdate, &s.files, fsys, name, dst, opts...)
+func (s *testStage) AddFile(ctx context.Context, fsys ocflfs.FS, name, dst string, opts ...stage.Option) error {
+	return stage.File(ctx, s.ObjectUpdate, &s.files, fsys, name, dst, opts...)
 }
 
 func (s *testStage) AddBytes(dst string, b []byte, fixity ...digest.Algorithm) error {
-	return ocfl.StageBytes(s.ObjectUpdate, &s.mem, dst, b, fixity...)
+	return stage.Bytes(s.ObjectUpdate, &s.mem, dst, b, fixity...)
 }
 
 // multiSource gets content from the first of its sources that has it.
@@ -96,12 +96,4 @@ func commit(t *testing.T, obj *ocfl.Object, stage *testStage, msg string, opts .
 	newObj, err := stage.Update().Apply(ctx, obj.FS(), obj.Path(), stage.Content())
 	be.NilErr(t, err)
 	return newObj
-}
-
-// mustMarshal returns v encoded as JSON.
-func mustMarshal(t *testing.T, v any) []byte {
-	t.Helper()
-	b, err := json.Marshal(v)
-	be.NilErr(t, err)
-	return b
 }

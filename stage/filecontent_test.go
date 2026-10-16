@@ -1,4 +1,4 @@
-package ocfl_test
+package stage_test
 
 import (
 	"context"
@@ -18,6 +18,7 @@ import (
 	"github.com/srerickson/ocfl-go/fs/config"
 	"github.com/srerickson/ocfl-go/fs/local"
 	"github.com/srerickson/ocfl-go/internal/testutil"
+	"github.com/srerickson/ocfl-go/stage"
 )
 
 func TestFileContentMap(t *testing.T) {
@@ -25,15 +26,15 @@ func TestFileContentMap(t *testing.T) {
 	digA := strings.Repeat("a", 128)
 	digB := strings.Repeat("b", 128)
 	t.Run("zero value", func(t *testing.T) {
-		var c ocfl.FileContentMap
+		var c stage.FileContentMap
 		srcFS, srcPath := c.GetContent(digA)
 		be.Zero(t, srcFS)
 		be.Zero(t, srcPath)
 		be.Equal(t, 0, len(c.Digests()))
 	})
 	t.Run("files", func(t *testing.T) {
-		fsys := ocflfs.DirFS(`testdata`)
-		var c ocfl.FileContentMap
+		fsys := ocflfs.DirFS(testdataPath)
+		var c stage.FileContentMap
 		c.StageFile(strings.ToUpper(digA), fsys, "content-fixture/hello.csv")
 		c.StageFile(digB, fsys, "content-fixture/folder1/file.txt")
 		be.DeepEqual(t, []string{digA, digB}, c.Digests())
@@ -54,7 +55,7 @@ func TestFileContentMap(t *testing.T) {
 	t.Run("FS values that can't be compared", func(t *testing.T) {
 		// the struct type is comparable, but its value isn't
 		fsys := mapFS{files: fstest.MapFS{"a.txt": &fstest.MapFile{Data: []byte("a")}}}
-		var c ocfl.FileContentMap
+		var c stage.FileContentMap
 		c.StageFile(digA, fsys, "a.txt")
 		c.StageFile(digB, fsys, "a.txt")
 		srcFS, srcPath := c.GetContent(digB)
@@ -85,7 +86,7 @@ func TestFileContentMap_JSON(t *testing.T) {
 	unused, err := local.NewFS(t.TempDir())
 	be.NilErr(t, err)
 
-	var c ocfl.FileContentMap
+	var c stage.FileContentMap
 	c.StageFile(digC, unused, "c.txt")
 	c.StageFile(digA, fsA, "dir/a.txt")
 	c.StageFile(digB, fsB, "b.txt")
@@ -105,7 +106,7 @@ func TestFileContentMap_JSON(t *testing.T) {
 	be.DeepEqual(t, []any{float64(0), "c.txt"}, savedJSON.Content[digC])
 
 	t.Run("load and save without opening", func(t *testing.T) {
-		var loaded ocfl.FileContentMap
+		var loaded stage.FileContentMap
 		be.NilErr(t, json.Unmarshal(saved, &loaded))
 		be.DeepEqual(t, c.Digests(), loaded.Digests())
 		// content isn't available until the sources are opened
@@ -120,8 +121,8 @@ func TestFileContentMap_JSON(t *testing.T) {
 	})
 	t.Run("in a struct", func(t *testing.T) {
 		type file struct {
-			Name    string               `json:"name"`
-			Content *ocfl.FileContentMap `json:"content"`
+			Name    string                `json:"name"`
+			Content *stage.FileContentMap `json:"content"`
 		}
 		data, err := json.Marshal(file{Name: "test", Content: &c})
 		be.NilErr(t, err)
@@ -131,7 +132,7 @@ func TestFileContentMap_JSON(t *testing.T) {
 		be.DeepEqual(t, c.Digests(), loaded.Content.Digests())
 	})
 	t.Run("add after loading", func(t *testing.T) {
-		var loaded ocfl.FileContentMap
+		var loaded stage.FileContentMap
 		be.NilErr(t, json.Unmarshal(saved, &loaded))
 		digD := strings.Repeat("d", 128)
 		digE := strings.Repeat("e", 128)
@@ -153,7 +154,7 @@ func TestFileContentMap_JSON(t *testing.T) {
 		be.DeepEqual(t, []any{float64(0), "e.txt"}, resavedJSON.Content[digE])
 	})
 	t.Run("FS without MarshalText can't be saved", func(t *testing.T) {
-		var c ocfl.FileContentMap
+		var c stage.FileContentMap
 		c.StageFile(digA, ocflfs.DirFS(dirA), "a.txt")
 		_, err := json.Marshal(c)
 		be.Nonzero(t, err)
@@ -172,7 +173,7 @@ func TestFileContentMap_JSON(t *testing.T) {
 			"unknown field": `{"sources": [], "content": {}, "extra": 1}`,
 		} {
 			t.Run(name, func(t *testing.T) {
-				var c ocfl.FileContentMap
+				var c stage.FileContentMap
 				be.Nonzero(t, json.Unmarshal([]byte(data), &c))
 			})
 		}
@@ -186,12 +187,12 @@ func TestFileContentMap_Open(t *testing.T) {
 	digB := strings.Repeat("b", 128)
 	// load returns a ContentMap loaded from JSON with content in two local
 	// directories, and the directories.
-	load := func(t *testing.T) (*ocfl.FileContentMap, string, string) {
+	load := func(t *testing.T) (*stage.FileContentMap, string, string) {
 		t.Helper()
 		dirA, dirB := t.TempDir(), t.TempDir()
 		data := `{"sources": [` + string(mustMarshal(t, localText(t, dirA))) + `, ` + string(mustMarshal(t, localText(t, dirB))) + `],
 			"content": {"` + digA + `": [0, "a.txt"], "` + digB + `": [1, "b.txt"]}}`
-		var c ocfl.FileContentMap
+		var c stage.FileContentMap
 		be.NilErr(t, json.Unmarshal([]byte(data), &c))
 		return &c, dirA, dirB
 	}
@@ -235,7 +236,7 @@ func TestFileContentMap_Open(t *testing.T) {
 	})
 	t.Run("passwords aren't in errors", func(t *testing.T) {
 		data := `{"sources": ["https://user:secret@example.org/ocfl"], "content": {"` + digA + `": [0, "a.txt"]}}`
-		var c ocfl.FileContentMap
+		var c stage.FileContentMap
 		be.NilErr(t, json.Unmarshal([]byte(data), &c))
 		err := c.OpenFS(ctx, ocflfs.Registry{})
 		be.Nonzero(t, err)
@@ -253,28 +254,28 @@ func localText(t *testing.T, dir string) string {
 
 // fileStage is an update with content in files, which can be saved as JSON.
 type fileStage struct {
-	Update  *ocfl.ObjectUpdate   `json:"update"`
-	Content *ocfl.FileContentMap `json:"content"`
+	Update  *ocfl.ObjectUpdate    `json:"update"`
+	Content *stage.FileContentMap `json:"content"`
 }
 
 func TestFileContentMap_JSON_withUpdate(t *testing.T) {
 	ctx := context.Background()
 	reg := config.Registry()
-	contentFS, err := local.NewFS(filepath.Join(`testdata`, `content-fixture`))
+	contentFS, err := local.NewFS(filepath.Join(testdataPath, `content-fixture`))
 	be.NilErr(t, err)
 	objFS := testutil.TmpLocalFS(t)
 	update, _, err := ocfl.NewObjectUpdate(ctx, objFS, "obj", "obj")
 	be.NilErr(t, err)
-	stage := &fileStage{Update: update, Content: &ocfl.FileContentMap{}}
-	be.NilErr(t, ocfl.StageFS(ctx, stage.Update, stage.Content, contentFS, "folder1", "files", ocfl.StageWithFixity(digest.MD5)))
-	be.NilErr(t, ocfl.StageFile(ctx, stage.Update, stage.Content, contentFS, "hello.csv", "hello.csv"))
+	stg := &fileStage{Update: update, Content: &stage.FileContentMap{}}
+	be.NilErr(t, stage.FS(ctx, stg.Update, stg.Content, contentFS, "folder1", "files", stage.WithFixity(digest.MD5)))
+	be.NilErr(t, stage.File(ctx, stg.Update, stg.Content, contentFS, "hello.csv", "hello.csv"))
 
-	saved, err := json.Marshal(stage)
+	saved, err := json.Marshal(stg)
 	be.NilErr(t, err)
 	var loaded fileStage
 	be.NilErr(t, json.Unmarshal(saved, &loaded))
-	be.True(t, stage.Update.NewState().Eq(loaded.Update.NewState()))
-	be.DeepEqual(t, stage.Content.Digests(), loaded.Content.Digests())
+	be.True(t, stg.Update.NewState().Eq(loaded.Update.NewState()))
+	be.DeepEqual(t, stg.Content.Digests(), loaded.Content.Digests())
 	resaved, err := json.Marshal(loaded)
 	be.NilErr(t, err)
 	be.Equal(t, string(saved), string(resaved))
@@ -290,12 +291,12 @@ func TestFileContentMap_JSON_withUpdate(t *testing.T) {
 
 	t.Run("invalid saved values", func(t *testing.T) {
 		for name, data := range map[string]string{
-			"invalid content": `{"update":` + string(mustMarshal(t, stage.Update)) + `,"content":{"extra":1}}`,
+			"invalid content": `{"update":` + string(mustMarshal(t, stg.Update)) + `,"content":{"extra":1}}`,
 			"invalid update":  `{"update":{},"content":{"sources":[],"content":{}}}`,
 		} {
 			t.Run(name, func(t *testing.T) {
-				var stage fileStage
-				be.Nonzero(t, json.Unmarshal([]byte(data), &stage))
+				var stg fileStage
+				be.Nonzero(t, json.Unmarshal([]byte(data), &stg))
 			})
 		}
 	})
@@ -305,14 +306,14 @@ func TestFileContentMap_JSON_missingContent(t *testing.T) {
 	// a stage whose content directory has been removed can be loaded, changed,
 	// saved and reverted: only opening its content fails.
 	ctx := context.Background()
-	contentFS := testutil.TmpLocalFS(t, filepath.Join(`testdata`, `content-fixture`))
+	contentFS := testutil.TmpLocalFS(t, filepath.Join(testdataPath, `content-fixture`))
 	objFS := testutil.TmpLocalFS(t)
 	upd, _, err := ocfl.NewObjectUpdate(ctx, objFS, "obj", "obj")
 	be.NilErr(t, err)
-	stage := &fileStage{Update: upd, Content: &ocfl.FileContentMap{}}
-	be.NilErr(t, ocfl.StageFS(ctx, upd, stage.Content, contentFS, "content-fixture", "."))
+	stg := &fileStage{Update: upd, Content: &stage.FileContentMap{}}
+	be.NilErr(t, stage.FS(ctx, upd, stg.Content, contentFS, "content-fixture", "."))
 	be.NilErr(t, upd.Finalize("v1", ocfl.User{Name: "Tester"}))
-	saved, err := json.Marshal(stage)
+	saved, err := json.Marshal(stg)
 	be.NilErr(t, err)
 	contentText, err := contentFS.MarshalText()
 	be.NilErr(t, err)

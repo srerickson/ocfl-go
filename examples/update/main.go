@@ -18,6 +18,7 @@ import (
 	"github.com/srerickson/ocfl-go/digest"
 	"github.com/srerickson/ocfl-go/fs/config"
 	"github.com/srerickson/ocfl-go/fs/local"
+	"github.com/srerickson/ocfl-go/stage"
 )
 
 type cmdFlags struct {
@@ -51,11 +52,11 @@ func (f *cmdFlags) checkNewVersion() error {
 	return nil
 }
 
-// stage is the update for the new version with the files it adds: saving
-// it as JSON before applying it lets an interrupted update be resumed.
-type stage struct {
-	Update  *ocfl.ObjectUpdate   `json:"update"`
-	Content *ocfl.FileContentMap `json:"content"`
+// stagedUpdate is the update for the new version with the files it adds:
+// saving it as JSON before applying it lets an interrupted update be resumed.
+type stagedUpdate struct {
+	Update  *ocfl.ObjectUpdate    `json:"update"`
+	Content *stage.FileContentMap `json:"content"`
 }
 
 func main() {
@@ -87,33 +88,33 @@ func runUpdate(ctx context.Context, args []string, stderr io.Writer) error {
 		return err
 	}
 	// an existing stage file is an update that was interrupted: resume it.
-	stage, err := loadStage(f.stageFile)
+	staged, err := loadStage(f.stageFile)
 	if err != nil {
 		return err
 	}
-	if stage != nil {
+	if staged != nil {
 		logger.Info("resuming update", "stage", f.stageFile)
 	} else {
-		if stage, err = newStage(ctx, objCnf, f); err != nil {
+		if staged, err = newStage(ctx, objCnf, f); err != nil {
 			return err
 		}
-		if err := saveStage(f.stageFile, stage); err != nil {
+		if err := saveStage(f.stageFile, staged); err != nil {
 			return err
 		}
 	}
-	if err := stage.Content.OpenFS(ctx, config.Registry(config.WithLogger(logger))); err != nil {
+	if err := staged.Content.OpenFS(ctx, config.Registry(config.WithLogger(logger))); err != nil {
 		return err
 	}
 	applyCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
-	_, err = stage.Update.Apply(applyCtx, objCnf.FS, objCnf.Path, stage.Content, ocfl.ApplyWithLogger(logger))
+	_, err = staged.Update.Apply(applyCtx, objCnf.FS, objCnf.Path, staged.Content, ocfl.ApplyWithLogger(logger))
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			// the stage file is kept, so the update can be resumed
 			return err
 		}
 		logger.Info("received interupt: reverting changes...")
-		if err := stage.Update.Revert(ctx, objCnf.FS, objCnf.Path, ocfl.ApplyWithLogger(logger)); err != nil {
+		if err := staged.Update.Revert(ctx, objCnf.FS, objCnf.Path, ocfl.ApplyWithLogger(logger)); err != nil {
 			return err
 		}
 	}
@@ -125,7 +126,7 @@ func runUpdate(ctx context.Context, args []string, stderr io.Writer) error {
 
 // newStage returns a finalized stage for a new version of the object with
 // the contents of the source directory.
-func newStage(ctx context.Context, objCnf *config.FSConfig, f *cmdFlags) (*stage, error) {
+func newStage(ctx context.Context, objCnf *config.FSConfig, f *cmdFlags) (*stagedUpdate, error) {
 	if err := f.checkNewVersion(); err != nil {
 		return nil, err
 	}
@@ -152,19 +153,19 @@ func newStage(ctx context.Context, objCnf *config.FSConfig, f *cmdFlags) (*stage
 	if err != nil {
 		return nil, err
 	}
-	content := &ocfl.FileContentMap{}
-	if err := ocfl.StageFS(ctx, update, content, srcFS, ".", "."); err != nil {
+	content := &stage.FileContentMap{}
+	if err := stage.FS(ctx, update, content, srcFS, ".", "."); err != nil {
 		return nil, err
 	}
 	if err := update.Finalize(f.msg, f.user); err != nil {
 		return nil, err
 	}
-	return &stage{Update: update, Content: content}, nil
+	return &stagedUpdate{Update: update, Content: content}, nil
 }
 
 // loadStage loads the stage saved in the file name. It returns nil and no
 // error if name is empty or the file doesn't exist.
-func loadStage(name string) (*stage, error) {
+func loadStage(name string) (*stagedUpdate, error) {
 	if name == "" {
 		return nil, nil
 	}
@@ -175,7 +176,7 @@ func loadStage(name string) (*stage, error) {
 	if err != nil {
 		return nil, err
 	}
-	var loaded stage
+	var loaded stagedUpdate
 	if err := json.Unmarshal(data, &loaded); err != nil {
 		return nil, fmt.Errorf("loading stage from %s: %w", name, err)
 	}
@@ -187,7 +188,7 @@ func loadStage(name string) (*stage, error) {
 }
 
 // saveStage saves the stage in the file name, if name isn't empty.
-func saveStage(name string, s *stage) error {
+func saveStage(name string, s *stagedUpdate) error {
 	if name == "" {
 		return nil
 	}

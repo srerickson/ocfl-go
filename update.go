@@ -123,13 +123,14 @@ type UpdateEntry struct {
 // This package doesn't synchronize updates: only one update may be applied
 // to or reverted from an object at a time (see [ObjectUpdate.Apply]).
 //
-// [StageFS], [StageFile] and [StageBytes] digest files, add them to an
-// update, and record the content it needs with a [FileStager] or
-// [BytesStager], such as a [FileContentMap] (which can be saved as JSON) or a
-// [BytesContentMap] (which holds content in memory). [ObjectUpdate.AddAll]
-// adds files whose digests are already known. To save an update with its
-// content, or to keep them together, define a type of your own that holds
-// both.
+// The [stage] package digests files, adds them to an update, and records the
+// content it needs, in files or in memory: its [stage.FileContentMap] can be
+// saved as JSON. [ObjectUpdate.AddAll] adds files whose digests are already
+// known. To save an update with its content, or to keep them together, define
+// a type of your own that holds both.
+//
+// [stage]: https://pkg.go.dev/github.com/srerickson/ocfl-go/stage
+// [stage.FileContentMap]: https://pkg.go.dev/github.com/srerickson/ocfl-go/stage#FileContentMap
 type ObjectUpdate struct {
 	id       string
 	rootSpec Spec             // storage root's spec, if known
@@ -502,8 +503,8 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...FinalizeUpdateOpt
 // Apply returns an error wrapping [ErrMissingContent], without writing
 // anything, if src doesn't provide content for every digest that is new in
 // the update. src may be nil if the update doesn't add new content. A
-// [FileContentMap] loaded from JSON must be opened with
-// [FileContentMap.OpenFS] first.
+// [stage.FileContentMap] loaded from JSON must be opened with
+// [stage.FileContentMap.OpenFS] first.
 //
 // By default, Apply digests new content as it copies it into the object, and
 // returns an error wrapping [ErrContentChanged] if any content doesn't match
@@ -513,6 +514,9 @@ func (u *ObjectUpdate) Finalize(msg string, user User, opts ...FinalizeUpdateOpt
 // verified on every attempt, including when an interrupted update is
 // resumed. Use [ApplyWithTrustedContent] to skip verification and let
 // storage backends copy content without reading it.
+//
+// [stage.FileContentMap]: https://pkg.go.dev/github.com/srerickson/ocfl-go/stage#FileContentMap
+// [stage.FileContentMap.OpenFS]: https://pkg.go.dev/github.com/srerickson/ocfl-go/stage#FileContentMap.OpenFS
 func (u *ObjectUpdate) Apply(ctx context.Context, fsys ocflfs.FS, dir string, src ContentSource, opts ...ApplyUpdateOption) (*Object, error) {
 	if u.final == nil {
 		return nil, ErrNotFinalized

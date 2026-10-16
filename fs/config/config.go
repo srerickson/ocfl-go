@@ -130,13 +130,13 @@ func (c *FSConfig) UnmarshalText(text []byte) error {
 // must name the root of a backend, as the MarshalText methods of the backends
 // in this module do: a string that leaves a path within the FS, such as an s3
 // bucket with a prefix, is an error. Use it to open the sources of a saved
-// [ocfl.FileContentMap] with [ocfl.FileContentMap.OpenFS].
+// [stage.FileContentMap] with [stage.FileContentMap.OpenFS].
 //
 // It is the default registry for this module's backends, which the
 // [ocflfs] package can't provide because the backends import it.
 //
-// [ocfl.FileContentMap]: https://pkg.go.dev/github.com/srerickson/ocfl-go#FileContentMap
-// [ocfl.FileContentMap.OpenFS]: https://pkg.go.dev/github.com/srerickson/ocfl-go#FileContentMap.OpenFS
+// [stage.FileContentMap]: https://pkg.go.dev/github.com/srerickson/ocfl-go/stage#FileContentMap
+// [stage.FileContentMap.OpenFS]: https://pkg.go.dev/github.com/srerickson/ocfl-go/stage#FileContentMap.OpenFS
 func Registry(opts ...Option) ocflfs.Registry {
 	open := func(ctx context.Context, conf string) (ocflfs.FS, error) {
 		cnf, err := New(ctx, conf, opts...)
