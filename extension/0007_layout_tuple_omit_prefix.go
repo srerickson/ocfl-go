@@ -45,6 +45,9 @@ func Ext0007() Extension {
 }
 
 func (l LayoutTupleOmitPrefix) Valid() error {
+	if l.Delimiter == "" {
+		return fmt.Errorf("required field not set in extension config: %q", delimiter)
+	}
 	if l.TupleSize < 1 {
 		return fmt.Errorf("invalid %s: %d", tupleSize, l.TupleSize)
 	}
