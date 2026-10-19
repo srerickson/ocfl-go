@@ -93,6 +93,15 @@ func TestLayoutTupleOmitPrefix(t *testing.T) {
 		}
 	})
 
+	t.Run("empty delimiter", func(t *testing.T) {
+		layout := extension.Ext0007().(*extension.LayoutTupleOmitPrefix)
+		layout.Delimiter = ""
+		be.Nonzero(t, layout.Valid())
+		_, err := layout.Resolve("ns:abc")
+		be.Nonzero(t, err)
+		be.False(t, errors.Is(err, extension.ErrInvalidLayoutID))
+	})
+
 	t.Run("unmarshal", func(t *testing.T) {
 		reg := extension.DefaultRegistry()
 		ext, err := reg.Unmarshal([]byte(`{
