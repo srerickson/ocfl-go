@@ -46,6 +46,16 @@ type FileWalker interface {
 	FS
 	// WalkFiles returns an iterator that yields *FileRefs and/or an
 	// error.
+	//
+	// Files must be yielded in one of two orders, by their paths relative to
+	// dir: full-path lexical (byte-wise) order, as S3's ListObjectsV2
+	// returns keys, or depth-first order with each directory's entries
+	// sorted by name, as [WalkFiles] produces for an FS that isn't a
+	// FileWalker. The two differ where a name has a byte that sorts before
+	// "/": "a-b" comes before "a/c" in lexical order, but after it depth
+	// first. In both, the files under any directory are contiguous, and
+	// callers such as ocfl.Root.ObjectDeclarations depend on it. A listing
+	// in neither order may be reported as an error.
 	WalkFiles(ctx context.Context, dir string) iter.Seq2[*FileRef, error]
 }
 
