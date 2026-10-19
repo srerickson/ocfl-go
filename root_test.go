@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"iter"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -16,6 +18,7 @@ import (
 	"github.com/srerickson/ocfl-go/extension"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
 	"github.com/srerickson/ocfl-go/fs/local"
+	"github.com/srerickson/ocfl-go/internal/testutil"
 )
 
 func TestNewRoot(t *testing.T) {
@@ -146,6 +149,123 @@ func TestRoot_ObjectDeclarations(t *testing.T) {
 				t.Fatal(err)
 			}
 		}()
+		for range root.ObjectDeclarations(ctx) {
+			break
+		}
+	})
+}
+
+// lexicalWalkFS is a [ocflfs.FileWalker] that lists files in lexical order of
+// their full paths, like S3.
+type lexicalWalkFS struct{ *ocflfs.WrapFS }
+
+func (fsys lexicalWalkFS) WalkFiles(ctx context.Context, dir string) iter.Seq2[*ocflfs.FileRef, error] {
+	return func(yield func(*ocflfs.FileRef, error) bool) {
+		var refs []*ocflfs.FileRef
+		for ref, err := range ocflfs.WalkFiles(ctx, fsys.WrapFS, dir) {
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			ref.FS = fsys
+			refs = append(refs, ref)
+		}
+		slices.SortFunc(refs, func(a, b *ocflfs.FileRef) int {
+			return strings.Compare(a.FullPath(), b.FullPath())
+		})
+		for _, ref := range refs {
+			if !yield(ref, nil) {
+				return
+			}
+		}
+	}
+}
+
+func TestRoot_ObjectDeclarations_Nested(t *testing.T) {
+	ctx := context.Background()
+
+	// collect returns the paths of all object declarations in root
+	collect := func(t *testing.T, root *ocfl.Root) []string {
+		t.Helper()
+		var got []string
+		for ref, err := range root.ObjectDeclarations(ctx) {
+			be.NilErr(t, err)
+			got = append(got, ref.Path)
+		}
+		slices.Sort(got)
+		return got
+	}
+
+	// fixture backends: the nested-object-root fixture has an object stored
+	// as content of another object.
+	fixtureDir := filepath.Join(storeFixturePath, `1.0`, `good-stores`, `nested-object-root`)
+	fixtureBackends := map[string]func(t *testing.T) ocflfs.FS{
+		"dir walk": func(*testing.T) ocflfs.FS { return ocflfs.DirFS(fixtureDir) },
+		"lexical listing": func(*testing.T) ocflfs.FS {
+			return lexicalWalkFS{ocflfs.DirFS(fixtureDir)}
+		},
+		"s3": func(t *testing.T) ocflfs.FS {
+			if !testutil.S3Enabled() {
+				t.Skip("S3 not enabled")
+			}
+			return testutil.TmpS3FS(t, ocflfs.DirFS(fixtureDir))
+		},
+	}
+	for name, newFS := range fixtureBackends {
+		t.Run("fixture/"+name, func(t *testing.T) {
+			root, err := ocfl.NewRoot(ctx, newFS(t), ".")
+			be.NilErr(t, err)
+			be.DeepEqual(t, []string{
+				"ark%3A123%2Fabc/0=ocfl_object_1.0",
+				"outer/0=ocfl_object_1.0",
+			}, collect(t, root))
+			paths := map[string]string{}
+			for obj, err := range root.Objects(ctx) {
+				be.NilErr(t, err)
+				paths[obj.ID()] = obj.Path()
+			}
+			be.DeepEqual(t, map[string]string{
+				"ark:123/abc": "ark%3A123%2Fabc",
+				"info:outer":  "outer",
+			}, paths)
+		})
+	}
+
+	// out-of-order declarations: entries in an object root that sort before
+	// its declaration, as an invalid object root might have.
+	decl := &fstest.MapFile{Data: []byte("ocfl_object_1.1\n")}
+	files := fstest.MapFS{
+		"0=ocfl_1.1":                               &fstest.MapFile{Data: []byte("ocfl_1.1\n")},
+		"-top/0=ocfl_object_1.1":                   decl, // yielded: the root isn't an object
+		"a/-b/0=ocfl_object_1.1":                   decl, // yielded: a isn't an object
+		"a/-b/-c/0=ocfl_object_1.1":                decl, // nested in a/-b
+		"a/-b/v1/content/0=ocfl_object_1.1":        decl, // nested in a/-b
+		"obj/-early/0=ocfl_object_1.1":             decl, // nested in obj
+		"obj/0/0=ocfl_object_1.1":                  decl, // nested in obj
+		"obj/0=ocfl_object_1.1":                    decl,
+		"obj/0=ocfl_object_1.1x/0=ocfl_object_1.1": decl, // nested in obj
+		"obj/v1/content/0=ocfl_object_1.1":         decl, // nested in obj
+		"obj/v1/content/x/0=ocfl_object_1.1":       decl, // nested in obj
+	}
+	memBackends := map[string]ocflfs.FS{
+		"dir walk":        ocflfs.NewWrapFS(files),
+		"lexical listing": lexicalWalkFS{ocflfs.NewWrapFS(files)},
+	}
+	for name, fsys := range memBackends {
+		t.Run("out of order/"+name, func(t *testing.T) {
+			root, err := ocfl.NewRoot(ctx, fsys, ".")
+			be.NilErr(t, err)
+			be.DeepEqual(t, []string{
+				"-top/0=ocfl_object_1.1",
+				"a/-b/0=ocfl_object_1.1",
+				"obj/0=ocfl_object_1.1",
+			}, collect(t, root))
+		})
+	}
+
+	t.Run("break iteration while holding declarations", func(t *testing.T) {
+		root, err := ocfl.NewRoot(ctx, lexicalWalkFS{ocflfs.NewWrapFS(files)}, ".")
+		be.NilErr(t, err)
 		for range root.ObjectDeclarations(ctx) {
 			break
 		}
