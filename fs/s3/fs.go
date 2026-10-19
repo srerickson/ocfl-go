@@ -224,7 +224,10 @@ func sameClient(a, b S3API) bool {
 }
 
 // WalkFiles returns an iterator over every object under dir, per
-// [ocflfs.FileWalker].
+// [ocflfs.FileWalker]. Files are yielded in lexical order of their keys, the
+// order ListObjectsV2 returns them in, which is one of the orders FileWalker
+// requires. An S3-compatible store that lists keys in some other order isn't
+// supported.
 //
 // Each yielded ref carries this BucketFS as its FS, so a caller can open the
 // file through the ref alone. Iteration stops as soon as the callback returns

@@ -200,6 +200,11 @@ func (r *Root) ResolveID(id string) (string, error) {
 // declarations nested inside another object's directory (for example, an
 // object stored as content of another object) are skipped. If an error occurs
 // during iteration, it is yielded and iteration stops.
+//
+// If r's FS is an [ocflfs.FileWalker], declarations are found in its flat
+// listing, which must be in one of the orders FileWalker documents. A listing
+// found to be in neither order is reported as an error; declarations yielded
+// before it may include nested ones.
 func (r *Root) ObjectDeclarations(ctx context.Context) iter.Seq2[*ocflfs.FileRef, error] {
 	if _, ok := r.fs.(ocflfs.FileWalker); ok {
 		return r.listObjectDeclarations(ctx)
@@ -261,74 +266,233 @@ func (r *Root) walkObjectDeclarations(ctx context.Context, dir string, yield fun
 }
 
 // listObjectDeclarations yields the object declarations from a flat listing of
-// every file under r.dir, as [ocflfs.FileWalker] provides (e.g., S3). It drops
-// declarations under a directory whose declaration came earlier in the
-// listing. A declaration can only come before an ancestor's declaration if the
-// path between them sorts before "0=ocfl_object_" (assuming a lexical
-// listing). Those are held back until the listing ends, then yielded only if
-// no ancestor was declared.
+// every file under r.dir, as [ocflfs.FileWalker] provides (e.g., S3). It
+// relies on the listing order that FileWalker documents: either full-path
+// lexical order or depth-first order with sorted entry names. In both, the
+// files under any directory form one contiguous run of the listing, which
+// lets it track only the directories on the path to the current file. It
+// yields an error if the listing turns out to be in neither order.
 func (r *Root) listObjectDeclarations(ctx context.Context) iter.Seq2[*ocflfs.FileRef, error] {
 	return func(yield func(*ocflfs.FileRef, error) bool) {
-		objRoots := map[string]bool{} // dirs with object declarations
-		var held []*ocflfs.FileRef
+		l := declLister{yield: yield}
+		var order listOrder
 		for f, err := range ocflfs.WalkFiles(ctx, r.fs, r.dir) {
 			if err != nil {
 				yield(nil, err)
 				return
 			}
-			decl, err := ParseNamaste(path.Base(f.Path))
-			if err != nil || !decl.IsObject() {
-				continue
+			if err := order.next(f.Path); err != nil {
+				yield(nil, fmt.Errorf("listing object declarations in %q: %w", r.dir, err))
+				return
 			}
-			dir := path.Dir(f.Path)
-			if hasAncestor(objRoots, dir) {
-				continue
-			}
-			objRoots[dir] = true
-			if mayPrecedeAncestorDecl(dir) {
-				held = append(held, f)
-				continue
-			}
-			if !yield(f, nil) {
+			if !l.next(f) {
 				return
 			}
 		}
-		for _, f := range held {
-			if hasAncestor(objRoots, path.Dir(f.Path)) {
-				continue
-			}
-			if !yield(f, nil) {
-				return
-			}
-		}
+		l.finish()
 	}
 }
 
-// hasAncestor reports whether a proper ancestor of dir is in dirs. The
-// root directory (".") is never treated as an ancestor.
-func hasAncestor(dirs map[string]bool, dir string) bool {
-	for i := range len(dir) {
-		if dir[i] == '/' && dirs[dir[:i]] {
-			return true
-		}
-	}
-	return false
+// declLister finds the object declarations in an ordered flat listing that
+// aren't nested inside another declared object's directory.
+//
+// It keeps a frame for each directory on the path to the current file, from
+// the shallowest (below the root) to the deepest. A directory's object
+// declaration can come after files under it in the listing: an invalid object
+// root can have entries that sort before "0=ocfl_object_". So a declaration
+// with an ancestor that might still turn out to be declared is held, attached
+// to the deepest such ancestor's frame. The invariants are:
+//
+//   - A frame is resolved once its directory's declaration has been seen
+//     (declared) or the listing has moved past every position its declaration
+//     could have (passed). Frames that are left are resolved as passed.
+//   - A held declaration is attached to its deepest ancestor frame that is
+//     unresolved, and has no declared ancestor.
+//   - No frame below a declared frame holds anything.
+//
+// When a frame resolves as passed, its held declarations move to the next
+// unresolved frame up, or are yielded if there is none. When a frame is
+// declared, everything it holds is dropped. Memory is bounded by the depth of
+// the tree plus the number of declarations currently held.
+type declLister struct {
+	yield  func(*ocflfs.FileRef, error) bool
+	frames []declFrame
 }
 
-// mayPrecedeAncestorDecl reports whether a file under dir could sort before
-// the declaration of one of dir's proper ancestors, below the root, in a
-// lexical listing.
-func mayPrecedeAncestorDecl(dir string) bool {
-	for i := range len(dir) {
-		if dir[i] != '/' {
+type declFrame struct {
+	dir      string // directory path, relative to the walked dir
+	declared bool   // dir has an object declaration
+	passed   bool   // the listing is past where dir's declaration could be
+	held     []*ocflfs.FileRef
+}
+
+// next processes the next file in the listing. It returns false if iteration
+// should stop.
+func (l *declLister) next(f *ocflfs.FileRef) bool {
+	name := f.Path
+	// leave frames for directories that don't contain name: since each
+	// directory's files are contiguous in the listing, nothing more can come
+	// under them.
+	for len(l.frames) > 0 {
+		top := l.frames[len(l.frames)-1]
+		if isUnder(name, top.dir) {
+			break
+		}
+		l.frames = l.frames[:len(l.frames)-1]
+		if !top.declared && !l.release(len(l.frames), top.held) {
+			return false
+		}
+	}
+	// enter frames for the rest of name's directories.
+	start := 0
+	if len(l.frames) > 0 {
+		start = len(l.frames[len(l.frames)-1].dir) + 1
+	}
+	for i := start; i < len(name); i++ {
+		if name[i] == '/' {
+			l.frames = append(l.frames, declFrame{dir: name[:i]})
+		}
+	}
+	// resolve frames the listing has now passed, deepest first so held
+	// declarations can move up through several frames at once.
+	for i := len(l.frames) - 1; i >= 0; i-- {
+		fr := &l.frames[i]
+		if fr.passed || fr.declared {
 			continue
 		}
-		rest := dir[i+1:] + "/"
-		if rest < objectDeclPrefix || strings.HasPrefix(rest, objectDeclPrefix) {
+		if pastObjectDecl(name[len(fr.dir)+1:]) {
+			fr.passed = true
+			held := fr.held
+			fr.held = nil
+			if !l.release(i, held) {
+				return false
+			}
+		}
+	}
+	decl, err := ParseNamaste(path.Base(name))
+	if err != nil || !decl.IsObject() {
+		return true
+	}
+	if len(l.frames) == 0 {
+		// a declaration in the root directory: it has no ancestors to wait
+		// for, and the root isn't an object root, so it never makes
+		// declarations below it nested.
+		return l.yield(f, nil)
+	}
+	dirFrame := len(l.frames) - 1
+	for _, fr := range l.frames[:dirFrame] {
+		if fr.declared {
+			return true // nested
+		}
+	}
+	l.frames[dirFrame].declared = true
+	l.frames[dirFrame].held = nil // nested
+	return l.release(dirFrame, []*ocflfs.FileRef{f})
+}
+
+// finish yields the declarations still held at the end of the listing that
+// aren't nested.
+func (l *declLister) finish() {
+	for len(l.frames) > 0 {
+		top := l.frames[len(l.frames)-1]
+		l.frames = l.frames[:len(l.frames)-1]
+		if !top.declared && !l.release(len(l.frames), top.held) {
+			return
+		}
+	}
+}
+
+// release hands refs, which are under the directories of all frames before
+// frames[i], to the deepest unresolved frame before frames[i], or yields
+// them if there is none. It returns false if iteration should stop.
+func (l *declLister) release(i int, refs []*ocflfs.FileRef) bool {
+	if len(refs) == 0 {
+		return true
+	}
+	for j := i - 1; j >= 0; j-- {
+		fr := &l.frames[j]
+		if fr.declared {
+			return true // nested
+		}
+		if !fr.passed {
+			fr.held = append(fr.held, refs...)
 			return true
 		}
 	}
-	return false
+	for _, ref := range refs {
+		if !l.yield(ref, nil) {
+			return false
+		}
+	}
+	return true
+}
+
+// isUnder reports whether name is under directory dir.
+func isUnder(name, dir string) bool {
+	return len(name) > len(dir) && name[len(dir)] == '/' && strings.HasPrefix(name, dir)
+}
+
+// pastObjectDecl reports whether a file at rest, relative to some directory,
+// comes after any object declaration that directory could have, in both
+// orders [ocflfs.FileWalker] allows. A declaration is "0=ocfl_object_"
+// followed by a version without a "/", so it's past if it sorts after that
+// prefix without starting with it. This holds equally for the whole of rest
+// (lexical order) and for its first path element (depth-first order), since
+// every byte of the prefix sorts after "/".
+func pastObjectDecl(rest string) bool {
+	return rest > objectDeclPrefix && !strings.HasPrefix(rest, objectDeclPrefix)
+}
+
+// listOrder checks that a sequence of paths is strictly increasing in one of
+// the orders [ocflfs.FileWalker] allows: full-path lexical order or
+// depth-first order with sorted entry names. The two differ for names with
+// bytes that sort before "/": "a-b" < "a/c", but a directory "a" and its
+// contents come before the sibling "a-b" in a depth-first walk.
+type listOrder struct {
+	prev       string
+	started    bool
+	notLexical bool
+	notDepth   bool
+}
+
+// next checks name against the previous path. It returns an error if the
+// paths so far are in neither order.
+func (o *listOrder) next(name string) error {
+	if o.started {
+		if o.prev >= name {
+			o.notLexical = true
+		}
+		if compareByElement(o.prev, name) >= 0 {
+			o.notDepth = true
+		}
+		if o.notLexical && o.notDepth {
+			return fmt.Errorf("listing isn't in lexical or depth-first order: %q came after %q", name, o.prev)
+		}
+	}
+	o.prev = name
+	o.started = true
+	return nil
+}
+
+// compareByElement compares paths a and b element by element, as a
+// depth-first walk with sorted entry names orders them.
+func compareByElement(a, b string) int {
+	for {
+		aElem, aRest, aMore := strings.Cut(a, "/")
+		bElem, bRest, bMore := strings.Cut(b, "/")
+		if c := strings.Compare(aElem, bElem); c != 0 {
+			return c
+		}
+		switch {
+		case !aMore && !bMore:
+			return 0
+		case !aMore:
+			return -1
+		case !bMore:
+			return 1
+		}
+		a, b = aRest, bRest
+	}
 }
 
 // Objects returns an iterator that yields objects or an error for every object
