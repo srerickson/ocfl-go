@@ -45,6 +45,13 @@ func TestLayoutTupleOmitPrefix(t *testing.T) {
 		testLayoutExt(t, layout, "ark:/13030/xyz", "000/000/xyz/xyz")
 	})
 
+	t.Run("leading delimiter", func(t *testing.T) {
+		layout := extension.Ext0007().(*extension.LayoutTupleOmitPrefix)
+		testLayoutExt(t, layout, ":abc", "000/000/abc/abc")
+		layout.Delimiter = "/"
+		testLayoutExt(t, layout, "/abc", "000/000/abc/abc")
+	})
+
 	t.Run("invalid ids", func(t *testing.T) {
 		defaultLayout := extension.Ext0007().(*extension.LayoutTupleOmitPrefix)
 		reverseLayout := extension.Ext0007().(*extension.LayoutTupleOmitPrefix)

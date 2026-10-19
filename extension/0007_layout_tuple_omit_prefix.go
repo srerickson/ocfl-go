@@ -73,7 +73,7 @@ func (l LayoutTupleOmitPrefix) Resolve(id string) (string, error) {
 	}
 	trimID := id
 	prefix := ""
-	if idx := strings.LastIndex(id, l.Delimiter); idx > 0 {
+	if idx := strings.LastIndex(id, l.Delimiter); idx >= 0 {
 		prefix = id[:idx+len(l.Delimiter)]
 		trimID = strings.TrimPrefix(id, prefix)
 	}
