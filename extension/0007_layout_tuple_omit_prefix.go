@@ -16,13 +16,13 @@ const (
 
 // LayoutTupleOmitPrefix implements 0007-n-tuple-omit-prefix-storage-layout.
 //
-// The Delimiter is matched case-insensitively. The part of the ID after the last Delimiter must be a valid directory name:
-// it can't be empty, "." or "..", and it can't contain "/". None of the tuples
-// taken from it can be "." or ".." either. IDs that break these rules are
-// rejected with ErrInvalidLayoutID. This includes IDs that keep a "/" after
-// the delimiter, such as ARKs ("ark:/13030/xyz") under the default ":"
-// delimiter: use a delimiter that ends at the last "/" for such IDs (for
-// example, "/").
+// The Delimiter is matched case-insensitively. The part of the ID after the
+// last Delimiter must be a valid directory name: it can't be empty, "." or
+// "..", and it can't contain "/". None of the tuples taken from it can be "."
+// or ".." either. IDs that break these rules are rejected with
+// ErrInvalidLayoutID. This includes IDs that keep a "/" after the delimiter,
+// such as ARKs ("ark:/13030/xyz") under the default ":" delimiter: use a
+// delimiter that ends at the last "/" for such IDs (for example, "/").
 type LayoutTupleOmitPrefix struct {
 	Base
 	Delimiter string `json:"delimiter"`
