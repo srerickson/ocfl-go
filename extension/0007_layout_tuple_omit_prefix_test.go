@@ -34,6 +34,8 @@ func TestLayoutTupleOmitPrefix(t *testing.T) {
 	tests = map[string]string{
 		"https://institution.edu/3448793":        "344/879/300/3448793",
 		"https://institution.edu/abc/edu/f8.05v": "f8./05v/000/f8.05v",
+		"https://institution.EDU/3448793":        "344/879/300/3448793",
+		"https://institution.edu/abc/EdU/f8.05v": "f8./05v/000/f8.05v",
 	}
 	for in, exp := range tests {
 		testLayoutExt(t, layout, in, exp)
@@ -43,6 +45,13 @@ func TestLayoutTupleOmitPrefix(t *testing.T) {
 		layout := extension.Ext0007().(*extension.LayoutTupleOmitPrefix)
 		layout.Delimiter = "/"
 		testLayoutExt(t, layout, "ark:/13030/xyz", "000/000/xyz/xyz")
+	})
+
+	t.Run("delimiter that lowercases to fewer bytes", func(t *testing.T) {
+		layout := extension.Ext0007().(*extension.LayoutTupleOmitPrefix)
+		layout.Delimiter = "\u212a" // Kelvin sign, lowercases to "k"
+		testLayoutExt(t, layout, "abckxyz", "000/000/xyz/xyz")
+		testLayoutExt(t, layout, "abcKxyz", "000/000/xyz/xyz")
 	})
 
 	t.Run("leading delimiter", func(t *testing.T) {

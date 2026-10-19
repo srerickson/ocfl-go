@@ -16,7 +16,7 @@ const (
 
 // LayoutTupleOmitPrefix implements 0007-n-tuple-omit-prefix-storage-layout.
 //
-// The part of the ID after the last Delimiter must be a valid directory name:
+// The Delimiter is matched case-insensitively. The part of the ID after the last Delimiter must be a valid directory name:
 // it can't be empty, "." or "..", and it can't contain "/". None of the tuples
 // taken from it can be "." or ".." either. IDs that break these rules are
 // rejected with ErrInvalidLayoutID. This includes IDs that keep a "/" after
@@ -72,10 +72,12 @@ func (l LayoutTupleOmitPrefix) Resolve(id string) (string, error) {
 		}
 	}
 	trimID := id
-	prefix := ""
-	if idx := strings.LastIndex(id, l.Delimiter); idx >= 0 {
-		prefix = id[:idx+len(l.Delimiter)]
-		trimID = strings.TrimPrefix(id, prefix)
+	// The delimiter is case-insensitive. The ID is ASCII, so offsets in the
+	// lowercased ID match offsets in id.
+	lowerID := strings.ToLower(id)
+	lowerDelim := strings.ToLower(l.Delimiter)
+	if idx := strings.LastIndex(lowerID, lowerDelim); idx >= 0 {
+		trimID = id[idx+len(lowerDelim):]
 	}
 	if trimID == "" || trimID == "." || trimID == ".." || strings.Contains(trimID, "/") {
 		return "", fmt.Errorf("%w:'%s'", ErrInvalidLayoutID, id)
