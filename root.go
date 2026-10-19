@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"iter"
 	"path"
+	"strings"
 
 	"github.com/srerickson/ocfl-go/extension"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
@@ -195,34 +196,151 @@ func (r *Root) ResolveID(id string) (string, error) {
 }
 
 // ObjectDeclarations returns an iterator that yields all OCFL object
-// declaration files in r. If an error occurs during iteration, it is returned
-// by the error function.
+// declaration files in r. Storage hierarchies terminate at object roots, so
+// declarations nested inside another object's directory (for example, an
+// object stored as content of another object) are skipped. If an error occurs
+// during iteration, it is yielded and iteration stops.
 func (r *Root) ObjectDeclarations(ctx context.Context) iter.Seq2[*ocflfs.FileRef, error] {
+	if _, ok := r.fs.(ocflfs.FileWalker); ok {
+		return r.listObjectDeclarations(ctx)
+	}
 	return func(yield func(*ocflfs.FileRef, error) bool) {
+		r.walkObjectDeclarations(ctx, ".", yield)
+	}
+}
+
+// walkObjectDeclarations yields the object declarations in dir and below,
+// relative to r.dir. It reads each directory's entries before descending, so
+// it doesn't descend into a directory with an object declaration, whatever
+// order the entries are in. The root directory itself is always descended:
+// it isn't an object root, even if it has a stray object declaration.
+func (r *Root) walkObjectDeclarations(ctx context.Context, dir string, yield func(*ocflfs.FileRef, error) bool) bool {
+	var subdirs []string
+	var isObject bool
+	for e, err := range ocflfs.DirEntries(ctx, r.fs, path.Join(r.dir, dir)) {
+		if err != nil {
+			yield(nil, err)
+			return false
+		}
+		if e == nil {
+			continue
+		}
+		if e.IsDir() {
+			subdirs = append(subdirs, path.Join(dir, e.Name()))
+			continue
+		}
+		decl, err := ParseNamaste(e.Name())
+		if err != nil || !decl.IsObject() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			yield(nil, err)
+			return false
+		}
+		isObject = true
+		ref := &ocflfs.FileRef{
+			FS:      r.fs,
+			BaseDir: r.dir,
+			Path:    path.Join(dir, e.Name()),
+			Info:    info,
+		}
+		if !yield(ref, nil) {
+			return false
+		}
+	}
+	if isObject && dir != "." {
+		return true
+	}
+	for _, sub := range subdirs {
+		if !r.walkObjectDeclarations(ctx, sub, yield) {
+			return false
+		}
+	}
+	return true
+}
+
+// listObjectDeclarations yields the object declarations from a flat listing of
+// every file under r.dir, as [ocflfs.FileWalker] provides (e.g., S3). It drops
+// declarations under a directory whose declaration came earlier in the
+// listing. A declaration can only come before an ancestor's declaration if the
+// path between them sorts before "0=ocfl_object_" (assuming a lexical
+// listing). Those are held back until the listing ends, then yielded only if
+// no ancestor was declared.
+func (r *Root) listObjectDeclarations(ctx context.Context) iter.Seq2[*ocflfs.FileRef, error] {
+	return func(yield func(*ocflfs.FileRef, error) bool) {
+		objRoots := map[string]bool{} // dirs with object declarations
+		var held []*ocflfs.FileRef
 		for f, err := range ocflfs.WalkFiles(ctx, r.fs, r.dir) {
 			if err != nil {
 				yield(nil, err)
 				return
 			}
 			decl, err := ParseNamaste(path.Base(f.Path))
-			if err == nil && decl.IsObject() {
-				if !yield(f, nil) {
-					return
-				}
+			if err != nil || !decl.IsObject() {
+				continue
+			}
+			dir := path.Dir(f.Path)
+			if hasAncestor(objRoots, dir) {
+				continue
+			}
+			objRoots[dir] = true
+			if mayPrecedeAncestorDecl(dir) {
+				held = append(held, f)
+				continue
+			}
+			if !yield(f, nil) {
+				return
+			}
+		}
+		for _, f := range held {
+			if hasAncestor(objRoots, path.Dir(f.Path)) {
+				continue
+			}
+			if !yield(f, nil) {
+				return
 			}
 		}
 	}
 }
 
+// hasAncestor reports whether a proper ancestor of dir is in dirs. The
+// root directory (".") is never treated as an ancestor.
+func hasAncestor(dirs map[string]bool, dir string) bool {
+	for i := range len(dir) {
+		if dir[i] == '/' && dirs[dir[:i]] {
+			return true
+		}
+	}
+	return false
+}
+
+// mayPrecedeAncestorDecl reports whether a file under dir could sort before
+// the declaration of one of dir's proper ancestors, below the root, in a
+// lexical listing.
+func mayPrecedeAncestorDecl(dir string) bool {
+	for i := range len(dir) {
+		if dir[i] != '/' {
+			continue
+		}
+		rest := dir[i+1:] + "/"
+		if rest < objectDeclPrefix || strings.HasPrefix(rest, objectDeclPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // Objects returns an iterator that yields objects or an error for every object
-// declaration file in the root. Objects are yielded in arbitrary order.
+// declaration file in the root, as yielded by [Root.ObjectDeclarations].
+// Objects are yielded in arbitrary order.
 func (r *Root) Objects(ctx context.Context, opts ...ObjectOption) iter.Seq2[*Object, error] {
 	return r.ObjectsBatch(ctx, 0, opts...)
 }
 
 // ObjectsBatch returns an iterator that yields objects or an error for every object
-// declaration file in the root. Objects are read in numgos go routines and are
-// yielded in arbitrary order.
+// declaration file in the root, as yielded by [Root.ObjectDeclarations].
+// Objects are read in numgos go routines and are yielded in arbitrary order.
 func (r *Root) ObjectsBatch(ctx context.Context, numgos int, opts ...ObjectOption) iter.Seq2[*Object, error] {
 	return func(yield func(*Object, error) bool) {
 		opts = append(opts, ObjectMustExist(), objectWithRoot(r))
