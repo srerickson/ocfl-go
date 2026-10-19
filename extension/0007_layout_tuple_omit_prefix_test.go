@@ -53,6 +53,14 @@ func TestLayoutTupleOmitPrefix(t *testing.T) {
 		dotTuples.TupleSize = 1
 		dotTuples.TupleNum = 2
 		dotTuples.Padding = "right"
+		pairs := func(num int, padding string, reverse bool) *extension.LayoutTupleOmitPrefix {
+			l := extension.Ext0007().(*extension.LayoutTupleOmitPrefix)
+			l.TupleSize = 2
+			l.TupleNum = num
+			l.Padding = padding
+			l.Reverse = reverse
+			return l
+		}
 		tests := map[string]struct {
 			layout *extension.LayoutTupleOmitPrefix
 			id     string
@@ -70,6 +78,11 @@ func TestLayoutTupleOmitPrefix(t *testing.T) {
 			"empty suffix":           {defaultLayout, "ns:"},
 			"dot tuples":             {dotTuples, "ns:.x."},
 			"dot-dot tuples":         {dotTuples, "ns:..x"},
+			"all dot-dot pairs":      {pairs(3, "left", false), "ns:......"},
+			"leading dot-dot pair":   {pairs(2, "right", false), "ns:..x"},
+			"single dot-dot pair":    {pairs(1, "left", false), "ns:..a"},
+			"reversed dot-dot pair":  {pairs(2, "left", true), "ns:ab.."},
+			"inner dot-dot pair":     {pairs(2, "left", false), "ns:ab..cd"},
 		}
 		for name, tc := range tests {
 			t.Run(name, func(t *testing.T) {

@@ -3,7 +3,6 @@ package extension
 import (
 	"encoding/json"
 	"fmt"
-	"path"
 	"strings"
 )
 
@@ -18,10 +17,12 @@ const (
 // LayoutTupleOmitPrefix implements 0007-n-tuple-omit-prefix-storage-layout.
 //
 // The part of the ID after the last Delimiter must be a valid directory name:
-// it can't be empty, "." or "..", and it can't contain "/". IDs that keep a
-// "/" after the delimiter, such as ARKs ("ark:/13030/xyz") under the default
-// ":" delimiter, are rejected with ErrInvalidLayoutID. Use a delimiter that
-// ends at the last "/" for such IDs (for example, "/").
+// it can't be empty, "." or "..", and it can't contain "/". None of the tuples
+// taken from it can be "." or ".." either. IDs that break these rules are
+// rejected with ErrInvalidLayoutID. This includes IDs that keep a "/" after
+// the delimiter, such as ARKs ("ark:/13030/xyz") under the default ":"
+// delimiter: use a delimiter that ends at the last "/" for such IDs (for
+// example, "/").
 type LayoutTupleOmitPrefix struct {
 	Base
 	Delimiter string `json:"delimiter"`
@@ -96,17 +97,16 @@ func (l LayoutTupleOmitPrefix) Resolve(id string) (string, error) {
 		}
 		padded = string(rev)
 	}
-	tuples := ""
+	segments := make([]string, 0, l.TupleNum+1)
 	for i := 0; i < l.TupleNum; i++ {
-		tuples = path.Join(tuples, padded[i*l.TupleSize:(i+1)*l.TupleSize])
+		tuple := padded[i*l.TupleSize : (i+1)*l.TupleSize]
+		if tuple == "." || tuple == ".." {
+			return "", fmt.Errorf("%w:'%s'", ErrInvalidLayoutID, id)
+		}
+		segments = append(segments, tuple)
 	}
-	result := path.Join(tuples, trimID)
-	// path.Join drops "." tuples and collapses ".." tuples: the result must
-	// have one segment per tuple plus the trimmed ID.
-	if strings.Count(result, "/") != l.TupleNum {
-		return "", fmt.Errorf("%w:'%s'", ErrInvalidLayoutID, id)
-	}
-	return result, nil
+	segments = append(segments, trimID)
+	return strings.Join(segments, "/"), nil
 }
 
 func (l LayoutTupleOmitPrefix) MarshalJSON() ([]byte, error) {
