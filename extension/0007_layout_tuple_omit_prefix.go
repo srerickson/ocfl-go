@@ -15,7 +15,13 @@ const (
 	reverseObjectRoot = "reverseObjectRoot"
 )
 
-// LayoutTupleOmitPrefix implements 0007-n-tuple-omit-prefix-storage-layout
+// LayoutTupleOmitPrefix implements 0007-n-tuple-omit-prefix-storage-layout.
+//
+// The part of the ID after the last Delimiter must be a valid directory name:
+// it can't be empty, "." or "..", and it can't contain "/". IDs that keep a
+// "/" after the delimiter, such as ARKs ("ark:/13030/xyz") under the default
+// ":" delimiter, are rejected with ErrInvalidLayoutID. Use a delimiter that
+// ends at the last "/" for such IDs (for example, "/").
 type LayoutTupleOmitPrefix struct {
 	Base
 	Delimiter string `json:"delimiter"`
@@ -65,14 +71,10 @@ func (l LayoutTupleOmitPrefix) Resolve(id string) (string, error) {
 	prefix := ""
 	if idx := strings.LastIndex(id, l.Delimiter); idx > 0 {
 		prefix = id[:idx+len(l.Delimiter)]
-		if prefix == id {
-			return "", fmt.Errorf("invalid id")
-		}
 		trimID = strings.TrimPrefix(id, prefix)
 	}
-	if strings.IndexRune(trimID, '/') > 0 {
+	if trimID == "" || trimID == "." || trimID == ".." || strings.Contains(trimID, "/") {
 		return "", fmt.Errorf("%w:'%s'", ErrInvalidLayoutID, id)
-
 	}
 	padded := trimID
 	if padlen := size - len(padded); padlen > 0 {
@@ -98,7 +100,13 @@ func (l LayoutTupleOmitPrefix) Resolve(id string) (string, error) {
 	for i := 0; i < l.TupleNum; i++ {
 		tuples = path.Join(tuples, padded[i*l.TupleSize:(i+1)*l.TupleSize])
 	}
-	return path.Join(tuples, trimID), nil
+	result := path.Join(tuples, trimID)
+	// path.Join drops "." tuples and collapses ".." tuples: the result must
+	// have one segment per tuple plus the trimmed ID.
+	if strings.Count(result, "/") != l.TupleNum {
+		return "", fmt.Errorf("%w:'%s'", ErrInvalidLayoutID, id)
+	}
+	return result, nil
 }
 
 func (l LayoutTupleOmitPrefix) MarshalJSON() ([]byte, error) {

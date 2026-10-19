@@ -1,6 +1,7 @@
 package extension_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/carlmjohnson/be"
@@ -37,6 +38,47 @@ func TestLayoutTupleOmitPrefix(t *testing.T) {
 	for in, exp := range tests {
 		testLayoutExt(t, layout, in, exp)
 	}
+
+	t.Run("ark with slash delimiter", func(t *testing.T) {
+		layout := extension.Ext0007().(*extension.LayoutTupleOmitPrefix)
+		layout.Delimiter = "/"
+		testLayoutExt(t, layout, "ark:/13030/xyz", "000/000/xyz/xyz")
+	})
+
+	t.Run("invalid ids", func(t *testing.T) {
+		defaultLayout := extension.Ext0007().(*extension.LayoutTupleOmitPrefix)
+		reverseLayout := extension.Ext0007().(*extension.LayoutTupleOmitPrefix)
+		reverseLayout.Reverse = true
+		dotTuples := extension.Ext0007().(*extension.LayoutTupleOmitPrefix)
+		dotTuples.TupleSize = 1
+		dotTuples.TupleNum = 2
+		dotTuples.Padding = "right"
+		tests := map[string]struct {
+			layout *extension.LayoutTupleOmitPrefix
+			id     string
+		}{
+			"ark":                    {defaultLayout, "ark:/13030/xyz"},
+			"ark nested in object":   {reverseLayout, "ark:/13030/xyz/v1/content/13030/xyz"},
+			"leading slash":          {defaultLayout, "/abc"},
+			"leading slash after ns": {defaultLayout, "ns:/abc"},
+			"trailing slash":         {defaultLayout, "ns:abc/"},
+			"dot-dot segments":       {defaultLayout, "a:/../../other/path"},
+			"dot-dot":                {defaultLayout, "ns:.."},
+			"dot":                    {defaultLayout, "ns:."},
+			"bare dot-dot":           {defaultLayout, ".."},
+			"empty":                  {defaultLayout, ""},
+			"empty suffix":           {defaultLayout, "ns:"},
+			"dot tuples":             {dotTuples, "ns:.x."},
+			"dot-dot tuples":         {dotTuples, "ns:..x"},
+		}
+		for name, tc := range tests {
+			t.Run(name, func(t *testing.T) {
+				got, err := tc.layout.Resolve(tc.id)
+				be.True(t, errors.Is(err, extension.ErrInvalidLayoutID))
+				be.Equal(t, "", got)
+			})
+		}
+	})
 
 	t.Run("unmarshal", func(t *testing.T) {
 		reg := extension.DefaultRegistry()
