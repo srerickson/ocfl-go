@@ -57,7 +57,7 @@ const maxDeleteBatch = 1000
 var ErrNoContentLength = errors.New("missing content length")
 
 // ErrIncompleteListing is the error wrapped by [BucketFS.DirEntries] and
-// [BucketFS.WalkFiles] when a ListObjectsV2 page carries an entry missing a
+// [BucketFS.ListFiles] when a ListObjectsV2 page carries an entry missing a
 // field they need: an object's Key, Size or LastModified, or a common
 // prefix's Prefix. The AWS SDK models all four as pointers -- Size only
 // since service/s3 v1.43.0, which corrected the nullability of most S3
@@ -433,14 +433,14 @@ func deleteErr(e types.Error) error {
 	return errors.New("delete failed, no reason reported")
 }
 
-// walkFiles returns an iterator that yields a *[ocflfs.FileRef] for every
+// listFiles returns an iterator that yields a *[ocflfs.FileRef] for every
 // object under dir. fsys is stamped onto each ref's FS field, so a caller can
 // open the file through the ref without carrying the backend around. It is a
 // parameter rather than something the caller patches in afterwards: a wrapper
 // that re-yields to set it would be a second implementation of this
 // iterator's early-termination and error semantics, free to drift from this
 // one.
-func walkFiles(ctx context.Context, api FilesAPI, buck string, dir string, fsys ocflfs.FS) iter.Seq2[*ocflfs.FileRef, error] {
+func listFiles(ctx context.Context, api FilesAPI, buck string, dir string, fsys ocflfs.FS) iter.Seq2[*ocflfs.FileRef, error] {
 	return func(yield func(*ocflfs.FileRef, error) bool) {
 		const op = "list_files"
 		if !fs.ValidPath(dir) {

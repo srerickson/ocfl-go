@@ -41,10 +41,10 @@ type WalkFiles struct {
 //
 // fsys is seeded with the files a.txt and sub/{b.txt,c.txt} — a flat file plus
 // a nested directory. WalkFiles is exercised through the package-level
-// [ocflfs.WalkFiles] entry point, which dispatches to the backend's own
-// optimized WalkFiles when it implements [ocflfs.FileWalker] (s3 does; local
-// walks via DirEntries), so the suite covers the same code path a library
-// caller uses for either backend.
+// [ocflfs.WalkFiles] entry point, which dispatches to the backend's
+// ListFiles when it implements [ocflfs.FileLister] (s3 does; local walks via
+// DirEntries), so the suite covers the same code path a library caller uses
+// for either backend.
 //
 // The seed enumerates identically on both backends — lexicographic key order
 // on s3, sorted DirEntries order on local — so the suite can pin exact paths,

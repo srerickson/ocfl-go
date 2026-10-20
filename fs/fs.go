@@ -41,22 +41,15 @@ type DirEntriesFS interface {
 	DirEntries(ctx context.Context, name string) iter.Seq2[fs.DirEntry, error]
 }
 
-// FileWalker is an [FS] with an optimized implementation of WalkFiles
-type FileWalker interface {
+// FileLister is an [FS] that lists every file under a directory in one flat
+// listing, as S3's ListObjectsV2 does.
+type FileLister interface {
 	FS
-	// WalkFiles returns an iterator that yields *FileRefs and/or an
-	// error.
-	//
-	// Files must be yielded in one of two orders, by their paths relative to
-	// dir: full-path lexical (byte-wise) order, as S3's ListObjectsV2
-	// returns keys, or depth-first order with each directory's entries
-	// sorted by name, as [WalkFiles] produces for an FS that isn't a
-	// FileWalker. The two differ where a name has a byte that sorts before
-	// "/": "a-b" comes before "a/c" in lexical order, but after it depth
-	// first. In both, the files under any directory are contiguous, and
-	// callers such as ocfl.Root.ObjectDeclarations depend on it. A listing
-	// in neither order may be reported as an error.
-	WalkFiles(ctx context.Context, dir string) iter.Seq2[*FileRef, error]
+	// ListFiles returns an iterator that yields *FileRefs and/or an error.
+	// Files must be yielded in lexical (byte-wise) order of their paths
+	// relative to dir, as S3's ListObjectsV2 returns keys. Callers such as
+	// ocfl.Root.ObjectDeclarations depend on it.
+	ListFiles(ctx context.Context, dir string) iter.Seq2[*FileRef, error]
 }
 
 // WriteFS is a storage backend that supports write and remove operations.
@@ -251,14 +244,15 @@ func StatFile(ctx context.Context, fsys FS, name string) (fs.FileInfo, error) {
 	return f.Stat()
 }
 
-// WalkFiles checks if fsys is a FileWalker and calls its WalkFiles if it is. If
-// fsys isn't a FileWalker, dir is walked using [DirEntries].
+// WalkFiles returns an iterator over every file under dir. If fsys is a
+// [FileLister], it calls its ListFiles. Otherwise, dir is walked using
+// [DirEntries]. Callers shouldn't depend on the order files are yielded in.
 //
 // A yielded error means the walk is incomplete, and may follow files from a
 // directory listing that failed partway (see [DirEntriesFS]).
 func WalkFiles(ctx context.Context, fsys FS, dir string) iter.Seq2[*FileRef, error] {
-	if walkFS, ok := fsys.(FileWalker); ok {
-		return walkFS.WalkFiles(ctx, dir)
+	if lister, ok := fsys.(FileLister); ok {
+		return lister.ListFiles(ctx, dir)
 	}
 	return func(yield func(*FileRef, error) bool) {
 		fileWalk(ctx, fsys, dir, ".", yield)

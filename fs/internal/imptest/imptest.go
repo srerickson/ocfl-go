@@ -21,8 +21,8 @@
 //
 // One file per interface under test, so a new assertion has an obvious home:
 // writefs.go covers [ocflfs.WriteFS] — Write, Remove and RemoveAll —
-// direntriesfs.go covers [ocflfs.DirEntriesFS], and filewalker.go covers
-// [ocflfs.FileWalker].
+// direntriesfs.go covers [ocflfs.DirEntriesFS], and walkfiles.go covers
+// [ocflfs.WalkFiles], which dispatches to [ocflfs.FileLister].
 //
 // # Options structs
 //

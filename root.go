@@ -201,13 +201,13 @@ func (r *Root) ResolveID(id string) (string, error) {
 // object stored as content of another object) are skipped. If an error occurs
 // during iteration, it is yielded and iteration stops.
 //
-// If r's FS is an [ocflfs.FileWalker], declarations are found in its flat
-// listing, which must be in one of the orders FileWalker documents. A listing
-// found to be in neither order is reported as an error; declarations yielded
-// before it may include nested ones.
+// If r's FS is an [ocflfs.FileLister], declarations are found in its flat
+// listing, which must be in lexical order. A listing found to be out of order
+// is reported as an error; declarations yielded before it may include nested
+// ones.
 func (r *Root) ObjectDeclarations(ctx context.Context) iter.Seq2[*ocflfs.FileRef, error] {
-	if _, ok := r.fs.(ocflfs.FileWalker); ok {
-		return r.listObjectDeclarations(ctx)
+	if lister, ok := r.fs.(ocflfs.FileLister); ok {
+		return r.listObjectDeclarations(ctx, lister)
 	}
 	return func(yield func(*ocflfs.FileRef, error) bool) {
 		r.walkObjectDeclarations(ctx, ".", yield)
@@ -265,26 +265,26 @@ func (r *Root) walkObjectDeclarations(ctx context.Context, dir string, yield fun
 	return true
 }
 
-// listObjectDeclarations yields the object declarations from a flat listing of
-// every file under r.dir, as [ocflfs.FileWalker] provides (e.g., S3). It
-// relies on the listing order that FileWalker documents: either full-path
-// lexical order or depth-first order with sorted entry names. In both, the
-// files under any directory form one contiguous run of the listing, which
-// lets it track only the directories on the path to the current file. It
-// yields an error if the listing turns out to be in neither order.
-func (r *Root) listObjectDeclarations(ctx context.Context) iter.Seq2[*ocflfs.FileRef, error] {
+// listObjectDeclarations yields the object declarations from lister's flat
+// listing of every file under r.dir (e.g., S3). It relies on the lexical order
+// that [ocflfs.FileLister] documents: the files under any directory form one
+// contiguous run of the listing, which lets it track only the directories on
+// the path to the current file. It yields an error if the listing turns out
+// to be out of order.
+func (r *Root) listObjectDeclarations(ctx context.Context, lister ocflfs.FileLister) iter.Seq2[*ocflfs.FileRef, error] {
 	return func(yield func(*ocflfs.FileRef, error) bool) {
 		l := declLister{yield: yield}
-		var order listOrder
-		for f, err := range ocflfs.WalkFiles(ctx, r.fs, r.dir) {
+		var prev string
+		for f, err := range lister.ListFiles(ctx, r.dir) {
 			if err != nil {
 				yield(nil, err)
 				return
 			}
-			if err := order.next(f.Path); err != nil {
-				yield(nil, fmt.Errorf("listing object declarations in %q: %w", r.dir, err))
+			if prev != "" && prev >= f.Path {
+				yield(nil, fmt.Errorf("listing object declarations in %q: listing isn't in lexical order: %q came after %q", r.dir, f.Path, prev))
 				return
 			}
+			prev = f.Path
 			if !l.next(f) {
 				return
 			}
@@ -433,66 +433,11 @@ func isUnder(name, dir string) bool {
 }
 
 // pastObjectDecl reports whether a file at rest, relative to some directory,
-// comes after any object declaration that directory could have, in both
-// orders [ocflfs.FileWalker] allows. A declaration is "0=ocfl_object_"
-// followed by a version without a "/", so it's past if it sorts after that
-// prefix without starting with it. This holds equally for the whole of rest
-// (lexical order) and for its first path element (depth-first order), since
-// every byte of the prefix sorts after "/".
+// comes after any object declaration that directory could have in a lexical
+// listing. A declaration is "0=ocfl_object_" followed by a version without a
+// "/", so it's past if it sorts after that prefix without starting with it.
 func pastObjectDecl(rest string) bool {
 	return rest > objectDeclPrefix && !strings.HasPrefix(rest, objectDeclPrefix)
-}
-
-// listOrder checks that a sequence of paths is strictly increasing in one of
-// the orders [ocflfs.FileWalker] allows: full-path lexical order or
-// depth-first order with sorted entry names. The two differ for names with
-// bytes that sort before "/": "a-b" < "a/c", but a directory "a" and its
-// contents come before the sibling "a-b" in a depth-first walk.
-type listOrder struct {
-	prev       string
-	started    bool
-	notLexical bool
-	notDepth   bool
-}
-
-// next checks name against the previous path. It returns an error if the
-// paths so far are in neither order.
-func (o *listOrder) next(name string) error {
-	if o.started {
-		if o.prev >= name {
-			o.notLexical = true
-		}
-		if compareByElement(o.prev, name) >= 0 {
-			o.notDepth = true
-		}
-		if o.notLexical && o.notDepth {
-			return fmt.Errorf("listing isn't in lexical or depth-first order: %q came after %q", name, o.prev)
-		}
-	}
-	o.prev = name
-	o.started = true
-	return nil
-}
-
-// compareByElement compares paths a and b element by element, as a
-// depth-first walk with sorted entry names orders them.
-func compareByElement(a, b string) int {
-	for {
-		aElem, aRest, aMore := strings.Cut(a, "/")
-		bElem, bRest, bMore := strings.Cut(b, "/")
-		if c := strings.Compare(aElem, bElem); c != 0 {
-			return c
-		}
-		switch {
-		case !aMore && !bMore:
-			return 0
-		case !aMore:
-			return -1
-		case !bMore:
-			return 1
-		}
-		a, b = aRest, bRest
-	}
 }
 
 // Objects returns an iterator that yields objects or an error for every object

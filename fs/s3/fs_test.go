@@ -47,7 +47,7 @@ var (
 	_ ocflfs.DirEntriesFS = (*s3.BucketFS)(nil)
 	_ ocflfs.CopyFS       = (*s3.BucketFS)(nil)
 	_ ocflfs.WriteFS      = (*s3.BucketFS)(nil)
-	_ ocflfs.FileWalker   = (*s3.BucketFS)(nil)
+	_ ocflfs.FileLister   = (*s3.BucketFS)(nil)
 	_ ocflfs.SameBackend  = (*s3.BucketFS)(nil)
 
 	fixtures = filepath.Join("..", "..", "testdata", "content-fixture")
@@ -1391,7 +1391,7 @@ func (stubClient) DeleteObject(context.Context, *s3v2.DeleteObjectInput, ...func
 
 var _ s3.S3API = stubClient{}
 
-func TestWalkFiles_Mock(t *testing.T) {
+func TestListFiles_Mock(t *testing.T) {
 	ctx := context.Background()
 	type testCase struct {
 		desc   string
@@ -1482,18 +1482,18 @@ func TestWalkFiles_Mock(t *testing.T) {
 				api = tcase.mock(t)
 			}
 			fsys := s3.NewBucketFS(api, tcase.bucket)
-			var walkFiles []*ocflfs.FileRef
+			var files []*ocflfs.FileRef
 			var walkErr error
-			for f, err := range fsys.WalkFiles(ctx, tcase.dir) {
+			for f, err := range fsys.ListFiles(ctx, tcase.dir) {
 				if err != nil {
 					walkErr = err
 					break
 				}
 				if f != nil {
-					walkFiles = append(walkFiles, f)
+					files = append(files, f)
 				}
 			}
-			tcase.expect(t, api, walkFiles, walkErr)
+			tcase.expect(t, api, files, walkErr)
 		})
 	}
 }
@@ -2524,11 +2524,11 @@ func blankContents(field string) func(*s3v2.ListObjectsV2Output) {
 	}
 }
 
-// TestWalkFilesNilListField_Mock covers the walkFiles half of the
+// TestListFilesNilListField_Mock covers the listFiles half of the
 // nil-listing-field guard: a page describing an object without a Key, Size or
 // LastModified fails the walk instead of nil-dereferencing inside the
 // iterator, where a caller cannot recover it as an error.
-func TestWalkFilesNilListField_Mock(t *testing.T) {
+func TestListFilesNilListField_Mock(t *testing.T) {
 	ctx := context.Background()
 	objs := []*mock.Object{
 		{Key: "obj/a.txt", Body: []byte("a"), LastModified: time.Now()},
@@ -2547,7 +2547,7 @@ func TestWalkFilesNilListField_Mock(t *testing.T) {
 			var files []*ocflfs.FileRef
 			var walkErr error
 			var yieldedAfterErr bool
-			for f, err := range fsys.WalkFiles(ctx, "obj") {
+			for f, err := range fsys.ListFiles(ctx, "obj") {
 				if walkErr != nil {
 					// The iterator must not yield anything after an error.
 					yieldedAfterErr = true
@@ -2580,7 +2580,7 @@ func TestWalkFilesNilListField_Mock(t *testing.T) {
 		}
 		fsys := s3.NewBucketFS(api, bucket)
 		var files []*ocflfs.FileRef
-		for f, err := range fsys.WalkFiles(ctx, "obj") {
+		for f, err := range fsys.ListFiles(ctx, "obj") {
 			be.NilErr(t, err)
 			files = append(files, f)
 		}
@@ -2589,7 +2589,7 @@ func TestWalkFilesNilListField_Mock(t *testing.T) {
 }
 
 // TestReadDirNilListField_Mock is the dirEntries half of the same guard. It
-// covers CommonPrefixes too, which walkFiles never sees: dirEntries is the
+// covers CommonPrefixes too, which listFiles never sees: dirEntries is the
 // only lister that sets a Delimiter.
 func TestReadDirNilListField_Mock(t *testing.T) {
 	ctx := context.Background()
