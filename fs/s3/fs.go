@@ -223,16 +223,19 @@ func sameClient(a, b S3API) bool {
 	return false
 }
 
-// WalkFiles returns an iterator over every object under dir, per
-// [ocflfs.FileWalker].
+// ListFiles returns an iterator over every object under dir, per
+// [ocflfs.FileLister]. Files are yielded in the order ListObjectsV2 returns
+// their keys, which is lexical for a general purpose bucket. A store that
+// lists keys in some other order, such as an S3 Express One Zone directory
+// bucket, doesn't satisfy FileLister.
 //
 // Each yielded ref carries this BucketFS as its FS, so a caller can open the
 // file through the ref alone. Iteration stops as soon as the callback returns
 // false, and a listing failure is delivered as the pair's error element with
 // nothing yielded after it.
-func (f *BucketFS) WalkFiles(ctx context.Context, dir string) iter.Seq2[*ocflfs.FileRef, error] {
-	f.debugLog(ctx, "s3:walkfiles", "bucket", f.bucket, "prefix", dir)
-	return walkFiles(ctx, f.client, f.bucket, dir, f)
+func (f *BucketFS) ListFiles(ctx context.Context, dir string) iter.Seq2[*ocflfs.FileRef, error] {
+	f.debugLog(ctx, "s3:listfiles", "bucket", f.bucket, "prefix", dir)
+	return listFiles(ctx, f.client, f.bucket, dir, f)
 }
 
 type S3API interface {

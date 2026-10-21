@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"iter"
 	"path"
+	"strings"
 
 	"github.com/srerickson/ocfl-go/extension"
 	ocflfs "github.com/srerickson/ocfl-go/fs"
@@ -195,34 +196,275 @@ func (r *Root) ResolveID(id string) (string, error) {
 }
 
 // ObjectDeclarations returns an iterator that yields all OCFL object
-// declaration files in r. If an error occurs during iteration, it is returned
-// by the error function.
+// declaration files in r. Storage hierarchies terminate at object roots, so
+// declarations nested inside another object's directory (for example, an
+// object stored as content of another object) are skipped. If an error occurs
+// during iteration, it is yielded and iteration stops.
+//
+// If r's FS is an [ocflfs.FileLister], declarations are found in its flat
+// listing, which must be in lexical order. A listing found to be out of order
+// is reported as an error; declarations yielded before it may include nested
+// ones.
 func (r *Root) ObjectDeclarations(ctx context.Context) iter.Seq2[*ocflfs.FileRef, error] {
+	if lister, ok := r.fs.(ocflfs.FileLister); ok {
+		return r.listObjectDeclarations(ctx, lister)
+	}
 	return func(yield func(*ocflfs.FileRef, error) bool) {
-		for f, err := range ocflfs.WalkFiles(ctx, r.fs, r.dir) {
+		r.walkObjectDeclarations(ctx, ".", yield)
+	}
+}
+
+// walkObjectDeclarations yields the object declarations in dir and below,
+// relative to r.dir. It reads each directory's entries before descending, so
+// it doesn't descend into a directory with an object declaration, whatever
+// order the entries are in. The root directory itself is always descended:
+// it isn't an object root, even if it has a stray object declaration.
+func (r *Root) walkObjectDeclarations(ctx context.Context, dir string, yield func(*ocflfs.FileRef, error) bool) bool {
+	var subdirs []string
+	var isObject bool
+	for e, err := range ocflfs.DirEntries(ctx, r.fs, path.Join(r.dir, dir)) {
+		if err != nil {
+			yield(nil, err)
+			return false
+		}
+		if e == nil {
+			continue
+		}
+		if e.IsDir() {
+			subdirs = append(subdirs, path.Join(dir, e.Name()))
+			continue
+		}
+		decl, err := ParseNamaste(e.Name())
+		if err != nil || !decl.IsObject() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			yield(nil, err)
+			return false
+		}
+		isObject = true
+		ref := &ocflfs.FileRef{
+			FS:      r.fs,
+			BaseDir: r.dir,
+			Path:    path.Join(dir, e.Name()),
+			Info:    info,
+		}
+		if !yield(ref, nil) {
+			return false
+		}
+	}
+	if isObject && dir != "." {
+		return true
+	}
+	for _, sub := range subdirs {
+		if !r.walkObjectDeclarations(ctx, sub, yield) {
+			return false
+		}
+	}
+	return true
+}
+
+// listObjectDeclarations yields the object declarations from lister's flat
+// listing of every file under r.dir (e.g., S3). It relies on the lexical order
+// that [ocflfs.FileLister] documents: the files under any directory form one
+// contiguous run of the listing, which lets it track only the directories on
+// the path to the current file. It yields an error if the listing turns out
+// to be out of order.
+func (r *Root) listObjectDeclarations(ctx context.Context, lister ocflfs.FileLister) iter.Seq2[*ocflfs.FileRef, error] {
+	return func(yield func(*ocflfs.FileRef, error) bool) {
+		l := declLister{yield: yield}
+		var prev string
+		for f, err := range lister.ListFiles(ctx, r.dir) {
 			if err != nil {
 				yield(nil, err)
 				return
 			}
-			decl, err := ParseNamaste(path.Base(f.Path))
-			if err == nil && decl.IsObject() {
-				if !yield(f, nil) {
-					return
-				}
+			if prev != "" && prev >= f.Path {
+				yield(nil, fmt.Errorf("listing object declarations in %q: listing isn't in lexical order: %q came after %q", r.dir, f.Path, prev))
+				return
 			}
+			prev = f.Path
+			if !l.next(f) {
+				return
+			}
+		}
+		l.finish()
+	}
+}
+
+// declLister finds the object declarations in a lexically ordered flat listing
+// that aren't nested inside another object: a declaration is nested if a
+// directory above it, other than the root, has one too.
+//
+// A directory's declaration isn't necessarily its first entry in the listing:
+// an invalid object root can have entries that sort before "0=ocfl_object_",
+// including subdirectories with declarations of their own. So declLister can't
+// always tell whether a declaration is nested when it's listed, and holds it
+// until every directory above it is known to have a declaration or not.
+//
+// It keeps a frame for each directory on the path to the current file, from
+// the shallowest (below the root) to the deepest, recording whether the
+// directory's declaration is pending, found, or absent. A held declaration
+// waits in the deepest pending frame above it. If that frame's declaration is
+// found, the held declaration is nested and is dropped. If it's ruled out, the
+// held declaration moves up to the next pending frame, or is yielded if there
+// is none. Memory is bounded by the depth of the tree plus the number of
+// declarations held.
+type declLister struct {
+	yield  func(*ocflfs.FileRef, error) bool
+	frames []declFrame
+}
+
+type declFrame struct {
+	dir   string            // directory path, relative to the listed dir
+	state declState         // whether dir has an object declaration
+	held  []*ocflfs.FileRef // declarations under dir waiting on state
+}
+
+// declState is what's known about whether a directory has an object
+// declaration.
+type declState uint8
+
+const (
+	declPending declState = iota // not listed yet, but it still could be
+	declFound                    // listed
+	declAbsent                   // the listing is past where it would be
+)
+
+// next processes the next file in the listing. It returns false if iteration
+// should stop.
+func (l *declLister) next(f *ocflfs.FileRef) bool {
+	name := f.Path
+	// leave directories that don't contain name: since each directory's files
+	// are contiguous in the listing, nothing more can come under them.
+	for len(l.frames) > 0 && !isUnder(name, l.frames[len(l.frames)-1].dir) {
+		if !l.leave() {
+			return false
+		}
+	}
+	l.enter(name)
+	// rule out declarations for the directories where name sorts past any
+	// declaration they could have: the listing is in lexical order, so the
+	// declaration can't come later.
+	for i, fr := range l.frames {
+		if pastObjectDecl(name[len(fr.dir)+1:]) && !l.ruleOut(i) {
+			return false
+		}
+	}
+	decl, err := ParseNamaste(path.Base(name))
+	if err != nil || !decl.IsObject() {
+		return true
+	}
+	// f is an object declaration
+	if len(l.frames) == 0 {
+		// in the root directory, which isn't an object root, so it has
+		// nothing to wait on.
+		return l.yield(f, nil)
+	}
+	dir := len(l.frames) - 1
+	l.frames[dir].state = declFound
+	l.frames[dir].held = nil // nested in dir
+	return l.hold(dir, f)
+}
+
+// finish yields the declarations still held at the end of the listing that
+// aren't nested.
+func (l *declLister) finish() {
+	for len(l.frames) > 0 {
+		if !l.leave() {
+			return
 		}
 	}
 }
 
+// enter pushes a frame for each of name's directories below the deepest
+// frame.
+func (l *declLister) enter(name string) {
+	start := 0
+	if n := len(l.frames); n > 0 {
+		start = len(l.frames[n-1].dir) + 1
+	}
+	for i := start; i < len(name); i++ {
+		if name[i] == '/' {
+			l.frames = append(l.frames, declFrame{dir: name[:i]})
+		}
+	}
+}
+
+// leave pops the deepest frame, which the listing has moved past, ruling out
+// its declaration first. It returns false if iteration should stop.
+func (l *declLister) leave() bool {
+	n := len(l.frames) - 1
+	if !l.ruleOut(n) {
+		return false
+	}
+	l.frames = l.frames[:n]
+	return true
+}
+
+// ruleOut records that the directory of l.frames[i] has no declaration, if
+// it's pending, and hands the declarations it held up to l.frames[:i]. It
+// returns false if iteration should stop.
+func (l *declLister) ruleOut(i int) bool {
+	fr := &l.frames[i]
+	if fr.state != declPending {
+		return true
+	}
+	held := fr.held
+	fr.state, fr.held = declAbsent, nil
+	return l.hold(i, held...)
+}
+
+// hold settles refs, declarations under the directories of l.frames[:n]. If
+// any of those frames has a declaration, refs are nested and are dropped.
+// Otherwise they wait in the deepest pending frame, or are yielded if none is
+// pending. It returns false if iteration should stop.
+func (l *declLister) hold(n int, refs ...*ocflfs.FileRef) bool {
+	pending := -1
+	for i, fr := range l.frames[:n] {
+		switch fr.state {
+		case declFound:
+			return true // nested
+		case declPending:
+			pending = i
+		}
+	}
+	if pending >= 0 {
+		l.frames[pending].held = append(l.frames[pending].held, refs...)
+		return true
+	}
+	for _, ref := range refs {
+		if !l.yield(ref, nil) {
+			return false
+		}
+	}
+	return true
+}
+
+// isUnder reports whether name is under directory dir.
+func isUnder(name, dir string) bool {
+	return len(name) > len(dir) && name[len(dir)] == '/' && strings.HasPrefix(name, dir)
+}
+
+// pastObjectDecl reports whether a file at rest, relative to some directory,
+// comes after any object declaration that directory could have in a lexical
+// listing. A declaration is "0=ocfl_object_" followed by a version without a
+// "/", so it's past if it sorts after that prefix without starting with it.
+func pastObjectDecl(rest string) bool {
+	return rest > objectDeclPrefix && !strings.HasPrefix(rest, objectDeclPrefix)
+}
+
 // Objects returns an iterator that yields objects or an error for every object
-// declaration file in the root. Objects are yielded in arbitrary order.
+// declaration file in the root, as yielded by [Root.ObjectDeclarations].
+// Objects are yielded in arbitrary order.
 func (r *Root) Objects(ctx context.Context, opts ...ObjectOption) iter.Seq2[*Object, error] {
 	return r.ObjectsBatch(ctx, 0, opts...)
 }
 
 // ObjectsBatch returns an iterator that yields objects or an error for every object
-// declaration file in the root. Objects are read in numgos go routines and are
-// yielded in arbitrary order.
+// declaration file in the root, as yielded by [Root.ObjectDeclarations].
+// Objects are read in numgos go routines and are yielded in arbitrary order.
 func (r *Root) ObjectsBatch(ctx context.Context, numgos int, opts ...ObjectOption) iter.Seq2[*Object, error] {
 	return func(yield func(*Object, error) bool) {
 		opts = append(opts, ObjectMustExist(), objectWithRoot(r))

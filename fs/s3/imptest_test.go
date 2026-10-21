@@ -50,8 +50,8 @@ func TestDirEntries_S3(t *testing.T) {
 }
 
 // TestWalkFiles_S3 runs the shared WalkFiles suite against the S3 backend. It
-// exercises the exact BucketFS.WalkFiles method the library uses
-// (ocflfs.WalkFiles dispatches to it because BucketFS implements FileWalker):
+// exercises the exact BucketFS.ListFiles method the library uses
+// (ocflfs.WalkFiles dispatches to it because BucketFS implements FileLister):
 // the wrapper that stamps the backend instance onto every yielded FileRef and
 // stops iterating as soon as the callback returns false.
 //
