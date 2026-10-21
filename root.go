@@ -293,131 +293,146 @@ func (r *Root) listObjectDeclarations(ctx context.Context, lister ocflfs.FileLis
 	}
 }
 
-// declLister finds the object declarations in an ordered flat listing that
-// aren't nested inside another declared object's directory.
+// declLister finds the object declarations in a lexically ordered flat listing
+// that aren't nested inside another object: a declaration is nested if a
+// directory above it, other than the root, has one too.
+//
+// A directory's declaration isn't necessarily its first entry in the listing:
+// an invalid object root can have entries that sort before "0=ocfl_object_",
+// including subdirectories with declarations of their own. So declLister can't
+// always tell whether a declaration is nested when it's listed, and holds it
+// until every directory above it is known to have a declaration or not.
 //
 // It keeps a frame for each directory on the path to the current file, from
-// the shallowest (below the root) to the deepest. A directory's object
-// declaration can come after files under it in the listing: an invalid object
-// root can have entries that sort before "0=ocfl_object_". So a declaration
-// with an ancestor that might still turn out to be declared is held, attached
-// to the deepest such ancestor's frame. The invariants are:
-//
-//   - A frame is resolved once its directory's declaration has been seen
-//     (declared) or the listing has moved past every position its declaration
-//     could have (passed). Frames that are left are resolved as passed.
-//   - A held declaration is attached to its deepest ancestor frame that is
-//     unresolved, and has no declared ancestor.
-//   - No frame below a declared frame holds anything.
-//
-// When a frame resolves as passed, its held declarations move to the next
-// unresolved frame up, or are yielded if there is none. When a frame is
-// declared, everything it holds is dropped. Memory is bounded by the depth of
-// the tree plus the number of declarations currently held.
+// the shallowest (below the root) to the deepest, recording whether the
+// directory's declaration is pending, found, or absent. A held declaration
+// waits in the deepest pending frame above it. If that frame's declaration is
+// found, the held declaration is nested and is dropped. If it's ruled out, the
+// held declaration moves up to the next pending frame, or is yielded if there
+// is none. Memory is bounded by the depth of the tree plus the number of
+// declarations held.
 type declLister struct {
 	yield  func(*ocflfs.FileRef, error) bool
 	frames []declFrame
 }
 
 type declFrame struct {
-	dir      string // directory path, relative to the walked dir
-	declared bool   // dir has an object declaration
-	passed   bool   // the listing is past where dir's declaration could be
-	held     []*ocflfs.FileRef
+	dir   string            // directory path, relative to the listed dir
+	state declState         // whether dir has an object declaration
+	held  []*ocflfs.FileRef // declarations under dir waiting on state
 }
+
+// declState is what's known about whether a directory has an object
+// declaration.
+type declState uint8
+
+const (
+	declPending declState = iota // not listed yet, but it still could be
+	declFound                    // listed
+	declAbsent                   // the listing is past where it would be
+)
 
 // next processes the next file in the listing. It returns false if iteration
 // should stop.
 func (l *declLister) next(f *ocflfs.FileRef) bool {
 	name := f.Path
-	// leave frames for directories that don't contain name: since each
-	// directory's files are contiguous in the listing, nothing more can come
-	// under them.
-	for len(l.frames) > 0 {
-		top := l.frames[len(l.frames)-1]
-		if isUnder(name, top.dir) {
-			break
-		}
-		l.frames = l.frames[:len(l.frames)-1]
-		if !top.declared && !l.release(len(l.frames), top.held) {
+	// leave directories that don't contain name: since each directory's files
+	// are contiguous in the listing, nothing more can come under them.
+	for len(l.frames) > 0 && !isUnder(name, l.frames[len(l.frames)-1].dir) {
+		if !l.leave() {
 			return false
 		}
 	}
-	// enter frames for the rest of name's directories.
-	start := 0
-	if len(l.frames) > 0 {
-		start = len(l.frames[len(l.frames)-1].dir) + 1
-	}
-	for i := start; i < len(name); i++ {
-		if name[i] == '/' {
-			l.frames = append(l.frames, declFrame{dir: name[:i]})
-		}
-	}
-	// resolve frames the listing has now passed, deepest first so held
-	// declarations can move up through several frames at once.
-	for i := len(l.frames) - 1; i >= 0; i-- {
-		fr := &l.frames[i]
-		if fr.passed || fr.declared {
-			continue
-		}
-		if pastObjectDecl(name[len(fr.dir)+1:]) {
-			fr.passed = true
-			held := fr.held
-			fr.held = nil
-			if !l.release(i, held) {
-				return false
-			}
+	l.enter(name)
+	// rule out declarations for the directories where name sorts past any
+	// declaration they could have: the listing is in lexical order, so the
+	// declaration can't come later.
+	for i, fr := range l.frames {
+		if pastObjectDecl(name[len(fr.dir)+1:]) && !l.ruleOut(i) {
+			return false
 		}
 	}
 	decl, err := ParseNamaste(path.Base(name))
 	if err != nil || !decl.IsObject() {
 		return true
 	}
+	// f is an object declaration
 	if len(l.frames) == 0 {
-		// a declaration in the root directory: it has no ancestors to wait
-		// for, and the root isn't an object root, so it never makes
-		// declarations below it nested.
+		// in the root directory, which isn't an object root, so it has
+		// nothing to wait on.
 		return l.yield(f, nil)
 	}
-	dirFrame := len(l.frames) - 1
-	for _, fr := range l.frames[:dirFrame] {
-		if fr.declared {
-			return true // nested
-		}
-	}
-	l.frames[dirFrame].declared = true
-	l.frames[dirFrame].held = nil // nested
-	return l.release(dirFrame, []*ocflfs.FileRef{f})
+	dir := len(l.frames) - 1
+	l.frames[dir].state = declFound
+	l.frames[dir].held = nil // nested in dir
+	return l.hold(dir, f)
 }
 
 // finish yields the declarations still held at the end of the listing that
 // aren't nested.
 func (l *declLister) finish() {
 	for len(l.frames) > 0 {
-		top := l.frames[len(l.frames)-1]
-		l.frames = l.frames[:len(l.frames)-1]
-		if !top.declared && !l.release(len(l.frames), top.held) {
+		if !l.leave() {
 			return
 		}
 	}
 }
 
-// release hands refs, which are under the directories of all frames before
-// frames[i], to the deepest unresolved frame before frames[i], or yields
-// them if there is none. It returns false if iteration should stop.
-func (l *declLister) release(i int, refs []*ocflfs.FileRef) bool {
-	if len(refs) == 0 {
+// enter pushes a frame for each of name's directories below the deepest
+// frame.
+func (l *declLister) enter(name string) {
+	start := 0
+	if n := len(l.frames); n > 0 {
+		start = len(l.frames[n-1].dir) + 1
+	}
+	for i := start; i < len(name); i++ {
+		if name[i] == '/' {
+			l.frames = append(l.frames, declFrame{dir: name[:i]})
+		}
+	}
+}
+
+// leave pops the deepest frame, which the listing has moved past, ruling out
+// its declaration first. It returns false if iteration should stop.
+func (l *declLister) leave() bool {
+	n := len(l.frames) - 1
+	if !l.ruleOut(n) {
+		return false
+	}
+	l.frames = l.frames[:n]
+	return true
+}
+
+// ruleOut records that the directory of l.frames[i] has no declaration, if
+// it's pending, and hands the declarations it held up to l.frames[:i]. It
+// returns false if iteration should stop.
+func (l *declLister) ruleOut(i int) bool {
+	fr := &l.frames[i]
+	if fr.state != declPending {
 		return true
 	}
-	for j := i - 1; j >= 0; j-- {
-		fr := &l.frames[j]
-		if fr.declared {
+	held := fr.held
+	fr.state, fr.held = declAbsent, nil
+	return l.hold(i, held...)
+}
+
+// hold settles refs, declarations under the directories of l.frames[:n]. If
+// any of those frames has a declaration, refs are nested and are dropped.
+// Otherwise they wait in the deepest pending frame, or are yielded if none is
+// pending. It returns false if iteration should stop.
+func (l *declLister) hold(n int, refs ...*ocflfs.FileRef) bool {
+	pending := -1
+	for i, fr := range l.frames[:n] {
+		switch fr.state {
+		case declFound:
 			return true // nested
+		case declPending:
+			pending = i
 		}
-		if !fr.passed {
-			fr.held = append(fr.held, refs...)
-			return true
-		}
+	}
+	if pending >= 0 {
+		l.frames[pending].held = append(l.frames[pending].held, refs...)
+		return true
 	}
 	for _, ref := range refs {
 		if !l.yield(ref, nil) {
